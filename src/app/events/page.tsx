@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { format } from "date-fns";
+import Image from "next/image";
 
 export default async function EventsPage() {
   // Fetch public events
@@ -24,25 +25,37 @@ export default async function EventsPage() {
           {publicEvents.length > 0 ? (
             <div className="space-y-6">
               {publicEvents.map((event) => (
-                <div key={event.id} className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm hover:shadow-md transition">
-                  <h3 className="text-2xl font-semibold mb-2 text-gray-900">
-                    {event.title}
-                  </h3>
-                  <div className="flex items-center text-gray-600 mb-3">
-                    <span className="font-medium">
-                      {format(new Date(event.startDate), "MMMM d, yyyy")} at{" "}
-                      {format(new Date(event.startDate), "h:mm a")}
-                    </span>
-                    {event.location && (
-                      <>
-                        <span className="mx-2">•</span>
-                        <span>{event.location}</span>
-                      </>
+                <div key={event.id} className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition">
+                  {event.image && (
+                    <div className="relative w-full h-64">
+                      <Image
+                        src={event.image}
+                        alt={event.title}
+                        fill
+                        className="object-cover"
+                      />
+                    </div>
+                  )}
+                  <div className="p-6">
+                    <h3 className="text-2xl font-semibold mb-2 text-gray-900">
+                      {event.title}
+                    </h3>
+                    <div className="flex items-center text-gray-600 mb-3">
+                      <span className="font-medium">
+                        {format(new Date(event.startDate), "MMMM d, yyyy")} at{" "}
+                        {format(new Date(event.startDate), "h:mm a")}
+                      </span>
+                      {event.location && (
+                        <>
+                          <span className="mx-2">•</span>
+                          <span>{event.location}</span>
+                        </>
+                      )}
+                    </div>
+                    {event.description && (
+                      <p className="text-gray-700">{event.description}</p>
                     )}
                   </div>
-                  {event.description && (
-                    <p className="text-gray-700">{event.description}</p>
-                  )}
                 </div>
               ))}
             </div>

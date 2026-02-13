@@ -13,6 +13,7 @@
     "db:push": "drizzle-kit push",
     "db:migrate-and-push": "node drizzle/run-migrations.mjs && drizzle-kit push",
     "db:import-roster": "tsx scripts/import-roster.ts",
+    "db:add-events": "tsx scripts/add-events.ts",
     "start": "next start",
     "lint": "eslint"
   },
@@ -46,15 +47,16 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.24",
     "dotenv-cli": "^11.0.0",
     "drizzle-kit": "^0.31.8",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
-    "tailwindcss": "^4",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19",
     "tsx": "^4.21.0",
     "typescript": "^5"
   }

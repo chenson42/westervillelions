@@ -20,12 +20,14 @@ export const members = pgTable("members", {
   memberNumber: integer("member_number").unique(), // Lions International member number
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
+  email: text("email"),
   phone: text("phone"),
   address: text("address"),
   city: text("city"),
   state: text("state"),
   zip: text("zip"),
   branch: text("branch"), // Branch/chapter (e.g., "Somali Branch")
+  boardPosition: text("board_position"), // Board position (e.g., "President", "Treasurer")
   joinDate: timestamp("join_date"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -40,6 +42,7 @@ export const events = pgTable("events", {
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date"),
   location: text("location"),
+  image: text("image"), // Event photo path
   isPublic: boolean("is_public").notNull().default(false), // public events shown on website
   maxAttendees: integer("max_attendees"),
   createdBy: uuid("created_by").references(() => users.id),

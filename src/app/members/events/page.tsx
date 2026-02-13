@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
 import { format } from "date-fns";
+import Image from "next/image";
 
 export default async function MemberEventsPage() {
   const session = await auth();
@@ -38,40 +39,52 @@ export default async function MemberEventsPage() {
           {allEvents.length > 0 ? (
             <div className="space-y-6">
               {allEvents.map((event) => (
-                <div key={event.id} className="border border-gray-200 rounded-lg p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                        {event.title}
-                      </h3>
-                      <div className="flex items-center text-gray-600 mb-2">
-                        <span className="font-medium">
-                          {format(new Date(event.startDate), "EEEE, MMMM d, yyyy")} at{" "}
-                          {format(new Date(event.startDate), "h:mm a")}
-                        </span>
+                <div key={event.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                  {event.image && (
+                    <div className="relative w-full h-64">
+                      <Image
+                        src={event.image}
+                        alt={event.title}
+                        fill
+                        className="object-cover"
+                      />
+                    </div>
+                  )}
+                  <div className="p-6">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                          {event.title}
+                        </h3>
+                        <div className="flex items-center text-gray-600 mb-2">
+                          <span className="font-medium">
+                            {format(new Date(event.startDate), "EEEE, MMMM d, yyyy")} at{" "}
+                            {format(new Date(event.startDate), "h:mm a")}
+                          </span>
+                        </div>
+                        {event.location && (
+                          <p className="text-gray-600">
+                            <span className="font-medium">Location:</span> {event.location}
+                          </p>
+                        )}
                       </div>
-                      {event.location && (
-                        <p className="text-gray-600">
-                          <span className="font-medium">Location:</span> {event.location}
-                        </p>
-                      )}
+                      <div className="flex gap-2">
+                        {event.isPublic && (
+                          <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
+                            Public Event
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      {event.isPublic && (
-                        <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
-                          Public Event
-                        </span>
-                      )}
-                    </div>
+                    {event.description && (
+                      <p className="text-gray-700 mb-4">{event.description}</p>
+                    )}
+                    {event.maxAttendees && (
+                      <p className="text-sm text-gray-600">
+                        <span className="font-medium">Capacity:</span> {event.maxAttendees} attendees
+                      </p>
+                    )}
                   </div>
-                  {event.description && (
-                    <p className="text-gray-700 mb-4">{event.description}</p>
-                  )}
-                  {event.maxAttendees && (
-                    <p className="text-sm text-gray-600">
-                      <span className="font-medium">Capacity:</span> {event.maxAttendees} attendees
-                    </p>
-                  )}
                 </div>
               ))}
             </div>
