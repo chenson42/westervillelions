@@ -10,7 +10,7 @@ export default async function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="bg-lions-red text-white py-12">
+      <div className="bg-lions-blue text-white py-12">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-2">My Profile</h1>
           <p className="text-xl">Update your information</p>
@@ -21,7 +21,7 @@ export default async function ProfilePage() {
         <div className="mb-6">
           <a
             href="/members"
-            className="text-lions-red hover:underline"
+            className="text-lions-blue hover:underline"
           >
             ← Back to Member Portal
           </a>

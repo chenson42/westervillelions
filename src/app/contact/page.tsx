@@ -1,7 +1,7 @@
 export default function ContactPage() {
   return (
     <div className="min-h-screen bg-white">
-      <div className="bg-lions-red text-white py-16">
+      <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-4">Contact Us</h1>
           <p className="text-xl">We'd love to hear from you</p>
@@ -16,7 +16,7 @@ export default function ContactPage() {
 
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-xl font-semibold mb-2 text-lions-red">Email</h3>
+                  <h3 className="text-xl font-semibold mb-2 text-lions-blue">Email</h3>
                   <p className="text-lg text-gray-700">
                     <a href="mailto:info@westervillelions.org" className="hover:underline">
                       info@westervillelions.org
@@ -25,7 +25,7 @@ export default function ContactPage() {
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold mb-2 text-lions-red">Meetings</h3>
+                  <h3 className="text-xl font-semibold mb-2 text-lions-blue">Meetings</h3>
                   <p className="text-lg text-gray-700">
                     1st and 3rd Wednesday of each month
                     <br />
@@ -36,14 +36,14 @@ export default function ContactPage() {
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold mb-2 text-lions-red">Location</h3>
+                  <h3 className="text-xl font-semibold mb-2 text-lions-blue">Location</h3>
                   <p className="text-lg text-gray-700">
                     Westerville, Ohio
                   </p>
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold mb-2 text-lions-red">Social Media</h3>
+                  <h3 className="text-xl font-semibold mb-2 text-lions-blue">Social Media</h3>
                   <p className="text-lg text-gray-700">
                     Follow us on Facebook for updates on our events and service projects
                   </p>
@@ -63,7 +63,7 @@ export default function ContactPage() {
                       type="text"
                       id="name"
                       name="name"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
                       required
                     />
                   </div>
@@ -75,7 +75,7 @@ export default function ContactPage() {
                       type="email"
                       id="email"
                       name="email"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
                       required
                     />
                   </div>
@@ -87,7 +87,7 @@ export default function ContactPage() {
                       type="text"
                       id="subject"
                       name="subject"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
                       required
                     />
                   </div>
@@ -99,13 +99,13 @@ export default function ContactPage() {
                       id="message"
                       name="message"
                       rows={6}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
                       required
                     ></textarea>
                   </div>
                   <button
                     type="submit"
-                    className="w-full bg-lions-red text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-red-dark transition"
+                    className="w-full bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition"
                   >
                     Send Message
                   </button>

@@ -107,7 +107,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search by name, phone, or member number..."
-            className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent text-lg"
+            className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent text-lg"
           />
           {searchQuery && (
             <button
@@ -133,7 +133,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
               onClick={() => setFilterBranch("main")}
               className={`px-4 py-2 rounded-full font-medium transition ${
                 filterBranch === "main"
-                  ? "bg-lions-red text-white"
+                  ? "bg-lions-blue text-white"
                   : "bg-gray-200 text-gray-700 hover:bg-gray-300"
               }`}
             >
@@ -143,7 +143,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
               onClick={() => setFilterBranch("board")}
               className={`px-4 py-2 rounded-full font-medium transition ${
                 filterBranch === "board"
-                  ? "bg-lions-red text-white"
+                  ? "bg-lions-blue text-white"
                   : "bg-gray-200 text-gray-700 hover:bg-gray-300"
               }`}
             >
@@ -155,7 +155,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
                 onClick={() => setFilterBranch(branch)}
                 className={`px-4 py-2 rounded-full font-medium transition ${
                   filterBranch === branch
-                    ? "bg-lions-red text-white"
+                    ? "bg-lions-blue text-white"
                     : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                 }`}
               >
@@ -166,7 +166,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
               onClick={() => setFilterBranch("all")}
               className={`px-4 py-2 rounded-full font-medium transition ${
                 filterBranch === "all"
-                  ? "bg-lions-red text-white"
+                  ? "bg-lions-blue text-white"
                   : "bg-gray-200 text-gray-700 hover:bg-gray-300"
               }`}
             >
@@ -194,7 +194,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
                   </h3>
                   <div className="flex gap-1 flex-wrap justify-end">
                     {member.boardPosition && (
-                      <span className="px-2 py-1 bg-lions-red text-white text-xs font-medium rounded-full whitespace-nowrap">
+                      <span className="px-2 py-1 bg-lions-blue text-white text-xs font-medium rounded-full whitespace-nowrap">
                         {member.boardPosition}
                       </span>
                     )}
@@ -220,7 +220,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
                       d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                     />
                   </svg>
-                  <a href={`mailto:${member.email}`} className="hover:text-lions-red truncate">
+                  <a href={`mailto:${member.email}`} className="hover:text-lions-blue truncate">
                     {member.email}
                   </a>
                 </p>
@@ -235,7 +235,7 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
                       d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
                     />
                   </svg>
-                  <a href={`tel:${member.phone}`} className="hover:text-lions-red">
+                  <a href={`tel:${member.phone}`} className="hover:text-lions-blue">
                     {member.phone}
                   </a>
                 </p>

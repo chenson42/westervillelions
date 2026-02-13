@@ -7,16 +7,14 @@ export function Footer() {
       <div className="container mx-auto px-4 py-12">
         <div className="grid md:grid-cols-4 gap-8">
           <div>
-            <div className="mb-4 flex items-center gap-3">
-              <div className="relative w-20 h-20 sm:w-24 sm:h-24 flex-shrink-0 bg-white rounded-lg p-2">
-                <Image
-                  src="/images/logo.png"
-                  alt="Westerville Lions Club"
-                  fill
-                  className="object-contain"
-                />
-              </div>
-              <h3 className="text-xl font-bold text-lions-gold">Westerville<br/>Lions Club</h3>
+            <div className="mb-4">
+              <Image
+                src="/images/logo-official.png"
+                alt="Westerville Lions Club"
+                width={250}
+                height={80}
+                className="h-20 w-auto object-contain"
+              />
             </div>
             <p className="text-gray-400 mb-4">
               Serving our community through humanitarian service since 1938.
@@ -81,8 +79,8 @@ export function Footer() {
             <h4 className="font-semibold mb-4 text-lions-gold">Get Involved</h4>
             <ul className="space-y-2">
               <li>
-                <Link href="/donate" className="text-gray-400 hover:text-white transition">
-                  Donate
+                <Link href="/campaigns" className="text-gray-400 hover:text-white transition">
+                  Campaigns
                 </Link>
               </li>
               <li>

@@ -1,7 +1,7 @@
 export default function MissionPage() {
   return (
     <div className="min-h-screen bg-white">
-      <div className="bg-lions-red text-white py-16">
+      <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-4">Our Mission</h1>
           <p className="text-xl max-w-3xl">
@@ -17,7 +17,7 @@ export default function MissionPage() {
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Core Principles</h2>
             <div className="grid md:grid-cols-3 gap-8">
               <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-xl font-semibold mb-3 text-lions-red">
+                <h3 className="text-xl font-semibold mb-3 text-lions-blue">
                   Understanding
                 </h3>
                 <p className="text-gray-700">
@@ -25,7 +25,7 @@ export default function MissionPage() {
                 </p>
               </div>
               <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-xl font-semibold mb-3 text-lions-red">
+                <h3 className="text-xl font-semibold mb-3 text-lions-blue">
                   Good Government
                 </h3>
                 <p className="text-gray-700">
@@ -33,7 +33,7 @@ export default function MissionPage() {
                 </p>
               </div>
               <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-xl font-semibold mb-3 text-lions-red">
+                <h3 className="text-xl font-semibold mb-3 text-lions-blue">
                   Community Welfare
                 </h3>
                 <p className="text-gray-700">
@@ -48,7 +48,7 @@ export default function MissionPage() {
 
             <div className="space-y-8">
               <div>
-                <h3 className="text-2xl font-semibold mb-3 text-lions-red">Youth Programs</h3>
+                <h3 className="text-2xl font-semibold mb-3 text-lions-blue">Youth Programs</h3>
                 <p className="text-lg text-gray-700">
                   We invest in our community's future by supporting educational programs,
                   providing scholarships, and creating opportunities for youth to develop
@@ -57,7 +57,7 @@ export default function MissionPage() {
               </div>
 
               <div>
-                <h3 className="text-2xl font-semibold mb-3 text-lions-red">Community Service</h3>
+                <h3 className="text-2xl font-semibold mb-3 text-lions-blue">Community Service</h3>
                 <p className="text-lg text-gray-700">
                   From local food drives to community clean-up events, we partner with
                   organizations throughout Westerville to address pressing community needs
@@ -66,7 +66,7 @@ export default function MissionPage() {
               </div>
 
               <div>
-                <h3 className="text-2xl font-semibold mb-3 text-lions-red">Humanitarian Aid</h3>
+                <h3 className="text-2xl font-semibold mb-3 text-lions-blue">Humanitarian Aid</h3>
                 <p className="text-lg text-gray-700">
                   When disaster strikes or communities face hardship, we mobilize to provide
                   relief and support. Our efforts extend locally and globally through
@@ -75,7 +75,7 @@ export default function MissionPage() {
               </div>
 
               <div>
-                <h3 className="text-2xl font-semibold mb-3 text-lions-red">Vision Care</h3>
+                <h3 className="text-2xl font-semibold mb-3 text-lions-blue">Vision Care</h3>
                 <p className="text-lg text-gray-700">
                   Following Lions International's legacy of fighting blindness, we support
                   vision screening programs and eyeglass collection drives, ensuring access
@@ -84,7 +84,7 @@ export default function MissionPage() {
               </div>
 
               <div>
-                <h3 className="text-2xl font-semibold mb-3 text-lions-red">Hunger Relief</h3>
+                <h3 className="text-2xl font-semibold mb-3 text-lions-blue">Hunger Relief</h3>
                 <p className="text-lg text-gray-700">
                   We partner with local food banks and meal programs to fight hunger in
                   our community, ensuring no family goes without nutritious food.
@@ -92,7 +92,7 @@ export default function MissionPage() {
               </div>
 
               <div>
-                <h3 className="text-2xl font-semibold mb-3 text-lions-red">Environment</h3>
+                <h3 className="text-2xl font-semibold mb-3 text-lions-blue">Environment</h3>
                 <p className="text-lg text-gray-700">
                   Through conservation efforts and environmental education, we work to
                   protect our natural resources for future generations.

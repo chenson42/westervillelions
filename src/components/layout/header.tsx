@@ -15,10 +15,12 @@ export function Header({ session }: HeaderProps) {
   const pathname = usePathname();
 
   const navLinks = [
-    { href: "/about", label: "About" },
+    { href: "/about", label: "Organization" },
     { href: "/mission", label: "Mission" },
-    { href: "/events", label: "Events" },
-    { href: "/donate", label: "Donate" },
+    { href: "/causes", label: "Our Causes" },
+    { href: "/events", label: "What We Do" },
+    { href: "/meetings", label: "Meetings" },
+    { href: "/campaigns", label: "Campaigns" },
     { href: "/contact", label: "Contact" },
   ];
 
@@ -30,12 +32,13 @@ export function Header({ session }: HeaderProps) {
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-8">
             <Link href="/" className="flex items-center">
-              <div className="relative w-24 h-24 md:w-32 md:h-32 lg:w-36 lg:h-36 flex-shrink-0 bg-white rounded-lg p-2 hover:shadow-lg transition">
+              <div className="relative h-16 md:h-20 lg:h-24 flex-shrink-0">
                 <Image
-                  src="/images/logo.png"
+                  src="/images/logo-official.png"
                   alt="Westerville Lions Club"
-                  fill
-                  className="object-contain drop-shadow-md"
+                  width={300}
+                  height={96}
+                  className="h-full w-auto object-contain"
                   priority
                 />
               </div>
@@ -45,8 +48,8 @@ export function Header({ session }: HeaderProps) {
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`text-gray-700 hover:text-lions-red transition font-medium ${
-                    isActive(link.href) ? "text-lions-red border-b-2 border-lions-red" : ""
+                  className={`text-gray-700 hover:text-lions-blue transition font-medium ${
+                    isActive(link.href) ? "text-lions-blue border-b-2 border-lions-blue" : ""
                   }`}
                 >
                   {link.label}
@@ -60,16 +63,16 @@ export function Header({ session }: HeaderProps) {
               <>
                 <Link
                   href="/members"
-                  className="hidden md:inline-block bg-lions-red text-white px-4 py-2 rounded-lg hover:bg-lions-red-dark transition"
+                  className="hidden md:inline-block bg-lions-blue text-white px-4 py-2 rounded-lg hover:bg-lions-blue-dark transition"
                 >
                   Member Portal
                 </Link>
-                <SignOutButton className="hidden md:inline-block text-gray-700 hover:text-lions-red transition font-medium" />
+                <SignOutButton className="hidden md:inline-block text-gray-700 hover:text-lions-blue transition font-medium" />
               </>
             ) : (
               <Link
                 href="/signin"
-                className="hidden md:inline-block bg-lions-red text-white px-4 py-2 rounded-lg hover:bg-lions-red-dark transition"
+                className="hidden md:inline-block bg-lions-blue text-white px-4 py-2 rounded-lg hover:bg-lions-blue-dark transition"
               >
                 Login
               </Link>
@@ -78,7 +81,7 @@ export function Header({ session }: HeaderProps) {
             {/* Mobile menu button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden p-2 text-gray-700 hover:text-lions-red"
+              className="lg:hidden p-2 text-gray-700 hover:text-lions-blue"
               aria-label="Toggle menu"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -101,8 +104,8 @@ export function Header({ session }: HeaderProps) {
                   key={link.href}
                   href={link.href}
                   onClick={() => setMobileMenuOpen(false)}
-                  className={`text-gray-700 hover:text-lions-red transition font-medium px-2 py-2 ${
-                    isActive(link.href) ? "text-lions-red bg-red-50 rounded" : ""
+                  className={`text-gray-700 hover:text-lions-blue transition font-medium px-2 py-2 ${
+                    isActive(link.href) ? "text-lions-blue bg-blue-50 rounded" : ""
                   }`}
                 >
                   {link.label}
@@ -113,17 +116,17 @@ export function Header({ session }: HeaderProps) {
                   <Link
                     href="/members"
                     onClick={() => setMobileMenuOpen(false)}
-                    className="text-gray-700 hover:text-lions-red transition font-medium px-2 py-2"
+                    className="text-gray-700 hover:text-lions-blue transition font-medium px-2 py-2"
                   >
                     Member Portal
                   </Link>
-                  <SignOutButton className="text-left w-full text-gray-700 hover:text-lions-red transition font-medium px-2 py-2" />
+                  <SignOutButton className="text-left w-full text-gray-700 hover:text-lions-blue transition font-medium px-2 py-2" />
                 </>
               ) : (
                 <Link
                   href="/signin"
                   onClick={() => setMobileMenuOpen(false)}
-                  className="bg-lions-red text-white px-4 py-2 rounded-lg hover:bg-lions-red-dark transition text-center"
+                  className="bg-lions-blue text-white px-4 py-2 rounded-lg hover:bg-lions-blue-dark transition text-center"
                 >
                   Login
                 </Link>

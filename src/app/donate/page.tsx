@@ -1,7 +1,7 @@
 export default function DonatePage() {
   return (
     <div className="min-h-screen bg-white">
-      <div className="bg-lions-red text-white py-16">
+      <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-4">Support Our Mission</h1>
           <p className="text-xl">Your donation helps us serve our community</p>
@@ -36,7 +36,7 @@ export default function DonatePage() {
                 href="https://givebutter.com/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-block bg-lions-red text-white px-8 py-4 rounded-lg font-semibold text-lg hover:bg-lions-red-dark transition"
+                className="inline-block bg-lions-blue text-white px-8 py-4 rounded-lg font-semibold text-lg hover:bg-lions-blue-dark transition"
               >
                 Donate Now
               </a>
@@ -50,7 +50,7 @@ export default function DonatePage() {
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Where Your Money Goes</h2>
             <div className="grid md:grid-cols-2 gap-6">
               <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-xl font-semibold mb-3 text-lions-red">
+                <h3 className="text-xl font-semibold mb-3 text-lions-blue">
                   Youth Programs
                 </h3>
                 <p className="text-gray-700">
@@ -58,7 +58,7 @@ export default function DonatePage() {
                 </p>
               </div>
               <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-xl font-semibold mb-3 text-lions-red">
+                <h3 className="text-xl font-semibold mb-3 text-lions-blue">
                   Community Projects
                 </h3>
                 <p className="text-gray-700">
@@ -66,7 +66,7 @@ export default function DonatePage() {
                 </p>
               </div>
               <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-xl font-semibold mb-3 text-lions-red">
+                <h3 className="text-xl font-semibold mb-3 text-lions-blue">
                   Humanitarian Aid
                 </h3>
                 <p className="text-gray-700">
@@ -74,7 +74,7 @@ export default function DonatePage() {
                 </p>
               </div>
               <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-xl font-semibold mb-3 text-lions-red">
+                <h3 className="text-xl font-semibold mb-3 text-lions-blue">
                   Hunger Relief
                 </h3>
                 <p className="text-gray-700">
@@ -110,7 +110,7 @@ export default function DonatePage() {
             </p>
             <a
               href="/contact"
-              className="inline-block bg-lions-red text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-red-dark transition"
+              className="inline-block bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition"
             >
               Contact Us
             </a>

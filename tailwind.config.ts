@@ -12,10 +12,14 @@ const config: Config = {
       colors: {
         // Westerville Lions Club brand colors
         lions: {
-          red: "#CC0000",
-          "red-dark": "#990000",
-          gold: "#FFD700",
+          blue: "#00499E",
+          "blue-dark": "#003875",
+          gold: "#FFCF00",
+          "gold-dark": "#E6B800",
         },
+      },
+      fontFamily: {
+        sans: ['Open Sans', 'system-ui', 'sans-serif'],
       },
     },
   },

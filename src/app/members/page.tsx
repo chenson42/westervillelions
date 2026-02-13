@@ -27,7 +27,7 @@ export default async function MembersPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="bg-gradient-to-br from-lions-red to-lions-red-dark text-white py-12">
+      <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-12">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-2">Member Portal</h1>
           <p className="text-xl">Welcome, {session.user.name}!</p>
@@ -38,23 +38,23 @@ export default async function MembersPage() {
         <div className="grid md:grid-cols-3 gap-6 mb-12">
           <a
             href="/members"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition border-2 border-lions-red transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition border-2 border-lions-blue transform hover:-translate-y-1"
           >
-            <h3 className="text-xl font-semibold mb-2 text-lions-red">Member Directory</h3>
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Member Directory</h3>
             <p className="text-gray-700">View contact information for all club members</p>
           </a>
           <a
             href="/members/events"
             className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
-            <h3 className="text-xl font-semibold mb-2 text-lions-red">Events</h3>
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Events</h3>
             <p className="text-gray-700">View and RSVP to upcoming club events</p>
           </a>
           <a
             href="/members/profile"
             className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
-            <h3 className="text-xl font-semibold mb-2 text-lions-red">My Profile</h3>
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Profile</h3>
             <p className="text-gray-700">Update your contact information and preferences</p>
           </a>
         </div>

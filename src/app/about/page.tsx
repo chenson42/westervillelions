@@ -1,7 +1,7 @@
 export default function AboutPage() {
   return (
     <div className="min-h-screen bg-white">
-      <div className="bg-lions-red text-white py-16">
+      <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-4">About Our Club</h1>
           <p className="text-xl">Serving Westerville since 1938</p>
@@ -59,7 +59,7 @@ export default function AboutPage() {
             </p>
             <a
               href="/contact"
-              className="inline-block bg-lions-red text-white px-8 py-3 rounded-lg font-semibold hover:bg-lions-red-dark transition"
+              className="inline-block bg-lions-blue text-white px-8 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition"
             >
               Contact Us to Learn More
             </a>
