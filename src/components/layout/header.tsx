@@ -19,7 +19,6 @@ export function Header({ session }: HeaderProps) {
     { href: "/mission", label: "Mission" },
     { href: "/causes", label: "Our Causes" },
     { href: "/events", label: "What We Do" },
-    { href: "/meetings", label: "Meetings" },
     { href: "/campaigns", label: "Campaigns" },
     { href: "/contact", label: "Contact" },
   ];
@@ -43,7 +42,7 @@ export function Header({ session }: HeaderProps) {
                 />
               </div>
             </Link>
-            <div className="hidden lg:flex space-x-6">
+            <div className="hidden xl:flex space-x-6">
               {navLinks.map((link) => (
                 <Link
                   key={link.href}
@@ -81,7 +80,7 @@ export function Header({ session }: HeaderProps) {
             {/* Mobile menu button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden p-2 text-gray-700 hover:text-lions-blue"
+              className="xl:hidden p-2 text-gray-700 hover:text-lions-blue"
               aria-label="Toggle menu"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -97,7 +96,7 @@ export function Header({ session }: HeaderProps) {
 
         {/* Mobile menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden mt-4 pb-4 border-t border-gray-200 pt-4">
+          <div className="xl:hidden mt-4 pb-4 border-t border-gray-200 pt-4">
             <div className="flex flex-col space-y-3">
               {navLinks.map((link) => (
                 <Link

@@ -1,5 +1,6 @@
 import { ServiceCard } from "@/components/home/service-card";
 import { InstagramGrid } from "@/components/home/instagram-grid";
+import { ZeffyButton } from "@/components/campaigns/zeffy-button";
 
 export default function HomePage() {
   return (
@@ -141,7 +142,7 @@ export default function HomePage() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <a
-              href="/donate"
+              href="/campaigns"
               className="bg-lions-blue text-white px-10 py-4 rounded-full font-bold text-lg hover:bg-lions-blue-dark transition shadow-lg transform hover:scale-105"
             >
               Donate Now

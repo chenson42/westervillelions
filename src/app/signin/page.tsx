@@ -2,12 +2,17 @@
 
 import { signIn } from "next-auth/react";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { toast } from "sonner";
 
 export default function SignInPage() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get("callbackUrl") || "/members";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,32 +21,39 @@ export default function SignInPage() {
     try {
       const result = await signIn("credentials", {
         email,
-        password: "prototype", // For prototype only
+        password,
         redirect: false,
       });
 
       if (result?.ok) {
-        router.push("/members");
+        toast.success("Welcome back!");
+        router.push(callbackUrl);
+        router.refresh();
       } else {
-        alert("Email not found. Please check your email or contact the club administrator.");
+        toast.error("Invalid email or password");
       }
     } catch (error) {
       console.error("Sign in error:", error);
-      alert("An error occurred. Please try again.");
+      toast.error("An error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleGoogleSignIn = () => {
-    signIn("google", { callbackUrl: "/members" });
+    signIn("google", { callbackUrl });
   };
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Member Login</h1>
+          <Link href="/" className="inline-block">
+            <span className="text-6xl">🦁</span>
+          </Link>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2 mt-4">
+            Member Login
+          </h1>
           <p className="text-gray-600">Sign in to access the member portal</p>
         </div>
 
@@ -76,13 +88,18 @@ export default function SignInPage() {
               <div className="w-full border-t border-gray-300"></div>
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-white text-gray-500">Or sign in with email</span>
+              <span className="px-2 bg-white text-gray-500">
+                Or sign in with email
+              </span>
             </div>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="email"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Email Address
               </label>
               <input
@@ -90,32 +107,58 @@ export default function SignInPage() {
                 id="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent"
                 placeholder="your.email@example.com"
                 required
               />
             </div>
 
+            <div>
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                Password
+              </label>
+              <input
+                type="password"
+                id="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-sm">
+              <Link
+                href="/forgot-password"
+                className="text-lions-red hover:text-red-700 font-medium"
+              >
+                Forgot password?
+              </Link>
+            </div>
+
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition disabled:opacity-50"
+              className="w-full bg-lions-red text-white px-6 py-3 rounded-lg font-semibold hover:bg-red-700 transition disabled:opacity-50"
             >
               {isLoading ? "Signing in..." : "Sign In"}
             </button>
-
-            <p className="text-sm text-gray-600 text-center">
-              Prototype: No password required for email login
-            </p>
           </form>
         </div>
 
         <div className="mt-6 text-center text-sm text-gray-600">
           <p>
-            Not a member?{" "}
-            <a href="/contact" className="text-lions-blue hover:underline">
-              Contact us to learn more
-            </a>
+            Don&apos;t have an account?{" "}
+            <Link
+              href="/register"
+              className="text-lions-red hover:text-red-700 font-medium"
+            >
+              Create one here
+            </Link>
           </p>
         </div>
       </div>

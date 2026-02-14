@@ -1,0 +1,175 @@
+import { db } from "@/lib/db";
+import { users, userRoles, roles, members } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import Link from "next/link";
+
+/**
+ * Users List Page
+ *
+ * Displays all user accounts with their roles and status.
+ */
+export default async function UsersPage() {
+  // Fetch all users with their roles
+  const userList = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      createdAt: users.createdAt,
+      emailVerified: users.emailVerified,
+    })
+    .from(users)
+    .orderBy(users.createdAt);
+
+  // Fetch roles for each user
+  const userRoleData = await db
+    .select({
+      userId: userRoles.userId,
+      roleName: roles.name,
+      sortOrder: roles.sortOrder,
+    })
+    .from(userRoles)
+    .innerJoin(roles, eq(userRoles.roleId, roles.id))
+    .orderBy(roles.sortOrder);
+
+  // Fetch member links
+  const memberLinks = await db
+    .select({
+      userId: members.userId,
+      memberName: members.firstName,
+    })
+    .from(members);
+
+  // Group roles by user
+  const userRolesMap = new Map<string, string[]>();
+  userRoleData.forEach((ur) => {
+    if (!userRolesMap.has(ur.userId)) {
+      userRolesMap.set(ur.userId, []);
+    }
+    userRolesMap.get(ur.userId)!.push(ur.roleName);
+  });
+
+  // Map member links
+  const memberLinkMap = new Map<string, string>();
+  memberLinks.forEach((ml) => {
+    if (ml.userId) {
+      memberLinkMap.set(ml.userId, ml.memberName);
+    }
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Users</h1>
+          <p className="mt-2 text-gray-600">
+            Manage user accounts and role assignments
+          </p>
+        </div>
+      </div>
+
+      {/* Users table */}
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                User
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                Roles
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                Status
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                Joined
+              </th>
+              <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200 bg-white">
+            {userList.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-6 py-12 text-center">
+                  <div className="text-gray-500">
+                    <p className="text-lg font-medium">No users found</p>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              userList.map((user) => {
+                const userRolesList = userRolesMap.get(user.id) || [];
+                const linkedMember = memberLinkMap.get(user.id);
+
+                return (
+                  <tr key={user.id} className="hover:bg-gray-50">
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <div>
+                        <div className="font-medium text-gray-900">
+                          {user.name || user.email}
+                        </div>
+                        <div className="text-sm text-gray-500">{user.email}</div>
+                        {linkedMember && (
+                          <div className="mt-1 text-xs text-green-600">
+                            🦁 Linked to member
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {userRolesList.length > 0 ? (
+                          userRolesList.map((role) => (
+                            <span
+                              key={role}
+                              className="inline-flex rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800"
+                            >
+                              {role}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-sm text-gray-400">No roles</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <span
+                        className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
+                          user.emailVerified
+                            ? "bg-green-100 text-green-800"
+                            : "bg-yellow-100 text-yellow-800"
+                        }`}
+                      >
+                        {user.emailVerified ? "Verified" : "Unverified"}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                      {new Date(user.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                      <Link
+                        href={`/admin/users/${user.id}`}
+                        className="text-lions-red hover:text-red-900"
+                      >
+                        Manage Roles
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Summary */}
+      <div className="text-sm text-gray-500">
+        Showing {userList.length} user{userList.length !== 1 ? "s" : ""}
+      </div>
+    </div>
+  );
+}

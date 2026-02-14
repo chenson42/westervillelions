@@ -34,6 +34,113 @@ export const members = pgTable("members", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Roles table for permission system
+export const roles = pgTable("roles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  sortOrder: integer("sort_order").notNull().default(999), // Lower numbers = higher priority
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// User roles junction table (many-to-many)
+export const userRoles = pgTable("user_roles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Features table for granular permissions
+export const features = pgTable("features", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(), // e.g., "members.view", "events.create"
+  category: text("category").notNull(), // e.g., "members", "events", "admin"
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Role features junction table (many-to-many)
+export const roleFeatures = pgTable("role_features", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+  featureId: uuid("feature_id").notNull().references(() => features.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Permission audit log
+export const permissionAuditLog = pgTable("permission_audit_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  action: text("action").notNull(), // e.g., "role_assigned", "permission_granted"
+  targetUserId: uuid("target_user_id").references(() => users.id, { onDelete: "set null" }),
+  targetRoleId: uuid("target_role_id").references(() => roles.id, { onDelete: "set null" }),
+  targetFeatureId: uuid("target_feature_id").references(() => features.id, { onDelete: "set null" }),
+  details: text("details"), // JSON details
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Password reset tokens
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Campaigns table for Zeffy donation campaigns
+export const campaigns = pgTable("campaigns", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  description: text("description"),
+  zeffyLink: text("zeffy_link").notNull(), // Zeffy campaign URL
+  image: text("image"), // Campaign image path
+  displayOrder: integer("display_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Group types (committees, service teams, branches)
+export const groupTypes = pgTable("group_types", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(), // e.g., "Committee", "Service Team", "Branch"
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Groups (specific committees, teams, branches)
+export const groups = pgTable("groups", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  groupTypeId: uuid("group_type_id").notNull().references(() => groupTypes.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  parentGroupId: uuid("parent_group_id").references(() => groups.id, { onDelete: "set null" }), // For hierarchy
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Group roles (Leader, Member, etc.)
+export const groupRoles = pgTable("group_roles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(), // e.g., "Leader", "Member", "Co-Chair"
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Group memberships (who belongs to which group with what role)
+export const groupMemberships = pgTable("group_memberships", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+  memberId: uuid("member_id").notNull().references(() => members.id, { onDelete: "cascade" }),
+  groupRoleId: uuid("group_role_id").notNull().references(() => groupRoles.id, { onDelete: "cascade" }),
+  joinedAt: timestamp("joined_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Events table
 export const events = pgTable("events", {
   id: uuid("id").primaryKey().defaultRandom(),
