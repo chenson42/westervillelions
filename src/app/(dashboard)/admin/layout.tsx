@@ -21,9 +21,11 @@ export default async function AdminLayout({
   }
 
   const userFeatures = session.user.features || [];
+  const userRoles = session.user.roles || [];
+  const isAdmin = session.user.role === "admin" || userRoles.includes("Admin");
 
-  // Require at least admin dashboard access
-  if (!userFeatures.includes(FEATURES.ADMIN_DASHBOARD)) {
+  // Require at least admin dashboard access (admins always pass)
+  if (!isAdmin && !userFeatures.includes(FEATURES.ADMIN_DASHBOARD)) {
     redirect("/access-pending");
   }
 

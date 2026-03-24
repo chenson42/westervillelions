@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { users, userRoles, roles, members } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, ilike, or } from "drizzle-orm";
 import Link from "next/link";
 
 /**
@@ -8,9 +8,15 @@ import Link from "next/link";
  *
  * Displays all user accounts with their roles and status.
  */
-export default async function UsersPage() {
+export default async function UsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ search?: string; role?: string }>;
+}) {
+  const { search, role: roleFilter } = await searchParams;
+
   // Fetch all users with their roles
-  const userList = await db
+  const query = db
     .select({
       id: users.id,
       email: users.email,
@@ -20,6 +26,10 @@ export default async function UsersPage() {
     })
     .from(users)
     .orderBy(users.createdAt);
+
+  const userList = search
+    ? await query.where(or(ilike(users.email, `%${search}%`), ilike(users.name, `%${search}%`)))
+    : await query;
 
   // Fetch roles for each user
   const userRoleData = await db
@@ -57,6 +67,17 @@ export default async function UsersPage() {
     }
   });
 
+  // Get all role names for the filter dropdown
+  const allRoles = await db.select({ name: roles.name }).from(roles).orderBy(roles.sortOrder);
+
+  // Apply role filter if set
+  const filteredList = roleFilter
+    ? userList.filter((u) => {
+        const userRolesList = userRolesMap.get(u.id) || [];
+        return roleFilter === "none" ? userRolesList.length === 0 : userRolesList.includes(roleFilter);
+      })
+    : userList;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -68,6 +89,42 @@ export default async function UsersPage() {
           </p>
         </div>
       </div>
+
+      {/* Filters */}
+      <form method="GET" className="flex gap-3">
+        <input
+          type="text"
+          name="search"
+          defaultValue={search || ""}
+          placeholder="Search by name or email..."
+          className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+        />
+        <select
+          name="role"
+          defaultValue={roleFilter || ""}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+        >
+          <option value="">All roles</option>
+          <option value="none">No roles assigned</option>
+          {allRoles.map((r) => (
+            <option key={r.name} value={r.name}>{r.name}</option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white hover:bg-lions-blue-dark"
+        >
+          Filter
+        </button>
+        {(search || roleFilter) && (
+          <Link
+            href="/admin/users"
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Clear
+          </Link>
+        )}
+      </form>
 
       {/* Users table */}
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow">
@@ -92,7 +149,7 @@ export default async function UsersPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 bg-white">
-            {userList.length === 0 ? (
+            {filteredList.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-6 py-12 text-center">
                   <div className="text-gray-500">
@@ -101,7 +158,7 @@ export default async function UsersPage() {
                 </td>
               </tr>
             ) : (
-              userList.map((user) => {
+              filteredList.map((user) => {
                 const userRolesList = userRolesMap.get(user.id) || [];
                 const linkedMember = memberLinkMap.get(user.id);
 
@@ -153,7 +210,7 @@ export default async function UsersPage() {
                     <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
                       <Link
                         href={`/admin/users/${user.id}`}
-                        className="text-lions-red hover:text-red-900"
+                        className="text-lions-blue hover:text-lions-blue-dark"
                       >
                         Manage Roles
                       </Link>
@@ -168,7 +225,7 @@ export default async function UsersPage() {
 
       {/* Summary */}
       <div className="text-sm text-gray-500">
-        Showing {userList.length} user{userList.length !== 1 ? "s" : ""}
+        Showing {filteredList.length} of {userList.length} user{userList.length !== 1 ? "s" : ""}
       </div>
     </div>
   );

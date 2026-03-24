@@ -13,11 +13,13 @@ import UserRoleManager from "@/components/admin/user-role-manager";
 export default async function UserRolePage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
+
   // Fetch user
   const user = await db.query.users.findFirst({
-    where: eq(users.id, params.id),
+    where: eq(users.id, id),
   });
 
   if (!user) {
@@ -39,7 +41,7 @@ export default async function UserRolePage({
     })
     .from(userRoles)
     .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, params.id));
+    .where(eq(userRoles.userId, id));
 
   const currentRoleIds = currentRoles.map((r) => r.roleId);
 
@@ -82,7 +84,7 @@ export default async function UserRolePage({
 
       {/* Role manager */}
       <UserRoleManager
-        userId={params.id}
+        userId={id}
         allRoles={allRoles}
         currentRoleIds={currentRoleIds}
       />
