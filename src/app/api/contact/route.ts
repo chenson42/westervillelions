@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     const resend = new Resend(process.env.RESEND_API_KEY);
 
     await resend.emails.send({
-      from: "Westerville Lions Website <noreply@westervillelions.org>",
+      from: "Westerville Lions Website <onboarding@resend.dev>",
       to: ["info@westervillelions.org"],
       replyTo: email,
       subject: `Website Contact: ${subject}`,
