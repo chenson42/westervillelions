@@ -119,6 +119,8 @@ export const groups = pgTable("groups", {
   groupTypeId: uuid("group_type_id").notNull().references(() => groupTypes.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
+  color: text("color"), // Hex color for directory display (e.g. "#1a56db")
+  availablePositions: text("available_positions"), // JSON array of position names
   parentGroupId: uuid("parent_group_id").references((): AnyPgColumn => groups.id, { onDelete: "set null" }), // For hierarchy
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -139,6 +141,7 @@ export const groupMemberships = pgTable("group_memberships", {
   groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
   memberId: uuid("member_id").notNull().references(() => members.id, { onDelete: "cascade" }),
   groupRoleId: uuid("group_role_id").notNull().references(() => groupRoles.id, { onDelete: "cascade" }),
+  position: text("position"), // Optional position within the group (e.g. "President")
   joinedAt: timestamp("joined_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

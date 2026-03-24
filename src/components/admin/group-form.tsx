@@ -10,6 +10,8 @@ type Group = {
   name: string;
   description: string | null;
   groupTypeId: string;
+  color: string | null;
+  availablePositions: string | null;
   isActive: boolean;
 };
 
@@ -30,10 +32,17 @@ export function GroupForm({
     setIsSaving(true);
 
     const formData = new FormData(e.currentTarget);
+    const positionsRaw = (formData.get("availablePositions") as string || "").trim();
+    const positions = positionsRaw
+      ? positionsRaw.split("\n").map((p) => p.trim()).filter(Boolean)
+      : [];
+
     const data = {
       name: formData.get("name"),
       description: formData.get("description") || null,
       groupTypeId: formData.get("groupTypeId"),
+      color: formData.get("color") || null,
+      availablePositions: positions.length > 0 ? JSON.stringify(positions) : null,
       isActive: formData.get("isActive") === "true",
     };
 
@@ -115,6 +124,32 @@ export function GroupForm({
           defaultValue={group?.description ?? ""}
           rows={3}
           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-lions-blue focus:border-transparent"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
+        <div className="flex items-center gap-3">
+          <input
+            type="color"
+            name="color"
+            defaultValue={group?.color ?? "#1a56db"}
+            className="h-10 w-16 cursor-pointer rounded border border-gray-300 p-1"
+          />
+          <span className="text-sm text-gray-500">Used as a badge color in the member directory</span>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Available Positions <span className="text-gray-400 font-normal">(one per line, optional)</span>
+        </label>
+        <textarea
+          name="availablePositions"
+          defaultValue={group?.availablePositions ? JSON.parse(group.availablePositions).join("\n") : ""}
+          rows={4}
+          placeholder={"President\nVice President\nSecretary\nTreasurer"}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-lions-blue focus:border-transparent text-sm"
         />
       </div>
 

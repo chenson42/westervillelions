@@ -55,6 +55,8 @@ export async function POST(request: NextRequest) {
         name: data.name,
         description: data.description || null,
         groupTypeId: data.groupTypeId,
+        color: data.color || null,
+        availablePositions: data.availablePositions || null,
         parentGroupId: data.parentGroupId || null,
         isActive: data.isActive ?? true,
       })

@@ -3,34 +3,38 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+type Group = { id: string; name: string; color: string | null };
+
 interface MemberSearchProps {
   branches: string[];
+  groups: Group[];
   currentSearch: string;
   currentBranch: string;
   currentStatus: string;
+  currentGroup: string;
 }
 
 export default function MemberSearch({
   branches,
+  groups,
   currentSearch,
   currentBranch,
   currentStatus,
+  currentGroup,
 }: MemberSearchProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [search, setSearch] = useState(currentSearch);
   const [branch, setBranch] = useState(currentBranch);
   const [status, setStatus] = useState(currentStatus);
+  const [group, setGroup] = useState(currentGroup);
 
-  function applyFilters(
-    newSearch: string,
-    newBranch: string,
-    newStatus: string
-  ) {
+  function applyFilters(newSearch: string, newBranch: string, newStatus: string, newGroup: string) {
     const params = new URLSearchParams();
     if (newSearch) params.set("search", newSearch);
     if (newBranch) params.set("branch", newBranch);
     if (newStatus && newStatus !== "active") params.set("status", newStatus);
+    if (newGroup) params.set("group", newGroup);
     startTransition(() => {
       router.push(`/admin/members${params.size > 0 ? `?${params}` : ""}`);
     });
@@ -38,33 +42,39 @@ export default function MemberSearch({
 
   function handleBranchChange(value: string) {
     setBranch(value);
-    applyFilters(search, value, status);
+    applyFilters(search, value, status, group);
   }
 
   function handleStatusChange(value: string) {
     setStatus(value);
-    applyFilters(search, branch, value);
+    applyFilters(search, branch, value, group);
+  }
+
+  function handleGroupChange(value: string) {
+    setGroup(value);
+    applyFilters(search, branch, status, value);
   }
 
   function handleClear() {
     setSearch("");
     setBranch("");
     setStatus("active");
+    setGroup("");
     startTransition(() => router.push("/admin/members"));
   }
 
-  const hasFilters = search || branch || status !== "active";
+  const hasFilters = search || branch || status !== "active" || group;
 
   return (
     <div className={`rounded-lg border border-gray-200 bg-white p-4 ${isPending ? "opacity-70" : ""}`}>
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-5">
         {/* Search input */}
-        <div className="sm:col-span-2">
+        <div className="sm:col-span-2" onBlur={() => applyFilters(search, branch, status, group)}>
           <label htmlFor="search" className="sr-only">Search members</label>
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              applyFilters(search, branch, status);
+              applyFilters(search, branch, status, group);
             }}
           >
             <div className="relative">
@@ -78,7 +88,7 @@ export default function MemberSearch({
                 id="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                onBlur={() => applyFilters(search, branch, status)}
+
                 className="block w-full rounded-md border border-gray-300 py-2 pl-10 pr-3 text-sm placeholder-gray-400 focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
                 placeholder="Search by name or email..."
               />
@@ -98,6 +108,22 @@ export default function MemberSearch({
             <option value="">All Branches</option>
             {branches.map((b) => (
               <option key={b} value={b}>{b}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Group filter */}
+        <div>
+          <label htmlFor="group" className="sr-only">Filter by group</label>
+          <select
+            id="group"
+            value={group}
+            onChange={(e) => handleGroupChange(e.target.value)}
+            className="block w-full rounded-md border border-gray-300 py-2 pl-3 pr-10 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+          >
+            <option value="">All Groups</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
             ))}
           </select>
         </div>

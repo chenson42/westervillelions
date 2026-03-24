@@ -1,15 +1,15 @@
 import { db } from "@/lib/db";
-import { members } from "@/lib/db/schema";
-import { and, desc, eq, like, or, sql } from "drizzle-orm";
+import { members, groups, groupMemberships } from "@/lib/db/schema";
+import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import Link from "next/link";
 import MemberSearch from "@/components/admin/member-search";
 
 export default async function MembersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ search?: string; branch?: string; status?: string }>;
+  searchParams: Promise<{ search?: string; branch?: string; status?: string; group?: string }>;
 }) {
-  const { search = "", branch = "", status = "active" } = await searchParams;
+  const { search = "", branch = "", status = "active", group: groupFilter = "" } = await searchParams;
 
   // Build conditions
   const conditions = [];
@@ -33,7 +33,22 @@ export default async function MembersPage({
   } else if (status === "inactive") {
     conditions.push(eq(members.isActive, false));
   }
-  // status === "all" → no filter
+
+  // Group filter: get member IDs in that group first
+  let groupFilterMemberIds: string[] | null = null;
+  if (groupFilter) {
+    const inGroup = await db
+      .select({ memberId: groupMemberships.memberId })
+      .from(groupMemberships)
+      .where(eq(groupMemberships.groupId, groupFilter));
+    groupFilterMemberIds = inGroup.map((g) => g.memberId);
+    if (groupFilterMemberIds.length > 0) {
+      conditions.push(inArray(members.id, groupFilterMemberIds));
+    } else {
+      // Group exists but has no members — return empty
+      conditions.push(eq(members.id, "00000000-0000-0000-0000-000000000000"));
+    }
+  }
 
   const memberList = await db
     .select()
@@ -46,6 +61,36 @@ export default async function MembersPage({
     .selectDistinct({ branch: members.branch })
     .from(members)
     .where(sql`${members.branch} IS NOT NULL`);
+
+  // Get all active groups for filter
+  const allGroups = await db
+    .select({ id: groups.id, name: groups.name, color: groups.color })
+    .from(groups)
+    .where(eq(groups.isActive, true))
+    .orderBy(groups.name);
+
+  // Get group memberships for listed members (for color badges)
+  const memberIds = memberList.map((m) => m.id);
+  const memberGroupData = memberIds.length > 0
+    ? await db
+        .select({
+          memberId: groupMemberships.memberId,
+          groupId: groups.id,
+          groupName: groups.name,
+          groupColor: groups.color,
+          position: groupMemberships.position,
+        })
+        .from(groupMemberships)
+        .innerJoin(groups, eq(groupMemberships.groupId, groups.id))
+        .where(and(inArray(groupMemberships.memberId, memberIds), eq(groups.isActive, true)))
+    : [];
+
+  // Map member ID → groups
+  const memberGroupsMap = new Map<string, typeof memberGroupData>();
+  for (const row of memberGroupData) {
+    if (!memberGroupsMap.has(row.memberId)) memberGroupsMap.set(row.memberId, []);
+    memberGroupsMap.get(row.memberId)!.push(row);
+  }
 
   return (
     <div className="space-y-6">
@@ -68,9 +113,11 @@ export default async function MembersPage({
       {/* Search and filters */}
       <MemberSearch
         branches={branches.map((b) => b.branch || "").filter(Boolean)}
+        groups={allGroups}
         currentSearch={search}
         currentBranch={branch}
         currentStatus={status}
+        currentGroup={groupFilter}
       />
 
       {/* Members table */}
@@ -82,10 +129,10 @@ export default async function MembersPage({
                 Name
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Email
+                Groups
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Phone
+                Email
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                 Branch
@@ -109,49 +156,60 @@ export default async function MembersPage({
                 </td>
               </tr>
             ) : (
-              memberList.map((member) => (
-                <tr
-                  key={member.id}
-                  className={`hover:bg-gray-50 ${!member.isActive ? "opacity-60" : ""}`}
-                >
-                  <td className="whitespace-nowrap px-6 py-4">
-                    <div className="font-medium text-gray-900">
-                      {member.firstName} {member.lastName}
-                    </div>
-                    {member.boardPosition && (
-                      <div className="text-sm text-gray-500">{member.boardPosition}</div>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {member.email || "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {member.phone || "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {member.branch || "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4">
-                    <span
-                      className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
-                        member.isActive
-                          ? "bg-green-100 text-green-800"
-                          : "bg-gray-100 text-gray-500"
-                      }`}
-                    >
-                      {member.isActive ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                    <Link
-                      href={`/admin/members/${member.id}`}
-                      className="text-lions-blue hover:text-lions-blue-dark"
-                    >
-                      Edit
-                    </Link>
-                  </td>
-                </tr>
-              ))
+              memberList.map((member) => {
+                const memberGroups = memberGroupsMap.get(member.id) || [];
+                return (
+                  <tr
+                    key={member.id}
+                    className={`hover:bg-gray-50 ${!member.isActive ? "opacity-60" : ""}`}
+                  >
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <div className="font-medium text-gray-900">
+                        {member.firstName} {member.lastName}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {memberGroups.map((g) => (
+                          <span
+                            key={g.groupId}
+                            className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white"
+                            style={{ backgroundColor: g.groupColor || "#6b7280" }}
+                            title={g.position ? `${g.groupName}: ${g.position}` : g.groupName}
+                          >
+                            {g.position || g.groupName}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                      {member.email || "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                      {member.branch || "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <span
+                        className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
+                          member.isActive
+                            ? "bg-green-100 text-green-800"
+                            : "bg-gray-100 text-gray-500"
+                        }`}
+                      >
+                        {member.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                      <Link
+                        href={`/admin/members/${member.id}`}
+                        className="text-lions-blue hover:text-lions-blue-dark"
+                      >
+                        Edit
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

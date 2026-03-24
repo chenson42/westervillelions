@@ -11,6 +11,7 @@ type Membership = {
   lastName: string;
   groupRoleId: string;
   roleName: string;
+  position: string | null;
 };
 
 type AvailableMember = { id: string; firstName: string; lastName: string };
@@ -21,17 +22,20 @@ export function GroupMemberships({
   memberships: initialMemberships,
   availableMembers,
   groupRoles,
+  availablePositions = [],
 }: {
   groupId: string;
   memberships: Membership[];
   availableMembers: AvailableMember[];
   groupRoles: GroupRole[];
+  availablePositions?: string[];
 }) {
   const router = useRouter();
   const [memberships, setMemberships] = useState(initialMemberships);
   const [available, setAvailable] = useState(availableMembers);
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState(groupRoles[2]?.id ?? ""); // default to "Member"
+  const [selectedPosition, setSelectedPosition] = useState("");
   const [isAdding, setIsAdding] = useState(false);
 
   async function handleAdd() {
@@ -42,7 +46,7 @@ export function GroupMemberships({
       const res = await fetch(`/api/admin/groups/${groupId}/members`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberId: selectedMemberId, groupRoleId: selectedRoleId }),
+        body: JSON.stringify({ memberId: selectedMemberId, groupRoleId: selectedRoleId, position: selectedPosition || null }),
       });
 
       if (!res.ok) throw new Error("Failed to add member");
@@ -53,10 +57,11 @@ export function GroupMemberships({
 
       setMemberships((prev) => [
         ...prev,
-        { id: created.id, memberId: member.id, firstName: member.firstName, lastName: member.lastName, groupRoleId: role.id, roleName: role.name },
+        { id: created.id, memberId: member.id, firstName: member.firstName, lastName: member.lastName, groupRoleId: role.id, roleName: role.name, position: selectedPosition || null },
       ]);
       setAvailable((prev) => prev.filter((m) => m.id !== selectedMemberId));
       setSelectedMemberId("");
+      setSelectedPosition("");
       toast.success(`${member.firstName} ${member.lastName} added`);
       router.refresh();
     } catch {
@@ -98,6 +103,7 @@ export function GroupMemberships({
           <thead>
             <tr>
               <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Member</th>
+              <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Position</th>
               <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Role</th>
               <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500"></th>
             </tr>
@@ -106,6 +112,7 @@ export function GroupMemberships({
             {memberships.map((m) => (
               <tr key={m.id}>
                 <td className="py-2 text-sm text-gray-900">{m.firstName} {m.lastName}</td>
+                <td className="py-2 text-sm text-gray-700">{m.position || <span className="text-gray-400">—</span>}</td>
                 <td className="py-2 text-sm text-gray-500">{m.roleName}</td>
                 <td className="py-2 text-right">
                   <button
@@ -141,6 +148,21 @@ export function GroupMemberships({
                 ))}
             </select>
           </div>
+          {availablePositions.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Position</label>
+              <select
+                value={selectedPosition}
+                onChange={(e) => setSelectedPosition(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md text-sm"
+              >
+                <option value="">None</option>
+                {availablePositions.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
             <select

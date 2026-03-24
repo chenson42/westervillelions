@@ -1,0 +1,3 @@
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS color TEXT;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS available_positions TEXT;
+ALTER TABLE group_memberships ADD COLUMN IF NOT EXISTS position TEXT;

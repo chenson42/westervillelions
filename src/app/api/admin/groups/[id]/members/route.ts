@@ -18,7 +18,7 @@ export async function POST(
     if (!canManage) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const { id: groupId } = await params;
-    const { memberId, groupRoleId } = await request.json();
+    const { memberId, groupRoleId, position } = await request.json();
 
     if (!memberId || !groupRoleId) {
       return NextResponse.json({ error: "memberId and groupRoleId are required" }, { status: 400 });
@@ -26,7 +26,7 @@ export async function POST(
 
     const [created] = await db
       .insert(groupMemberships)
-      .values({ groupId, memberId, groupRoleId })
+      .values({ groupId, memberId, groupRoleId, position: position ?? null })
       .returning();
 
     return NextResponse.json(created, { status: 201 });

@@ -13,7 +13,7 @@ export default async function EditGroupPage({
   const { id } = await params;
 
   const [group, types, memberships, allMembers, roles] = await Promise.all([
-    db.query.groups.findFirst({ where: eq(groups.id, id) }),
+    db.query.groups.findFirst({ where: eq(groups.id, id) }) as Promise<typeof groups.$inferSelect | undefined>,
     db.select().from(groupTypes),
     db
       .select({
@@ -23,6 +23,7 @@ export default async function EditGroupPage({
         lastName: members.lastName,
         groupRoleId: groupMemberships.groupRoleId,
         roleName: groupRoles.name,
+        position: groupMemberships.position,
       })
       .from(groupMemberships)
       .innerJoin(members, eq(groupMemberships.memberId, members.id))
@@ -49,7 +50,7 @@ export default async function EditGroupPage({
 
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Group Details</h2>
-        <GroupForm groupTypes={types} group={group as { id: string; name: string; description: string | null; groupTypeId: string; isActive: boolean }} />
+        <GroupForm groupTypes={types} group={group as { id: string; name: string; description: string | null; groupTypeId: string; color: string | null; availablePositions: string | null; isActive: boolean }} />
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow">
@@ -59,6 +60,7 @@ export default async function EditGroupPage({
           memberships={memberships}
           availableMembers={availableMembers}
           groupRoles={roles}
+          availablePositions={group.availablePositions ? JSON.parse(group.availablePositions) : []}
         />
       </div>
     </div>
