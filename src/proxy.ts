@@ -37,6 +37,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(signInUrl);
   }
 
+  // Admins bypass all feature checks
+  const userRoles = session.user.roles || [];
+  if (userRoles.includes("Admin") || session.user.role === "admin") {
+    return NextResponse.next();
+  }
+
   const userFeatures = session.user.features || [];
   const pathname = request.nextUrl.pathname;
 
