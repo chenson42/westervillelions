@@ -57,6 +57,20 @@ export async function POST(request: NextRequest) {
       `,
     });
 
+    await resend.emails.send({
+      from: "Westerville Lions Club <onboarding@resend.dev>",
+      to: [email],
+      subject: "We received your message!",
+      html: `
+        <p>Hi ${name},</p>
+        <p>Thank you for reaching out to the Westerville Lions Club. We've received your message and a member of our team will be in touch with you soon.</p>
+        <p>In the meantime, feel free to visit our website at <a href="https://westervillelions.org">westervillelions.org</a> to learn more about our community and upcoming events.</p>
+        <br />
+        <p>Yours in service,</p>
+        <p><strong>Westerville Lions Club</strong></p>
+      `,
+    });
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error processing contact form:", error);
