@@ -3,19 +3,22 @@
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { Turnstile } from "@marsidev/react-turnstile";
+import type { TurnstileInstance } from "@marsidev/react-turnstile";
 
 const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "1x00000000000000000000AA";
+const IS_DEV = process.env.NODE_ENV === "development";
 
 export function ContactForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-  const turnstileRef = useRef<{ reset: () => void }>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(IS_DEV ? "dev-bypass" : null);
+  const [captchaError, setCaptchaError] = useState(false);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!captchaToken) {
+    if (!captchaToken && !captchaError) {
       toast.error("Please complete the CAPTCHA verification.");
       return;
     }
@@ -117,13 +120,16 @@ export function ContactForm() {
             required
           />
         </div>
-        <Turnstile
-          ref={turnstileRef}
-          siteKey={SITE_KEY}
-          onSuccess={(token) => setCaptchaToken(token)}
-          onExpire={() => setCaptchaToken(null)}
-          options={{ theme: "light" }}
-        />
+        {!IS_DEV && (
+          <Turnstile
+            ref={turnstileRef}
+            siteKey={SITE_KEY}
+            onSuccess={(token) => setCaptchaToken(token)}
+            onExpire={() => setCaptchaToken(null)}
+            onError={() => setCaptchaError(true)}
+            options={{ theme: "light" }}
+          />
+        )}
         <button
           type="submit"
           disabled={isSubmitting || !captchaToken}
