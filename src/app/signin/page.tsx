@@ -104,7 +104,7 @@ export default function SignInPage() {
                 id="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
                 placeholder="your.email@example.com"
                 required
               />
@@ -122,7 +122,7 @@ export default function SignInPage() {
                 id="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-red focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
                 placeholder="••••••••"
                 required
               />
@@ -131,7 +131,7 @@ export default function SignInPage() {
             <div className="flex items-center justify-between text-sm">
               <Link
                 href="/forgot-password"
-                className="text-lions-red hover:text-red-700 font-medium"
+                className="text-lions-blue hover:text-lions-blue-dark font-medium"
               >
                 Forgot password?
               </Link>
@@ -140,7 +140,7 @@ export default function SignInPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-lions-red text-white px-6 py-3 rounded-lg font-semibold hover:bg-red-700 transition disabled:opacity-50"
+              className="w-full bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition disabled:opacity-50"
             >
               {isLoading ? "Signing in..." : "Sign In"}
             </button>
@@ -152,7 +152,7 @@ export default function SignInPage() {
             Don&apos;t have an account?{" "}
             <Link
               href="/register"
-              className="text-lions-red hover:text-red-700 font-medium"
+              className="text-lions-blue hover:text-lions-blue-dark font-medium"
             >
               Create one here
             </Link>
