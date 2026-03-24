@@ -96,7 +96,7 @@ export default function UserRoleManager({
             type="button"
             onClick={handleSave}
             disabled={isSubmitting}
-            className="rounded-md bg-lions-red px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 disabled:opacity-50"
+            className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-50"
           >
             {isSubmitting ? "Saving..." : "Save Changes"}
           </button>
@@ -111,8 +111,8 @@ export default function UserRoleManager({
               key={role.id}
               className={`flex items-start rounded-lg border-2 p-4 transition-colors ${
                 isSelected
-                  ? "border-lions-red bg-red-50"
-                  : "border-gray-200 bg-white hover:border-gray-300"
+                  ? "border-lions-blue bg-red-50"
+                  : "border-gray-200 bg-white hover:border-lions-blue"
               }`}
             >
               <div className="flex h-5 items-center">
@@ -121,7 +121,7 @@ export default function UserRoleManager({
                   id={`role-${role.id}`}
                   checked={isSelected}
                   onChange={() => handleToggleRole(role.id)}
-                  className="h-4 w-4 rounded border-gray-300 text-lions-red focus:ring-lions-red"
+                  className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
                 />
               </div>
               <div className="ml-3 flex-1">
