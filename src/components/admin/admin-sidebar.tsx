@@ -65,17 +65,21 @@ const navigation: NavItem[] = [
 
 export default function AdminSidebar({
   userFeatures,
+  isAdmin = false,
 }: {
   userFeatures: string[];
+  isAdmin?: boolean;
 }) {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Filter navigation items based on user features
-  const visibleNavItems = navigation.filter((item) => {
-    if (!item.requiredFeature) return true;
-    return userFeatures.includes(item.requiredFeature);
-  });
+  // Admins see all nav items; others are filtered by feature
+  const visibleNavItems = isAdmin
+    ? navigation
+    : navigation.filter((item) => {
+        if (!item.requiredFeature) return true;
+        return userFeatures.includes(item.requiredFeature);
+      });
 
   return (
     <>

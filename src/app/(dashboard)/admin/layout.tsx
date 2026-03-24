@@ -32,7 +32,7 @@ export default async function AdminLayout({
   return (
     <div className="flex min-h-screen bg-gray-50">
       {/* Sidebar */}
-      <AdminSidebar userFeatures={userFeatures} />
+      <AdminSidebar userFeatures={userFeatures} isAdmin={isAdmin} />
 
       {/* Main content */}
       <div className="flex-1 lg:pl-64">
