@@ -14,6 +14,9 @@ export function Header({ session }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const pathname = usePathname();
 
+  // Admin pages have their own sidebar navigation
+  if (pathname.startsWith("/admin")) return null;
+
   const navLinks = [
     { href: "/about", label: "Organization" },
     { href: "/mission", label: "Mission" },
