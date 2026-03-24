@@ -12,6 +12,8 @@ type Group = {
   groupTypeId: string;
   color: string | null;
   availablePositions: string | null;
+  showInDirectory: boolean;
+  showPositionAsTag: boolean;
   isActive: boolean;
 };
 
@@ -43,6 +45,8 @@ export function GroupForm({
       groupTypeId: formData.get("groupTypeId"),
       color: formData.get("color") || null,
       availablePositions: positions.length > 0 ? JSON.stringify(positions) : null,
+      showInDirectory: formData.get("showInDirectory") === "on",
+      showPositionAsTag: formData.get("showPositionAsTag") === "on",
       isActive: formData.get("isActive") === "true",
     };
 
@@ -138,6 +142,28 @@ export function GroupForm({
           />
           <span className="text-sm text-gray-500">Used as a badge color in the member directory</span>
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-gray-700">Member Directory</label>
+        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input
+            type="checkbox"
+            name="showInDirectory"
+            defaultChecked={group?.showInDirectory ?? false}
+            className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+          />
+          Show group tag on member cards
+        </label>
+        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input
+            type="checkbox"
+            name="showPositionAsTag"
+            defaultChecked={group?.showPositionAsTag ?? false}
+            className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+          />
+          Show position as tag (instead of group name)
+        </label>
       </div>
 
       <div>

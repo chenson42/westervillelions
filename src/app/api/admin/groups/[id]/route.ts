@@ -66,6 +66,8 @@ export async function PUT(
         groupTypeId: data.groupTypeId,
         color: data.color ?? null,
         availablePositions: data.availablePositions ?? null,
+        showInDirectory: data.showInDirectory ?? false,
+        showPositionAsTag: data.showPositionAsTag ?? false,
         parentGroupId: data.parentGroupId ?? null,
         isActive: data.isActive ?? true,
         updatedAt: new Date(),

@@ -57,6 +57,8 @@ export async function POST(request: NextRequest) {
         groupTypeId: data.groupTypeId,
         color: data.color || null,
         availablePositions: data.availablePositions || null,
+        showInDirectory: data.showInDirectory ?? false,
+        showPositionAsTag: data.showPositionAsTag ?? false,
         parentGroupId: data.parentGroupId || null,
         isActive: data.isActive ?? true,
       })

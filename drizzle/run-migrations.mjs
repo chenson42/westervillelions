@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+import { readFileSync, readdirSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
@@ -15,13 +14,24 @@ if (!connectionString) {
   process.exit(1);
 }
 
-console.log("🔄 Running database migrations...");
+const migrationsDir = join(__dirname, "migrations");
 
 const sql = postgres(connectionString, { max: 1 });
-const db = drizzle(sql);
 
 try {
-  await migrate(db, { migrationsFolder: join(__dirname, "migrations") });
+  console.log("🔄 Running database migrations...");
+
+  const files = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+
+  for (const file of files) {
+    const filePath = join(migrationsDir, file);
+    const content = readFileSync(filePath, "utf-8");
+    console.log(`  → ${file}`);
+    await sql.unsafe(content);
+  }
+
   console.log("✅ Migrations completed successfully");
 } catch (error) {
   console.error("❌ Migration failed:", error);

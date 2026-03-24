@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FEATURES } from "@/lib/permissions";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+const RETURN_KEY = "adminReturnTo";
 
 interface NavItem {
   name: string;
@@ -72,6 +74,26 @@ export default function AdminSidebar({
 }) {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [returnTo, setReturnTo] = useState("/");
+
+  useEffect(() => {
+    // On first entry to admin, save the referrer if it's not an admin page
+    const stored = sessionStorage.getItem(RETURN_KEY);
+    if (!stored) {
+      const ref = typeof document !== "undefined" ? document.referrer : "";
+      let url = "/";
+      try {
+        const refPath = ref ? new URL(ref).pathname : "";
+        url = refPath && !refPath.startsWith("/admin") ? refPath : "/members";
+      } catch {
+        url = "/members";
+      }
+      sessionStorage.setItem(RETURN_KEY, url);
+      setReturnTo(url);
+    } else {
+      setReturnTo(stored);
+    }
+  }, []);
 
   // Admins see all nav items; others are filtered by feature
   const visibleNavItems = isAdmin
@@ -177,7 +199,8 @@ export default function AdminSidebar({
         {/* Footer */}
         <div className="border-t border-gray-200 p-4">
           <Link
-            href="/"
+            href={returnTo}
+            onClick={() => sessionStorage.removeItem(RETURN_KEY)}
             className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
           >
             <svg

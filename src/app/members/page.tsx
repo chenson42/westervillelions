@@ -1,8 +1,8 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { members } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { members, groups, groupMemberships } from "@/lib/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { MemberDirectory } from "@/components/members/member-directory";
 
 export default async function MembersPage() {
@@ -17,13 +17,68 @@ export default async function MembersPage() {
     orderBy: (members, { asc }) => [asc(members.lastName), asc(members.firstName)],
   });
 
-  // Ensure all fields are properly typed for the client component
-  const membersWithDates = allMembers.map(member => ({
-    ...member,
+  // Fetch groups that are shown in directory
+  const directoryGroups = await db
+    .select({
+      id: groups.id,
+      name: groups.name,
+      color: groups.color,
+      showPositionAsTag: groups.showPositionAsTag,
+    })
+    .from(groups)
+    .where(and(eq(groups.isActive, true), eq(groups.showInDirectory, true)));
+
+  // Fetch memberships for those groups
+  const memberIds = allMembers.map((m) => m.id);
+  const directoryGroupIds = directoryGroups.map((g) => g.id);
+
+  const memberGroupData =
+    memberIds.length > 0 && directoryGroupIds.length > 0
+      ? await db
+          .select({
+            memberId: groupMemberships.memberId,
+            groupId: groupMemberships.groupId,
+            position: groupMemberships.position,
+          })
+          .from(groupMemberships)
+          .where(
+            and(
+              inArray(groupMemberships.memberId, memberIds),
+              inArray(groupMemberships.groupId, directoryGroupIds)
+            )
+          )
+      : [];
+
+  // Build a map of memberId -> group tag info
+  const groupMap = new Map(directoryGroups.map((g) => [g.id, g]));
+  const memberTagsMap = new Map<string, { groupId: string; groupName: string; color: string | null; tag: string }[]>();
+  for (const row of memberGroupData) {
+    const group = groupMap.get(row.groupId);
+    if (!group) continue;
+    const tag = group.showPositionAsTag && row.position ? row.position : group.name;
+    if (!memberTagsMap.has(row.memberId)) memberTagsMap.set(row.memberId, []);
+    memberTagsMap.get(row.memberId)!.push({
+      groupId: row.groupId,
+      groupName: group.name,
+      color: group.color,
+      tag,
+    });
+  }
+
+  const membersWithTags = allMembers.map((member) => ({
+    id: member.id,
+    firstName: member.firstName,
+    lastName: member.lastName,
     email: member.email,
+    phone: member.phone,
+    branch: member.branch,
+    memberNumber: member.memberNumber,
     joinDate: member.joinDate,
-    boardPosition: member.boardPosition,
+    groupTags: memberTagsMap.get(member.id) ?? [],
   }));
+
+  // Groups available as filters (those that have at least one member)
+  const filterGroups = directoryGroups.map((g) => ({ id: g.id, name: g.name, color: g.color }));
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -59,7 +114,7 @@ export default async function MembersPage() {
           </a>
         </div>
 
-        <MemberDirectory members={membersWithDates} />
+        <MemberDirectory members={membersWithTags} filterGroups={filterGroups} />
       </div>
     </div>
   );

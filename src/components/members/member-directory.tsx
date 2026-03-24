@@ -2,6 +2,13 @@
 
 import { useState, useMemo } from "react";
 
+interface GroupTag {
+  groupId: string;
+  groupName: string;
+  color: string | null;
+  tag: string;
+}
+
 interface Member {
   id: string;
   firstName: string;
@@ -9,9 +16,15 @@ interface Member {
   email: string | null;
   phone: string | null;
   branch: string | null;
-  boardPosition: string | null;
   memberNumber: number | null;
   joinDate: Date | null;
+  groupTags: GroupTag[];
+}
+
+interface FilterGroup {
+  id: string;
+  name: string;
+  color: string | null;
 }
 
 function getYearsOfService(joinDate: Date | null): number {
@@ -31,24 +44,23 @@ function getServiceBadge(years: number): { label: string; color: string } | null
 
 interface MemberDirectoryProps {
   members: Member[];
+  filterGroups: FilterGroup[];
 }
 
-export function MemberDirectory({ members }: MemberDirectoryProps) {
+export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterBranch, setFilterBranch] = useState<string>("main");
+  const [filterGroupId, setFilterGroupId] = useState<string>("");
 
   // Get unique branches
   const branches = useMemo(() => {
     const uniqueBranches = new Set<string>();
     members.forEach((member) => {
-      if (member.branch) {
-        uniqueBranches.add(member.branch);
-      }
+      if (member.branch) uniqueBranches.add(member.branch);
     });
     return Array.from(uniqueBranches).sort();
   }, [members]);
 
-  // Filter members based on search query and branch
   const filteredMembers = useMemo(() => {
     return members.filter((member) => {
       // Search filter
@@ -62,16 +74,23 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
         member.phone?.toLowerCase().includes(searchLower) ||
         member.memberNumber?.toString().includes(searchQuery);
 
-      // Branch filter
-      const matchesBranch =
-        filterBranch === "all" ||
-        (filterBranch === "main" && !member.branch) ||
-        (filterBranch === "board" && !!member.boardPosition) ||
-        member.branch === filterBranch;
+      // Branch/group filter
+      let matchesBranch = true;
+      if (filterBranch === "all") {
+        matchesBranch = true;
+      } else if (filterBranch === "main") {
+        matchesBranch = !member.branch;
+      } else {
+        matchesBranch = member.branch === filterBranch;
+      }
 
-      return matchesSearch && matchesBranch;
+      // Group filter
+      const matchesGroup =
+        !filterGroupId || member.groupTags.some((g) => g.groupId === filterGroupId);
+
+      return matchesSearch && matchesBranch && matchesGroup;
     });
-  }, [members, searchQuery, filterBranch]);
+  }, [members, searchQuery, filterBranch, filterGroupId]);
 
   return (
     <div className="bg-white rounded-xl shadow-lg p-8">
@@ -139,16 +158,6 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
             >
               Main Club
             </button>
-            <button
-              onClick={() => setFilterBranch("board")}
-              className={`px-4 py-2 rounded-full font-medium transition ${
-                filterBranch === "board"
-                  ? "bg-lions-blue text-white"
-                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-              }`}
-            >
-              Board
-            </button>
             {branches.map((branch) => (
               <button
                 key={branch}
@@ -174,6 +183,27 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
             </button>
           </div>
         )}
+
+        {/* Group Filter */}
+        {filterGroups.length > 0 && (
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="text-sm text-gray-500 font-medium">Filter by group:</span>
+            {filterGroups.map((g) => (
+              <button
+                key={g.id}
+                onClick={() => setFilterGroupId(filterGroupId === g.id ? "" : g.id)}
+                className={`px-3 py-1.5 rounded-full text-sm font-medium transition ${
+                  filterGroupId === g.id
+                    ? "text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
+                style={filterGroupId === g.id ? { backgroundColor: g.color ?? "#1a56db" } : undefined}
+              >
+                {g.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Members Grid */}
@@ -193,11 +223,16 @@ export function MemberDirectory({ members }: MemberDirectoryProps) {
                     {member.firstName} {member.lastName}
                   </h3>
                   <div className="flex gap-1 flex-wrap justify-end">
-                    {member.boardPosition && (
-                      <span className="px-2 py-1 bg-lions-blue text-white text-xs font-medium rounded-full whitespace-nowrap">
-                        {member.boardPosition}
+                    {member.groupTags.map((g) => (
+                      <span
+                        key={g.groupId}
+                        className="px-2 py-1 text-white text-xs font-medium rounded-full whitespace-nowrap"
+                        style={{ backgroundColor: g.color ?? "#1a56db" }}
+                        title={g.groupName}
+                      >
+                        {g.tag}
                       </span>
-                    )}
+                    ))}
                     {member.branch && (
                       <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
                         {member.branch}

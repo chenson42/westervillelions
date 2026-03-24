@@ -6,8 +6,8 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "drizzle-kit push --force && next build",
+    "dev": "node drizzle/run-migrations.mjs && next dev",
+    "build": "node drizzle/run-migrations.mjs && drizzle-kit push --force && next build",
     "build:only": "NEXT_PUBLIC_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) NEXT_PUBLIC_APP_VERSION=$(node -p \"require('./package.json').version\") next build",
     "db:migrate": "node drizzle/run-migrations.mjs",
     "db:push": "drizzle-kit push",

@@ -121,6 +121,8 @@ export const groups = pgTable("groups", {
   description: text("description"),
   color: text("color"), // Hex color for directory display (e.g. "#1a56db")
   availablePositions: text("available_positions"), // JSON array of position names
+  showInDirectory: boolean("show_in_directory").notNull().default(false), // Show group tag on member cards
+  showPositionAsTag: boolean("show_position_as_tag").notNull().default(false), // Show position instead of group name as tag
   parentGroupId: uuid("parent_group_id").references((): AnyPgColumn => groups.id, { onDelete: "set null" }), // For hierarchy
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
