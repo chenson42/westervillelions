@@ -3,13 +3,18 @@ import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { db } from "@/lib/db";
-import { users, members, userRoles, roles, roleFeatures, features } from "@/lib/db/schema";
+import { users, accounts, sessions, verificationTokens, members, userRoles, roles, roleFeatures, features } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
-  adapter: DrizzleAdapter(db),
+  adapter: DrizzleAdapter(db, {
+    usersTable: users,
+    accountsTable: accounts,
+    sessionsTable: sessions,
+    verificationTokensTable: verificationTokens,
+  }),
   session: {
     strategy: "jwt",
   },
