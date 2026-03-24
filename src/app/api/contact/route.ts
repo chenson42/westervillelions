@@ -1,16 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
+import { db } from "@/lib/db";
+import { contactSubmissions } from "@/lib/db/schema";
+
+async function verifyTurnstile(token: string): Promise<boolean> {
+  // Use test secret if no real one is configured
+  const secret = process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA";
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ secret, response: token }),
+  });
+  const data = await res.json();
+  return data.success === true;
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { name, email, subject, message } = await request.json();
+    const { name, email, subject, message, captchaToken } = await request.json();
 
     if (!name || !email || !subject || !message) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
 
+    if (!captchaToken) {
+      return NextResponse.json({ error: "CAPTCHA verification required" }, { status: 400 });
+    }
+
+    const captchaValid = await verifyTurnstile(captchaToken);
+    if (!captchaValid) {
+      return NextResponse.json({ error: "CAPTCHA verification failed. Please try again." }, { status: 400 });
+    }
+
+    // Always save to database
+    await db.insert(contactSubmissions).values({ name, email, subject, message });
+
     if (!process.env.RESEND_API_KEY) {
-      // Log to console in dev when not configured
       console.log(`[Contact Form] From: ${name} <${email}>, Subject: ${subject}\n${message}`);
       return NextResponse.json({ success: true });
     }
@@ -34,7 +59,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error sending contact email:", error);
+    console.error("Error processing contact form:", error);
     return NextResponse.json(
       { error: "Failed to send message. Please try again." },
       { status: 500 }

@@ -29,6 +29,9 @@ export const FEATURES = {
   ADMIN_USERS: "admin.users",
   ADMIN_ROLES: "admin.roles",
 
+  // Contact features
+  CONTACT_VIEW: "contact.view",
+
   // Reports features
   REPORTS_VIEW: "reports.view",
   REPORTS_EXPORT: "reports.export",
@@ -72,6 +75,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.ADMIN_DASHBOARD]: "Access admin dashboard and statistics",
   [FEATURES.ADMIN_USERS]: "Manage user accounts and access",
   [FEATURES.ADMIN_ROLES]: "Manage roles and permissions",
+
+  [FEATURES.CONTACT_VIEW]: "View contact form submissions",
 
   [FEATURES.REPORTS_VIEW]: "View reports and analytics",
   [FEATURES.REPORTS_EXPORT]: "Export reports and data",

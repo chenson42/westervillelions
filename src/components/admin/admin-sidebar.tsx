@@ -63,6 +63,12 @@ const navigation: NavItem[] = [
     icon: "👨‍👩‍👧‍👦",
     requiredFeature: FEATURES.GROUPS_MANAGE,
   },
+  {
+    name: "Contact",
+    href: "/admin/contact",
+    icon: "✉️",
+    requiredFeature: FEATURES.CONTACT_VIEW,
+  },
 ];
 
 export default function AdminSidebar({

@@ -175,6 +175,17 @@ export const eventRsvps = pgTable("event_rsvps", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Contact form submissions
+export const contactSubmissions = pgTable("contact_submissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  subject: text("subject").notNull(),
+  message: text("message").notNull(),
+  isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // NextAuth required tables
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
