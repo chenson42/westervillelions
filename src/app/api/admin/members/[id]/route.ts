@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { members } from "@/lib/db/schema";
+import { members, users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 
 /**
  * PATCH /api/admin/members/[id]
- * Update a member
+ * Update a member. When isActive changes, the linked user account is synced.
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -21,24 +21,24 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission
     const canEdit = await hasFeature(session.user.id, FEATURES.MEMBERS_EDIT);
     if (!canEdit) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const { id } = await params;
     const data = await request.json();
 
-    // Check if member exists
     const existing = await db.query.members.findFirst({
-      where: eq(members.id, params.id),
+      where: eq(members.id, id),
     });
 
     if (!existing) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
 
-    // Update member
+    const newIsActive = typeof data.isActive === "boolean" ? data.isActive : true;
+
     const [updated] = await db
       .update(members)
       .set({
@@ -54,11 +54,19 @@ export async function PATCH(
         branch: data.branch || null,
         boardPosition: data.boardPosition || null,
         joinDate: data.joinDate ? new Date(data.joinDate) : null,
-        isActive: data.isActive ?? true,
+        isActive: newIsActive,
         updatedAt: new Date(),
       })
-      .where(eq(members.id, params.id))
+      .where(eq(members.id, id))
       .returning();
+
+    // Sync isActive to the linked user account when it changes
+    if (existing.userId && existing.isActive !== newIsActive) {
+      await db
+        .update(users)
+        .set({ isActive: newIsActive, updatedAt: new Date() })
+        .where(eq(users.id, existing.userId));
+    }
 
     return NextResponse.json(updated);
   } catch (error) {
@@ -76,7 +84,7 @@ export async function PATCH(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -85,23 +93,22 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission
     const canDelete = await hasFeature(session.user.id, FEATURES.MEMBERS_DELETE);
     if (!canDelete) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Check if member exists
+    const { id } = await params;
+
     const existing = await db.query.members.findFirst({
-      where: eq(members.id, params.id),
+      where: eq(members.id, id),
     });
 
     if (!existing) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
 
-    // Delete member
-    await db.delete(members).where(eq(members.id, params.id));
+    await db.delete(members).where(eq(members.id, id));
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -9,10 +9,11 @@ import type { CampaignFormData } from "@/components/admin/campaign-form";
 export default async function EditCampaignPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
   const campaign = await db.query.campaigns.findFirst({
-    where: eq(campaigns.id, params.id),
+    where: eq(campaigns.id, id),
   });
 
   if (!campaign) {
@@ -26,6 +27,7 @@ export default async function EditCampaignPage({
     image: campaign.image,
     displayOrder: campaign.displayOrder,
     isActive: campaign.isActive,
+    isPublic: campaign.isPublic,
   };
 
   return (
@@ -42,7 +44,7 @@ export default async function EditCampaignPage({
         <h1 className="mt-2 text-3xl font-bold text-gray-900">Edit Campaign</h1>
       </div>
 
-      <CampaignForm campaign={formData} campaignId={params.id} />
+      <CampaignForm campaign={formData} campaignId={id} />
     </div>
   );
 }

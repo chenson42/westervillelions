@@ -12,8 +12,8 @@ export function InstagramGrid() {
 
     // Process embeds when script loads
     script.onload = () => {
-      if (window.instgrm) {
-        window.instgrm.Embeds.process();
+      if ((window as any).instgrm) {
+        (window as any).instgrm.Embeds.process();
       }
     };
 

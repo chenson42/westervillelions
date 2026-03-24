@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Westerville Lions Club Website - A public-facing website and member portal for the Westerville Lions Club. Built with Next.js 16 (App Router), TypeScript, PostgreSQL with Drizzle ORM, and NextAuth.js 5.0.
 
-**Current Website:** https://westervillelions.org/ (reference for content, but club colors are now red)
+**Current Website:** https://westervillelions.org/ (reference for content)
 
 **Mission Statement:** "Create and foster a spirit of understanding among all people for humanitarian needs by providing voluntary services through community involvement."
 
@@ -18,9 +18,9 @@ Westerville Lions Club Website - A public-facing website and member portal for t
 ## Brand Guidelines
 
 **Colors:**
-- Primary: Red (#CC0000) - club's official color
-- Secondary: Gold (#FFD700)
-- Avoid the old blue/navy color scheme from the current website
+- Primary: Blue (`lions-blue` / `#1a56db`) - main brand color used throughout the site
+- Accent: Gold (`lions-gold` / `#FFD700`)
+- Dark Blue: `lions-blue-dark` / `#1e40af` for hover states and gradients
 
 **Focus:**
 - Emphasize **broad community service** and volunteer engagement
@@ -169,7 +169,7 @@ toast.error("Error message");
 
 ### Styling with Tailwind
 - Use Tailwind CSS utility classes
-- Custom brand colors: `bg-lions-red`, `text-lions-gold`
+- Custom brand colors: `bg-lions-blue`, `text-lions-gold`, `bg-lions-blue-dark`
 - Responsive design: mobile-first approach
 
 ## Content Guidelines
@@ -189,7 +189,7 @@ toast.error("Error message");
 
 ## Gotchas
 
-- **Red theme:** The club recently switched from blue/gold to red/gold - ensure all branding uses the new colors
+- **Blue/gold theme:** Primary color is `lions-blue`, accent is `lions-gold` — do not use red
 - **Google OAuth:** Requires Google for Nonprofits account setup
 - **Givebutter:** May need API key or specific configuration for embeds
 - **Mobile-first:** Ensure all pages are mobile-responsive

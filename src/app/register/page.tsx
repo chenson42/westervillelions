@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { signIn } from "next-auth/react";
 import { toast } from "sonner";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [formData, setFormData] = useState({
-    name: "",
     email: "",
     password: "",
     confirmPassword: "",
@@ -42,7 +42,6 @@ export default function RegisterPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: formData.name,
           email: formData.email,
           password: formData.password,
         }),
@@ -53,15 +52,22 @@ export default function RegisterPage() {
         throw new Error(error.error || "Registration failed");
       }
 
-      const data = await response.json();
+      toast.success("Welcome! Signing you in...");
 
-      toast.success(
-        data.linkedMember
-          ? "Account created and linked to your member profile!"
-          : "Account created successfully!"
-      );
+      const result = await signIn("credentials", {
+        email: formData.email,
+        password: formData.password,
+        redirect: false,
+      });
 
-      router.push("/signin");
+      if (result?.ok) {
+        router.push("/members");
+        router.refresh();
+      } else {
+        // Account created but auto-login failed — send to signin
+        toast.info("Account created! Please sign in.");
+        router.push("/signin");
+      }
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "An error occurred"
@@ -74,35 +80,16 @@ export default function RegisterPage() {
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12">
       <div className="w-full max-w-md space-y-8">
         <div>
-          <Link href="/" className="flex justify-center">
-            <span className="text-6xl">🦁</span>
-          </Link>
-          <h1 className="mt-6 text-center text-3xl font-bold tracking-tight text-gray-900">
+          <h1 className="text-center text-3xl font-bold tracking-tight text-gray-900">
             Create Your Account
           </h1>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Join the Westerville Lions Club member portal
+            Use the email address on file with the club to register
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-6">
           <div className="space-y-4">
-            <div>
-              <label htmlFor="name" className="sr-only">
-                Full name
-              </label>
-              <input
-                id="name"
-                name="name"
-                type="text"
-                required
-                value={formData.name}
-                onChange={handleChange}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
-                placeholder="Full name"
-              />
-            </div>
-
             <div>
               <label htmlFor="email" className="sr-only">
                 Email address
@@ -115,12 +102,9 @@ export default function RegisterPage() {
                 required
                 value={formData.email}
                 onChange={handleChange}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
                 placeholder="Email address"
               />
-              <p className="mt-1 text-xs text-gray-500">
-                Use the same email as your member record if applicable
-              </p>
             </div>
 
             <div>
@@ -134,7 +118,7 @@ export default function RegisterPage() {
                 required
                 value={formData.password}
                 onChange={handleChange}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
                 placeholder="Password (min. 8 characters)"
               />
             </div>
@@ -150,7 +134,7 @@ export default function RegisterPage() {
                 required
                 value={formData.confirmPassword}
                 onChange={handleChange}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
                 placeholder="Confirm password"
               />
             </div>
@@ -160,17 +144,25 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex w-full justify-center rounded-md bg-lions-red px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 disabled:opacity-50"
+              className="flex w-full justify-center rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-50"
             >
-              {isSubmitting ? "Creating account..." : "Create Account"}
+              {isSubmitting ? "Setting up your account..." : "Create Account"}
             </button>
+          </div>
+
+          <div className="text-center text-sm text-gray-500">
+            Not a member yet?{" "}
+            <Link href="/contact" className="font-medium text-lions-blue hover:text-lions-blue-dark">
+              Contact us
+            </Link>{" "}
+            to join the club.
           </div>
 
           <div className="text-center text-sm">
             <span className="text-gray-600">Already have an account? </span>
             <Link
               href="/signin"
-              className="font-medium text-lions-red hover:text-red-700"
+              className="font-medium text-lions-blue hover:text-lions-blue-dark"
             >
               Sign in
             </Link>

@@ -1,43 +1,45 @@
 import { db } from "@/lib/db";
 import { members } from "@/lib/db/schema";
-import { desc, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, like, or, sql } from "drizzle-orm";
 import Link from "next/link";
 import MemberSearch from "@/components/admin/member-search";
 
-/**
- * Member List Page
- *
- * Displays all club members with search and filtering capabilities.
- */
 export default async function MembersPage({
   searchParams,
 }: {
-  searchParams: { search?: string; branch?: string };
+  searchParams: Promise<{ search?: string; branch?: string; status?: string }>;
 }) {
-  const search = searchParams.search || "";
-  const branch = searchParams.branch || "";
+  const { search = "", branch = "", status = "active" } = await searchParams;
 
-  // Build query
-  let query = db.select().from(members);
+  // Build conditions
+  const conditions = [];
 
-  // Apply search filter
   if (search) {
-    query = query.where(
+    conditions.push(
       or(
         like(members.firstName, `%${search}%`),
         like(members.lastName, `%${search}%`),
         like(members.email, `%${search}%`)
       )
-    ) as typeof query;
+    );
   }
 
-  // Apply branch filter
   if (branch) {
-    query = query.where(like(members.branch, `%${branch}%`)) as typeof query;
+    conditions.push(eq(members.branch, branch));
   }
 
-  // Order by last name
-  const memberList = await query.orderBy(members.lastName, members.firstName);
+  if (status === "active") {
+    conditions.push(eq(members.isActive, true));
+  } else if (status === "inactive") {
+    conditions.push(eq(members.isActive, false));
+  }
+  // status === "all" → no filter
+
+  const memberList = await db
+    .select()
+    .from(members)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(members.lastName, members.firstName);
 
   // Get unique branches for filter
   const branches = await db
@@ -57,14 +59,19 @@ export default async function MembersPage({
         </div>
         <Link
           href="/admin/members/new"
-          className="rounded-md bg-lions-red px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2"
+          className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
         >
           Add Member
         </Link>
       </div>
 
       {/* Search and filters */}
-      <MemberSearch branches={branches.map((b) => b.branch || "")} />
+      <MemberSearch
+        branches={branches.map((b) => b.branch || "").filter(Boolean)}
+        currentSearch={search}
+        currentBranch={branch}
+        currentStatus={status}
+      />
 
       {/* Members table */}
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow">
@@ -97,30 +104,23 @@ export default async function MembersPage({
                 <td colSpan={6} className="px-6 py-12 text-center">
                   <div className="text-gray-500">
                     <p className="text-lg font-medium">No members found</p>
-                    {search && (
-                      <p className="mt-1 text-sm">
-                        Try adjusting your search criteria
-                      </p>
-                    )}
+                    <p className="mt-1 text-sm">Try adjusting your search or filters</p>
                   </div>
                 </td>
               </tr>
             ) : (
               memberList.map((member) => (
-                <tr key={member.id} className="hover:bg-gray-50">
+                <tr
+                  key={member.id}
+                  className={`hover:bg-gray-50 ${!member.isActive ? "opacity-60" : ""}`}
+                >
                   <td className="whitespace-nowrap px-6 py-4">
-                    <div className="flex items-center">
-                      <div>
-                        <div className="font-medium text-gray-900">
-                          {member.firstName} {member.lastName}
-                        </div>
-                        {member.boardPosition && (
-                          <div className="text-sm text-gray-500">
-                            {member.boardPosition}
-                          </div>
-                        )}
-                      </div>
+                    <div className="font-medium text-gray-900">
+                      {member.firstName} {member.lastName}
                     </div>
+                    {member.boardPosition && (
+                      <div className="text-sm text-gray-500">{member.boardPosition}</div>
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
                     {member.email || "—"}
@@ -136,7 +136,7 @@ export default async function MembersPage({
                       className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
                         member.isActive
                           ? "bg-green-100 text-green-800"
-                          : "bg-gray-100 text-gray-800"
+                          : "bg-gray-100 text-gray-500"
                       }`}
                     >
                       {member.isActive ? "Active" : "Inactive"}
@@ -145,7 +145,7 @@ export default async function MembersPage({
                   <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
                     <Link
                       href={`/admin/members/${member.id}`}
-                      className="text-lions-red hover:text-red-900"
+                      className="text-lions-blue hover:text-lions-blue-dark"
                     >
                       Edit
                     </Link>
@@ -160,6 +160,7 @@ export default async function MembersPage({
       {/* Summary */}
       <div className="text-sm text-gray-500">
         Showing {memberList.length} member{memberList.length !== 1 ? "s" : ""}
+        {status !== "all" && ` (${status} only)`}
       </div>
     </div>
   );

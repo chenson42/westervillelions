@@ -149,14 +149,16 @@ export default function AdminSidebar({
         {/* Navigation */}
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
           {visibleNavItems.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+            const isActive = item.href === "/admin"
+              ? pathname === "/admin"
+              : pathname === item.href || pathname.startsWith(item.href + "/");
             return (
               <Link
                 key={item.name}
                 href={item.href}
                 className={`flex items-center space-x-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
-                    ? "bg-lions-red text-white"
+                    ? "bg-lions-blue text-white"
                     : "text-gray-700 hover:bg-gray-100"
                 }`}
                 onClick={() => setIsMobileMenuOpen(false)}

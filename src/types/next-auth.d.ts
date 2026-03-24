@@ -8,6 +8,7 @@ declare module "next-auth" {
       roles: string[]; // Array of role names
       features: string[]; // Array of feature names (permissions)
       memberId?: string; // Linked member ID if applicable
+      isActive: boolean;
     } & DefaultSession["user"];
   }
 
@@ -16,6 +17,7 @@ declare module "next-auth" {
     roles?: string[];
     features?: string[];
     memberId?: string;
+    isActive?: boolean;
   }
 }
 
@@ -25,5 +27,6 @@ declare module "next-auth/jwt" {
     roles?: string[];
     features?: string[];
     memberId?: string;
+    isActive?: boolean;
   }
 }

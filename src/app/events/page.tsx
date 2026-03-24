@@ -2,7 +2,6 @@ import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { format } from "date-fns";
-import Image from "next/image";
 
 export default async function WhatWeDoPage() {
   // Fetch public events
@@ -62,14 +61,12 @@ export default async function WhatWeDoPage() {
                 {publicEvents.map((event) => (
                   <div key={event.id} className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition">
                     {event.image && (
-                      <div className="relative w-full h-64">
-                        <Image
-                          src={event.image}
-                          alt={event.title}
-                          fill
-                          className="object-cover"
-                        />
-                      </div>
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={event.image}
+                        alt={event.title}
+                        className="w-full h-64 object-cover"
+                      />
                     )}
                     <div className="p-6">
                       <h3 className="text-2xl font-semibold mb-2 text-gray-900">

@@ -60,6 +60,14 @@ export function Header({ session }: HeaderProps) {
           <div className="flex items-center gap-4">
             {session?.user ? (
               <>
+                {session.user.features?.includes("admin.dashboard") && (
+                  <Link
+                    href="/admin"
+                    className="hidden md:inline-block text-gray-700 hover:text-lions-blue transition font-medium"
+                  >
+                    Admin
+                  </Link>
+                )}
                 <Link
                   href="/members"
                   className="hidden md:inline-block bg-lions-blue text-white px-4 py-2 rounded-lg hover:bg-lions-blue-dark transition"
@@ -73,7 +81,7 @@ export function Header({ session }: HeaderProps) {
                 href="/signin"
                 className="hidden md:inline-block bg-lions-blue text-white px-4 py-2 rounded-lg hover:bg-lions-blue-dark transition"
               >
-                Login
+                Member Login
               </Link>
             )}
 
@@ -112,6 +120,15 @@ export function Header({ session }: HeaderProps) {
               ))}
               {session?.user ? (
                 <>
+                  {session.user.features?.includes("admin.dashboard") && (
+                    <Link
+                      href="/admin"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="text-gray-700 hover:text-lions-blue transition font-medium px-2 py-2"
+                    >
+                      Admin
+                    </Link>
+                  )}
                   <Link
                     href="/members"
                     onClick={() => setMobileMenuOpen(false)}
@@ -127,7 +144,7 @@ export function Header({ session }: HeaderProps) {
                   onClick={() => setMobileMenuOpen(false)}
                   className="bg-lions-blue text-white px-4 py-2 rounded-lg hover:bg-lions-blue-dark transition text-center"
                 >
-                  Login
+                  Member Login
                 </Link>
               )}
             </div>

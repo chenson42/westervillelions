@@ -3,8 +3,9 @@
 /**
  * Zeffy Button Component
  *
- * Creates a button that triggers the Zeffy donation modal.
- * The zeffy-form-link attribute is read by Zeffy's global script (loaded in layout).
+ * Opens the Zeffy donation form in a new tab.
+ * Also keeps the zeffy-form-link attribute so Zeffy's embed script can
+ * intercept the click and show a modal if it has initialized.
  */
 interface ZeffyButtonProps {
   zeffyLink: string;
@@ -14,13 +15,15 @@ interface ZeffyButtonProps {
 
 export function ZeffyButton({ zeffyLink, className, children }: ZeffyButtonProps) {
   return (
-    <button
-      // @ts-ignore - zeffy-form-link is a custom attribute used by Zeffy's script
+    <a
+      href={zeffyLink}
+      target="_blank"
+      rel="noopener noreferrer"
+      // @ts-ignore - zeffy-form-link is a custom attribute used by Zeffy's embed script
       zeffy-form-link={zeffyLink}
       className={className}
-      type="button"
     >
       {children}
-    </button>
+    </a>
   );
 }

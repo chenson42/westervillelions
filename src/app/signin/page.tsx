@@ -48,10 +48,7 @@ export default function SignInPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
-          <Link href="/" className="inline-block">
-            <span className="text-6xl">🦁</span>
-          </Link>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2 mt-4">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Member Login
           </h1>
           <p className="text-gray-600">Sign in to access the member portal</p>

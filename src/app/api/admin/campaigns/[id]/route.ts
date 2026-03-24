@@ -12,7 +12,7 @@ import { FEATURES } from "@/lib/permissions";
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -21,24 +21,22 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission
     const canManage = await hasFeature(session.user.id, FEATURES.CAMPAIGNS_MANAGE);
     if (!canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const { id } = await params;
     const data = await request.json();
 
-    // Check if campaign exists
     const existing = await db.query.campaigns.findFirst({
-      where: eq(campaigns.id, params.id),
+      where: eq(campaigns.id, id),
     });
 
     if (!existing) {
       return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
     }
 
-    // Update campaign
     const [updated] = await db
       .update(campaigns)
       .set({
@@ -46,11 +44,12 @@ export async function PATCH(
         description: data.description || null,
         zeffyLink: data.zeffyLink,
         image: data.image || null,
-        displayOrder: data.displayOrder || 0,
-        isActive: data.isActive ?? true,
+        displayOrder: data.displayOrder ?? 0,
+        isActive: typeof data.isActive === "boolean" ? data.isActive : true,
+        isPublic: typeof data.isPublic === "boolean" ? data.isPublic : true,
         updatedAt: new Date(),
       })
-      .where(eq(campaigns.id, params.id))
+      .where(eq(campaigns.id, id))
       .returning();
 
     return NextResponse.json(updated);
@@ -69,7 +68,7 @@ export async function PATCH(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -78,23 +77,22 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission
     const canManage = await hasFeature(session.user.id, FEATURES.CAMPAIGNS_MANAGE);
     if (!canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Check if campaign exists
+    const { id } = await params;
+
     const existing = await db.query.campaigns.findFirst({
-      where: eq(campaigns.id, params.id),
+      where: eq(campaigns.id, id),
     });
 
     if (!existing) {
       return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
     }
 
-    // Delete campaign
-    await db.delete(campaigns).where(eq(campaigns.id, params.id));
+    await db.delete(campaigns).where(eq(campaigns.id, id));
 
     return NextResponse.json({ success: true });
   } catch (error) {

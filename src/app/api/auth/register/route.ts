@@ -6,15 +6,15 @@ import bcrypt from "bcryptjs";
 
 /**
  * POST /api/auth/register
- * Register a new user with member auto-linking
+ * Register a new user. Email must match an existing active member record.
  */
 export async function POST(request: NextRequest) {
   try {
-    const { name, email, password } = await request.json();
+    const { email, password } = await request.json();
 
-    if (!name || !email || !password) {
+    if (!email || !password) {
       return NextResponse.json(
-        { error: "Name, email, and password are required" },
+        { error: "Email and password are required" },
         { status: 400 }
       );
     }
@@ -26,7 +26,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if user already exists
+    // Must match an existing active member record
+    const matchingMember = await db.query.members.findFirst({
+      where: eq(members.email, email),
+    });
+
+    if (!matchingMember || !matchingMember.isActive) {
+      return NextResponse.json(
+        { error: "No active member record found for this email address. Please contact an administrator." },
+        { status: 403 }
+      );
+    }
+
+    // Check if an account already exists for this email
     const existingUser = await db.query.users.findFirst({
       where: eq(users.email, email),
     });
@@ -38,62 +50,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Check if there's a member with this email
-    const matchingMember = await db.query.members.findFirst({
-      where: eq(members.email, email),
-    });
-
-    // Create user account
+    // Create user, pulling name from the member record
     const [newUser] = await db
       .insert(users)
       .values({
         email,
-        name,
+        name: `${matchingMember.firstName} ${matchingMember.lastName}`,
         password: hashedPassword,
-        emailVerified: null, // Could implement email verification later
+        emailVerified: null,
       })
       .returning();
 
-    // Determine which role to assign
-    let roleName = "volunteer"; // Default for non-members
-    let linkedMember = false;
+    // Link user to member record
+    await db
+      .update(members)
+      .set({ userId: newUser.id })
+      .where(eq(members.id, matchingMember.id));
 
-    if (matchingMember) {
-      // Link user to member record
-      await db
-        .update(members)
-        .set({ userId: newUser.id })
-        .where(eq(members.id, matchingMember.id));
-
-      roleName = "member"; // Members get member role
-      linkedMember = true;
-    }
-
-    // Get the role ID
-    const role = await db.query.roles.findFirst({
-      where: eq(roles.name, roleName),
+    // Assign member role
+    const memberRole = await db.query.roles.findFirst({
+      where: eq(roles.name, "member"),
     });
 
-    if (role) {
-      // Assign role to user
+    if (memberRole) {
       await db.insert(userRoles).values({
         userId: newUser.id,
-        roleId: role.id,
+        roleId: memberRole.id,
       });
     }
 
-    // In a real implementation, send welcome email here:
-    // await sendWelcomeEmail(email, name, linkedMember);
-
     return NextResponse.json({
       success: true,
-      linkedMember,
-      message: linkedMember
-        ? "Account created and linked to your member profile"
-        : "Account created successfully",
+      message: "Account created and linked to your member profile",
     });
   } catch (error) {
     console.error("Error in register:", error);

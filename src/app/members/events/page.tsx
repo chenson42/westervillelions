@@ -1,9 +1,10 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { events } from "@/lib/db/schema";
+import { events, eventRsvps } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { format } from "date-fns";
-import Image from "next/image";
+import { EventRsvp } from "@/components/members/event-rsvp";
 
 export default async function MemberEventsPage() {
   const session = await auth();
@@ -13,8 +14,21 @@ export default async function MemberEventsPage() {
   }
 
   const allEvents = await db.query.events.findMany({
-    orderBy: (events, { desc }) => [desc(events.startDate)],
+    orderBy: (events, { asc }) => [asc(events.startDate)],
   });
+
+  // Fetch current user's RSVPs
+  const userRsvps = session.user.id
+    ? await db.query.eventRsvps.findMany({
+        where: eq(eventRsvps.userId, session.user.id),
+      })
+    : [];
+
+  const rsvpByEvent = new Map(userRsvps.map((r) => [r.eventId, r.status]));
+
+  const now = new Date();
+  const upcoming = allEvents.filter((e) => new Date(e.startDate) >= now);
+  const past = allEvents.filter((e) => new Date(e.startDate) < now);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -27,73 +41,89 @@ export default async function MemberEventsPage() {
 
       <div className="container mx-auto px-4 py-12">
         <div className="mb-6">
-          <a
-            href="/members"
-            className="text-lions-blue hover:underline"
-          >
+          <a href="/members" className="text-lions-blue hover:underline">
             ← Back to Member Portal
           </a>
         </div>
 
-        <div className="bg-white rounded-lg shadow-md p-8">
-          {allEvents.length > 0 ? (
-            <div className="space-y-6">
-              {allEvents.map((event) => (
-                <div key={event.id} className="border border-gray-200 rounded-lg overflow-hidden">
-                  {event.image && (
-                    <div className="relative w-full h-64">
-                      <Image
-                        src={event.image}
-                        alt={event.title}
-                        fill
-                        className="object-cover"
+        {/* Upcoming Events */}
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">Upcoming Events</h2>
+        {upcoming.length > 0 ? (
+          <div className="space-y-4 mb-10">
+            {upcoming.map((event) => (
+              <div key={event.id} className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                {event.image && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={event.image} alt={event.title} className="w-full h-48 object-cover" />
+                )}
+                <div className="p-6">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                    <div className="flex-1">
+                      <h3 className="text-xl font-semibold text-gray-900 mb-1">{event.title}</h3>
+                      <p className="text-gray-600 text-sm mb-1">
+                        {format(new Date(event.startDate), "EEEE, MMMM d, yyyy")} at{" "}
+                        {format(new Date(event.startDate), "h:mm a")}
+                      </p>
+                      {event.location && (
+                        <p className="text-gray-600 text-sm mb-2">{event.location}</p>
+                      )}
+                      {event.description && (
+                        <p className="text-gray-700 text-sm">{event.description}</p>
+                      )}
+                      {event.maxAttendees && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          Capacity: {event.maxAttendees} attendees
+                        </p>
+                      )}
+                    </div>
+                    <div className="shrink-0">
+                      <EventRsvp
+                        eventId={event.id}
+                        initialStatus={(rsvpByEvent.get(event.id) ?? null) as "attending" | "maybe" | "declined" | null}
                       />
                     </div>
+                  </div>
+                  {event.isPublic && (
+                    <span className="inline-block mt-3 px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded-full">
+                      Public Event
+                    </span>
                   )}
-                  <div className="p-6">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                          {event.title}
-                        </h3>
-                        <div className="flex items-center text-gray-600 mb-2">
-                          <span className="font-medium">
-                            {format(new Date(event.startDate), "EEEE, MMMM d, yyyy")} at{" "}
-                            {format(new Date(event.startDate), "h:mm a")}
-                          </span>
-                        </div>
-                        {event.location && (
-                          <p className="text-gray-600">
-                            <span className="font-medium">Location:</span> {event.location}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        {event.isPublic && (
-                          <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
-                            Public Event
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {event.description && (
-                      <p className="text-gray-700 mb-4">{event.description}</p>
-                    )}
-                    {event.maxAttendees && (
-                      <p className="text-sm text-gray-600">
-                        <span className="font-medium">Capacity:</span> {event.maxAttendees} attendees
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg p-8 text-center text-gray-600 mb-10">
+            No upcoming events scheduled.
+          </div>
+        )}
+
+        {/* Past Events */}
+        {past.length > 0 && (
+          <>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Past Events</h2>
+            <div className="space-y-3">
+              {past.map((event) => (
+                <div key={event.id} className="bg-white border border-gray-100 rounded-lg p-4 opacity-75">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="font-semibold text-gray-700">{event.title}</h3>
+                      <p className="text-sm text-gray-500">
+                        {format(new Date(event.startDate), "MMMM d, yyyy")}
+                        {event.location && ` · ${event.location}`}
                       </p>
+                    </div>
+                    {rsvpByEvent.get(event.id) && (
+                      <span className="text-xs text-gray-500 capitalize">
+                        {rsvpByEvent.get(event.id)}
+                      </span>
                     )}
                   </div>
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="text-center py-12">
-              <p className="text-xl text-gray-600">No events scheduled at this time.</p>
-            </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

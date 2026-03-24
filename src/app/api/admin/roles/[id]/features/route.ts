@@ -12,7 +12,7 @@ import { FEATURES } from "@/lib/permissions";
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -21,12 +21,12 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission
     const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_ROLES);
     if (!canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const { id } = await params;
     const { featureId } = await request.json();
 
     if (!featureId) {
@@ -39,7 +39,7 @@ export async function POST(
     // Check if assignment already exists
     const existing = await db.query.roleFeatures.findFirst({
       where: and(
-        eq(roleFeatures.roleId, params.id),
+        eq(roleFeatures.roleId, id),
         eq(roleFeatures.featureId, featureId)
       ),
     });
@@ -55,7 +55,7 @@ export async function POST(
     const [assignment] = await db
       .insert(roleFeatures)
       .values({
-        roleId: params.id,
+        roleId: id,
         featureId,
       })
       .returning();
@@ -64,7 +64,7 @@ export async function POST(
     await db.insert(permissionAuditLog).values({
       userId: session.user.id,
       action: "permission_granted",
-      targetRoleId: params.id,
+      targetRoleId: id,
       targetFeatureId: featureId,
       details: JSON.stringify({ featureId }),
     });
@@ -88,7 +88,7 @@ export async function POST(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -97,12 +97,12 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission
     const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_ROLES);
     if (!canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const { id } = await params;
     const { featureId } = await request.json();
 
     if (!featureId) {
@@ -116,7 +116,7 @@ export async function DELETE(
     const deleted = await db
       .delete(roleFeatures)
       .where(
-        and(eq(roleFeatures.roleId, params.id), eq(roleFeatures.featureId, featureId))
+        and(eq(roleFeatures.roleId, id), eq(roleFeatures.featureId, featureId))
       )
       .returning();
 
@@ -131,7 +131,7 @@ export async function DELETE(
     await db.insert(permissionAuditLog).values({
       userId: session.user.id,
       action: "permission_revoked",
-      targetRoleId: params.id,
+      targetRoleId: id,
       targetFeatureId: featureId,
       details: JSON.stringify({ featureId }),
     });

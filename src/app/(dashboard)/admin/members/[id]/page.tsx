@@ -14,10 +14,11 @@ import type { MemberFormData } from "@/components/admin/member-form";
 export default async function EditMemberPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
   const member = await db.query.members.findFirst({
-    where: eq(members.id, params.id),
+    where: eq(members.id, id),
   });
 
   if (!member) {
@@ -58,7 +59,7 @@ export default async function EditMemberPage({
       </div>
 
       {/* Form */}
-      <MemberForm member={formData} memberId={params.id} />
+      <MemberForm member={formData} memberId={id} />
     </div>
   );
 }

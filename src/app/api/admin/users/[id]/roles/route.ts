@@ -12,7 +12,7 @@ import { FEATURES } from "@/lib/permissions";
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -21,12 +21,12 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission
     const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
     if (!canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const { id } = await params;
     const { roleId } = await request.json();
 
     if (!roleId) {
@@ -39,7 +39,7 @@ export async function POST(
     // Check if role assignment already exists
     const existing = await db.query.userRoles.findFirst({
       where: and(
-        eq(userRoles.userId, params.id),
+        eq(userRoles.userId, id),
         eq(userRoles.roleId, roleId)
       ),
     });
@@ -55,7 +55,7 @@ export async function POST(
     const [assignment] = await db
       .insert(userRoles)
       .values({
-        userId: params.id,
+        userId: id,
         roleId,
       })
       .returning();
@@ -64,13 +64,13 @@ export async function POST(
     await db.insert(permissionAuditLog).values({
       userId: session.user.id,
       action: "role_assigned",
-      targetUserId: params.id,
+      targetUserId: id,
       targetRoleId: roleId,
       details: JSON.stringify({ roleId }),
     });
 
     // Clear permission cache for the user
-    clearUserPermissionCache(params.id);
+    clearUserPermissionCache(id);
 
     return NextResponse.json(assignment, { status: 201 });
   } catch (error) {
@@ -88,7 +88,7 @@ export async function POST(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -97,12 +97,12 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission
     const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
     if (!canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const { id } = await params;
     const { roleId } = await request.json();
 
     if (!roleId) {
@@ -116,7 +116,7 @@ export async function DELETE(
     const deleted = await db
       .delete(userRoles)
       .where(
-        and(eq(userRoles.userId, params.id), eq(userRoles.roleId, roleId))
+        and(eq(userRoles.userId, id), eq(userRoles.roleId, roleId))
       )
       .returning();
 
@@ -131,13 +131,13 @@ export async function DELETE(
     await db.insert(permissionAuditLog).values({
       userId: session.user.id,
       action: "role_removed",
-      targetUserId: params.id,
+      targetUserId: id,
       targetRoleId: roleId,
       details: JSON.stringify({ roleId }),
     });
 
     // Clear permission cache for the user
-    clearUserPermissionCache(params.id);
+    clearUserPermissionCache(id);
 
     return NextResponse.json({ success: true });
   } catch (error) {

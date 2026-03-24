@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -8,6 +8,7 @@ export const users = pgTable("users", {
   password: text("password"), // hashed password for email/password auth
   image: text("image"),
   role: text("role").notNull().default("member"), // 'admin' | 'member' | 'guest'
+  isActive: boolean("is_active").notNull().default(true),
   emailVerified: timestamp("email_verified"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -99,6 +100,7 @@ export const campaigns = pgTable("campaigns", {
   image: text("image"), // Campaign image path
   displayOrder: integer("display_order").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
+  isPublic: boolean("is_public").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -117,7 +119,7 @@ export const groups = pgTable("groups", {
   groupTypeId: uuid("group_type_id").notNull().references(() => groupTypes.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
-  parentGroupId: uuid("parent_group_id").references(() => groups.id, { onDelete: "set null" }), // For hierarchy
+  parentGroupId: uuid("parent_group_id").references((): AnyPgColumn => groups.id, { onDelete: "set null" }), // For hierarchy
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
