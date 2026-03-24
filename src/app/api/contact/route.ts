@@ -42,8 +42,10 @@ export async function POST(request: NextRequest) {
 
     const resend = new Resend(process.env.RESEND_API_KEY);
 
+    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "onboarding@resend.dev";
+
     await resend.emails.send({
-      from: "Westerville Lions Website <onboarding@resend.dev>",
+      from: `Westerville Lions Website <${fromEmail}>`,
       to: ["info@westervillelions.org"],
       replyTo: email,
       subject: `Website Contact: ${subject}`,
@@ -58,7 +60,7 @@ export async function POST(request: NextRequest) {
     });
 
     await resend.emails.send({
-      from: "Westerville Lions Club <onboarding@resend.dev>",
+      from: `Westerville Lions Club <${fromEmail}>`,
       to: [email],
       subject: "We received your message!",
       html: `
