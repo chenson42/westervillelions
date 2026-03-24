@@ -1,14 +1,15 @@
 import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { format } from "date-fns";
 
 export default async function WhatWeDoPage() {
-  // Fetch public events
-  const publicEvents = await db.query.events.findMany({
-    where: eq(events.isPublic, true),
-    orderBy: (events, { desc }) => [desc(events.startDate)],
-  });
+  // Fetch upcoming public events only
+  const publicEvents = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.isPublic, true), gte(events.startDate, new Date())))
+    .orderBy(events.startDate);
 
   return (
     <div className="min-h-screen bg-white">
