@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "node drizzle/run-migrations.mjs && drizzle-kit push --force && NEXT_PUBLIC_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) NEXT_PUBLIC_APP_VERSION=$(node -p \"require('./package.json').version\") next build",
+    "build": "drizzle-kit push --force && NEXT_PUBLIC_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) NEXT_PUBLIC_APP_VERSION=$(node -p \"require('./package.json').version\") next build",
     "build:only": "NEXT_PUBLIC_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) NEXT_PUBLIC_APP_VERSION=$(node -p \"require('./package.json').version\") next build",
     "db:migrate": "node drizzle/run-migrations.mjs",
     "db:push": "drizzle-kit push",
