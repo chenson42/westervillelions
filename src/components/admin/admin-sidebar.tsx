@@ -69,6 +69,12 @@ const navigation: NavItem[] = [
     icon: "✉️",
     requiredFeature: FEATURES.CONTACT_VIEW,
   },
+  {
+    name: "Membership",
+    href: "/admin/membership",
+    icon: "📋",
+    requiredFeature: FEATURES.MEMBERSHIP_MANAGE,
+  },
 ];
 
 export default function AdminSidebar({

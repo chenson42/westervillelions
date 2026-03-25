@@ -186,6 +186,40 @@ export const contactSubmissions = pgTable("contact_submissions", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Membership applications
+export const membershipApplications = pgTable("membership_applications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // Personal info
+  firstName: text("first_name").notNull(),
+  middleInitial: text("middle_initial"),
+  lastName: text("last_name").notNull(),
+  suffix: text("suffix"),
+  gender: text("gender"),
+  occupation: text("occupation"),
+  dateOfBirth: text("date_of_birth"),
+  spouseName: text("spouse_name"),
+  // Contact info
+  address: text("address"),
+  city: text("city"),
+  state: text("state"),
+  zip: text("zip"),
+  country: text("country").default("USA"),
+  phone: text("phone"),
+  email: text("email").notNull(),
+  // Membership type
+  memberType: text("member_type").notNull().default("new"), // new | former | transfer | family | student | leo | young_adult
+  sponsorName: text("sponsor_name"),
+  previousMemberNumber: text("previous_member_number"),
+  previousClubName: text("previous_club_name"),
+  previousClubNumber: text("previous_club_number"),
+  // Status
+  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  adminNotes: text("admin_notes"),
+  reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // NextAuth required tables
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
