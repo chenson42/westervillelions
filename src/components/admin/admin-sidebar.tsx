@@ -78,6 +78,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.MEMBERSHIP_MANAGE,
   },
   {
+    name: "Newsletter",
+    href: "/admin/subscriptions",
+    icon: "📧",
+    requiredFeature: FEATURES.CONTACT_VIEW,
+  },
+  {
     name: "Release Notes",
     href: "/admin/release-notes",
     icon: "📝",

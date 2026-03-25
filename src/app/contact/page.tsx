@@ -1,18 +1,21 @@
 import Link from "next/link";
 import { ContactForm } from "@/components/contact-form";
+import { NewsletterForm } from "@/components/newsletter-form";
 
 export default function ContactPage() {
   return (
     <div className="min-h-screen bg-white">
       <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
-          <h1 className="text-4xl font-bold mb-4">Contact Us</h1>
-          <p className="text-xl">We'd love to hear from you</p>
+          <h1 className="text-4xl font-bold mb-4">Connect With Us</h1>
+          <p className="text-xl">We&apos;d love to hear from you</p>
         </div>
       </div>
 
       <div className="container mx-auto px-4 py-16">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-4xl mx-auto space-y-16">
+
+          {/* Contact info + form */}
           <div className="grid md:grid-cols-2 gap-12">
             <div>
               <h2 className="text-3xl font-bold mb-6 text-gray-900">Get In Touch</h2>
@@ -39,9 +42,9 @@ export default function ContactPage() {
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold mb-2 text-lions-blue">Social Media</h3>
+                  <h3 className="text-xl font-semibold mb-2 text-lions-blue">Follow Us</h3>
                   <p className="text-lg text-gray-700 mb-3">
-                    Follow us on social media
+                    Stay up to date on social media
                   </p>
                   <div className="flex gap-4">
                     <a
@@ -60,7 +63,7 @@ export default function ContactPage() {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-lions-blue hover:text-lions-blue-dark transition"
-                      aria-label="Twitter"
+                      aria-label="X (Twitter)"
                     >
                       <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.827 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-7.496 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z"/>
@@ -83,15 +86,28 @@ export default function ContactPage() {
             </div>
 
             <div>
+              <h2 className="text-2xl font-bold mb-4 text-gray-900">Send a Message</h2>
               <ContactForm />
             </div>
           </div>
 
-          <div className="mt-12 bg-lions-gold/10 p-8 rounded-lg">
+          {/* Newsletter signup */}
+          <div className="rounded-xl border border-lions-blue/20 bg-lions-blue/5 p-8">
+            <div className="max-w-xl">
+              <h2 className="text-2xl font-bold mb-2 text-gray-900">Stay in the Loop</h2>
+              <p className="text-gray-600 mb-6">
+                Subscribe to our newsletter for updates on events, community projects, and ways to get involved with the Westerville Lions Club.
+              </p>
+              <NewsletterForm />
+            </div>
+          </div>
+
+          {/* Join CTA */}
+          <div className="bg-lions-gold/10 p-8 rounded-lg">
             <h2 className="text-2xl font-bold mb-4 text-gray-900">Interested in Joining?</h2>
             <p className="text-lg text-gray-700 mb-4">
               We welcome new members who share our commitment to community service.
-              Visitors are welcome at any of our meetings - no appointment necessary!
+              Visitors are welcome at any of our meetings — no appointment necessary!
             </p>
             <p className="text-lg text-gray-700 mb-6">
               Ready to become a Lion? Submit a membership application and a club representative will be in touch.

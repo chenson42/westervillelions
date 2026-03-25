@@ -23,7 +23,7 @@ export function Header({ session }: HeaderProps) {
     { href: "/causes", label: "Our Causes" },
     { href: "/events", label: "What We Do" },
     { href: "/campaigns", label: "Campaigns" },
-    { href: "/contact", label: "Contact" },
+    { href: "/contact", label: "Connect" },
   ];
 
   const isActive = (href: string) => pathname === href;

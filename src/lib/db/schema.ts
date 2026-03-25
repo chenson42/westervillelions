@@ -35,6 +35,20 @@ export const members = pgTable("members", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Newsletter subscriptions
+export const newsletterSubscriptions = pgTable("newsletter_subscriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  email: text("email").notNull(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  isActive: boolean("is_active").notNull().default(true),
+  source: text("source").notNull().default("website"),
+  subscribedAt: timestamp("subscribed_at").notNull().defaultNow(),
+  unsubscribedAt: timestamp("unsubscribed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Roles table for permission system
 export const roles = pgTable("roles", {
   id: uuid("id").primaryKey().defaultRandom(),
