@@ -20,7 +20,7 @@ export function Header({ session }: HeaderProps) {
   const navLinks = [
     { href: "/about", label: "About" },
     { href: "/mission", label: "Mission & Service" },
-    { href: "/events", label: "What We Do" },
+    { href: "/events", label: "Events" },
     { href: "/contact", label: "Connect" },
   ];
 
