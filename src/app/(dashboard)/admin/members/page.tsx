@@ -3,6 +3,7 @@ import { members, groups, groupMemberships } from "@/lib/db/schema";
 import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import Link from "next/link";
 import MemberSearch from "@/components/admin/member-search";
+import ExportMembersButton from "@/components/admin/export-members-button";
 
 export default async function MembersPage({
   searchParams,
@@ -102,12 +103,15 @@ export default async function MembersPage({
             Manage club member directory and information
           </p>
         </div>
-        <Link
-          href="/admin/members/new"
-          className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
-        >
-          Add Member
-        </Link>
+        <div className="flex items-center gap-3">
+          <ExportMembersButton />
+          <Link
+            href="/admin/members/new"
+            className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
+          >
+            Add Member
+          </Link>
+        </div>
       </div>
 
       {/* Search and filters */}

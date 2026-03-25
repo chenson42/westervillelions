@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FEATURES } from "@/lib/permissions";
 import { useState, useEffect } from "react";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { version } = require("../../../package.json") as { version: string };
 
 const RETURN_KEY = "adminReturnTo";
 
@@ -74,6 +76,11 @@ const navigation: NavItem[] = [
     href: "/admin/membership",
     icon: "📋",
     requiredFeature: FEATURES.MEMBERSHIP_MANAGE,
+  },
+  {
+    name: "Release Notes",
+    href: "/admin/release-notes",
+    icon: "📝",
   },
 ];
 
@@ -209,7 +216,7 @@ export default function AdminSidebar({
         </nav>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 p-4">
+        <div className="border-t border-gray-200 p-4 space-y-1">
           <Link
             href={returnTo}
             onClick={() => sessionStorage.removeItem(RETURN_KEY)}
@@ -229,6 +236,13 @@ export default function AdminSidebar({
               />
             </svg>
             <span>Back to Website</span>
+          </Link>
+          <Link
+            href="/admin/release-notes"
+            className="flex items-center justify-between rounded-lg px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+          >
+            <span>Westerville Lions</span>
+            <span className="font-mono">v{version}</span>
           </Link>
         </div>
       </div>
