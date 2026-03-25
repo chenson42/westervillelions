@@ -69,12 +69,7 @@ export function Footer() {
               </li>
               <li>
                 <Link href="/mission" className="text-gray-400 hover:text-white transition">
-                  Our Mission
-                </Link>
-              </li>
-              <li>
-                <Link href="/causes" className="text-gray-400 hover:text-white transition">
-                  Our Causes
+                  Mission &amp; Service
                 </Link>
               </li>
               <li>
