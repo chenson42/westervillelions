@@ -1,8 +1,31 @@
+import type { Metadata } from "next";
 import { ServiceCard } from "@/components/home/service-card";
 import { InstagramGrid } from "@/components/home/instagram-grid";
 import { ZeffyButton } from "@/components/campaigns/zeffy-button";
+import { db } from "@/lib/db";
+import { members } from "@/lib/db/schema";
+import { eq, count } from "drizzle-orm";
 
-export default function HomePage() {
+export const metadata: Metadata = {
+  title: "Westerville Lions Club | Serving Westerville, OH Since 1938",
+  description:
+    "The Westerville Lions Club has served Westerville, Ohio since 1938 through youth programs, hunger relief, humanitarian aid, and hands-on community service. Join us.",
+  openGraph: {
+    title: "Westerville Lions Club | Serving Westerville, OH Since 1938",
+    description:
+      "Serving Westerville, Ohio since 1938 through youth programs, hunger relief, humanitarian aid, and hands-on community service.",
+  },
+};
+
+const FOUNDING_YEAR = 1938;
+
+export default async function HomePage() {
+  const [{ value: memberCount }] = await db
+    .select({ value: count() })
+    .from(members)
+    .where(eq(members.isActive, true));
+
+  const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR;
   return (
     <div className="min-h-screen bg-white">
       {/* Hero Section with Background Image */}
@@ -34,10 +57,10 @@ export default function HomePage() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <a
-              href="/campaigns"
+              href="/join"
               className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-full font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105"
             >
-              View Campaigns
+              Join the Club
             </a>
             <a
               href="/about"
@@ -54,11 +77,11 @@ export default function HomePage() {
         <div className="container mx-auto px-4">
           <div className="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto text-center">
             <div className="p-6">
-              <div className="text-5xl font-bold text-lions-blue mb-2">85+</div>
+              <div className="text-5xl font-bold text-lions-blue mb-2">{yearsOfService}+</div>
               <p className="text-xl text-gray-700">Years of Service</p>
             </div>
             <div className="p-6">
-              <div className="text-5xl font-bold text-lions-blue mb-2">47</div>
+              <div className="text-5xl font-bold text-lions-blue mb-2">{memberCount}</div>
               <p className="text-xl text-gray-700">Active Members</p>
             </div>
             <div className="p-6">
@@ -145,7 +168,7 @@ export default function HomePage() {
               href="/campaigns"
               className="bg-lions-blue text-white px-10 py-4 rounded-full font-bold text-lg hover:bg-lions-blue-dark transition shadow-lg transform hover:scale-105"
             >
-              Donate Now
+              Support Our Mission
             </a>
             <a
               href="/contact"

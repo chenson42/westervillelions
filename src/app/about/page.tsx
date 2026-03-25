@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "About Us",
+  description:
+    "Learn about the Westerville Lions Club — a community service organization serving Westerville, Ohio since 1938 as part of Lions Clubs International.",
+};
+
 export default function AboutPage() {
   return (
     <div className="min-h-screen bg-white">
@@ -58,10 +66,10 @@ export default function AboutPage() {
               service, there's a place for you in the Westerville Lions Club.
             </p>
             <a
-              href="/contact"
+              href="/join"
               className="inline-block bg-lions-blue text-white px-8 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition"
             >
-              Contact Us to Learn More
+              Apply for Membership
             </a>
           </section>
         </div>

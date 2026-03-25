@@ -1,8 +1,14 @@
+import type { Metadata } from "next";
 import { ZeffyEmbed } from "@/components/campaigns/zeffy-embed";
 import { db } from "@/lib/db";
 import { campaigns } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+
+export const metadata: Metadata = {
+  title: "Support Our Campaigns | Westerville Lions Club",
+  description: "Donate to the Westerville Lions Club — a 501(c)(3) nonprofit. Your tax-deductible gift supports youth programs, hunger relief, humanitarian aid, and community service in Westerville, Ohio.",
+};
 
 /** Fetch og:image and og:description from a Zeffy campaign page. Cached for 1 hour. */
 async function fetchZeffyMeta(
@@ -63,7 +69,7 @@ export default async function CampaignsPage() {
     <div className="min-h-screen bg-white">
       <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
-          <h1 className="text-4xl font-bold mb-4">Support Our Campaigns</h1>
+          <h1 className="text-4xl font-bold mb-4">Support Our Mission</h1>
           <p className="text-xl">Your generosity helps us serve our community</p>
         </div>
       </div>
@@ -119,6 +125,56 @@ export default async function CampaignsPage() {
               Your generosity makes a real difference in our community. Every
               donation helps us continue our mission of service.
             </p>
+          </div>
+
+          {/* Donation context */}
+          <div className="mt-16 grid md:grid-cols-2 gap-12">
+            <div>
+              <h2 className="text-2xl font-bold mb-4 text-gray-900">Tax-Deductible Giving</h2>
+              <p className="text-gray-700 mb-3">
+                The Westerville Lions Club is a 501(c)(3) nonprofit organization. Every dollar you
+                contribute is tax-deductible and goes directly to our community service programs.
+              </p>
+              <p className="text-gray-700">
+                Every dollar stays in our community or supports Lions Clubs International&apos;s
+                global humanitarian efforts.
+              </p>
+            </div>
+
+            <div>
+              <h2 className="text-2xl font-bold mb-4 text-gray-900">Other Ways to Give</h2>
+              <ul className="space-y-3 text-gray-700">
+                <li>
+                  <strong>Mail a Check:</strong> Payable to &ldquo;Westerville Lions Club&rdquo; —{" "}
+                  <a href="/contact" className="text-lions-blue hover:underline">contact us</a> for the mailing address.
+                </li>
+                <li>
+                  <strong>Donate Items:</strong> We accept eyeglass donations and other items for our service programs.
+                </li>
+                <li>
+                  <strong>Volunteer:</strong> Your time is just as valuable —{" "}
+                  <a href="/join" className="text-lions-blue hover:underline">become a member</a> or attend an event.
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          {/* Where money goes */}
+          <div className="mt-12">
+            <h2 className="text-2xl font-bold mb-6 text-gray-900">Where Your Donation Goes</h2>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { label: "Youth Programs", body: "Scholarships, educational programs, and youth leadership development" },
+                { label: "Community Projects", body: "Local service initiatives, food drives, and community support programs" },
+                { label: "Humanitarian Aid", body: "Disaster relief and support for those in need locally and globally" },
+                { label: "Hunger Relief", body: "Partnerships with food banks and meal programs for families in need" },
+              ].map((item) => (
+                <div key={item.label} className="bg-gray-50 p-5 rounded-lg">
+                  <h3 className="font-semibold text-lions-blue mb-2">{item.label}</h3>
+                  <p className="text-sm text-gray-700">{item.body}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

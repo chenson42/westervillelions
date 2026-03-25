@@ -18,10 +18,9 @@ export function Header({ session }: HeaderProps) {
   if (pathname.startsWith("/admin")) return null;
 
   const navLinks = [
-    { href: "/about", label: "Organization" },
+    { href: "/about", label: "About" },
     { href: "/mission", label: "Mission & Service" },
     { href: "/events", label: "What We Do" },
-    { href: "/campaigns", label: "Campaigns" },
     { href: "/contact", label: "Connect" },
   ];
 
@@ -60,6 +59,12 @@ export function Header({ session }: HeaderProps) {
           </div>
 
           <div className="flex items-center gap-4">
+            <Link
+              href="/campaigns"
+              className="hidden md:inline-block bg-lions-gold text-lions-blue-dark px-4 py-2 rounded-lg font-semibold hover:brightness-95 transition"
+            >
+              Donate
+            </Link>
             {session?.user ? (
               <>
                 {session.user.features?.includes("admin.dashboard") && (
@@ -120,6 +125,13 @@ export function Header({ session }: HeaderProps) {
                   {link.label}
                 </Link>
               ))}
+              <Link
+                href="/campaigns"
+                onClick={() => setMobileMenuOpen(false)}
+                className="bg-lions-gold text-lions-blue-dark px-4 py-2 rounded-lg font-semibold text-center hover:brightness-95 transition"
+              >
+                Donate
+              </Link>
               {session?.user ? (
                 <>
                   {session.user.features?.includes("admin.dashboard") && (

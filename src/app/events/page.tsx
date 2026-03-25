@@ -1,10 +1,17 @@
+import type { Metadata } from "next";
 import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
 import { and, eq, gte } from "drizzle-orm";
 import { format } from "date-fns";
+import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Upcoming Events",
+  description:
+    "Find upcoming events and service projects hosted by the Westerville Lions Club in Westerville, Ohio. All are welcome — come see what Lions service is all about.",
+};
 
 export default async function WhatWeDoPage() {
-  // Fetch upcoming public events only
   const publicEvents = await db
     .select()
     .from(events)
@@ -20,43 +27,12 @@ export default async function WhatWeDoPage() {
         </div>
       </div>
 
-      {/* Service Areas Overview */}
       <div className="container mx-auto px-4 py-16">
         <div className="max-w-4xl mx-auto">
-          <div className="grid md:grid-cols-2 gap-8 mb-16">
-            <div className="bg-white border-2 border-lions-gold rounded-xl p-6">
-              <h3 className="text-2xl font-bold mb-4 text-lions-blue">Community Service</h3>
-              <p className="text-gray-700 leading-relaxed">
-                We partner with local organizations to address community needs through food drives,
-                holiday programs, and support for families in our area.
-              </p>
-            </div>
-            <div className="bg-white border-2 border-lions-gold rounded-xl p-6">
-              <h3 className="text-2xl font-bold mb-4 text-lions-blue">Vision Care</h3>
-              <p className="text-gray-700 leading-relaxed">
-                Supporting vision health through eye screenings, glasses collection programs,
-                and partnerships that provide eye care services to those in need.
-              </p>
-            </div>
-            <div className="bg-white border-2 border-lions-gold rounded-xl p-6">
-              <h3 className="text-2xl font-bold mb-4 text-lions-blue">Youth Development</h3>
-              <p className="text-gray-700 leading-relaxed">
-                Investing in tomorrow's leaders through scholarships, educational programs,
-                and youth activity support in our community.
-              </p>
-            </div>
-            <div className="bg-white border-2 border-lions-gold rounded-xl p-6">
-              <h3 className="text-2xl font-bold mb-4 text-lions-blue">Humanitarian Aid</h3>
-              <p className="text-gray-700 leading-relaxed">
-                Providing disaster relief and emergency assistance to those facing hardship
-                both locally and through international Lions programs.
-              </p>
-            </div>
-          </div>
 
-          {/* Upcoming Events Section */}
+          {/* Upcoming Events — primary content */}
           <div className="mb-16">
-            <h2 className="text-3xl font-bold mb-8 text-gray-900 text-center">Upcoming Events</h2>
+            <h2 className="text-3xl font-bold mb-8 text-gray-900">Upcoming Events</h2>
             {publicEvents.length > 0 ? (
               <div className="space-y-6">
                 {publicEvents.map((event) => (
@@ -94,7 +70,7 @@ export default async function WhatWeDoPage() {
               </div>
             ) : (
               <div className="text-center py-12 bg-gray-50 rounded-lg">
-                <p className="text-xl text-gray-600 mb-6">
+                <p className="text-xl text-gray-600 mb-3">
                   No upcoming public events at this time.
                 </p>
                 <p className="text-gray-600">
@@ -104,6 +80,38 @@ export default async function WhatWeDoPage() {
             )}
           </div>
 
+          {/* Service areas — secondary context */}
+          <div className="mb-16">
+            <h2 className="text-3xl font-bold mb-3 text-gray-900">Our Service Areas</h2>
+            <p className="text-gray-600 mb-8">
+              Lions service spans a broad range of humanitarian causes — locally and globally.{" "}
+              <Link href="/mission" className="text-lions-blue hover:underline font-medium">
+                Learn more about our mission.
+              </Link>
+            </p>
+            <div className="grid sm:grid-cols-3 gap-6">
+              {[
+                {
+                  title: "Community Service",
+                  body: "Food drives, holiday programs, and hands-on support for families in Westerville.",
+                },
+                {
+                  title: "Youth Development",
+                  body: "Scholarships, educational programs, and youth leadership opportunities.",
+                },
+                {
+                  title: "Humanitarian Aid",
+                  body: "Disaster relief and emergency assistance locally and through Lions International.",
+                },
+              ].map((area) => (
+                <div key={area.title} className="border border-gray-200 rounded-xl p-6 hover:border-lions-blue/40 hover:shadow-sm transition">
+                  <h3 className="text-lg font-semibold mb-2 text-lions-blue">{area.title}</h3>
+                  <p className="text-gray-700 text-sm leading-relaxed">{area.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Get Involved CTA */}
           <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white p-8 rounded-xl text-center">
             <h2 className="text-3xl font-bold mb-4">Join Us in Service</h2>
@@ -111,13 +119,14 @@ export default async function WhatWeDoPage() {
               Many of our service projects and events are open to guests and prospective members.
               Come see what Lions service is all about!
             </p>
-            <a
-              href="/contact"
+            <Link
+              href="/join"
               className="inline-block bg-lions-gold text-lions-blue-dark px-8 py-3 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition"
             >
-              Contact Us to Learn More
-            </a>
+              Apply for Membership
+            </Link>
           </div>
+
         </div>
       </div>
     </div>

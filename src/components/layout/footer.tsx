@@ -95,7 +95,7 @@ export function Footer() {
                 </Link>
               </li>
               <li>
-                <Link href="/donate" className="text-gray-400 hover:text-white transition">
+                <Link href="/campaigns" className="text-gray-400 hover:text-white transition">
                   Donate
                 </Link>
               </li>

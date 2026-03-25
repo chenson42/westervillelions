@@ -1,6 +1,13 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ContactForm } from "@/components/contact-form";
 import { NewsletterForm } from "@/components/newsletter-form";
+
+export const metadata: Metadata = {
+  title: "Connect With Us",
+  description:
+    "Get in touch with the Westerville Lions Club. Send a message, subscribe to our newsletter, or stop by one of our meetings in Westerville, Ohio.",
+};
 
 export default function ContactPage() {
   return (
@@ -92,7 +99,7 @@ export default function ContactPage() {
           </div>
 
           {/* Newsletter signup */}
-          <div className="rounded-xl border border-lions-blue/20 bg-lions-blue/5 p-8">
+          <div id="newsletter" className="rounded-xl border border-lions-blue/20 bg-lions-blue/5 p-8">
             <div className="max-w-xl">
               <h2 className="text-2xl font-bold mb-2 text-gray-900">Stay in the Loop</h2>
               <p className="text-gray-600 mb-6">

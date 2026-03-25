@@ -4,9 +4,64 @@ import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { auth } from "@/lib/auth";
 
+const siteUrl = "https://westervillelions.org";
+
 export const metadata: Metadata = {
-  title: "Westerville Lions Club",
-  description: "Creating and fostering a spirit of understanding among all people for humanitarian needs through community service",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: "Westerville Lions Club | Serving Westerville, OH Since 1938",
+    template: "%s | Westerville Lions Club",
+  },
+  description:
+    "The Westerville Lions Club is a 501(c)(3) nonprofit serving Westerville, Ohio since 1938 through youth programs, hunger relief, humanitarian aid, and community service.",
+  openGraph: {
+    type: "website",
+    siteName: "Westerville Lions Club",
+    locale: "en_US",
+    images: [
+      {
+        url: "/images/logo-official.png",
+        width: 250,
+        height: 80,
+        alt: "Westerville Lions Club",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    site: "@LionWesterville",
+  },
+};
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "NGO",
+  name: "Westerville Lions Club",
+  url: siteUrl,
+  logo: `${siteUrl}/images/logo-official.png`,
+  foundingDate: "1938",
+  description:
+    "A 501(c)(3) nonprofit serving Westerville, Ohio through youth programs, hunger relief, humanitarian aid, and community service.",
+  address: {
+    "@type": "PostalAddress",
+    streetAddress: "350 County Line Rd W",
+    addressLocality: "Westerville",
+    addressRegion: "OH",
+    postalCode: "43082",
+    addressCountry: "US",
+  },
+  email: "info@westervillelions.org",
+  sameAs: [
+    "https://www.facebook.com/WestervilleLions",
+    "https://x.com/LionWesterville",
+    "https://www.instagram.com/westervillelions",
+    "https://www.lionsclubs.org",
+  ],
+  memberOf: {
+    "@type": "Organization",
+    name: "Lions Clubs International",
+    url: "https://www.lionsclubs.org",
+  },
 };
 
 export default async function RootLayout({
@@ -22,6 +77,10 @@ export default async function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&display=swap" rel="stylesheet" />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
       </head>
       <body>
         <Header session={session} />
