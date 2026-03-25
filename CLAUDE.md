@@ -144,9 +144,73 @@ WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Admin');
 
 ## Development Workflow
 
-1. **DO NOT auto commit and push** - Always wait for explicit user approval
-2. **Test locally first** - Run `pnpm dev` and verify changes
-3. **Check build** - Run `pnpm build:only` before pushing
+1. **DO NOT auto commit and push** — Always wait for explicit user approval. Production deploys from `main`.
+2. **Test locally first** — Run `pnpm dev` and verify changes in the browser.
+3. **Check build** — Run `pnpm build:only` before pushing.
+4. **Run migrations after schema changes** — `export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate`
+5. **Use `/pre-push` skill** — Before pushing, run `/pre-push` for automated pre-flight checks.
+6. **Use `/new-feature` skill** — Before implementing a non-trivial feature, use `/new-feature` to scaffold planning docs.
+7. **Use `/add-permission` skill** — When adding a new permission to the system.
+8. **Use `/release-notes` skill** — When preparing to merge to main, write release notes and bump version.
+
+## Agent Team
+
+This project uses specialized Claude Code subagents. See `.claude/agents/` for their full definitions.
+
+| Agent | Responsibility |
+|-------|---------------|
+| **tech-lead** | Technical design and implementation planning before any non-trivial feature |
+| **database-admin** | Schema design, migrations, data integrity |
+| **api-developer** | API routes, server-side logic, database operations |
+| **ux-developer** | React components, pages, forms, UI |
+| **full-stack-developer** | Small tightly-coupled features spanning API + UI |
+| **architect** | Structural decisions, dependency evaluation, compliance review |
+| **deployment-engineer** | Build verification, deployment readiness, production health |
+
+### Workflow Selection
+
+#### Full Workflow (Complex Features)
+Use for new major features, architectural changes, features touching multiple subsystems.
+
+1. **tech-lead** — Create technical design
+2. **database-admin** — Schema changes (if needed)
+3. **api-developer** — Build API endpoints
+4. **ux-developer** — Build UI (can start after API contract is defined)
+5. **deployment-engineer** — Verify build and deployment readiness
+
+#### Standard Workflow (Medium Features)
+Use for routine features with clear requirements.
+
+1. **tech-lead** — Quick design (or skip if requirements are obvious)
+2. **database-admin** — Schema changes (if needed)
+3. **full-stack-developer** OR **api-developer** + **ux-developer** — Implement
+4. **deployment-engineer** — Verify build
+
+#### Fast Track (Simple Changes)
+Use for bug fixes, minor UI tweaks, small improvements.
+
+1. **full-stack-developer** — Implement fix/change
+2. Quick build check, commit
+
+### Agent Handoff Protocol
+
+When one agent completes work and another picks up, provide:
+
+```
+[Agent] completed [task].
+
+Status: ✅ Complete | ⚠️ Complete with notes | 🚧 Blocked
+
+Artifacts:
+- [files created/modified]
+- [key decisions made]
+
+For [next agent]:
+- [specific info they need]
+- [API contracts, data models, etc.]
+
+Blockers: [any issues]
+```
 
 ## Key Patterns
 
