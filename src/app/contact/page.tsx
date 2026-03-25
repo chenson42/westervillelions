@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ContactForm } from "@/components/contact-form";
 
 export default function ContactPage() {
@@ -38,15 +39,6 @@ export default function ContactPage() {
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold mb-2 text-lions-blue">Mailing Address</h3>
-                  <p className="text-lg text-gray-700">
-                    Westerville Lions Club
-                    <br />
-                    Westerville, Ohio
-                  </p>
-                </div>
-
-                <div>
                   <h3 className="text-xl font-semibold mb-2 text-lions-blue">Social Media</h3>
                   <p className="text-lg text-gray-700 mb-3">
                     Follow us on social media
@@ -64,7 +56,7 @@ export default function ContactPage() {
                       </svg>
                     </a>
                     <a
-                      href="https://twitter.com/WestervilleLions"
+                      href="https://x.com/LionWesterville"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-lions-blue hover:text-lions-blue-dark transition"
@@ -101,10 +93,15 @@ export default function ContactPage() {
               We welcome new members who share our commitment to community service.
               Visitors are welcome at any of our meetings - no appointment necessary!
             </p>
-            <p className="text-lg text-gray-700">
-              Contact us to learn more about membership, or simply show up to a meeting
-              and introduce yourself.
+            <p className="text-lg text-gray-700 mb-6">
+              Ready to become a Lion? Submit a membership application and a club representative will be in touch.
             </p>
+            <Link
+              href="/join"
+              className="inline-block bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition"
+            >
+              Apply for Membership
+            </Link>
           </div>
         </div>
       </div>
