@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
       "Postal code": "",
       Country: "",
       Phone: "",
-      Lists: "Lions Members",
+      Lists: "Newsletter Subscribed",
       Note: "",
       "Subscription status": "subscribed",
       "Company name": "",
