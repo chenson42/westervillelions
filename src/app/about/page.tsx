@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { db } from "@/lib/db";
 import { groups, groupMemberships, members } from "@/lib/db/schema";
 import { eq, asc, sql } from "drizzle-orm";
+import { LeadershipAvatar } from "@/components/members/leadership-avatar";
 
 export const metadata: Metadata = {
   title: "About Us",
@@ -28,7 +29,7 @@ function positionSortKey(position: string | null): [number, string] {
   return [rank, normalized];
 }
 
-async function getLeadership(): Promise<{ firstName: string; lastName: string; position: string | null }[]> {
+async function getLeadership(): Promise<{ memberId: string; firstName: string; lastName: string; position: string | null }[]> {
   try {
     const boardGroup = await db.query.groups.findFirst({
       where: sql`lower(${groups.name}) = 'board of directors'`,
@@ -38,6 +39,7 @@ async function getLeadership(): Promise<{ firstName: string; lastName: string; p
 
     const boardMembers = await db
       .select({
+        memberId: members.id,
         firstName: members.firstName,
         lastName: members.lastName,
         position: groupMemberships.position,
@@ -123,7 +125,11 @@ export default async function AboutPage() {
             {leadership.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {leadership.map((member, index) => (
-                  <div key={index} className="bg-gray-50 p-6 rounded-lg">
+                  <div key={index} className="bg-gray-50 p-6 rounded-lg text-center">
+                    <LeadershipAvatar
+                      src={`/api/public/members/${member.memberId}/photo`}
+                      alt={`${member.firstName} ${member.lastName}`}
+                    />
                     <p className="font-semibold text-gray-900">
                       {member.firstName} {member.lastName}
                     </p>

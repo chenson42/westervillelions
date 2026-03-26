@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { ShadowAvatar } from "./shadow-avatar";
 
 interface GroupTag {
   groupId: string;
@@ -18,6 +19,7 @@ interface Member {
   branch: string | null;
   memberNumber: number | null;
   joinDate: Date | null;
+  profilePicture: string | null;
   groupTags: GroupTag[];
 }
 
@@ -218,7 +220,21 @@ export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps)
                 key={member.id}
                 className="border border-gray-200 rounded-xl p-5 hover:shadow-lg transition transform hover:-translate-y-1"
               >
-                <div className="flex items-start justify-between mb-3">
+                <div className="flex items-start gap-3 mb-3">
+                  {/* Avatar */}
+                  <div className="w-12 h-12 rounded-full overflow-hidden flex-shrink-0 border border-gray-200">
+                    {member.profilePicture ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={member.profilePicture}
+                        alt={`${member.firstName} ${member.lastName}`}
+                        className="w-12 h-12 rounded-full object-cover"
+                      />
+                    ) : (
+                      <ShadowAvatar className="w-12 h-12 rounded-full" />
+                    )}
+                  </div>
+                  <div className="flex flex-1 items-start justify-between">
                   <h3 className="text-lg font-bold text-gray-900">
                     {member.firstName} {member.lastName}
                   </h3>
@@ -243,6 +259,7 @@ export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps)
                         {serviceBadge.label}
                       </span>
                     )}
+                  </div>
                   </div>
                 </div>
               {member.email && (

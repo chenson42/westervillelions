@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { members } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { ProfileForm } from "@/components/members/profile-form";
+import { ProfilePictureSection } from "@/components/members/profile-picture-section";
 import { SignOutButton } from "@/components/layout/signout-button";
 
 export default async function ProfilePage() {
@@ -47,6 +48,13 @@ export default async function ProfilePage() {
 
           {member ? (
             <>
+              <div className="mb-6 pb-6 border-b border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">Profile Photo</h2>
+                <ProfilePictureSection
+                  currentPhotoDataUri={member.profilePicture}
+                  memberName={`${member.firstName} ${member.lastName}`}
+                />
+              </div>
               <h2 className="text-xl font-semibold text-gray-900 mb-4">Member Information</h2>
               <ProfileForm member={member} />
             </>

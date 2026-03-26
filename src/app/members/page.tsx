@@ -74,6 +74,7 @@ export default async function MembersPage() {
     branch: member.branch,
     memberNumber: member.memberNumber,
     joinDate: member.joinDate,
+    profilePicture: member.profilePicture,
     groupTags: memberTagsMap.get(member.id) ?? [],
   }));
 

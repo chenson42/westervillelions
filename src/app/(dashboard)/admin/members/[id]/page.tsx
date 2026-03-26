@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import MemberForm from "@/components/admin/member-form";
 import Link from "next/link";
 import type { MemberFormData } from "@/components/admin/member-form";
+import { ProfilePictureSection } from "@/components/members/profile-picture-section";
 
 /**
  * Edit Member Page
@@ -56,6 +57,16 @@ export default async function EditMemberPage({
           </span>
         </div>
         <h1 className="mt-2 text-3xl font-bold text-gray-900">Edit Member</h1>
+      </div>
+
+      {/* Profile Photo */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Profile Photo</h2>
+        <ProfilePictureSection
+          currentPhotoDataUri={member.profilePicture}
+          memberName={`${member.firstName} ${member.lastName}`}
+          adminMemberId={id}
+        />
       </div>
 
       {/* Form */}
