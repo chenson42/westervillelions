@@ -97,6 +97,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (user) {
         token.sub = user.id;
         token.role = user.role;
+        // fire and forget — don't block the JWT callback
+        if (user.id) {
+          db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id)).catch(() => {});
+        }
       }
 
       // Load roles, features, and active status (on sign-in or when explicitly updated)
