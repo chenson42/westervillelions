@@ -36,6 +36,41 @@ export async function POST(
   }
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const canManage = await hasFeature(session.user.id, FEATURES.GROUPS_MANAGE);
+    if (!canManage) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    const { id: groupId } = await params;
+    const { membershipId, position } = await request.json();
+
+    if (!membershipId) {
+      return NextResponse.json({ error: "membershipId is required" }, { status: 400 });
+    }
+
+    await db
+      .update(groupMemberships)
+      .set({ position: position ?? null })
+      .where(
+        and(
+          eq(groupMemberships.id, membershipId),
+          eq(groupMemberships.groupId, groupId)
+        )
+      );
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Error updating membership:", error);
+    return NextResponse.json({ error: "Failed to update membership" }, { status: 500 });
+  }
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

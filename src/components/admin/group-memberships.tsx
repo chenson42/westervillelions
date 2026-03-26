@@ -37,6 +37,41 @@ export function GroupMemberships({
   const [selectedRoleId, setSelectedRoleId] = useState(groupRoles[2]?.id ?? ""); // default to "Member"
   const [selectedPosition, setSelectedPosition] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingPosition, setEditingPosition] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  function startEdit(m: Membership) {
+    setEditingId(m.id);
+    setEditingPosition(m.position ?? "");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingPosition("");
+  }
+
+  async function handleUpdatePosition(m: Membership) {
+    setIsSaving(true);
+    try {
+      const res = await fetch(`/api/admin/groups/${groupId}/members`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ membershipId: m.id, position: editingPosition || null }),
+      });
+      if (!res.ok) throw new Error("Failed to update");
+      setMemberships((prev) =>
+        prev.map((x) => x.id === m.id ? { ...x, position: editingPosition || null } : x)
+      );
+      toast.success("Position updated");
+      setEditingId(null);
+      router.refresh();
+    } catch {
+      toast.error("Failed to update position");
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   async function handleAdd() {
     if (!selectedMemberId || !selectedRoleId) return;
@@ -112,7 +147,51 @@ export function GroupMemberships({
             {memberships.map((m) => (
               <tr key={m.id}>
                 <td className="py-2 text-sm text-gray-900">{m.firstName} {m.lastName}</td>
-                <td className="py-2 text-sm text-gray-700">{m.position || <span className="text-gray-400">—</span>}</td>
+                <td className="py-2 text-sm text-gray-700">
+                  {editingId === m.id ? (
+                    <div className="flex items-center gap-2">
+                      {availablePositions.length > 0 ? (
+                        <select
+                          value={editingPosition}
+                          onChange={(e) => setEditingPosition(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          autoFocus
+                        >
+                          <option value="">None</option>
+                          {availablePositions.map((p) => (
+                            <option key={p} value={p}>{p}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={editingPosition}
+                          onChange={(e) => setEditingPosition(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm w-36"
+                          autoFocus
+                        />
+                      )}
+                      <button
+                        onClick={() => handleUpdatePosition(m)}
+                        disabled={isSaving}
+                        className="text-xs text-lions-blue hover:text-lions-blue-dark font-medium disabled:opacity-50"
+                      >
+                        {isSaving ? "Saving…" : "Save"}
+                      </button>
+                      <button onClick={cancelEdit} className="text-xs text-gray-400 hover:text-gray-600">
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => startEdit(m)}
+                      className="hover:text-lions-blue group flex items-center gap-1"
+                    >
+                      <span>{m.position || <span className="text-gray-400">—</span>}</span>
+                      <span className="text-xs text-gray-400 group-hover:text-lions-blue opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
+                    </button>
+                  )}
+                </td>
                 <td className="py-2 text-sm text-gray-500">{m.roleName}</td>
                 <td className="py-2 text-right">
                   <button
