@@ -1,4 +1,7 @@
 import type { Metadata } from "next";
+import { db } from "@/lib/db";
+import { groups, groupMemberships, members } from "@/lib/db/schema";
+import { eq, asc, sql } from "drizzle-orm";
 
 export const metadata: Metadata = {
   title: "About Us",
@@ -6,7 +9,58 @@ export const metadata: Metadata = {
     "Learn about the Westerville Lions Club — a community service organization serving Westerville, Ohio since 1938 as part of Lions Clubs International.",
 };
 
-export default function AboutPage() {
+const POSITION_ORDER: Record<string, number> = {
+  president: 0,
+  "1st vice president": 1,
+  "first vice president": 1,
+  "2nd vice president": 2,
+  "second vice president": 2,
+  "vice president": 3,
+  secretary: 4,
+  treasurer: 5,
+  "lion tamer": 6,
+  "tail twister": 7,
+};
+
+function positionSortKey(position: string | null): [number, string] {
+  const normalized = (position ?? "").toLowerCase().trim();
+  const rank = POSITION_ORDER[normalized] ?? 99;
+  return [rank, normalized];
+}
+
+async function getLeadership(): Promise<{ firstName: string; lastName: string; position: string | null }[]> {
+  try {
+    const boardGroup = await db.query.groups.findFirst({
+      where: sql`lower(${groups.name}) = 'board of directors'`,
+    });
+
+    if (!boardGroup) return [];
+
+    const boardMembers = await db
+      .select({
+        firstName: members.firstName,
+        lastName: members.lastName,
+        position: groupMemberships.position,
+      })
+      .from(groupMemberships)
+      .innerJoin(members, eq(groupMemberships.memberId, members.id))
+      .where(eq(groupMemberships.groupId, boardGroup.id))
+      .orderBy(asc(members.lastName));
+
+    return boardMembers.sort((a, b) => {
+      const [rankA, nameA] = positionSortKey(a.position);
+      const [rankB, nameB] = positionSortKey(b.position);
+      if (rankA !== rankB) return rankA - rankB;
+      return nameA.localeCompare(nameB);
+    });
+  } catch {
+    return [];
+  }
+}
+
+export default async function AboutPage() {
+  const leadership = await getLeadership();
+
   return (
     <div className="min-h-screen bg-white">
       <div className="bg-lions-blue text-white py-16">
@@ -37,10 +91,10 @@ export default function AboutPage() {
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Our Meetings</h2>
             <div className="bg-gray-50 p-6 rounded-lg">
               <p className="text-lg text-gray-700 mb-2">
-                <strong>When:</strong> 1st and 3rd Wednesday of each month at 6:30 PM
+                <strong>When:</strong> 1st and 3rd Thursday of each month at 6:30 PM
               </p>
               <p className="text-lg text-gray-700 mb-2">
-                <strong>Where:</strong> Westerville Community Center
+                <strong>Where:</strong> The Landings, 350 County Line Rd W, Westerville, OH 43082
               </p>
               <p className="text-lg text-gray-700">
                 All meetings are open to visitors. Come see what we're all about!
@@ -50,12 +104,26 @@ export default function AboutPage() {
 
           <section className="mb-12">
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Leadership</h2>
-            <p className="text-lg text-gray-700 mb-4">
+            <p className="text-lg text-gray-700 mb-6">
               Our club is led by dedicated volunteers who guide our service initiatives
               and ensure we meet the needs of our community. Leadership positions rotate
               annually, providing opportunities for all members to contribute their unique
               skills and perspectives.
             </p>
+            {leadership.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {leadership.map((member, index) => (
+                  <div key={index} className="bg-gray-50 p-6 rounded-lg">
+                    <p className="font-semibold text-gray-900">
+                      {member.firstName} {member.lastName}
+                    </p>
+                    {member.position && (
+                      <p className="text-lions-blue text-sm mt-1">{member.position}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </section>
 
           <section>
