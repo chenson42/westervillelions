@@ -11,6 +11,15 @@ export const metadata: Metadata = {
     "Find upcoming events and service projects hosted by the Westerville Lions Club in Westerville, Ohio. All are welcome — come see what Lions service is all about.",
 };
 
+const breadcrumb = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: "https://westervillelions.org" },
+    { "@type": "ListItem", position: 2, name: "Events", item: "https://westervillelions.org/events" },
+  ],
+};
+
 export default async function WhatWeDoPage() {
   const publicEvents = await db
     .select()
@@ -20,6 +29,7 @@ export default async function WhatWeDoPage() {
 
   return (
     <div className="min-h-screen bg-white">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
       <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-4">What We Do</h1>

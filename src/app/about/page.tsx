@@ -58,11 +58,21 @@ async function getLeadership(): Promise<{ firstName: string; lastName: string; p
   }
 }
 
+const breadcrumb = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: "https://westervillelions.org" },
+    { "@type": "ListItem", position: 2, name: "About", item: "https://westervillelions.org/about" },
+  ],
+};
+
 export default async function AboutPage() {
   const leadership = await getLeadership();
 
   return (
     <div className="min-h-screen bg-white">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
       <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-4">About Our Club</h1>

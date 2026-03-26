@@ -60,7 +60,7 @@ export function Header({ session }: HeaderProps) {
 
           <div className="flex items-center gap-4">
             <Link
-              href="/campaigns"
+              href="/donate"
               className="hidden md:inline-block bg-lions-gold text-lions-blue-dark px-4 py-2 rounded-lg font-semibold hover:brightness-95 transition"
             >
               Donate
@@ -126,7 +126,7 @@ export function Header({ session }: HeaderProps) {
                 </Link>
               ))}
               <Link
-                href="/campaigns"
+                href="/donate"
                 onClick={() => setMobileMenuOpen(false)}
                 className="bg-lions-gold text-lions-blue-dark px-4 py-2 rounded-lg font-semibold text-center hover:brightness-95 transition"
               >

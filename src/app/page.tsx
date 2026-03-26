@@ -14,6 +14,14 @@ export const metadata: Metadata = {
     title: "Westerville Lions Club | Serving Westerville, OH Since 1938",
     description:
       "Serving Westerville, Ohio since 1938 through youth programs, hunger relief, humanitarian aid, and hands-on community service.",
+    images: [
+      {
+        url: "/images/hero-bg.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Westerville Lions Club — Serving Westerville, OH Since 1938",
+      },
+    ],
   },
 };
 

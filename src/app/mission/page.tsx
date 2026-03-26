@@ -58,9 +58,19 @@ const causes = [
   },
 ];
 
+const breadcrumb = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: "https://westervillelions.org" },
+    { "@type": "ListItem", position: 2, name: "Mission & Service", item: "https://westervillelions.org/mission" },
+  ],
+};
+
 export default function MissionPage() {
   return (
     <div className="min-h-screen bg-white">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
       {/* Hero */}
       <div className="bg-lions-blue text-white py-20">
         <div className="container mx-auto px-4 max-w-4xl">

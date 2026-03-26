@@ -9,9 +9,19 @@ export const metadata: Metadata = {
     "Get in touch with the Westerville Lions Club. Send a message, subscribe to our newsletter, or stop by one of our meetings in Westerville, Ohio.",
 };
 
+const breadcrumb = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: "https://westervillelions.org" },
+    { "@type": "ListItem", position: 2, name: "Connect", item: "https://westervillelions.org/contact" },
+  ],
+};
+
 export default function ContactPage() {
   return (
     <div className="min-h-screen bg-white">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
       <div className="bg-lions-blue text-white py-16">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl font-bold mb-4">Connect With Us</h1>
@@ -39,13 +49,25 @@ export default function ContactPage() {
 
                 <div>
                   <h3 className="text-xl font-semibold mb-2 text-lions-blue">Meeting Location</h3>
-                  <p className="text-lg text-gray-700">
+                  <p className="text-lg text-gray-700 mb-3">
                     The Landings
                     <br />
                     350 County Line Rd W
                     <br />
                     Westerville, OH 43082
                   </p>
+                  <div className="rounded-lg overflow-hidden border border-gray-200">
+                    <iframe
+                      title="Meeting location map"
+                      src="https://maps.google.com/maps?q=The+Landings+350+County+Line+Rd+W+Westerville+OH+43082&output=embed&z=15"
+                      width="100%"
+                      height="220"
+                      style={{ border: 0 }}
+                      allowFullScreen
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -101,9 +123,9 @@ export default function ContactPage() {
           {/* Newsletter signup */}
           <div id="newsletter" className="rounded-xl border border-lions-blue/20 bg-lions-blue/5 p-8">
             <div className="max-w-xl">
-              <h2 className="text-2xl font-bold mb-2 text-gray-900">Stay in the Loop</h2>
+              <h2 className="text-2xl font-bold mb-2 text-gray-900">Be Part of Something Bigger</h2>
               <p className="text-gray-600 mb-6">
-                Subscribe to our newsletter for updates on events, community projects, and ways to get involved with the Westerville Lions Club.
+                Get monthly updates on service projects, community events, and membership opportunities — delivered straight to your inbox. No spam, just Lions.
               </p>
               <NewsletterForm />
             </div>
