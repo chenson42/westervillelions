@@ -29,6 +29,8 @@ const FAMOUS_PEOPLE: Record<string, string> = {
   "William Phythyon": "Benjamin_Franklin",
   "Kris Thompson":    "George_Washington",
   "Chris Henson":     "Mark_Twain",
+  "Howard Baum":      "Winston_Churchill",
+  "Jane Enneking":    "Harriet_Tubman",
 };
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));

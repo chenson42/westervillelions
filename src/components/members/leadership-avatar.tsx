@@ -17,7 +17,7 @@ export function LeadershipAvatar({ src, alt }: LeadershipAvatarProps) {
 
   if (failed) {
     return (
-      <div className="w-16 h-16 rounded-full overflow-hidden mx-auto mb-3 border border-gray-200">
+      <div className="w-24 h-24 rounded-full overflow-hidden mx-auto mb-3 border border-gray-200">
         <ShadowAvatar />
       </div>
     );
@@ -28,7 +28,7 @@ export function LeadershipAvatar({ src, alt }: LeadershipAvatarProps) {
     <img
       src={src}
       alt={alt}
-      className="w-16 h-16 rounded-full object-cover mx-auto mb-3 border border-gray-200"
+      className="w-24 h-24 rounded-full object-cover mx-auto mb-3 border border-gray-200"
       onError={() => setFailed(true)}
     />
   );
