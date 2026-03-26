@@ -30,10 +30,15 @@ export default async function WhatWeDoPage() {
   return (
     <div className="min-h-screen bg-white">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
-      <div className="bg-lions-blue text-white py-16">
-        <div className="container mx-auto px-4">
-          <h1 className="text-4xl font-bold mb-4">What We Do</h1>
-          <p className="text-xl">Serving our community through action and partnership</p>
+      <div className="bg-lions-blue text-white py-20">
+        <div className="container mx-auto px-4 max-w-4xl">
+          <p className="text-lions-gold font-semibold uppercase tracking-widest text-sm mb-4">
+            Get Involved
+          </p>
+          <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">Upcoming Events</h1>
+          <p className="text-xl md:text-2xl text-blue-100 max-w-2xl leading-relaxed">
+            Serving our community through action and partnership — come join us at our next event.
+          </p>
         </div>
       </div>
 

@@ -174,6 +174,7 @@ export const events = pgTable("events", {
   location: text("location"),
   image: text("image"), // Event photo path
   isPublic: boolean("is_public").notNull().default(false), // public events shown on website
+  requiresRsvp: boolean("requires_rsvp").notNull().default(false),
   maxAttendees: integer("max_attendees"),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),

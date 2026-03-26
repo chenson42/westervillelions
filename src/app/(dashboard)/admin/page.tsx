@@ -1,7 +1,8 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, members, events, campaigns } from "@/lib/db/schema";
-import { sql } from "drizzle-orm";
+import { members, events, campaigns, contactSubmissions, membershipApplications, newsletterSubscriptions } from "@/lib/db/schema";
+import { sql, gte, eq } from "drizzle-orm";
+import Link from "next/link";
 
 /**
  * Admin Dashboard
@@ -11,17 +12,34 @@ import { sql } from "drizzle-orm";
 export default async function AdminDashboardPage() {
   const session = await auth();
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   // Fetch statistics
-  const stats = await Promise.all([
-    db.select({ count: sql<number>`count(*)::int` }).from(users),
-    db.select({ count: sql<number>`count(*)::int` }).from(members),
-    db.select({ count: sql<number>`count(*)::int` }).from(events),
-    db.select({ count: sql<number>`count(*)::int` }).from(campaigns),
+  const [
+    membersResult,
+    upcomingEventsResult,
+    campaignsResult,
+    unreadContactsResult,
+    pendingApplicationsResult,
+    recentNewsletterResult,
+  ] = await Promise.all([
+    db.select({ count: sql<number>`count(*)::int` }).from(members).where(eq(members.isActive, true)),
+    db.select({ count: sql<number>`count(*)::int` }).from(events).where(gte(events.startDate, today)),
+    db.select({ count: sql<number>`count(*)::int` }).from(campaigns).where(eq(campaigns.isActive, true)),
+    db.select({ count: sql<number>`count(*)::int` }).from(contactSubmissions).where(eq(contactSubmissions.isRead, false)),
+    db.select({ count: sql<number>`count(*)::int` }).from(membershipApplications).where(eq(membershipApplications.status, "pending")),
+    db.select({ count: sql<number>`count(*)::int` }).from(newsletterSubscriptions).where(eq(newsletterSubscriptions.isActive, true)),
   ]);
 
-  const [usersCount, membersCount, eventsCount, campaignsCount] = stats.map(
-    (s) => s[0]?.count || 0
-  );
+  const membersCount = membersResult[0]?.count || 0;
+  const upcomingEventsCount = upcomingEventsResult[0]?.count || 0;
+  const campaignsCount = campaignsResult[0]?.count || 0;
+  const unreadContacts = unreadContactsResult[0]?.count || 0;
+  const pendingApplications = pendingApplicationsResult[0]?.count || 0;
+  const newsletterCount = recentNewsletterResult[0]?.count || 0;
+
+  const needsAttention = unreadContacts > 0 || pendingApplications > 0;
 
   return (
     <div className="space-y-6">
@@ -32,32 +50,74 @@ export default async function AdminDashboardPage() {
         </p>
       </div>
 
+      {/* Needs Attention */}
+      {needsAttention && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-5">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-amber-800 mb-3">Needs Attention</h2>
+          <div className="flex flex-wrap gap-3">
+            {pendingApplications > 0 && (
+              <Link
+                href="/admin/applications"
+                className="flex items-center gap-2 rounded-md bg-white border border-amber-300 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+              >
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">
+                  {pendingApplications}
+                </span>
+                Pending Member Application{pendingApplications !== 1 ? "s" : ""}
+              </Link>
+            )}
+            {unreadContacts > 0 && (
+              <Link
+                href="/admin/contacts"
+                className="flex items-center gap-2 rounded-md bg-white border border-amber-300 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+              >
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">
+                  {unreadContacts}
+                </span>
+                Unread Contact Message{unreadContacts !== 1 ? "s" : ""}
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Stats grid */}
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Total Users"
-          value={usersCount}
-          icon="👥"
-          description="Registered accounts"
-        />
+      <div className="grid gap-6 sm:grid-cols-3">
         <StatCard
           title="Active Members"
           value={membersCount}
           icon="🦁"
           description="Club members"
+          href="/admin/members"
         />
         <StatCard
-          title="Events"
-          value={eventsCount}
+          title="Upcoming Events"
+          value={upcomingEventsCount}
           icon="📅"
-          description="Scheduled events"
+          description="Today and future"
+          href="/admin/events"
         />
         <StatCard
-          title="Campaigns"
+          title="Active Campaigns"
           value={campaignsCount}
           icon="💰"
-          description="Active campaigns"
+          description="Live donation campaigns"
+          href="/admin/campaigns"
         />
+      </div>
+
+      {/* Newsletter stat */}
+      <div className="rounded-lg border border-gray-200 bg-white p-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">📧</span>
+          <div>
+            <p className="text-sm font-medium text-gray-700">Newsletter Subscribers</p>
+            <p className="text-xs text-gray-500">{newsletterCount} active subscription{newsletterCount !== 1 ? "s" : ""}</p>
+          </div>
+        </div>
+        <Link href="/admin/newsletter" className="text-sm text-lions-blue hover:text-lions-blue-dark font-medium">
+          Export →
+        </Link>
       </div>
 
       {/* Quick actions */}
@@ -72,33 +132,6 @@ export default async function AdminDashboardPage() {
           <QuickActionButton href="/admin/permissions" label="Permissions" />
         </div>
       </div>
-
-      {/* System info */}
-      <div className="rounded-lg border border-gray-200 bg-white p-6">
-        <h2 className="text-lg font-semibold text-gray-900">System Information</h2>
-        <dl className="mt-4 space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-gray-600">Your Role:</dt>
-            <dd className="font-medium text-gray-900">
-              {session?.user?.roles?.[0] || "None"}
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-gray-600">Permissions:</dt>
-            <dd className="font-medium text-gray-900">
-              {session?.user?.features?.length || 0} features
-            </dd>
-          </div>
-          {session?.user?.memberId && (
-            <div className="flex justify-between">
-              <dt className="text-gray-600">Member ID:</dt>
-              <dd className="font-medium text-gray-900">
-                {session.user.memberId.substring(0, 8)}...
-              </dd>
-            </div>
-          )}
-        </dl>
-      </div>
     </div>
   );
 }
@@ -108,14 +141,16 @@ function StatCard({
   value,
   icon,
   description,
+  href,
 }: {
   title: string;
   value: number;
   icon: string;
   description: string;
+  href: string;
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-6">
+    <Link href={href} className="block rounded-lg border border-gray-200 bg-white p-6 hover:border-lions-blue transition-colors">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-gray-600">{title}</p>
@@ -124,7 +159,7 @@ function StatCard({
         </div>
         <div className="text-4xl">{icon}</div>
       </div>
-    </div>
+    </Link>
   );
 }
 

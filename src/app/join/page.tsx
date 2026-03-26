@@ -18,10 +18,15 @@ export default function JoinPage() {
   return (
     <div className="min-h-screen bg-white">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
-      <div className="bg-lions-blue text-white py-16">
-        <div className="container mx-auto px-4">
-          <h1 className="text-4xl font-bold mb-4">Join the Lions Club</h1>
-          <p className="text-xl">Become a member and serve your community</p>
+      <div className="bg-lions-blue text-white py-20">
+        <div className="container mx-auto px-4 max-w-4xl">
+          <p className="text-lions-gold font-semibold uppercase tracking-widest text-sm mb-4">
+            Membership
+          </p>
+          <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">Join the Lions Club</h1>
+          <p className="text-xl md:text-2xl text-blue-100 max-w-2xl leading-relaxed">
+            Become a member and make a real difference — in Westerville and around the world.
+          </p>
         </div>
       </div>
 

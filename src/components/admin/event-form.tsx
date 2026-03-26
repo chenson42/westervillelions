@@ -13,6 +13,7 @@ export interface EventFormData {
   location?: string | null;
   image?: string | null;
   isPublic: boolean;
+  requiresRsvp: boolean;
   maxAttendees?: number | null;
 }
 
@@ -30,6 +31,7 @@ export default function EventForm({
       title: "",
       startDate: "",
       isPublic: false,
+      requiresRsvp: false,
     }
   );
 
@@ -218,6 +220,25 @@ export default function EventForm({
             <label htmlFor="isPublic" className="ml-2 block text-sm text-gray-700">
               Public (visible on public events page)
             </label>
+          </div>
+
+          <div>
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="requiresRsvp"
+                name="requiresRsvp"
+                checked={formData.requiresRsvp}
+                onChange={handleChange}
+                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+              />
+              <label htmlFor="requiresRsvp" className="ml-2 block text-sm text-gray-700">
+                Requires RSVP
+              </label>
+            </div>
+            <p className="mt-1 ml-6 text-xs text-gray-500">
+              Members will be prompted to RSVP for this event
+            </p>
           </div>
         </div>
       </div>

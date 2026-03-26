@@ -143,15 +143,22 @@ export default async function AdminEventsPage({
                     {event.location || "—"}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4">
-                    <span
-                      className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
-                        event.isPublic
-                          ? "bg-green-100 text-green-800"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
-                      {event.isPublic ? "Public" : "Members only"}
-                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      <span
+                        className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
+                          event.isPublic
+                            ? "bg-green-100 text-green-800"
+                            : "bg-gray-100 text-gray-800"
+                        }`}
+                      >
+                        {event.isPublic ? "Public" : "Members only"}
+                      </span>
+                      {event.requiresRsvp && (
+                        <span className="inline-flex rounded-full px-2 text-xs font-semibold leading-5 bg-lions-blue/10 text-lions-blue">
+                          RSVP
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
                     <Link

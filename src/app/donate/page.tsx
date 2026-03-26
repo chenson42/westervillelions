@@ -80,10 +80,15 @@ export default async function DonatePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <div className="bg-lions-blue text-white py-16">
-        <div className="container mx-auto px-4">
-          <h1 className="text-4xl font-bold mb-4">Support Our Mission</h1>
-          <p className="text-xl">Your generosity helps us serve our community</p>
+      <div className="bg-lions-blue text-white py-20">
+        <div className="container mx-auto px-4 max-w-4xl">
+          <p className="text-lions-gold font-semibold uppercase tracking-widest text-sm mb-4">
+            Give Back
+          </p>
+          <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">Support Our Mission</h1>
+          <p className="text-xl md:text-2xl text-blue-100 max-w-2xl leading-relaxed">
+            Your generosity helps us serve our community — 100% of donations go toward local and humanitarian service.
+          </p>
         </div>
       </div>
 
