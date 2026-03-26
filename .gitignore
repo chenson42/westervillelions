@@ -35,6 +35,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# claude code local files
+.claude/projects/
+
 # drizzle (but keep migrations)
 drizzle/*
 !drizzle/migrations/
