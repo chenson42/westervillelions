@@ -9,11 +9,11 @@ const siteUrl = "https://westervillelions.org";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Westerville Lions Club | Serving Westerville, OH Since 1938",
+    default: "Westerville Lions Club | Serving Westerville, OH Since 1928",
     template: "%s | Westerville Lions Club",
   },
   description:
-    "The Westerville Lions Club is a 501(c)(3) nonprofit serving Westerville, Ohio since 1938 through youth programs, hunger relief, humanitarian aid, and community service.",
+    "The Westerville Lions Club is a 501(c)(3) nonprofit serving Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and community service.",
   openGraph: {
     type: "website",
     siteName: "Westerville Lions Club",
@@ -39,7 +39,7 @@ const jsonLd = {
   name: "Westerville Lions Club",
   url: siteUrl,
   logo: `${siteUrl}/images/logo-official.png`,
-  foundingDate: "1938",
+  foundingDate: "1928",
   description:
     "A 501(c)(3) nonprofit serving Westerville, Ohio through youth programs, hunger relief, humanitarian aid, and community service.",
   address: {

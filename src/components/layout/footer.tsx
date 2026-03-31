@@ -19,7 +19,7 @@ export function Footer() {
               />
             </div>
             <p className="text-gray-400 mb-4 text-sm">
-              Serving Westerville through humanitarian service since 1938.
+              Serving Westerville through humanitarian service since 1928.
             </p>
             <div className="flex gap-4">
               <a

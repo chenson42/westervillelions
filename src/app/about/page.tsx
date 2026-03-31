@@ -7,7 +7,7 @@ import { LeadershipAvatar } from "@/components/members/leadership-avatar";
 export const metadata: Metadata = {
   title: "About Us",
   description:
-    "Learn about the Westerville Lions Club — a community service organization serving Westerville, Ohio since 1938 as part of Lions Clubs International.",
+    "Learn about the Westerville Lions Club — a community service organization serving Westerville, Ohio since 1928 as part of Lions Clubs International.",
 };
 
 const POSITION_ORDER: Record<string, number> = {
@@ -82,7 +82,7 @@ export default async function AboutPage() {
           </p>
           <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">About Our Club</h1>
           <p className="text-xl md:text-2xl text-blue-100 max-w-2xl leading-relaxed">
-            Serving our community with pride since 1938 — a proud chapter of Lions Clubs International.
+            Serving our community with pride since 1928 — a proud chapter of Lions Clubs International.
           </p>
         </div>
       </div>
@@ -93,7 +93,7 @@ export default async function AboutPage() {
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Our History</h2>
             <p className="text-lg text-gray-700 mb-4">
               The Westerville Lions Club has been a cornerstone of community service in
-              Westerville, Ohio since 1938. For over 85 years, our members have dedicated
+              Westerville, Ohio since 1928. For over 85 years, our members have dedicated
               themselves to improving the lives of our neighbors through humanitarian service
               and civic engagement.
             </p>
@@ -108,7 +108,7 @@ export default async function AboutPage() {
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Our Meetings</h2>
             <div className="bg-gray-50 p-6 rounded-lg">
               <p className="text-lg text-gray-700 mb-2">
-                <strong>When:</strong> 1st and 3rd Thursday of each month at 6:30 PM
+                <strong>When:</strong> 1st and 3rd Thursday of each month at 6:30 PM (September–May)
               </p>
               <p className="text-lg text-gray-700 mb-2">
                 <strong>Where:</strong> The Landings, 350 County Line Rd W, Westerville, OH 43082

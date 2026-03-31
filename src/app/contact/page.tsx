@@ -76,6 +76,15 @@ export default function ContactPage() {
                 </div>
 
                 <div>
+                  <h3 className="text-xl font-semibold mb-2 text-lions-blue">Mailing Address</h3>
+                  <p className="text-lg text-gray-700">
+                    PO Box 0597
+                    <br />
+                    Westerville, OH 43086-0597
+                  </p>
+                </div>
+
+                <div>
                   <h3 className="text-xl font-semibold mb-2 text-lions-blue">Follow Us</h3>
                   <p className="text-lg text-gray-700 mb-3">
                     Stay up to date on social media

@@ -7,25 +7,25 @@ import { members } from "@/lib/db/schema";
 import { eq, count } from "drizzle-orm";
 
 export const metadata: Metadata = {
-  title: "Westerville Lions Club | Serving Westerville, OH Since 1938",
+  title: "Westerville Lions Club | Serving Westerville, OH Since 1928",
   description:
-    "The Westerville Lions Club has served Westerville, Ohio since 1938 through youth programs, hunger relief, humanitarian aid, and hands-on community service. Join us.",
+    "The Westerville Lions Club has served Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and hands-on community service. Join us.",
   openGraph: {
-    title: "Westerville Lions Club | Serving Westerville, OH Since 1938",
+    title: "Westerville Lions Club | Serving Westerville, OH Since 1928",
     description:
-      "Serving Westerville, Ohio since 1938 through youth programs, hunger relief, humanitarian aid, and hands-on community service.",
+      "Serving Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and hands-on community service.",
     images: [
       {
         url: "/images/hero-bg.jpg",
         width: 1200,
         height: 630,
-        alt: "Westerville Lions Club — Serving Westerville, OH Since 1938",
+        alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
       },
     ],
   },
 };
 
-const FOUNDING_YEAR = 1938;
+const FOUNDING_YEAR = 1928;
 
 export default async function HomePage() {
   const [{ value: memberCount }] = await db
@@ -56,7 +56,7 @@ export default async function HomePage() {
             Westerville Lions Club
           </h1>
           <p className="text-2xl md:text-3xl mb-8 font-light">
-            Serving Our Community Since 1938
+            Serving Our Community Since 1928
           </p>
           <p className="text-xl md:text-2xl max-w-4xl mx-auto font-light leading-relaxed mb-10">
             Creating and fostering a spirit of understanding among all people

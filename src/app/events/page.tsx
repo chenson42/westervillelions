@@ -95,38 +95,6 @@ export default async function WhatWeDoPage() {
             )}
           </div>
 
-          {/* Service areas — secondary context */}
-          <div className="mb-16">
-            <h2 className="text-3xl font-bold mb-3 text-gray-900">Our Service Areas</h2>
-            <p className="text-gray-600 mb-8">
-              Lions service spans a broad range of humanitarian causes — locally and globally.{" "}
-              <Link href="/mission" className="text-lions-blue hover:underline font-medium">
-                Learn more about our mission.
-              </Link>
-            </p>
-            <div className="grid sm:grid-cols-3 gap-6">
-              {[
-                {
-                  title: "Community Service",
-                  body: "Food drives, holiday programs, and hands-on support for families in Westerville.",
-                },
-                {
-                  title: "Youth Development",
-                  body: "Scholarships, educational programs, and youth leadership opportunities.",
-                },
-                {
-                  title: "Humanitarian Aid",
-                  body: "Disaster relief and emergency assistance locally and through Lions International.",
-                },
-              ].map((area) => (
-                <div key={area.title} className="border border-gray-200 rounded-xl p-6 hover:border-lions-blue/40 hover:shadow-sm transition">
-                  <h3 className="text-lg font-semibold mb-2 text-lions-blue">{area.title}</h3>
-                  <p className="text-gray-700 text-sm leading-relaxed">{area.body}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
           {/* Get Involved CTA */}
           <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white p-8 rounded-xl text-center">
             <h2 className="text-3xl font-bold mb-4">Join Us in Service</h2>
