@@ -1,7 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
+import { Turnstile } from "@marsidev/react-turnstile";
+import type { TurnstileInstance } from "@marsidev/react-turnstile";
+
+const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "1x00000000000000000000AA";
+const IS_DEV = process.env.NODE_ENV === "development";
 
 type MemberType = "new" | "former" | "transfer" | "family" | "student" | "leo" | "young_adult";
 
@@ -19,13 +24,22 @@ export function MembershipApplicationForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [memberType, setMemberType] = useState<MemberType>("new");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(IS_DEV ? "dev-bypass" : null);
+  const [captchaError, setCaptchaError] = useState(false);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
+    if (!captchaToken && !captchaError) {
+      toast.error("Please complete the CAPTCHA verification.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     const formData = new FormData(e.currentTarget);
-    const data = Object.fromEntries(formData.entries());
+    const data = { ...Object.fromEntries(formData.entries()), captchaToken };
 
     try {
       const res = await fetch("/api/membership-applications", {
@@ -42,6 +56,8 @@ export function MembershipApplicationForm() {
       setSubmitted(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to submit application");
+      turnstileRef.current?.reset();
+      setCaptchaToken(null);
     } finally {
       setIsSubmitting(false);
     }
@@ -350,9 +366,20 @@ export function MembershipApplicationForm() {
         </p>
       </section>
 
+      {!IS_DEV && (
+        <Turnstile
+          ref={turnstileRef}
+          siteKey={SITE_KEY}
+          onSuccess={(token) => setCaptchaToken(token)}
+          onExpire={() => setCaptchaToken(null)}
+          onError={() => setCaptchaError(true)}
+          options={{ theme: "light" }}
+        />
+      )}
+
       <button
         type="submit"
-        disabled={isSubmitting}
+        disabled={isSubmitting || (!captchaToken && !IS_DEV)}
         className="w-full bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 disabled:cursor-not-allowed"
       >
         {isSubmitting ? "Submitting..." : "Submit Application"}

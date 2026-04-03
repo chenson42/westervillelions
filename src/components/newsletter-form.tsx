@@ -1,6 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { Turnstile } from "@marsidev/react-turnstile";
+import type { TurnstileInstance } from "@marsidev/react-turnstile";
+
+const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "1x00000000000000000000AA";
+const IS_DEV = process.env.NODE_ENV === "development";
 
 export function NewsletterForm() {
   const [email, setEmail] = useState("");
@@ -8,9 +13,19 @@ export function NewsletterForm() {
   const [lastName, setLastName] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(IS_DEV ? "dev-bypass" : null);
+  const [captchaError, setCaptchaError] = useState(false);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    if (!captchaToken && !captchaError) {
+      setErrorMsg("Please complete the CAPTCHA verification.");
+      setStatus("error");
+      return;
+    }
+
     setStatus("loading");
     setErrorMsg("");
 
@@ -18,13 +33,15 @@ export function NewsletterForm() {
       const res = await fetch("/api/newsletter/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, firstName, lastName }),
+        body: JSON.stringify({ email, firstName, lastName, captchaToken }),
       });
 
       if (!res.ok) {
         const data = await res.json();
         setErrorMsg(data.error ?? "Something went wrong. Please try again.");
         setStatus("error");
+        turnstileRef.current?.reset();
+        setCaptchaToken(null);
         return;
       }
 
@@ -32,6 +49,8 @@ export function NewsletterForm() {
     } catch {
       setErrorMsg("Something went wrong. Please try again.");
       setStatus("error");
+      turnstileRef.current?.reset();
+      setCaptchaToken(null);
     }
   }
 
@@ -97,9 +116,20 @@ export function NewsletterForm() {
         <p className="text-sm text-red-600">{errorMsg}</p>
       )}
 
+      {!IS_DEV && (
+        <Turnstile
+          ref={turnstileRef}
+          siteKey={SITE_KEY}
+          onSuccess={(token) => setCaptchaToken(token)}
+          onExpire={() => setCaptchaToken(null)}
+          onError={() => setCaptchaError(true)}
+          options={{ theme: "light" }}
+        />
+      )}
+
       <button
         type="submit"
-        disabled={status === "loading"}
+        disabled={status === "loading" || (!captchaToken && !IS_DEV)}
         className="w-full rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-50 transition"
       >
         {status === "loading" ? "Subscribing…" : "Subscribe to Newsletter"}

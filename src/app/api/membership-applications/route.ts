@@ -2,6 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { membershipApplications } from "@/lib/db/schema";
 
+async function verifyTurnstile(token: string): Promise<boolean> {
+  const secret = process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA";
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ secret, response: token }),
+  });
+  const data = await res.json();
+  return data.success === true;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -10,6 +21,7 @@ export async function POST(request: NextRequest) {
       firstName,
       lastName,
       email,
+      captchaToken,
       middleInitial,
       suffix,
       gender,
@@ -33,6 +45,15 @@ export async function POST(request: NextRequest) {
         { error: "First name, last name, and email are required" },
         { status: 400 }
       );
+    }
+
+    if (!captchaToken) {
+      return NextResponse.json({ error: "CAPTCHA verification required" }, { status: 400 });
+    }
+
+    const captchaValid = await verifyTurnstile(captchaToken);
+    if (!captchaValid) {
+      return NextResponse.json({ error: "CAPTCHA verification failed. Please try again." }, { status: 400 });
     }
 
     await db.insert(membershipApplications).values({

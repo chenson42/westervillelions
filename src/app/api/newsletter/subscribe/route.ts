@@ -3,10 +3,30 @@ import { db } from "@/lib/db";
 import { newsletterSubscriptions } from "@/lib/db/schema";
 import { sql, eq } from "drizzle-orm";
 
+async function verifyTurnstile(token: string): Promise<boolean> {
+  const secret = process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA";
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ secret, response: token }),
+  });
+  const data = await res.json();
+  return data.success === true;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { email, firstName, lastName } = body;
+    const { email, firstName, lastName, captchaToken } = body;
+
+    if (!captchaToken) {
+      return NextResponse.json({ error: "CAPTCHA verification required" }, { status: 400 });
+    }
+
+    const captchaValid = await verifyTurnstile(captchaToken);
+    if (!captchaValid) {
+      return NextResponse.json({ error: "CAPTCHA verification failed. Please try again." }, { status: 400 });
+    }
 
     if (!email || typeof email !== "string") {
       return NextResponse.json({ error: "Email is required" }, { status: 400 });
