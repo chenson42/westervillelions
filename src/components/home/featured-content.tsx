@@ -10,7 +10,7 @@ type NextEvent = {
 };
 
 type Props = {
-  nextEvent: NextEvent | null;
+  nextEvents: NextEvent[];
   activeAnnouncements: HomepageAnnouncement[];
 };
 
@@ -34,7 +34,7 @@ function NextEventCard({ event }: { event: NextEvent }) {
     <article className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm border-l-4 border-l-lions-blue h-full flex flex-col">
       <div className="mb-3">
         <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
-          Upcoming Event
+          Upcoming Events
         </span>
       </div>
       <h3 className="text-xl font-bold text-gray-900 mb-2">{event.title}</h3>
@@ -155,28 +155,37 @@ function AnnouncementList({
 
 type FeaturedContentProps = Props & { embedded?: boolean };
 
-export default function FeaturedContent({ nextEvent, activeAnnouncements, embedded = false }: FeaturedContentProps) {
-  if (!nextEvent && activeAnnouncements.length === 0) {
+export default function FeaturedContent({ nextEvents, activeAnnouncements, embedded = false }: FeaturedContentProps) {
+  if (nextEvents.length === 0 && activeAnnouncements.length === 0) {
     return null;
   }
 
-  const hasEvent = nextEvent !== null;
+  const hasEvents = nextEvents.length > 0;
   const hasAnnouncements = activeAnnouncements.length > 0;
 
-  let gridClass = "grid gap-6";
-  if (hasEvent && hasAnnouncements) {
-    gridClass += " md:grid-cols-3";
-  }
+  // Events-only grid class when no announcements
+  const eventsOnlyGrid =
+    nextEvents.length === 1 ? "" :
+    nextEvents.length === 2 ? "md:grid-cols-2" :
+    "md:grid-cols-3";
 
   const grid = (
-    <div className={`${gridClass} max-w-6xl mx-auto`}>
-      {hasEvent && (
+    <div className={`grid gap-6 max-w-6xl mx-auto ${hasEvents && hasAnnouncements ? "md:grid-cols-3" : ""}`}>
+      {hasEvents && (
         <div className={hasAnnouncements ? "md:col-span-2" : "w-full"}>
-          <NextEventCard event={nextEvent} />
+          {nextEvents.length === 1 ? (
+            <NextEventCard event={nextEvents[0]} />
+          ) : (
+            <div className={`grid gap-4 h-full ${eventsOnlyGrid}`}>
+              {nextEvents.map((event) => (
+                <NextEventCard key={event.id} event={event} />
+              ))}
+            </div>
+          )}
         </div>
       )}
       {hasAnnouncements && (
-        <div className={hasEvent ? "md:col-span-1" : "w-full"}>
+        <div className={hasEvents ? "md:col-span-1" : "w-full"}>
           <AnnouncementList announcements={activeAnnouncements} />
         </div>
       )}

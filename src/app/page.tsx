@@ -55,7 +55,7 @@ export default async function HomePage() {
       .from(events)
       .where(and(upcomingPublic, eq(events.isFeatured, true)))
       .orderBy(asc(events.startDate))
-      .limit(1),
+      .limit(3),
 
     db
       .select(eventCols)
@@ -87,7 +87,9 @@ export default async function HomePage() {
       .limit(5),
   ]);
 
-  const nextEvent = featuredEventRows[0] ?? fallbackEventRows[0] ?? null;
+  const nextEvents = featuredEventRows.length > 0
+    ? featuredEventRows
+    : fallbackEventRows.slice(0, 1);
   const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR - 1;
   return (
     <div className="min-h-screen bg-white">
@@ -238,7 +240,7 @@ export default async function HomePage() {
             </div>
           </div>
 
-          <FeaturedContent nextEvent={nextEvent} activeAnnouncements={activeAnnouncementRows} embedded />
+          <FeaturedContent nextEvents={nextEvents} activeAnnouncements={activeAnnouncementRows} embedded />
         </div>
       </section>
 
