@@ -153,7 +153,9 @@ function AnnouncementList({
   );
 }
 
-export default function FeaturedContent({ nextEvent, activeAnnouncements }: Props) {
+type FeaturedContentProps = Props & { embedded?: boolean };
+
+export default function FeaturedContent({ nextEvent, activeAnnouncements, embedded = false }: FeaturedContentProps) {
   if (!nextEvent && activeAnnouncements.length === 0) {
     return null;
   }
@@ -161,11 +163,27 @@ export default function FeaturedContent({ nextEvent, activeAnnouncements }: Prop
   const hasEvent = nextEvent !== null;
   const hasAnnouncements = activeAnnouncements.length > 0;
 
-  // Determine grid layout
   let gridClass = "grid gap-6";
   if (hasEvent && hasAnnouncements) {
     gridClass += " md:grid-cols-3";
   }
+
+  const grid = (
+    <div className={`${gridClass} max-w-6xl mx-auto`}>
+      {hasEvent && (
+        <div className={hasAnnouncements ? "md:col-span-2" : "w-full"}>
+          <NextEventCard event={nextEvent} />
+        </div>
+      )}
+      {hasAnnouncements && (
+        <div className={hasEvent ? "md:col-span-1" : "w-full"}>
+          <AnnouncementList announcements={activeAnnouncements} />
+        </div>
+      )}
+    </div>
+  );
+
+  if (embedded) return grid;
 
   return (
     <section className="py-16 bg-lions-blue/5">
@@ -173,18 +191,7 @@ export default function FeaturedContent({ nextEvent, activeAnnouncements }: Prop
         <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-10 text-center">
           What&rsquo;s Happening
         </h2>
-        <div className={`${gridClass} max-w-6xl mx-auto`}>
-          {hasEvent && (
-            <div className={hasAnnouncements ? "md:col-span-2" : "w-full"}>
-              <NextEventCard event={nextEvent} />
-            </div>
-          )}
-          {hasAnnouncements && (
-            <div className={hasEvent ? "md:col-span-1" : "w-full"}>
-              <AnnouncementList announcements={activeAnnouncements} />
-            </div>
-          )}
-        </div>
+        {grid}
       </div>
     </section>
   );
