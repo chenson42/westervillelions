@@ -96,7 +96,7 @@ export default async function HomePage() {
       {/* Hero Section with Background Image */}
       <section className="relative bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-24 md:py-32 overflow-hidden">
         {/* Background Image Overlay */}
-        <div className="absolute inset-0 bg-black opacity-40"></div>
+        <div className="absolute inset-0 bg-black opacity-30"></div>
         <div
           className="absolute inset-0 bg-cover bg-center"
           style={{
