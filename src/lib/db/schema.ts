@@ -174,6 +174,7 @@ export const events = pgTable("events", {
   location: text("location"),
   image: text("image"), // Event photo path
   isPublic: boolean("is_public").notNull().default(false), // public events shown on website
+  isFeatured: boolean("is_featured").notNull().default(false), // featured on homepage
   requiresRsvp: boolean("requires_rsvp").notNull().default(false),
   maxAttendees: integer("max_attendees"),
   createdBy: uuid("created_by").references(() => users.id),
@@ -236,6 +237,24 @@ export const membershipApplications = pgTable("membership_applications", {
   reviewedAt: timestamp("reviewed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// Homepage announcements (content managed by admins)
+export const homepageAnnouncements = pgTable("homepage_announcements", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  body: text("body"),
+  linkUrl: text("link_url"),
+  linkLabel: text("link_label"),
+  isActive: boolean("is_active").notNull().default(true),
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  endsAt: timestamp("ends_at", { withTimezone: true }),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type HomepageAnnouncement = typeof homepageAnnouncements.$inferSelect;
+export type NewHomepageAnnouncement = typeof homepageAnnouncements.$inferInsert;
 
 // NextAuth required tables
 export const accounts = pgTable("accounts", {

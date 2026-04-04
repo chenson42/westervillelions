@@ -1,0 +1,191 @@
+import Link from "next/link";
+import type { HomepageAnnouncement } from "@/lib/db/schema";
+
+type NextEvent = {
+  id: string;
+  title: string;
+  startDate: Date;
+  location: string | null;
+  description: string | null;
+};
+
+type Props = {
+  nextEvent: NextEvent | null;
+  activeAnnouncements: HomepageAnnouncement[];
+};
+
+function formatEventDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function NextEventCard({ event }: { event: NextEvent }) {
+  const description =
+    event.description && event.description.length > 150
+      ? event.description.slice(0, 150) + "…"
+      : event.description;
+
+  return (
+    <article className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm border-l-4 border-l-lions-blue h-full flex flex-col">
+      <div className="mb-3">
+        <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
+          Upcoming Event
+        </span>
+      </div>
+      <h3 className="text-xl font-bold text-gray-900 mb-2">{event.title}</h3>
+      <p className="text-sm font-medium text-lions-blue mb-1">
+        {formatEventDate(event.startDate)}
+      </p>
+      {event.location && (
+        <p className="text-sm text-gray-500 mb-3 flex items-center gap-1">
+          <svg
+            className="w-4 h-4 shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth="1.5"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"
+            />
+          </svg>
+          {event.location}
+        </p>
+      )}
+      {description && (
+        <p className="text-gray-600 text-sm leading-relaxed mb-4 flex-1">
+          {description}
+        </p>
+      )}
+      <div className="mt-auto pt-2">
+        <Link
+          href="/events"
+          className="inline-flex items-center text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition-colors focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 rounded"
+        >
+          See All Events
+          <svg
+            className="ml-1 w-4 h-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth="2"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+            />
+          </svg>
+        </Link>
+      </div>
+    </article>
+  );
+}
+
+function AnnouncementList({
+  announcements,
+}: {
+  announcements: HomepageAnnouncement[];
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm h-full">
+      <div className="px-6 pt-6 pb-2">
+        <h3 className="text-base font-bold text-gray-900 uppercase tracking-wide">
+          Announcements
+        </h3>
+      </div>
+      <ul>
+        {announcements.map((item, index) => {
+          const body =
+            item.body && item.body.length > 200
+              ? item.body.slice(0, 200) + "…"
+              : item.body;
+          const label = item.linkLabel ?? "Learn more";
+
+          return (
+            <li key={item.id}>
+              {index > 0 && <hr className="border-gray-100 mx-6" />}
+              <div className="px-6 py-4">
+                <p className="font-semibold text-gray-900 text-sm leading-snug">
+                  {item.title}
+                </p>
+                {body && (
+                  <p className="mt-1 text-sm text-gray-600 leading-relaxed">
+                    {body}
+                  </p>
+                )}
+                {item.linkUrl && (
+                  <a
+                    href={item.linkUrl}
+                    className="mt-2 inline-flex items-center text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition-colors focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-1 rounded"
+                    target={
+                      item.linkUrl.startsWith("http") ? "_blank" : undefined
+                    }
+                    rel={
+                      item.linkUrl.startsWith("http")
+                        ? "noopener noreferrer"
+                        : undefined
+                    }
+                  >
+                    {label} &rarr;
+                  </a>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+export default function FeaturedContent({ nextEvent, activeAnnouncements }: Props) {
+  if (!nextEvent && activeAnnouncements.length === 0) {
+    return null;
+  }
+
+  const hasEvent = nextEvent !== null;
+  const hasAnnouncements = activeAnnouncements.length > 0;
+
+  // Determine grid layout
+  let gridClass = "grid gap-6";
+  if (hasEvent && hasAnnouncements) {
+    gridClass += " md:grid-cols-3";
+  }
+
+  return (
+    <section className="py-16 bg-lions-blue/5">
+      <div className="container mx-auto px-4">
+        <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-10 text-center">
+          What&rsquo;s Happening
+        </h2>
+        <div className={`${gridClass} max-w-6xl mx-auto`}>
+          {hasEvent && (
+            <div className={hasAnnouncements ? "md:col-span-2" : "w-full"}>
+              <NextEventCard event={nextEvent} />
+            </div>
+          )}
+          {hasAnnouncements && (
+            <div className={hasEvent ? "md:col-span-1" : "w-full"}>
+              <AnnouncementList announcements={activeAnnouncements} />
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

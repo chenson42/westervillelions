@@ -13,6 +13,7 @@ export interface EventFormData {
   location?: string | null;
   image?: string | null;
   isPublic: boolean;
+  isFeatured: boolean;
   requiresRsvp: boolean;
   maxAttendees?: number | null;
 }
@@ -31,6 +32,7 @@ export default function EventForm({
       title: "",
       startDate: "",
       isPublic: false,
+      isFeatured: false,
       requiresRsvp: false,
     }
   );
@@ -208,18 +210,38 @@ export default function EventForm({
             />
           </div>
 
-          <div className="flex items-center">
-            <input
-              type="checkbox"
-              id="isPublic"
-              name="isPublic"
-              checked={formData.isPublic}
-              onChange={handleChange}
-              className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
-            />
-            <label htmlFor="isPublic" className="ml-2 block text-sm text-gray-700">
-              Public (visible on public events page)
-            </label>
+          <div className="space-y-3">
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="isPublic"
+                name="isPublic"
+                checked={formData.isPublic}
+                onChange={handleChange}
+                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+              />
+              <label htmlFor="isPublic" className="ml-2 block text-sm text-gray-700">
+                Public (visible on public events page)
+              </label>
+            </div>
+            <div className="flex items-start">
+              <input
+                type="checkbox"
+                id="isFeatured"
+                name="isFeatured"
+                checked={formData.isFeatured}
+                onChange={handleChange}
+                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue mt-0.5"
+              />
+              <div className="ml-2">
+                <label htmlFor="isFeatured" className="block text-sm text-gray-700">
+                  Featured on homepage
+                </label>
+                <p className="text-xs text-gray-500">
+                  Shows this event in the &quot;What&apos;s Happening&quot; section. Only the next upcoming featured event is shown.
+                </p>
+              </div>
+            </div>
           </div>
 
           <div>

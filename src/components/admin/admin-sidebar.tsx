@@ -66,6 +66,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.GROUPS_MANAGE,
   },
   {
+    name: "Announcements",
+    href: "/admin/announcements",
+    icon: "📣",
+    requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
+  },
+  {
     name: "Contact",
     href: "/admin/contact",
     icon: "✉️",

@@ -128,7 +128,7 @@ export default function MissionPage() {
           <section>
             <h2 className="text-3xl font-bold mb-3 text-gray-900">How We Serve</h2>
             <p className="text-gray-600 mb-8 text-lg">
-              Our service spans Lions Clubs International&apos;s five global causes and
+              Our service spans Lions Clubs International&apos;s eight global causes and
               the day-to-day needs of our own backyard.
             </p>
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">

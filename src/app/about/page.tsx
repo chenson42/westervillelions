@@ -93,7 +93,7 @@ export default async function AboutPage() {
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Our History</h2>
             <p className="text-lg text-gray-700 mb-4">
               The Westerville Lions Club has been a cornerstone of community service in
-              Westerville, Ohio since 1928. For over 85 years, our members have dedicated
+              Westerville, Ohio since 1928. For {new Date().getFullYear() - 1928 - 1}+ years, our members have dedicated
               themselves to improving the lives of our neighbors through humanitarian service
               and civic engagement.
             </p>

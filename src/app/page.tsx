@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import { ServiceCard } from "@/components/home/service-card";
 import { InstagramGrid } from "@/components/home/instagram-grid";
 import { ZeffyButton } from "@/components/campaigns/zeffy-button";
+import FeaturedContent from "@/components/home/featured-content";
 import { db } from "@/lib/db";
-import { members } from "@/lib/db/schema";
-import { eq, count } from "drizzle-orm";
+import { members, events, homepageAnnouncements } from "@/lib/db/schema";
+import { eq, count, gt, asc, lte, gte, isNull, or, and } from "drizzle-orm";
 
 export const metadata: Metadata = {
   title: "Westerville Lions Club | Serving Westerville, OH Since 1928",
@@ -28,12 +29,67 @@ export const metadata: Metadata = {
 const FOUNDING_YEAR = 1928;
 
 export default async function HomePage() {
-  const [{ value: memberCount }] = await db
-    .select({ value: count() })
-    .from(members)
-    .where(eq(members.isActive, true));
+  const now = new Date();
 
-  const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR;
+  const eventCols = {
+    id: events.id,
+    title: events.title,
+    startDate: events.startDate,
+    location: events.location,
+    description: events.description,
+  };
+  const upcomingPublic = and(eq(events.isPublic, true), gt(events.startDate, now));
+
+  const [
+    [{ value: memberCount }],
+    featuredEventRows,
+    fallbackEventRows,
+    activeAnnouncementRows,
+  ] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(members)
+      .where(eq(members.isActive, true)),
+
+    db
+      .select(eventCols)
+      .from(events)
+      .where(and(upcomingPublic, eq(events.isFeatured, true)))
+      .orderBy(asc(events.startDate))
+      .limit(1),
+
+    db
+      .select(eventCols)
+      .from(events)
+      .where(upcomingPublic)
+      .orderBy(asc(events.startDate))
+      .limit(1),
+
+    db
+      .select()
+      .from(homepageAnnouncements)
+      .where(
+        and(
+          eq(homepageAnnouncements.isActive, true),
+          or(
+            isNull(homepageAnnouncements.startsAt),
+            lte(homepageAnnouncements.startsAt, now)
+          ),
+          or(
+            isNull(homepageAnnouncements.endsAt),
+            gte(homepageAnnouncements.endsAt, now)
+          )
+        )
+      )
+      .orderBy(
+        asc(homepageAnnouncements.sortOrder),
+        asc(homepageAnnouncements.createdAt)
+      )
+      .limit(5),
+  ]);
+
+  const nextEvent = featuredEventRows[0] ?? fallbackEventRows[0] ?? null;
+  const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR - 1;
   return (
     <div className="min-h-screen bg-white">
       {/* Hero Section with Background Image */}
@@ -99,6 +155,8 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
+
+      <FeaturedContent nextEvent={nextEvent} activeAnnouncements={activeAnnouncementRows} />
 
       {/* Mission Section with Photos */}
       <section className="py-20 bg-gradient-to-b from-gray-50 to-white">

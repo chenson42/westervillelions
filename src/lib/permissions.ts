@@ -32,6 +32,9 @@ export const FEATURES = {
   // Contact features
   CONTACT_VIEW: "contact.view",
 
+  // Announcements features
+  ANNOUNCEMENTS_MANAGE: "announcements.manage",
+
   // Membership features
   MEMBERSHIP_MANAGE: "membership.manage",
 
@@ -49,6 +52,7 @@ export const FEATURE_CATEGORIES = {
   EVENTS: "events",
   CAMPAIGNS: "campaigns",
   GROUPS: "groups",
+  ANNOUNCEMENTS: "announcements",
   ADMIN: "admin",
   REPORTS: "reports",
 } as const;
@@ -72,6 +76,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.EVENTS_DELETE]: "Delete events",
 
   [FEATURES.CAMPAIGNS_MANAGE]: "Manage donation campaigns and fundraising",
+
+  [FEATURES.ANNOUNCEMENTS_MANAGE]: "Create, edit, and delete homepage announcements",
 
   [FEATURES.GROUPS_MANAGE]: "Manage groups, committees, and team memberships",
 

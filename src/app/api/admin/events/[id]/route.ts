@@ -18,7 +18,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   const body = await request.json();
-  const { title, description, startDate, endDate, location, image, isPublic, requiresRsvp, maxAttendees } = body;
+  const { title, description, startDate, endDate, location, image, isPublic, isFeatured, requiresRsvp, maxAttendees } = body;
 
   const [updated] = await db
     .update(events)
@@ -30,6 +30,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       location: location || null,
       image: image || null,
       isPublic: isPublic ?? existing.isPublic,
+      isFeatured: isFeatured ?? existing.isFeatured,
       requiresRsvp: requiresRsvp ?? existing.requiresRsvp,
       maxAttendees: maxAttendees || null,
       updatedAt: new Date(),

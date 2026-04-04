@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { title, description, startDate, endDate, location, image, isPublic, requiresRsvp, maxAttendees } = body;
+  const { title, description, startDate, endDate, location, image, isPublic, isFeatured, requiresRsvp, maxAttendees } = body;
 
   if (!title || !startDate) {
     return NextResponse.json({ error: "Title and start date are required" }, { status: 400 });
@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
       location: location || null,
       image: image || null,
       isPublic: isPublic ?? false,
+      isFeatured: isFeatured ?? false,
       requiresRsvp: requiresRsvp ?? false,
       maxAttendees: maxAttendees || null,
       createdBy: session.user.id,
