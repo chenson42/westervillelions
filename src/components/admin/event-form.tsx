@@ -16,7 +16,21 @@ export interface EventFormData {
   isFeatured: boolean;
   requiresRsvp: boolean;
   maxAttendees?: number | null;
+  isRecurring: boolean;
+  recurrenceType?: string | null;
+  recurrenceDays?: number[] | null;
+  recurrenceEndDate?: string | null;
 }
+
+const DAYS_OF_WEEK = [
+  { label: "Sun", value: 0 },
+  { label: "Mon", value: 1 },
+  { label: "Tue", value: 2 },
+  { label: "Wed", value: 3 },
+  { label: "Thu", value: 4 },
+  { label: "Fri", value: 5 },
+  { label: "Sat", value: 6 },
+];
 
 export default function EventForm({
   event,
@@ -34,6 +48,7 @@ export default function EventForm({
       isPublic: false,
       isFeatured: false,
       requiresRsvp: false,
+      isRecurring: false,
     }
   );
 
@@ -45,10 +60,18 @@ export default function EventForm({
       const url = eventId ? `/api/admin/events/${eventId}` : "/api/admin/events";
       const method = eventId ? "PATCH" : "POST";
 
+      // Normalise recurrence fields: clear them when not recurring
+      const payload: EventFormData = { ...formData };
+      if (!payload.isRecurring) {
+        payload.recurrenceType = null;
+        payload.recurrenceDays = null;
+        payload.recurrenceEndDate = null;
+      }
+
       const response = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -66,7 +89,7 @@ export default function EventForm({
   };
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value, type } = e.target;
     setFormData((prev) => ({
@@ -78,6 +101,16 @@ export default function EventForm({
           ? parseInt(value, 10) || null
           : value || null,
     }));
+  };
+
+  const handleDayToggle = (day: number) => {
+    setFormData((prev) => {
+      const current = prev.recurrenceDays ?? [];
+      const next = current.includes(day)
+        ? current.filter((d) => d !== day)
+        : [...current, day];
+      return { ...prev, recurrenceDays: next };
+    });
   };
 
   const handleDelete = async () => {
@@ -93,6 +126,10 @@ export default function EventForm({
       toast.error("Failed to delete event");
     }
   };
+
+  const showDaysOfWeek =
+    formData.isRecurring &&
+    (formData.recurrenceType === "weekly" || formData.recurrenceType === "biweekly");
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
@@ -178,6 +215,93 @@ export default function EventForm({
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
+        </div>
+      </div>
+
+      {/* Recurring Event */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-gray-900">Recurring Event</h2>
+        <div className="mt-4">
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="isRecurring"
+              name="isRecurring"
+              checked={formData.isRecurring}
+              onChange={handleChange}
+              className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+            />
+            <label htmlFor="isRecurring" className="ml-2 block text-sm text-gray-700">
+              This is a recurring event
+            </label>
+          </div>
+
+          {formData.isRecurring && (
+            <div className="mt-6 space-y-6">
+              {/* Recurrence type */}
+              <div>
+                <label htmlFor="recurrenceType" className="block text-sm font-medium text-gray-700">
+                  Repeat
+                </label>
+                <select
+                  id="recurrenceType"
+                  name="recurrenceType"
+                  value={formData.recurrenceType || ""}
+                  onChange={handleChange}
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+                >
+                  <option value="">Select frequency...</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="biweekly">Biweekly (every other week)</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+
+              {/* Days of week — only for weekly/biweekly */}
+              {showDaysOfWeek && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Days of the week
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {DAYS_OF_WEEK.map(({ label, value }) => {
+                      const selected = (formData.recurrenceDays ?? []).includes(value);
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => handleDayToggle(value)}
+                          className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+                            selected
+                              ? "bg-lions-blue text-white"
+                              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Series end date */}
+              <div>
+                <label htmlFor="recurrenceEndDate" className="block text-sm font-medium text-gray-700">
+                  Series ends on
+                </label>
+                <input
+                  type="date"
+                  id="recurrenceEndDate"
+                  name="recurrenceEndDate"
+                  value={formData.recurrenceEndDate || ""}
+                  onChange={handleChange}
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue sm:w-48"
+                />
+                <p className="mt-1 text-xs text-gray-500">Leave blank for an open-ended series.</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

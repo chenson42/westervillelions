@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq, or, gt, isNull } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
+import { formatRecurrence, getNextOccurrence } from "@/lib/events";
 
 export const metadata: Metadata = {
   title: "Upcoming Events",
@@ -21,11 +22,33 @@ const breadcrumb = {
 };
 
 export default async function WhatWeDoPage() {
-  const publicEvents = await db
+  const now = new Date();
+
+  // Include future one-time events AND active recurring series
+  const rawEvents = await db
     .select()
     .from(events)
-    .where(and(eq(events.isPublic, true), gte(events.startDate, new Date())))
-    .orderBy(events.startDate);
+    .where(
+      and(
+        eq(events.isPublic, true),
+        or(
+          gt(events.startDate, now),
+          and(
+            eq(events.isRecurring, true),
+            or(isNull(events.recurrenceEndDate), gt(events.recurrenceEndDate, now))
+          )
+        )
+      )
+    );
+
+  // Sort by next occurrence so recurring series appear at the right position
+  const publicEvents = rawEvents
+    .map((event) => ({
+      ...event,
+      nextOccurrence: getNextOccurrence(event, now),
+    }))
+    .filter((event) => event.nextOccurrence !== null)
+    .sort((a, b) => a.nextOccurrence!.getTime() - b.nextOccurrence!.getTime());
 
   return (
     <div className="min-h-screen bg-white">
@@ -50,38 +73,52 @@ export default async function WhatWeDoPage() {
             <h2 className="text-3xl font-bold mb-8 text-gray-900">Upcoming Events</h2>
             {publicEvents.length > 0 ? (
               <div className="space-y-6">
-                {publicEvents.map((event) => (
-                  <div key={event.id} className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition">
-                    {event.image && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={event.image}
-                        alt={event.title}
-                        className="w-full h-64 object-cover"
-                      />
-                    )}
-                    <div className="p-6">
-                      <h3 className="text-2xl font-semibold mb-2 text-gray-900">
-                        {event.title}
-                      </h3>
-                      <div className="flex items-center text-gray-600 mb-3">
-                        <span className="font-medium">
-                          {format(new Date(event.startDate), "MMMM d, yyyy")} at{" "}
-                          {format(new Date(event.startDate), "h:mm a")}
-                        </span>
-                        {event.location && (
-                          <>
-                            <span className="mx-2">•</span>
-                            <span>{event.location}</span>
-                          </>
+                {publicEvents.map((event) => {
+                  const recurrenceLabel = formatRecurrence(event);
+                  return (
+                    <div key={event.id} className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition">
+                      {event.image && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={event.image}
+                          alt={event.title}
+                          className="w-full h-64 object-cover"
+                        />
+                      )}
+                      <div className="p-6">
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <h3 className="text-2xl font-semibold text-gray-900">
+                            {event.title}
+                          </h3>
+                          {event.isRecurring && (
+                            <span className="inline-block rounded-full bg-lions-blue/10 px-2.5 py-0.5 text-xs font-medium text-lions-blue">
+                              Recurring
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-2 text-gray-600 mb-3">
+                          <span className="font-medium">
+                            {recurrenceLabel ?? (
+                              <>
+                                {format(new Date(event.startDate), "MMMM d, yyyy")} at{" "}
+                                {format(new Date(event.startDate), "h:mm a")}
+                              </>
+                            )}
+                          </span>
+                          {event.location && (
+                            <>
+                              <span className="mx-1">·</span>
+                              <span>{event.location}</span>
+                            </>
+                          )}
+                        </div>
+                        {event.description && (
+                          <p className="text-gray-700">{event.description}</p>
                         )}
                       </div>
-                      {event.description && (
-                        <p className="text-gray-700">{event.description}</p>
-                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="text-center py-12 bg-gray-50 rounded-lg">

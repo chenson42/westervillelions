@@ -74,6 +74,12 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
           isFeatured: event.isFeatured,
           requiresRsvp: event.requiresRsvp,
           maxAttendees: event.maxAttendees,
+          isRecurring: event.isRecurring,
+          recurrenceType: event.recurrenceType,
+          recurrenceDays: event.recurrenceDays,
+          recurrenceEndDate: event.recurrenceEndDate
+            ? event.recurrenceEndDate.toISOString().slice(0, 10)
+            : null,
         }}
       />
 

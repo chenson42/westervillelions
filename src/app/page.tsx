@@ -5,6 +5,7 @@ import FeaturedContent from "@/components/home/featured-content";
 import { db } from "@/lib/db";
 import { members, events, homepageAnnouncements } from "@/lib/db/schema";
 import { eq, count, gt, asc, lte, gte, isNull, or, and } from "drizzle-orm";
+import { getNextOccurrence } from "@/lib/events";
 
 export const metadata: Metadata = {
   title: "Westerville Lions Club | Serving Westerville, OH Since 1928",
@@ -36,8 +37,22 @@ export default async function HomePage() {
     startDate: events.startDate,
     location: events.location,
     description: events.description,
+    isRecurring: events.isRecurring,
+    recurrenceType: events.recurrenceType,
+    recurrenceDays: events.recurrenceDays,
+    recurrenceEndDate: events.recurrenceEndDate,
   };
-  const upcomingPublic = and(eq(events.isPublic, true), gt(events.startDate, now));
+  // Match future one-time events OR active recurring series (no end date, or end date still in future)
+  const upcomingPublic = and(
+    eq(events.isPublic, true),
+    or(
+      gt(events.startDate, now),
+      and(
+        eq(events.isRecurring, true),
+        or(isNull(events.recurrenceEndDate), gt(events.recurrenceEndDate, now))
+      )
+    )
+  );
 
   const [
     [{ value: memberCount }],
@@ -62,7 +77,7 @@ export default async function HomePage() {
       .from(events)
       .where(upcomingPublic)
       .orderBy(asc(events.startDate))
-      .limit(1),
+      .limit(5),
 
     db
       .select()
@@ -87,9 +102,24 @@ export default async function HomePage() {
       .limit(5),
   ]);
 
+  // Sort each pool by next occurrence so recurring events land in the right order
+  type EventRow = {
+    startDate: Date;
+    isRecurring: boolean;
+    recurrenceType: string | null;
+    recurrenceDays: number[] | null;
+    recurrenceEndDate: Date | null;
+  };
+  const sortByNextOccurrence = <T extends EventRow>(rows: T[]) =>
+    [...rows].sort((a, b) => {
+      const aNext = getNextOccurrence(a, now)?.getTime() ?? Infinity;
+      const bNext = getNextOccurrence(b, now)?.getTime() ?? Infinity;
+      return aNext - bNext;
+    });
+
   const nextEvents = featuredEventRows.length > 0
-    ? featuredEventRows
-    : fallbackEventRows.slice(0, 1);
+    ? sortByNextOccurrence(featuredEventRows)
+    : sortByNextOccurrence(fallbackEventRows).slice(0, 1);
   const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR - 1;
   return (
     <div className="min-h-screen bg-white">

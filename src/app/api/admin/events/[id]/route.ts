@@ -18,7 +18,24 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   const body = await request.json();
-  const { title, description, startDate, endDate, location, image, isPublic, isFeatured, requiresRsvp, maxAttendees } = body;
+  const {
+    title,
+    description,
+    startDate,
+    endDate,
+    location,
+    image,
+    isPublic,
+    isFeatured,
+    requiresRsvp,
+    maxAttendees,
+    isRecurring,
+    recurrenceType,
+    recurrenceDays,
+    recurrenceEndDate,
+  } = body;
+
+  const recurring = isRecurring ?? existing.isRecurring;
 
   const [updated] = await db
     .update(events)
@@ -33,6 +50,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       isFeatured: isFeatured ?? existing.isFeatured,
       requiresRsvp: requiresRsvp ?? existing.requiresRsvp,
       maxAttendees: maxAttendees || null,
+      isRecurring: recurring,
+      recurrenceType: recurring ? (recurrenceType || null) : null,
+      recurrenceDays: recurring ? (recurrenceDays || null) : null,
+      recurrenceEndDate: recurring && recurrenceEndDate ? new Date(recurrenceEndDate) : null,
       updatedAt: new Date(),
     })
     .where(eq(events.id, id))

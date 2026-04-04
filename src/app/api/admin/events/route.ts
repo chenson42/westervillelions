@@ -22,7 +22,22 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { title, description, startDate, endDate, location, image, isPublic, isFeatured, requiresRsvp, maxAttendees } = body;
+  const {
+    title,
+    description,
+    startDate,
+    endDate,
+    location,
+    image,
+    isPublic,
+    isFeatured,
+    requiresRsvp,
+    maxAttendees,
+    isRecurring,
+    recurrenceType,
+    recurrenceDays,
+    recurrenceEndDate,
+  } = body;
 
   if (!title || !startDate) {
     return NextResponse.json({ error: "Title and start date are required" }, { status: 400 });
@@ -41,6 +56,10 @@ export async function POST(request: NextRequest) {
       isFeatured: isFeatured ?? false,
       requiresRsvp: requiresRsvp ?? false,
       maxAttendees: maxAttendees || null,
+      isRecurring: isRecurring ?? false,
+      recurrenceType: isRecurring ? (recurrenceType || null) : null,
+      recurrenceDays: isRecurring ? (recurrenceDays || null) : null,
+      recurrenceEndDate: isRecurring && recurrenceEndDate ? new Date(recurrenceEndDate) : null,
       createdBy: session.user.id,
     })
     .returning();

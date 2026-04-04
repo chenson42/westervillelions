@@ -177,6 +177,10 @@ export const events = pgTable("events", {
   isFeatured: boolean("is_featured").notNull().default(false), // featured on homepage
   requiresRsvp: boolean("requires_rsvp").notNull().default(false),
   maxAttendees: integer("max_attendees"),
+  isRecurring: boolean("is_recurring").notNull().default(false),
+  recurrenceType: text("recurrence_type"), // 'weekly' | 'biweekly' | 'monthly'
+  recurrenceDays: integer("recurrence_days").array(), // days of week [0=Sun..6=Sat] for weekly/biweekly
+  recurrenceEndDate: timestamp("recurrence_end_date"), // when the series ends
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
