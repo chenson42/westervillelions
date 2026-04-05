@@ -7,6 +7,7 @@ type NextEvent = {
   startDate: Date;
   location: string | null;
   description: string | null;
+  image: string | null;
 };
 
 type Props = {
@@ -38,7 +39,16 @@ function NextEventCard({ event }: { event: NextEvent }) {
     plain && plain.length > 150 ? plain.slice(0, 150) + "…" : plain;
 
   return (
-    <article className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm border-l-4 border-l-lions-blue h-full flex flex-col">
+    <article className="rounded-xl border border-gray-200 bg-white shadow-sm border-l-4 border-l-lions-blue h-full flex flex-col overflow-hidden">
+      {event.image && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={event.image}
+          alt={event.title}
+          className="w-full h-40 object-cover"
+        />
+      )}
+      <div className="p-6 flex flex-col flex-1">
       <h3 className="text-xl font-bold text-gray-900 mb-2">{event.title}</h3>
       <p className="text-sm font-medium text-lions-blue mb-1">
         {formatEventDate(event.startDate)}
@@ -72,6 +82,7 @@ function NextEventCard({ event }: { event: NextEvent }) {
           {description}
         </p>
       )}
+      </div>
     </article>
   );
 }

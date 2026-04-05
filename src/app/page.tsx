@@ -37,6 +37,7 @@ export default async function HomePage() {
     startDate: events.startDate,
     location: events.location,
     description: events.description,
+    image: events.image,
     isRecurring: events.isRecurring,
     recurrenceType: events.recurrenceType,
     recurrenceDays: events.recurrenceDays,
