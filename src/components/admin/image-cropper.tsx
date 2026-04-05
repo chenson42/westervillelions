@@ -141,12 +141,15 @@ export function ImageCropper({
   if (value) {
     return (
       <div className="space-y-3">
+        <p className="text-xs text-gray-500">Preview — matches how it appears on the events page</p>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={value}
-          alt="Event image"
-          className="w-full max-h-48 object-cover rounded-lg border border-gray-200"
-        />
+        <div className="rounded-lg overflow-hidden border border-gray-200 shadow-sm">
+          <img
+            src={value}
+            alt="Event image"
+            className="w-full h-64 object-cover"
+          />
+        </div>
         <div className="flex gap-3">
           <button
             type="button"
