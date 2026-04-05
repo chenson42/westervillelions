@@ -62,11 +62,14 @@ export function getNextOccurrence(event: RecurringEvent, now: Date): Date | null
 
   const type = event.recurrenceType;
 
+  // Never return an occurrence before the series starts
+  const floor = isAfter(start, now) ? start : now;
+
   if (type === "monthly") {
     // Same day-of-month each month
     const dayOfMonth = start.getDate();
-    let candidate = setDate(new Date(now.getFullYear(), now.getMonth(), 1), dayOfMonth);
-    if (isBefore(candidate, now)) {
+    let candidate = setDate(new Date(floor.getFullYear(), floor.getMonth(), 1), dayOfMonth);
+    if (isBefore(candidate, floor)) {
       candidate = setDate(addMonths(candidate, 1), dayOfMonth);
     }
     if (end && isAfter(candidate, end)) return null;
@@ -78,9 +81,9 @@ export function getNextOccurrence(event: RecurringEvent, now: Date): Date | null
     if (!days || days.length === 0) {
       // Fall back to same day of week as startDate
       const dayOfWeek = start.getDay();
-      return findNextDayOfWeek(now, [dayOfWeek], type === "biweekly" ? 2 : 1, start, end);
+      return findNextDayOfWeek(floor, [dayOfWeek], type === "biweekly" ? 2 : 1, start, end);
     }
-    return findNextDayOfWeek(now, days, type === "biweekly" ? 2 : 1, start, end);
+    return findNextDayOfWeek(floor, days, type === "biweekly" ? 2 : 1, start, end);
   }
 
   // Unknown type — return startDate if in future
@@ -88,7 +91,7 @@ export function getNextOccurrence(event: RecurringEvent, now: Date): Date | null
 }
 
 function findNextDayOfWeek(
-  now: Date,
+  floor: Date,
   days: number[],
   intervalWeeks: number,
   seriesStart: Date,
@@ -96,15 +99,17 @@ function findNextDayOfWeek(
 ): Date | null {
   const sortedDays = [...days].sort((a, b) => a - b);
 
-  // Walk forward from today, checking each candidate day
+  // Walk forward from floor (= max(now, seriesStart)), checking each candidate day
   // Cap search at 2 * intervalWeeks weeks to avoid infinite loops
   const maxDays = intervalWeeks * 7 + 7;
-  let candidate = new Date(now);
+  let candidate = new Date(floor);
   candidate.setHours(seriesStart.getHours(), seriesStart.getMinutes(), 0, 0);
+  // If setting the time pushed us before floor, advance one day
+  if (isBefore(candidate, floor)) candidate = addDays(candidate, 1);
 
   for (let i = 0; i < maxDays; i++) {
     const dow = candidate.getDay();
-    if (sortedDays.includes(dow) && isAfter(candidate, now)) {
+    if (sortedDays.includes(dow) && !isBefore(candidate, floor)) {
       // For biweekly: check that this candidate falls in a valid week
       // A "valid week" is one where (floor difference in weeks from seriesStart) % intervalWeeks === 0
       if (intervalWeeks > 1) {
