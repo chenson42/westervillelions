@@ -4,9 +4,10 @@ import { useState, useRef } from "react";
 import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 
-const ASPECT = 16 / 9;
-const OUTPUT_WIDTH = 1200;
-const OUTPUT_HEIGHT = Math.round(OUTPUT_WIDTH / ASPECT);
+// Matches the events page display ratio: w-full h-64 (256px) at max-w-4xl (896px) ≈ 3.5:1
+const ASPECT = 7 / 2;
+const OUTPUT_WIDTH = 1400;
+const OUTPUT_HEIGHT = 400;
 
 function cropImageToDataUrl(image: HTMLImageElement, crop: PixelCrop): string {
   const canvas = document.createElement("canvas");
