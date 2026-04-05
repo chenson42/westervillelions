@@ -22,6 +22,101 @@ export interface EventFormData {
   recurrenceEndDate?: string | null;
 }
 
+// ── DateTime helpers ─────────────────────────────────────────────────────────
+
+function parseDateTime(value: string) {
+  if (!value || value.length < 16) return { date: "", hour: 12, minute: 0, isPm: false };
+  const date = value.slice(0, 10);
+  const h24 = parseInt(value.slice(11, 13));
+  const m = parseInt(value.slice(14, 16));
+  return { date, hour: h24 % 12 || 12, minute: m, isPm: h24 >= 12 };
+}
+
+function buildDateTime(date: string, hour12: number, minute: number, isPm: boolean): string {
+  if (!date) return "";
+  const h = (hour12 % 12) + (isPm ? 12 : 0);
+  return `${date}T${h.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+}
+
+function addOneHour(value: string): string {
+  if (!value || value.length < 16) return "";
+  const date = value.slice(0, 10);
+  const h = parseInt(value.slice(11, 13));
+  const m = parseInt(value.slice(14, 16));
+  const total = h * 60 + m + 60;
+  const newH = Math.floor(total / 60) % 24;
+  const newM = total % 60;
+  if (total >= 24 * 60) {
+    const d = new Date(date + "T00:00");
+    d.setDate(d.getDate() + 1);
+    return `${d.toISOString().slice(0, 10)}T${newH.toString().padStart(2, "0")}:${newM.toString().padStart(2, "0")}`;
+  }
+  return `${date}T${newH.toString().padStart(2, "0")}:${newM.toString().padStart(2, "0")}`;
+}
+
+const dtInputClass =
+  "rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue";
+
+function DateTimePicker({
+  id,
+  value,
+  onDateChange,
+  onTimeChange,
+  required,
+}: {
+  id: string;
+  value: string;
+  onDateChange: (newValue: string) => void;
+  onTimeChange: (newValue: string) => void;
+  required?: boolean;
+}) {
+  const { date, hour, minute, isPm } = parseDateTime(value);
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <input
+        type="date"
+        id={id}
+        required={required}
+        value={date}
+        onChange={(e) => onDateChange(buildDateTime(e.target.value, hour, minute, isPm))}
+        className={dtInputClass}
+      />
+      <div className="flex items-center gap-1">
+        <select
+          value={hour}
+          onChange={(e) => onTimeChange(buildDateTime(date, Number(e.target.value), minute, isPm))}
+          className={dtInputClass}
+        >
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((h) => (
+            <option key={h} value={h}>{h}</option>
+          ))}
+        </select>
+        <span className="text-gray-500 text-sm">:</span>
+        <select
+          value={minute}
+          onChange={(e) => onTimeChange(buildDateTime(date, hour, Number(e.target.value), isPm))}
+          className={dtInputClass}
+        >
+          {[0, 15, 30, 45].map((m) => (
+            <option key={m} value={m}>{m.toString().padStart(2, "0")}</option>
+          ))}
+        </select>
+        <select
+          value={isPm ? "PM" : "AM"}
+          onChange={(e) => onTimeChange(buildDateTime(date, hour, minute, e.target.value === "PM"))}
+          className={dtInputClass}
+        >
+          <option value="AM">AM</option>
+          <option value="PM">PM</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const DAYS_OF_WEEK = [
   { label: "Sun", value: 0 },
   { label: "Mon", value: 1 },
@@ -191,14 +286,29 @@ export default function EventForm({
             <label htmlFor="startDate" className="block text-sm font-medium text-gray-700">
               Start Date &amp; Time *
             </label>
-            <input
-              type="datetime-local"
+            <DateTimePicker
               id="startDate"
-              name="startDate"
-              required
               value={formData.startDate || ""}
-              onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+              required
+              onDateChange={(newStart) => {
+                const newDatePart = newStart.slice(0, 10);
+                // Sync end date to match; keep existing end time or mirror start time
+                const endTimeSuffix = formData.endDate
+                  ? formData.endDate.slice(10)
+                  : newStart.slice(10);
+                setFormData((prev) => ({
+                  ...prev,
+                  startDate: newStart,
+                  endDate: newDatePart ? `${newDatePart}${endTimeSuffix}` : prev.endDate,
+                }));
+              }}
+              onTimeChange={(newStart) => {
+                setFormData((prev) => ({
+                  ...prev,
+                  startDate: newStart,
+                  endDate: addOneHour(newStart),
+                }));
+              }}
             />
           </div>
 
@@ -206,13 +316,11 @@ export default function EventForm({
             <label htmlFor="endDate" className="block text-sm font-medium text-gray-700">
               End Date &amp; Time
             </label>
-            <input
-              type="datetime-local"
+            <DateTimePicker
               id="endDate"
-              name="endDate"
               value={formData.endDate || ""}
-              onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+              onDateChange={(newEnd) => setFormData((prev) => ({ ...prev, endDate: newEnd || null }))}
+              onTimeChange={(newEnd) => setFormData((prev) => ({ ...prev, endDate: newEnd || null }))}
             />
           </div>
         </div>
