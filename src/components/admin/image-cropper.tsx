@@ -69,8 +69,20 @@ export function ImageCropper({
   }
 
   function handleImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
-    const { naturalWidth, naturalHeight } = e.currentTarget;
-    setCrop(centerAspectCrop(naturalWidth, naturalHeight));
+    const img = e.currentTarget;
+    // Use displayed dimensions — ReactCrop operates in display-pixel space
+    const displayW = img.width || img.naturalWidth;
+    const displayH = img.height || img.naturalHeight;
+    const percentCrop = centerAspectCrop(displayW, displayH);
+    setCrop(percentCrop);
+    // Pre-initialize completedCrop so Apply works without requiring a manual drag
+    setCompletedCrop({
+      unit: "px",
+      x: Math.round((percentCrop.x / 100) * displayW),
+      y: Math.round((percentCrop.y / 100) * displayH),
+      width: Math.round((percentCrop.width / 100) * displayW),
+      height: Math.round((percentCrop.height / 100) * displayH),
+    });
   }
 
   function handleApply() {
