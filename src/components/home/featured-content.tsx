@@ -39,11 +39,6 @@ function NextEventCard({ event }: { event: NextEvent }) {
 
   return (
     <article className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm border-l-4 border-l-lions-blue h-full flex flex-col">
-      <div className="mb-3">
-        <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
-          Upcoming Event
-        </span>
-      </div>
       <h3 className="text-xl font-bold text-gray-900 mb-2">{event.title}</h3>
       <p className="text-sm font-medium text-lions-blue mb-1">
         {formatEventDate(event.startDate)}
@@ -73,32 +68,10 @@ function NextEventCard({ event }: { event: NextEvent }) {
         </p>
       )}
       {description && (
-        <p className="text-gray-600 text-sm leading-relaxed mb-4 flex-1">
+        <p className="text-gray-600 text-sm leading-relaxed flex-1">
           {description}
         </p>
       )}
-      <div className="mt-auto pt-2">
-        <Link
-          href="/events"
-          className="inline-flex items-center text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition-colors focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 rounded"
-        >
-          See All Events
-          <svg
-            className="ml-1 w-4 h-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth="2"
-            stroke="currentColor"
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
-            />
-          </svg>
-        </Link>
-      </div>
     </article>
   );
 }
@@ -180,15 +153,47 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
     <div className={`grid gap-6 max-w-6xl mx-auto ${hasEvents && hasAnnouncements ? "md:grid-cols-3" : ""}`}>
       {hasEvents && (
         <div className={hasAnnouncements ? "md:col-span-2" : "w-full"}>
+          {/* Badge above cards */}
+          <div className="mb-3">
+            <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
+              Upcoming Events
+            </span>
+          </div>
+
+          {/* Cards */}
           {nextEvents.length === 1 ? (
             <NextEventCard event={nextEvents[0]} />
           ) : (
-            <div className={`grid gap-4 h-full ${eventsOnlyGrid}`}>
+            <div className={`grid gap-4 ${eventsOnlyGrid}`}>
               {nextEvents.map((event) => (
                 <NextEventCard key={event.id} event={event} />
               ))}
             </div>
           )}
+
+          {/* See All Events below cards */}
+          <div className="mt-4">
+            <Link
+              href="/events"
+              className="inline-flex items-center text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition-colors focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 rounded"
+            >
+              See All Events
+              <svg
+                className="ml-1 w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth="2"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+                />
+              </svg>
+            </Link>
+          </div>
         </div>
       )}
       {hasAnnouncements && (
