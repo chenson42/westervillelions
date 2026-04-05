@@ -31,6 +31,7 @@ export const members = pgTable("members", {
   branch: text("branch"), // Branch/chapter (e.g., "Somali Branch")
   boardPosition: text("board_position"), // Board position (e.g., "President", "Treasurer")
   profilePicture: text("profile_picture"),
+  dateOfBirth: text("date_of_birth"), // stored as YYYY-MM-DD
   joinDate: timestamp("join_date"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),

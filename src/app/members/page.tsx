@@ -81,6 +81,23 @@ export default async function MembersPage() {
   // Groups available as filters (those that have at least one member)
   const filterGroups = directoryGroups.map((g) => ({ id: g.id, name: g.name, color: g.color }));
 
+  // Birthdays this month — dateOfBirth stored as "YYYY-MM-DD"
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const monthName = now.toLocaleString("en-US", { month: "long" });
+
+  const birthdaysThisMonth = allMembers
+    .filter((m) => {
+      if (!m.dateOfBirth) return false;
+      const parts = m.dateOfBirth.split("-");
+      return parts.length >= 2 && parseInt(parts[1]) === currentMonth;
+    })
+    .sort((a, b) => {
+      const dayA = parseInt(a.dateOfBirth!.split("-")[2]);
+      const dayB = parseInt(b.dateOfBirth!.split("-")[2]);
+      return dayA - dayB;
+    });
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-12">
@@ -114,6 +131,54 @@ export default async function MembersPage() {
             <p className="text-gray-700">Update your contact information and preferences</p>
           </a>
         </div>
+
+        {birthdaysThisMonth.length > 0 && (
+          <div className="mb-10 rounded-xl border border-lions-gold/40 bg-lions-gold/5 p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">
+              Birthdays in {monthName}
+            </h2>
+            <div className="flex flex-wrap gap-3">
+              {birthdaysThisMonth.map((m) => {
+                const day = parseInt(m.dateOfBirth!.split("-")[2]);
+                const ordinal =
+                  day === 1 || day === 21 || day === 31
+                    ? "st"
+                    : day === 2 || day === 22
+                    ? "nd"
+                    : day === 3 || day === 23
+                    ? "rd"
+                    : "th";
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center gap-3 rounded-lg border border-lions-gold/30 bg-white px-4 py-3 shadow-sm"
+                  >
+                    {m.profilePicture ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={m.profilePicture}
+                        alt={`${m.firstName} ${m.lastName}`}
+                        className="h-9 w-9 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-9 w-9 rounded-full bg-lions-blue/10 flex items-center justify-center text-sm font-bold text-lions-blue">
+                        {m.firstName[0]}{m.lastName[0]}
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {m.firstName} {m.lastName}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {monthName} {day}{ordinal}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <MemberDirectory members={membersWithTags} filterGroups={filterGroups} />
       </div>
