@@ -147,7 +147,7 @@ export function ImageCropper({
           <img
             src={value}
             alt="Event image"
-            className="w-full h-64 object-cover"
+            className="w-full aspect-[7/2] object-cover"
           />
         </div>
         <div className="flex gap-3">
