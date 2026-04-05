@@ -223,12 +223,12 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* See Us in Action */}
+      {/* Stay Connected */}
       <section className="py-20 bg-white">
         <div className="container mx-auto px-4">
           <div className="text-center mb-10">
             <h2 className="text-4xl md:text-5xl font-bold mb-4 text-gray-900">
-              See Us in Action
+              Stay Connected
             </h2>
             <p className="text-xl text-gray-600 mb-8">
               Follow our latest activities and stay connected with the community

@@ -29,7 +29,7 @@ function positionSortKey(position: string | null): [number, string] {
   return [rank, normalized];
 }
 
-async function getLeadership(): Promise<{ memberId: string; firstName: string; lastName: string; position: string | null }[]> {
+async function getLeadership(): Promise<{ memberId: string; firstName: string; lastName: string; position: string | null; joinDate: Date | null }[]> {
   try {
     const boardGroup = await db.query.groups.findFirst({
       where: sql`lower(${groups.name}) = 'board of directors'`,
@@ -43,6 +43,7 @@ async function getLeadership(): Promise<{ memberId: string; firstName: string; l
         firstName: members.firstName,
         lastName: members.lastName,
         position: groupMemberships.position,
+        joinDate: members.joinDate,
       })
       .from(groupMemberships)
       .innerJoin(members, eq(groupMemberships.memberId, members.id))
@@ -141,6 +142,14 @@ export default async function AboutPage() {
                     {member.position && (
                       <p className="text-lions-blue text-sm mt-1">{member.position}</p>
                     )}
+                    {member.joinDate && (() => {
+                      const years = new Date().getFullYear() - new Date(member.joinDate).getFullYear();
+                      return years > 0 ? (
+                        <p className="text-gray-500 text-xs mt-1">
+                          Member for {years} year{years !== 1 ? "s" : ""}
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                 ))}
               </div>
