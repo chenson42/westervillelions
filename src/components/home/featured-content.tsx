@@ -41,7 +41,7 @@ function NextEventCard({ event }: { event: NextEvent }) {
     <article className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm border-l-4 border-l-lions-blue h-full flex flex-col">
       <div className="mb-3">
         <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
-          Upcoming Events
+          Upcoming Event
         </span>
       </div>
       <h3 className="text-xl font-bold text-gray-900 mb-2">{event.title}</h3>
