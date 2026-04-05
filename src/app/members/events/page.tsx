@@ -5,6 +5,7 @@ import { events, eventRsvps } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { format } from "date-fns";
 import { EventRsvp } from "@/components/members/event-rsvp";
+import MarkdownContent from "@/components/markdown-content";
 
 export default async function MemberEventsPage() {
   const session = await auth();
@@ -68,7 +69,9 @@ export default async function MemberEventsPage() {
                         <p className="text-gray-600 text-sm mb-2">{event.location}</p>
                       )}
                       {event.description && (
-                        <p className="text-gray-700 text-sm">{event.description}</p>
+                        <MarkdownContent className="text-gray-700 text-sm">
+                          {event.description}
+                        </MarkdownContent>
                       )}
                       {event.maxAttendees && (
                         <p className="text-xs text-gray-500 mt-1">

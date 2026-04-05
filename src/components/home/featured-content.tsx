@@ -24,11 +24,18 @@ function formatEventDate(date: Date): string {
   }).format(date);
 }
 
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [text](url) → text
+    .replace(/[*_~`]/g, "")                  // bold/italic/strikethrough/code
+    .replace(/^#{1,6}\s+/gm, "")            // headings
+    .trim();
+}
+
 function NextEventCard({ event }: { event: NextEvent }) {
+  const plain = event.description ? stripMarkdown(event.description) : null;
   const description =
-    event.description && event.description.length > 150
-      ? event.description.slice(0, 150) + "…"
-      : event.description;
+    plain && plain.length > 150 ? plain.slice(0, 150) + "…" : plain;
 
   return (
     <article className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm border-l-4 border-l-lions-blue h-full flex flex-col">

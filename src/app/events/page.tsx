@@ -5,6 +5,7 @@ import { and, eq, or, gt, isNull } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
 import { formatRecurrence, getNextOccurrence } from "@/lib/events";
+import MarkdownContent from "@/components/markdown-content";
 
 export const metadata: Metadata = {
   title: "Upcoming Events",
@@ -113,7 +114,9 @@ export default async function WhatWeDoPage() {
                           )}
                         </div>
                         {event.description && (
-                          <p className="text-gray-700">{event.description}</p>
+                          <MarkdownContent className="text-gray-700">
+                            {event.description}
+                          </MarkdownContent>
                         )}
                       </div>
                     </div>
