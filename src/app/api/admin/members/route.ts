@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { members } from "@/lib/db/schema";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { syncClubMembersList } from "@/lib/google-groups";
 
 /**
  * GET /api/admin/members
@@ -82,6 +83,9 @@ export async function POST(request: NextRequest) {
         isActive: data.isActive ?? true,
       })
       .returning();
+
+    // Fire-and-forget club list sync
+    syncClubMembersList().catch((e) => console.error("[sync] club list:", e));
 
     return NextResponse.json(newMember, { status: 201 });
   } catch (error) {

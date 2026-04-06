@@ -32,6 +32,8 @@ export const members = pgTable("members", {
   boardPosition: text("board_position"), // Board position (e.g., "President", "Treasurer")
   profilePicture: text("profile_picture"),
   dateOfBirth: text("date_of_birth"), // stored as YYYY-MM-DD
+  gender: text("gender"),
+  spouseName: text("spouse_name"),
   joinDate: timestamp("join_date"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -141,6 +143,9 @@ export const groups = pgTable("groups", {
   showInDirectory: boolean("show_in_directory").notNull().default(false), // Show group tag on member cards
   showPositionAsTag: boolean("show_position_as_tag").notNull().default(false), // Show position instead of group name as tag
   parentGroupId: uuid("parent_group_id").references((): AnyPgColumn => groups.id, { onDelete: "set null" }), // For hierarchy
+  emailPrefix: text("email_prefix"),
+  googleGroupSyncedAt: timestamp("google_group_synced_at", { withTimezone: true }),
+  googleGroupSyncError: text("google_group_sync_error"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

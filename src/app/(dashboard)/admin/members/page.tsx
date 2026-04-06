@@ -4,6 +4,7 @@ import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import Link from "next/link";
 import MemberSearch from "@/components/admin/member-search";
 import ExportMembersButton from "@/components/admin/export-members-button";
+import SyncClubButton from "@/components/admin/sync-club-button";
 
 export default async function MembersPage({
   searchParams,
@@ -104,6 +105,7 @@ export default async function MembersPage({
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <SyncClubButton />
           <ExportMembersButton />
           <Link
             href="/admin/members/new"

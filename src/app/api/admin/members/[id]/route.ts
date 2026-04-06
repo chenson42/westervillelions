@@ -5,6 +5,7 @@ import { members, users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { syncClubMembersList } from "@/lib/google-groups";
 
 /**
  * PATCH /api/admin/members/[id]
@@ -68,6 +69,9 @@ export async function PATCH(
         .where(eq(users.id, existing.userId));
     }
 
+    // Fire-and-forget club list sync
+    syncClubMembersList().catch((e) => console.error("[sync] club list:", e));
+
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Error updating member:", error);
@@ -109,6 +113,9 @@ export async function DELETE(
     }
 
     await db.delete(members).where(eq(members.id, id));
+
+    // Fire-and-forget club list sync
+    syncClubMembersList().catch((e) => console.error("[sync] club list:", e));
 
     return NextResponse.json({ success: true });
   } catch (error) {

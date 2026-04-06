@@ -116,7 +116,7 @@ export default async function MembersPage() {
       </div>
 
       <div className="container mx-auto px-4 py-12">
-        <div className="grid md:grid-cols-3 gap-6 mb-12">
+        <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 mb-12">
           <a
             href="/members"
             className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition border-2 border-lions-blue transform hover:-translate-y-1"
@@ -130,6 +130,13 @@ export default async function MembersPage() {
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Events</h3>
             <p className="text-gray-700">View and RSVP to upcoming club events</p>
+          </a>
+          <a
+            href="/members/groups"
+            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+          >
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Groups</h3>
+            <p className="text-gray-700">Browse committees, service teams, and branches</p>
           </a>
           <a
             href="/members/profile"

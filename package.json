@@ -14,6 +14,7 @@
     "db:migrate-and-push": "node drizzle/run-migrations.mjs && drizzle-kit push",
     "db:import-roster": "tsx scripts/import-roster.ts",
     "db:sync-roster": "dotenv -e .env.local -- tsx scripts/sync-roster.ts",
+    "db:update-member-details": "dotenv -e .env.local -- tsx scripts/update-member-details.ts",
     "db:add-events": "tsx scripts/add-events.ts",
     "start": "next start",
     "lint": "eslint"

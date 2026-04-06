@@ -15,6 +15,9 @@ type Group = {
   showInDirectory: boolean;
   showPositionAsTag: boolean;
   isActive: boolean;
+  emailPrefix?: string | null;
+  googleGroupSyncedAt?: Date | string | null;
+  googleGroupSyncError?: string | null;
 };
 
 export function GroupForm({
@@ -27,6 +30,12 @@ export function GroupForm({
   const router = useRouter();
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [emailPrefix, setEmailPrefix] = useState(group?.emailPrefix ?? "");
+  const [syncedAt, setSyncedAt] = useState<string | null>(
+    group?.googleGroupSyncedAt ? new Date(group.googleGroupSyncedAt).toLocaleString() : null
+  );
+  const [syncError, setSyncError] = useState<string | null>(group?.googleGroupSyncError ?? null);
   const isEdit = !!group;
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -48,6 +57,7 @@ export function GroupForm({
       showInDirectory: formData.get("showInDirectory") === "on",
       showPositionAsTag: formData.get("showPositionAsTag") === "on",
       isActive: formData.get("isActive") === "true",
+      emailPrefix: (formData.get("emailPrefix") as string || "").trim() || null,
     };
 
     try {
@@ -90,6 +100,30 @@ export function GroupForm({
       toast.error("Failed to delete group");
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  async function handleSync() {
+    if (!group || !emailPrefix.trim()) return;
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const res = await fetch(`/api/admin/groups/${group.id}/sync`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        const msg = json.error || "Sync failed";
+        setSyncError(msg);
+        toast.error(msg);
+      } else {
+        setSyncedAt(new Date().toLocaleString());
+        toast.success("Google Group synced");
+      }
+    } catch {
+      const msg = "Failed to connect to sync service";
+      setSyncError(msg);
+      toast.error(msg);
+    } finally {
+      setIsSyncing(false);
     }
   }
 
@@ -178,6 +212,58 @@ export function GroupForm({
           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-lions-blue focus:border-transparent text-sm"
         />
       </div>
+
+      {isEdit && (
+        <div className="rounded-md border border-gray-200 bg-gray-50 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-800">Google Groups Sync</h3>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Email Prefix
+            </label>
+            <div className="flex items-center">
+              <input
+                type="text"
+                name="emailPrefix"
+                value={emailPrefix}
+                onChange={(e) => setEmailPrefix(e.target.value)}
+                placeholder="committee-name"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-l-md focus:ring-2 focus:ring-lions-blue focus:border-transparent text-sm"
+              />
+              <span className="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-100 text-sm text-gray-500 select-none">
+                @westervillelions.org
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              Set an email prefix to enable syncing this group to a Google Group.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSync}
+              disabled={isSyncing || !emailPrefix.trim()}
+              className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white hover:bg-lions-blue-dark disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSyncing ? "Syncing..." : "Sync Now"}
+            </button>
+            {syncedAt && !syncError && (
+              <span className="text-xs text-gray-500">Last synced: {syncedAt}</span>
+            )}
+          </div>
+
+          {syncError && (
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              Sync error: {syncError}
+            </p>
+          )}
+          {!syncError && syncedAt && (
+            <p className="text-xs text-green-700">
+              Google Group is up to date.
+            </p>
+          )}
+        </div>
+      )}
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>

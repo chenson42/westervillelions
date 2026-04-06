@@ -70,6 +70,7 @@ export async function PUT(
         showPositionAsTag: data.showPositionAsTag ?? false,
         parentGroupId: data.parentGroupId ?? null,
         isActive: data.isActive ?? true,
+        emailPrefix: data.emailPrefix ?? null,
         updatedAt: new Date(),
       })
       .where(eq(groups.id, id))
