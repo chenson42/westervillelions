@@ -9,9 +9,10 @@ interface ServiceCardProps {
   title: string;
   description: string;
   color: string;
+  priority?: boolean;
 }
 
-export function ServiceCard({ image, alt, title, description, color }: ServiceCardProps) {
+export function ServiceCard({ image, alt, title, description, color, priority = false }: ServiceCardProps) {
   const [imageError, setImageError] = useState(false);
 
   return (
@@ -22,6 +23,7 @@ export function ServiceCard({ image, alt, title, description, color }: ServiceCa
             src={image}
             alt={alt}
             fill
+            priority={priority}
             className="object-cover object-top grayscale brightness-90 group-hover:grayscale-0 group-hover:brightness-100 transition-all duration-500"
             onError={() => setImageError(true)}
           />

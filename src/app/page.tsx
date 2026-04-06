@@ -164,6 +164,7 @@ export default async function HomePage() {
             </a>
             <a
               href="/about"
+              aria-label="Learn more about the Westerville Lions Club"
               className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition"
             >
               Learn More
@@ -208,6 +209,7 @@ export default async function HomePage() {
               title="Youth Programs"
               description="Supporting education, scholarships, and youth activities to empower the next generation"
               color="from-yellow-400 to-yellow-500"
+              priority
             />
             <ServiceCard
               image="/images/service-community.jpg"

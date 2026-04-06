@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import type { HomepageAnnouncement } from "@/lib/db/schema";
 
 type NextEvent = {
@@ -41,12 +42,16 @@ function NextEventCard({ event }: { event: NextEvent }) {
   return (
     <article className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden h-full flex flex-col">
       {event.image && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={event.image}
-          alt={event.title}
-          className="w-full h-48 object-cover"
-        />
+        <div className="relative w-full h-48 shrink-0">
+          <Image
+            src={event.image}
+            alt={event.title}
+            fill
+            className="object-cover"
+            sizes="(max-width: 768px) 100vw, 400px"
+            unoptimized={event.image.startsWith("http")}
+          />
+        </div>
       )}
       <div className="p-8 flex flex-col flex-1">
       <h3 className="text-xl font-bold text-lions-blue mb-2">{event.title}</h3>
@@ -186,6 +191,7 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
           <div className="mt-4">
             <Link
               href="/events"
+              aria-label="See all upcoming events"
               className="inline-flex items-center text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition-colors focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 rounded"
             >
               See All Events

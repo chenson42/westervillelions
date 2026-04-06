@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
 import { and, eq, or, gt, isNull } from "drizzle-orm";
@@ -95,12 +96,16 @@ export default async function WhatWeDoPage() {
                   return (
                     <div key={event.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition transform hover:-translate-y-1">
                       {event.image && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={event.image}
-                          alt={event.title}
-                          className="w-full h-64 object-cover"
-                        />
+                        <div className="relative w-full h-64">
+                          <Image
+                            src={event.image}
+                            alt={event.title}
+                            fill
+                            className="object-cover"
+                            sizes="(max-width: 768px) 100vw, 896px"
+                            unoptimized={event.image.startsWith("http")}
+                          />
+                        </div>
                       )}
                       <div className="p-6">
                         <div className="flex flex-wrap items-center gap-2 mb-2">
