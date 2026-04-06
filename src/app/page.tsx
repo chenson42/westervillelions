@@ -10,11 +10,15 @@ import { getNextOccurrence } from "@/lib/events";
 export const metadata: Metadata = {
   title: "Westerville Lions Club | Serving Westerville, OH Since 1928",
   description:
-    "The Westerville Lions Club has served Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and hands-on community service. Join us.",
+    "Westerville Lions Club — serving Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and hands-on community service.",
+  alternates: {
+    canonical: "https://westervillelions.org",
+  },
   openGraph: {
     title: "Westerville Lions Club | Serving Westerville, OH Since 1928",
     description:
       "Serving Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and hands-on community service.",
+    url: "https://westervillelions.org",
     images: [
       {
         url: "/images/hero-bg.jpg",

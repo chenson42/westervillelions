@@ -11,6 +11,23 @@ export const metadata: Metadata = {
   title: "Upcoming Events",
   description:
     "Find upcoming events and service projects hosted by the Westerville Lions Club in Westerville, Ohio. All are welcome — come see what Lions service is all about.",
+  alternates: {
+    canonical: "https://westervillelions.org/events",
+  },
+  openGraph: {
+    title: "Upcoming Events | Westerville Lions Club",
+    description:
+      "Find upcoming events and service projects hosted by the Westerville Lions Club in Westerville, Ohio. All are welcome.",
+    url: "https://westervillelions.org/events",
+    images: [
+      {
+        url: "/images/hero-bg.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Westerville Lions Club Events",
+      },
+    ],
+  },
 };
 
 const breadcrumb = {
@@ -71,7 +88,6 @@ export default async function WhatWeDoPage() {
 
           {/* Upcoming Events — primary content */}
           <div className="mb-16">
-            <h2 className="text-3xl font-bold mb-8 text-gray-900">Upcoming Events</h2>
             {publicEvents.length > 0 ? (
               <div className="space-y-6">
                 {publicEvents.map((event) => {

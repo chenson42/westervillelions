@@ -3,6 +3,9 @@ import { MembershipApplicationForm } from "@/components/membership-application-f
 export const metadata = {
   title: "Join the Westerville Lions Club",
   description: "Apply for membership in the Westerville Lions Club and make a difference in your community.",
+  alternates: {
+    canonical: "https://westervillelions.org/join",
+  },
 };
 
 const breadcrumb = {

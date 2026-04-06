@@ -13,22 +13,22 @@ export const metadata: Metadata = {
     template: "%s | Westerville Lions Club",
   },
   description:
-    "The Westerville Lions Club is a 501(c)(3) nonprofit serving Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and community service.",
+    "Westerville Lions Club — a nonprofit serving Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and community service.",
   openGraph: {
     type: "website",
     siteName: "Westerville Lions Club",
     locale: "en_US",
     images: [
       {
-        url: "/images/logo-official.png",
-        width: 250,
-        height: 80,
-        alt: "Westerville Lions Club",
+        url: "/images/hero-bg.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
       },
     ],
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     site: "@LionWesterville",
   },
 };

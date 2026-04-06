@@ -5,6 +5,9 @@ export const metadata: Metadata = {
   title: "Our Mission & Service Areas",
   description:
     "The Westerville Lions Club serves through vision care, hunger relief, youth programs, environmental initiatives, diabetes awareness, and humanitarian aid in Westerville, Ohio.",
+  alternates: {
+    canonical: "https://westervillelions.org/mission",
+  },
 };
 
 const causes = [

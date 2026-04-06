@@ -8,6 +8,9 @@ export const metadata: Metadata = {
   title: "About Us",
   description:
     "Learn about the Westerville Lions Club — a community service organization serving Westerville, Ohio since 1928 as part of Lions Clubs International.",
+  alternates: {
+    canonical: "https://westervillelions.org/about",
+  },
 };
 
 const POSITION_ORDER: Record<string, number> = {

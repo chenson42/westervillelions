@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   title: "Connect With Us",
   description:
     "Get in touch with the Westerville Lions Club. Send a message, subscribe to our newsletter, or stop by one of our meetings in Westerville, Ohio.",
+  alternates: {
+    canonical: "https://westervillelions.org/contact",
+  },
 };
 
 const breadcrumb = {

@@ -7,7 +7,11 @@ import { auth } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Donate | Support Our Mission",
-  description: "Donate to the Westerville Lions Club Foundation — a 501(c)(3) charitable organization. Your tax-deductible gift supports youth programs, hunger relief, humanitarian aid, and community service in Westerville, Ohio.",
+  description:
+    "Support the Westerville Lions Club Foundation — 501(c)(3). Your tax-deductible gift funds youth programs, hunger relief, and community service in Westerville, Ohio.",
+  alternates: {
+    canonical: "https://westervillelions.org/donate",
+  },
 };
 
 const jsonLd = {
