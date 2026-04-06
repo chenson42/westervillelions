@@ -27,7 +27,7 @@ export default function ContactPage() {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
       <div className="bg-lions-blue text-white py-20">
         <div className="container mx-auto px-4 max-w-4xl">
-          <p className="text-lions-gold font-semibold uppercase tracking-widest text-sm mb-4">
+          <p className="text-white/80 font-semibold uppercase tracking-widest text-sm mb-4">
             Connect
           </p>
           <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">Connect With Us</h1>

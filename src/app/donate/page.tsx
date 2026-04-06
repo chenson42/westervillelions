@@ -86,7 +86,7 @@ export default async function DonatePage() {
       />
       <div className="bg-lions-blue text-white py-20">
         <div className="container mx-auto px-4 max-w-4xl">
-          <p className="text-lions-gold font-semibold uppercase tracking-widest text-sm mb-4">
+          <p className="text-white/80 font-semibold uppercase tracking-widest text-sm mb-4">
             Give Back
           </p>
           <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">Support Our Mission</h1>
