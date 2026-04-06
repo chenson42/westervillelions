@@ -3,6 +3,7 @@ import "./globals.css";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { auth } from "@/lib/auth";
+import Script from "next/script";
 
 const siteUrl = "https://westervillelions.org";
 
@@ -83,6 +84,18 @@ export default async function RootLayout({
         />
       </head>
       <body>
+        <Script
+          src="https://www.googletagmanager.com/gtag/js?id=G-RC3NVC28GC"
+          strategy="afterInteractive"
+        />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-RC3NVC28GC');
+          `}
+        </Script>
         <Header session={session} />
         {children}
         <Footer />
