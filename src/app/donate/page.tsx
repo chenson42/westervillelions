@@ -7,7 +7,7 @@ import { auth } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Donate | Support Our Mission",
-  description: "Donate to the Westerville Lions Club — a 501(c)(3) nonprofit. Your tax-deductible gift supports youth programs, hunger relief, humanitarian aid, and community service in Westerville, Ohio.",
+  description: "Donate to the Westerville Lions Club Foundation — a 501(c)(3) charitable organization. Your tax-deductible gift supports youth programs, hunger relief, humanitarian aid, and community service in Westerville, Ohio.",
 };
 
 const jsonLd = {
@@ -149,8 +149,9 @@ export default async function DonatePage() {
             <div>
               <h2 className="text-2xl font-bold mb-4 text-gray-900">Tax-Deductible Giving</h2>
               <p className="text-gray-700 mb-3">
-                The Westerville Lions Club is a 501(c)(3) nonprofit organization. Every dollar you
-                contribute is tax-deductible and goes directly to our community service programs.
+                Charitable donations are made to the <strong>Westerville Lions Club Foundation</strong>,
+                our 501(c)(3) nonprofit organization. Gifts to the Foundation are tax-deductible and
+                go directly to our community service programs.
               </p>
               <p className="text-gray-700">
                 Every dollar stays in our community or supports Lions Clubs International&apos;s
@@ -162,7 +163,7 @@ export default async function DonatePage() {
               <h2 className="text-2xl font-bold mb-4 text-gray-900">Other Ways to Give</h2>
               <ul className="space-y-3 text-gray-700">
                 <li>
-                  <strong>Mail a Check:</strong> Payable to &ldquo;Westerville Lions Club&rdquo; —{" "}
+                  <strong>Mail a Check:</strong> Payable to &ldquo;Westerville Lions Club Foundation&rdquo; —{" "}
                   <a href="/contact" className="text-lions-blue hover:underline">contact us</a> for the mailing address.
                 </li>
                 <li>
