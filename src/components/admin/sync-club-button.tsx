@@ -12,7 +12,16 @@ export default function SyncClubButton() {
       const res = await fetch("/api/admin/members/sync-club", { method: "POST" });
       const data = await res.json();
       if (data.success) {
-        toast.success("club@westervillelions.org synced successfully");
+        const added = data.added?.length ?? 0;
+        const removed = data.removed?.length ?? 0;
+        if (added === 0 && removed === 0) {
+          toast.success("club@ is already up to date — no changes needed");
+        } else {
+          const parts = [];
+          if (added > 0) parts.push(`${added} added (${data.added.join(", ")})`);
+          if (removed > 0) parts.push(`${removed} removed (${data.removed.join(", ")})`);
+          toast.success(`club@ synced: ${parts.join(" · ")}`);
+        }
       } else {
         toast.error(data.error || "Sync failed");
       }

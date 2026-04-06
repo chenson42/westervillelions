@@ -16,7 +16,7 @@ const CLUB_GROUP_EMAIL = "club@westervillelions.org";
  * Sync all active members to club@westervillelions.org.
  * Fire-and-forget safe — catches all errors internally.
  */
-export async function syncClubMembersList(): Promise<{ success: boolean; error?: string }> {
+export async function syncClubMembersList(): Promise<{ success: boolean; added?: string[]; removed?: string[]; error?: string }> {
   try {
     const auth = getOAuthClient();
     const adminClient = google.admin({ version: "directory_v1", auth });
@@ -64,14 +64,17 @@ export async function syncClubMembersList(): Promise<{ success: boolean; error?:
     );
 
     // Add missing, remove extra
-    for (const email of [...portalMemberEmails].filter((e) => !googleMemberEmails.has(e))) {
+    const toAdd = [...portalMemberEmails].filter((e) => !googleMemberEmails.has(e));
+    const toRemove = [...googleMemberEmails].filter((e) => !portalMemberEmails.has(e));
+
+    for (const email of toAdd) {
       await adminClient.members.insert({ groupKey: CLUB_GROUP_EMAIL, requestBody: { email, role: "MEMBER" } });
     }
-    for (const email of [...googleMemberEmails].filter((e) => !portalMemberEmails.has(e))) {
+    for (const email of toRemove) {
       await adminClient.members.delete({ groupKey: CLUB_GROUP_EMAIL, memberKey: email });
     }
 
-    return { success: true };
+    return { success: true, added: toAdd, removed: toRemove };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[google-groups] syncClubMembersList failed:", err);
@@ -95,7 +98,7 @@ function getOAuthClient() {
 
 export async function syncGoogleGroup(
   groupId: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; added?: string[]; removed?: string[]; error?: string }> {
   try {
     // 1. Load the portal group
     const group = await db.query.groups.findFirst({
@@ -197,7 +200,7 @@ export async function syncGoogleGroup(
       })
       .where(eq(groups.id, groupId));
 
-    return { success: true };
+    return { success: true, added: toAdd, removed: toRemove };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[google-groups] syncGoogleGroup failed for ${groupId}:`, err);

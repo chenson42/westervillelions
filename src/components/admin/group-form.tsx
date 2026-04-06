@@ -116,7 +116,16 @@ export function GroupForm({
         toast.error(msg);
       } else {
         setSyncedAt(new Date().toLocaleString());
-        toast.success("Google Group synced");
+        const added = json.added?.length ?? 0;
+        const removed = json.removed?.length ?? 0;
+        if (added === 0 && removed === 0) {
+          toast.success("Google Group is already up to date — no changes needed");
+        } else {
+          const parts = [];
+          if (added > 0) parts.push(`${added} added (${json.added.join(", ")})`);
+          if (removed > 0) parts.push(`${removed} removed (${json.removed.join(", ")})`);
+          toast.success(`Synced: ${parts.join(" · ")}`);
+        }
       }
     } catch {
       const msg = "Failed to connect to sync service";
