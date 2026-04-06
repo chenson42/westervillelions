@@ -139,7 +139,7 @@ export default async function DonatePage() {
             </div>
           )}
 
-          <div className="mt-12 bg-blue-50 p-8 rounded-xl text-center">
+          <div className="mt-12 bg-lions-blue/5 p-8 rounded-2xl text-center">
             <h2 className="text-2xl font-bold mb-4 text-lions-blue">
               Thank You for Your Support
             </h2>
@@ -190,7 +190,7 @@ export default async function DonatePage() {
                 { label: "Humanitarian Aid", body: "Disaster relief and support for those in need locally and globally" },
                 { label: "Hunger Relief", body: "Partnerships with food banks and meal programs for families in need" },
               ].map((item) => (
-                <div key={item.label} className="bg-gray-50 p-5 rounded-lg">
+                <div key={item.label} className="bg-gray-50 p-5 rounded-2xl">
                   <h3 className="font-semibold text-lions-blue mb-2">{item.label}</h3>
                   <p className="text-sm text-gray-700">{item.body}</p>
                 </div>
