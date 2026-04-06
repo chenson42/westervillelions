@@ -122,7 +122,7 @@ function AnnouncementList({
                 {item.linkUrl && (
                   <a
                     href={item.linkUrl}
-                    className="mt-2 inline-flex items-center text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition-colors focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-1 rounded"
+                    className="mt-2 inline-flex items-center text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition-colors focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-1 rounded"
                     target={
                       item.linkUrl.startsWith("http") ? "_blank" : undefined
                     }

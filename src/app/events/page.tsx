@@ -77,7 +77,7 @@ export default async function WhatWeDoPage() {
                 {publicEvents.map((event) => {
                   const recurrenceLabel = formatRecurrence(event);
                   return (
-                    <div key={event.id} className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition">
+                    <div key={event.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition transform hover:-translate-y-1">
                       {event.image && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -124,7 +124,7 @@ export default async function WhatWeDoPage() {
                 })}
               </div>
             ) : (
-              <div className="text-center py-12 bg-gray-50 rounded-lg">
+              <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500">
                 <p className="text-xl text-gray-600 mb-3">
                   No upcoming public events at this time.
                 </p>

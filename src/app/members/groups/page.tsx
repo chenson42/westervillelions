@@ -54,7 +54,7 @@ export default async function GroupsPage() {
         </div>
 
         {allGroups.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-md p-10 text-center text-gray-500">
+          <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500">
             No groups have been set up yet.
           </div>
         ) : (
@@ -62,7 +62,7 @@ export default async function GroupsPage() {
             {allGroups.map((group) => (
               <div
                 key={group.id}
-                className="bg-white rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden flex flex-col"
+                className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden flex flex-col"
               >
                 {group.color && (
                   <div

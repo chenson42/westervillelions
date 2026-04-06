@@ -154,13 +154,13 @@ export default async function HomePage() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <a
               href="/join"
-              className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-full font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105"
+              className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105"
             >
               Join the Club
             </a>
             <a
               href="/about"
-              className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-white hover:text-lions-blue transition"
+              className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition"
             >
               Learn More
             </a>
@@ -287,13 +287,13 @@ export default async function HomePage() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <a
               href="/campaigns"
-              className="bg-lions-blue text-white px-10 py-4 rounded-full font-bold text-lg hover:bg-lions-blue-dark transition shadow-lg transform hover:scale-105"
+              className="bg-lions-blue text-white px-10 py-4 rounded-lg font-bold text-lg hover:bg-lions-blue-dark transition shadow-lg transform hover:scale-105"
             >
               Support Our Mission
             </a>
             <a
               href="/contact"
-              className="bg-white text-lions-blue border-2 border-lions-blue px-10 py-4 rounded-full font-bold text-lg hover:bg-gray-50 transition shadow-lg"
+              className="bg-white text-lions-blue border-2 border-lions-blue px-10 py-4 rounded-lg font-bold text-lg hover:bg-gray-50 transition shadow-lg"
             >
               Get in Touch
             </a>

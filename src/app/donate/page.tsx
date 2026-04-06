@@ -105,7 +105,7 @@ export default async function DonatePage() {
               {campaignsWithMeta.map((campaign) => (
                 <div
                   key={campaign.id}
-                  className="bg-white border-2 border-lions-gold rounded-xl overflow-hidden shadow-md hover:shadow-xl transition"
+                  className="rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 bg-white overflow-hidden"
                 >
                   <div className="relative">
                     {campaign.displayImage && (

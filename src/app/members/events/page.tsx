@@ -52,7 +52,7 @@ export default async function MemberEventsPage() {
         {upcoming.length > 0 ? (
           <div className="space-y-4 mb-10">
             {upcoming.map((event) => (
-              <div key={event.id} className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+              <div key={event.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition transform hover:-translate-y-1">
                 {event.image && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={event.image} alt={event.title} className="w-full h-48 object-cover" />
@@ -96,7 +96,7 @@ export default async function MemberEventsPage() {
             ))}
           </div>
         ) : (
-          <div className="bg-white rounded-lg p-8 text-center text-gray-600 mb-10">
+          <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500 mb-10">
             No upcoming events scheduled.
           </div>
         )}
@@ -107,7 +107,7 @@ export default async function MemberEventsPage() {
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Past Events</h2>
             <div className="space-y-3">
               {past.map((event) => (
-                <div key={event.id} className="bg-white border border-gray-100 rounded-lg p-4 opacity-75">
+                <div key={event.id} className="bg-white rounded-2xl shadow-sm p-4 opacity-75">
                   <div className="flex justify-between items-center">
                     <div>
                       <h3 className="font-semibold text-gray-700">{event.title}</h3>

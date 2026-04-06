@@ -113,7 +113,7 @@ export default function MissionPage() {
               ].map((p) => (
                 <div
                   key={p.title}
-                  className="rounded-xl border border-lions-blue/20 bg-lions-blue/5 p-6"
+                  className="rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 bg-white overflow-hidden p-6"
                 >
                   <h3 className="text-lg font-semibold mb-2 text-lions-blue">
                     {p.title}
@@ -135,7 +135,7 @@ export default function MissionPage() {
               {causes.map((cause) => (
                 <div
                   key={cause.title}
-                  className="rounded-xl border border-gray-200 bg-white p-5 hover:border-lions-blue/40 hover:shadow-sm transition"
+                  className="rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 bg-white overflow-hidden p-5"
                 >
                   <div className="text-3xl mb-3">{cause.icon}</div>
                   <h3 className="font-semibold text-gray-900 mb-2">{cause.title}</h3>

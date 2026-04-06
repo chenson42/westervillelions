@@ -75,7 +75,7 @@ export default async function GroupDetailPage({ params }: Props) {
 
         {/* Contact email card */}
         {group.emailPrefix && (
-          <div className="mb-8 rounded-xl border-2 border-lions-gold bg-lions-gold/5 p-6 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="mb-8 rounded-2xl bg-white shadow-sm p-6 flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="flex-1">
               <p className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">
                 Contact this group
@@ -99,7 +99,7 @@ export default async function GroupDetailPage({ params }: Props) {
         </h2>
 
         {groupMembers.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-md p-10 text-center text-gray-500">
+          <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500">
             No members in this group yet.
           </div>
         ) : (
@@ -107,7 +107,7 @@ export default async function GroupDetailPage({ params }: Props) {
             {groupMembers.map((member) => (
               <div
                 key={member.memberId}
-                className="bg-white rounded-xl shadow-md p-5 flex items-center gap-4"
+                className="bg-white rounded-2xl shadow-sm p-5 flex items-center gap-4"
               >
                 <div className="shrink-0">
                   {member.profilePicture ? (

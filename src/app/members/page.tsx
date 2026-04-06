@@ -119,7 +119,7 @@ export default async function MembersPage() {
         <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 mb-12">
           <a
             href="/members"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition border-2 border-lions-blue transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Member Directory</h3>
             <p className="text-gray-700">View contact information for all club members</p>
@@ -166,7 +166,7 @@ export default async function MembersPage() {
                 return (
                   <div
                     key={m.id}
-                    className="flex items-center gap-3 rounded-lg border border-lions-gold/30 bg-white px-4 py-3 shadow-sm"
+                    className="flex items-center gap-3 rounded-lg bg-white px-4 py-3 shadow-sm"
                   >
                     {m.profilePicture ? (
                       // eslint-disable-next-line @next/next/no-img-element
