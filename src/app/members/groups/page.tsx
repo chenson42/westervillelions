@@ -39,6 +39,20 @@ export default async function GroupsPage() {
           </a>
         </div>
 
+        {/* Club-wide email */}
+        <div className="mb-8 flex items-center gap-4 rounded-xl border border-lions-gold/40 bg-lions-gold/5 px-6 py-4">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-gray-700">Club-wide email list</p>
+            <p className="text-sm text-gray-500 mt-0.5">Reaches all active members</p>
+          </div>
+          <a
+            href="mailto:club@westervillelions.org"
+            className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark hover:underline"
+          >
+            club@westervillelions.org
+          </a>
+        </div>
+
         {allGroups.length === 0 ? (
           <div className="bg-white rounded-xl shadow-md p-10 text-center text-gray-500">
             No groups have been set up yet.
