@@ -52,7 +52,7 @@ export async function PATCH(
         state: data.state || null,
         zip: data.zip || null,
         branch: data.branch || null,
-        boardPosition: data.boardPosition || null,
+        dateOfBirth: data.dateOfBirth || null,
         joinDate: data.joinDate ? new Date(data.joinDate) : null,
         isActive: newIsActive,
         updatedAt: new Date(),

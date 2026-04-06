@@ -46,7 +46,7 @@ export default function ResetPasswordPage() {
 
           <Link
             href="/forgot-password"
-            className="block w-full rounded-md bg-lions-red px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700"
+            className="block w-full rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark"
           >
             Request New Link
           </Link>
@@ -120,7 +120,7 @@ export default function ResetPasswordPage() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
                 placeholder="New password (min. 8 characters)"
               />
             </div>
@@ -136,7 +136,7 @@ export default function ResetPasswordPage() {
                 required
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
                 placeholder="Confirm new password"
               />
             </div>
@@ -146,7 +146,7 @@ export default function ResetPasswordPage() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex w-full justify-center rounded-md bg-lions-red px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 disabled:opacity-50"
+              className="flex w-full justify-center rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-50"
             >
               {isSubmitting ? "Resetting..." : "Reset Password"}
             </button>

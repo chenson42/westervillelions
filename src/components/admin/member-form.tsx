@@ -15,9 +15,39 @@ export interface MemberFormData {
   state?: string | null;
   zip?: string | null;
   branch?: string | null;
-  boardPosition?: string | null;
+  dateOfBirth?: string | null;
   joinDate?: string | null;
   isActive: boolean;
+}
+
+const MONTHS = [
+  { value: "01", label: "January" },
+  { value: "02", label: "February" },
+  { value: "03", label: "March" },
+  { value: "04", label: "April" },
+  { value: "05", label: "May" },
+  { value: "06", label: "June" },
+  { value: "07", label: "July" },
+  { value: "08", label: "August" },
+  { value: "09", label: "September" },
+  { value: "10", label: "October" },
+  { value: "11", label: "November" },
+  { value: "12", label: "December" },
+];
+
+function parseDateOfBirth(dob: string | null | undefined) {
+  if (!dob) return { month: "", day: "", year: "" };
+  // Format: YYYY-MM-DD or --MM-DD (year omitted)
+  const noYear = dob.startsWith("--");
+  const parts = noYear ? dob.slice(2).split("-") : dob.split("-");
+  if (noYear) return { month: parts[0] ?? "", day: parts[1] ?? "", year: "" };
+  return { month: parts[1] ?? "", day: parts[2] ?? "", year: parts[0] ?? "" };
+}
+
+function composeDateOfBirth(month: string, day: string, year: string): string | null {
+  if (!month || !day) return null;
+  if (year) return `${year.padStart(4, "0")}-${month}-${day}`;
+  return `--${month}-${day}`;
 }
 
 export default function MemberForm({
@@ -36,6 +66,17 @@ export default function MemberForm({
       isActive: true,
     }
   );
+
+  const [birthMonth, setBirthMonth] = useState(() => parseDateOfBirth(member?.dateOfBirth).month);
+  const [birthDay, setBirthDay] = useState(() => parseDateOfBirth(member?.dateOfBirth).day);
+  const [birthYear, setBirthYear] = useState(() => parseDateOfBirth(member?.dateOfBirth).year);
+
+  function updateBirthday(month: string, day: string, year: string) {
+    setFormData((prev) => ({
+      ...prev,
+      dateOfBirth: composeDateOfBirth(month, day, year),
+    }));
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,7 +147,7 @@ export default function MemberForm({
               required
               value={formData.firstName}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
@@ -124,7 +165,7 @@ export default function MemberForm({
               required
               value={formData.lastName}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
@@ -141,7 +182,7 @@ export default function MemberForm({
               name="email"
               value={formData.email || ""}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
@@ -158,7 +199,7 @@ export default function MemberForm({
               name="phone"
               value={formData.phone || ""}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
@@ -175,7 +216,7 @@ export default function MemberForm({
               name="memberNumber"
               value={formData.memberNumber || ""}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
@@ -192,7 +233,7 @@ export default function MemberForm({
               name="joinDate"
               value={formData.joinDate || ""}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
         </div>
@@ -215,7 +256,7 @@ export default function MemberForm({
               name="address"
               value={formData.address || ""}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
@@ -232,7 +273,7 @@ export default function MemberForm({
               name="city"
               value={formData.city || ""}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
@@ -250,7 +291,7 @@ export default function MemberForm({
               value={formData.state || ""}
               onChange={handleChange}
               maxLength={2}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
@@ -267,7 +308,7 @@ export default function MemberForm({
               name="zip"
               value={formData.zip || ""}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
         </div>
@@ -293,26 +334,56 @@ export default function MemberForm({
               value={formData.branch || ""}
               onChange={handleChange}
               placeholder="e.g., Main, Somali Branch"
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
           </div>
 
           <div>
-            <label
-              htmlFor="boardPosition"
-              className="block text-sm font-medium text-gray-700"
-            >
-              Board Position
+            <label className="block text-sm font-medium text-gray-700">
+              Birthday
             </label>
-            <input
-              type="text"
-              id="boardPosition"
-              name="boardPosition"
-              value={formData.boardPosition || ""}
-              onChange={handleChange}
-              placeholder="e.g., President, Treasurer"
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
-            />
+            <div className="mt-1 flex gap-2">
+              <select
+                value={birthMonth}
+                onChange={(e) => {
+                  setBirthMonth(e.target.value);
+                  updateBirthday(e.target.value, birthDay, birthYear);
+                }}
+                className="rounded-md border border-gray-300 px-2 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+              >
+                <option value="">Month</option>
+                {MONTHS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <select
+                value={birthDay}
+                onChange={(e) => {
+                  setBirthDay(e.target.value);
+                  updateBirthday(birthMonth, e.target.value, birthYear);
+                }}
+                className="rounded-md border border-gray-300 px-2 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+              >
+                <option value="">Day</option>
+                {Array.from({ length: 31 }, (_, i) => {
+                  const d = String(i + 1).padStart(2, "0");
+                  return <option key={d} value={d}>{i + 1}</option>;
+                })}
+              </select>
+              <input
+                type="number"
+                value={birthYear}
+                onChange={(e) => {
+                  setBirthYear(e.target.value);
+                  updateBirthday(birthMonth, birthDay, e.target.value);
+                }}
+                placeholder="Year"
+                min={1900}
+                max={new Date().getFullYear()}
+                className="w-24 rounded-md border border-gray-300 px-2 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+              />
+            </div>
+            <p className="mt-1 text-xs text-gray-500">Year is optional</p>
           </div>
 
           <div className="flex items-center">
@@ -322,7 +393,7 @@ export default function MemberForm({
               name="isActive"
               checked={formData.isActive}
               onChange={handleChange}
-              className="h-4 w-4 rounded border-gray-300 text-lions-red focus:ring-lions-red"
+              className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
             />
             <label
               htmlFor="isActive"
@@ -339,14 +410,14 @@ export default function MemberForm({
         <button
           type="button"
           onClick={() => router.back()}
-          className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-lions-red focus:ring-offset-2"
+          className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={isSubmitting}
-          className="rounded-md bg-lions-red px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 disabled:opacity-50"
+          className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-50"
         >
           {isSubmitting ? "Saving..." : memberId ? "Update Member" : "Create Member"}
         </button>

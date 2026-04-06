@@ -161,7 +161,7 @@ export default function PermissionsMatrix({
                                 type="checkbox"
                                 checked={assigned}
                                 onChange={() => handleToggle(role.id, feature.id)}
-                                className="h-4 w-4 rounded border-gray-300 text-lions-red focus:ring-lions-red"
+                                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
                               />
                             )}
                           </div>

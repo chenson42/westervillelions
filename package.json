@@ -6,13 +6,14 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "dev": "node drizzle/run-migrations.mjs && next dev",
+    "dev": "dotenv -e .env.local -- node drizzle/run-migrations.mjs && dotenv -e .env.local -- next dev",
     "build": "node drizzle/run-migrations.mjs && drizzle-kit push --force && next build",
     "build:only": "NEXT_PUBLIC_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) NEXT_PUBLIC_APP_VERSION=$(node -p \"require('./package.json').version\") next build",
     "db:migrate": "node drizzle/run-migrations.mjs",
     "db:push": "drizzle-kit push",
     "db:migrate-and-push": "node drizzle/run-migrations.mjs && drizzle-kit push",
     "db:import-roster": "tsx scripts/import-roster.ts",
+    "db:sync-roster": "dotenv -e .env.local -- tsx scripts/sync-roster.ts",
     "db:add-events": "tsx scripts/add-events.ts",
     "start": "next start",
     "lint": "eslint"

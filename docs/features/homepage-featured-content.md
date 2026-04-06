@@ -1,7 +1,7 @@
 # Homepage Featured Content
 
 **Date:** 2026-04-03
-**Status:** Planning
+**Status:** Complete
 **Area:** public-site, admin
 
 ## Value

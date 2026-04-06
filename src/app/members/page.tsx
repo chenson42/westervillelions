@@ -81,22 +81,30 @@ export default async function MembersPage() {
   // Groups available as filters (those that have at least one member)
   const filterGroups = directoryGroups.map((g) => ({ id: g.id, name: g.name, color: g.color }));
 
-  // Birthdays this month — dateOfBirth stored as "YYYY-MM-DD"
+  // Birthdays this month — dateOfBirth stored as "YYYY-MM-DD" or "--MM-DD" (no year)
   const now = new Date();
   const currentMonth = now.getMonth() + 1;
   const monthName = now.toLocaleString("en-US", { month: "long" });
 
+  function parseDobMonth(dob: string): number {
+    // "--MM-DD" → month is index 2/3 after split; "YYYY-MM-DD" → index 1
+    const noYear = dob.startsWith("--");
+    const parts = noYear ? dob.slice(2).split("-") : dob.split("-");
+    return parseInt(noYear ? parts[0] : parts[1]);
+  }
+
+  function parseDobDay(dob: string): number {
+    const noYear = dob.startsWith("--");
+    const parts = noYear ? dob.slice(2).split("-") : dob.split("-");
+    return parseInt(noYear ? parts[1] : parts[2]);
+  }
+
   const birthdaysThisMonth = allMembers
     .filter((m) => {
       if (!m.dateOfBirth) return false;
-      const parts = m.dateOfBirth.split("-");
-      return parts.length >= 2 && parseInt(parts[1]) === currentMonth;
+      return parseDobMonth(m.dateOfBirth) === currentMonth;
     })
-    .sort((a, b) => {
-      const dayA = parseInt(a.dateOfBirth!.split("-")[2]);
-      const dayB = parseInt(b.dateOfBirth!.split("-")[2]);
-      return dayA - dayB;
-    });
+    .sort((a, b) => parseDobDay(a.dateOfBirth!) - parseDobDay(b.dateOfBirth!));
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -139,7 +147,7 @@ export default async function MembersPage() {
             </h2>
             <div className="flex flex-wrap gap-3">
               {birthdaysThisMonth.map((m) => {
-                const day = parseInt(m.dateOfBirth!.split("-")[2]);
+                const day = parseDobDay(m.dateOfBirth!);
                 const ordinal =
                   day === 1 || day === 21 || day === 31
                     ? "st"

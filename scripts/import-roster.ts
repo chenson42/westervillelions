@@ -82,7 +82,7 @@ async function importRoster(filePath: string) {
           .insert(users)
           .values({
             email,
-            name: row.Name,
+            name: `${firstName} ${lastName}`,
             role: "member",
           })
           .returning();

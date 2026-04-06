@@ -69,7 +69,7 @@ export default function ForgotPasswordPage() {
 
           <Link
             href="/signin"
-            className="block w-full rounded-md bg-lions-red px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2"
+            className="block w-full rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
           >
             Back to Sign In
           </Link>
@@ -107,7 +107,7 @@ export default function ForgotPasswordPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-red focus:outline-none focus:ring-1 focus:ring-lions-red"
+              className="block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
               placeholder="Email address"
             />
           </div>
@@ -116,7 +116,7 @@ export default function ForgotPasswordPage() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex w-full justify-center rounded-md bg-lions-red px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 disabled:opacity-50"
+              className="flex w-full justify-center rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-50"
             >
               {isSubmitting ? "Sending..." : "Send Reset Link"}
             </button>
@@ -125,7 +125,7 @@ export default function ForgotPasswordPage() {
           <div className="text-center">
             <Link
               href="/signin"
-              className="text-sm font-medium text-lions-red hover:text-red-700"
+              className="text-sm font-medium text-lions-blue hover:text-lions-blue-dark"
             >
               Back to Sign In
             </Link>
