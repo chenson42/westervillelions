@@ -21,7 +21,7 @@ export function Header({ session }: HeaderProps) {
     { href: "/about", label: "About" },
     { href: "/mission", label: "Mission & Service" },
     { href: "/events", label: "Events" },
-    { href: "/contact", label: "Connect" },
+    { href: "/contact", label: "Contact" },
   ];
 
   const isActive = (href: string) => pathname === href;
@@ -86,7 +86,7 @@ export function Header({ session }: HeaderProps) {
             ) : (
               <Link
                 href="/signin"
-                className="hidden md:inline-block bg-lions-blue text-white px-4 py-2 rounded-lg hover:bg-lions-blue-dark transition"
+                className="hidden md:inline-block text-gray-500 hover:text-lions-blue transition text-sm font-medium"
               >
                 Member Login
               </Link>

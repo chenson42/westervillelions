@@ -17,9 +17,10 @@ async function verifyTurnstile(token: string): Promise<boolean> {
 
 export async function POST(request: NextRequest) {
   try {
-    const { name, email, subject, message, captchaToken } = await request.json();
+    const { name, email, message, captchaToken } = await request.json();
+    const subject = "General Inquiry";
 
-    if (!name || !email || !subject || !message) {
+    if (!name || !email || !message) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
 

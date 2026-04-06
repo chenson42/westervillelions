@@ -29,7 +29,6 @@ export function ContactForm() {
     const data = {
       name: formData.get("name"),
       email: formData.get("email"),
-      subject: formData.get("subject"),
       message: formData.get("message"),
       captchaToken,
     };
@@ -92,18 +91,6 @@ export function ContactForm() {
             type="email"
             id="email"
             name="email"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
-            required
-          />
-        </div>
-        <div>
-          <label htmlFor="subject" className="block text-sm font-medium text-gray-700 mb-1">
-            Subject
-          </label>
-          <input
-            type="text"
-            id="subject"
-            name="subject"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
             required
           />
