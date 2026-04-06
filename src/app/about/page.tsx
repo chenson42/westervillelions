@@ -11,6 +11,20 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "https://westervillelions.org/about",
   },
+  openGraph: {
+    title: "About Us | Westerville Lions Club",
+    description:
+      "Learn about the Westerville Lions Club — a community service organization serving Westerville, Ohio since 1928 as part of Lions Clubs International.",
+    url: "https://westervillelions.org/about",
+    images: [
+      {
+        url: "https://westervillelions.org/images/hero-bg.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
+      },
+    ],
+  },
 };
 
 const POSITION_ORDER: Record<string, number> = {

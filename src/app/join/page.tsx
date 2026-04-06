@@ -6,6 +6,19 @@ export const metadata = {
   alternates: {
     canonical: "https://westervillelions.org/join",
   },
+  openGraph: {
+    title: "Join the Westerville Lions Club",
+    description: "Apply for membership in the Westerville Lions Club and make a difference in your community.",
+    url: "https://westervillelions.org/join",
+    images: [
+      {
+        url: "https://westervillelions.org/images/hero-bg.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
+      },
+    ],
+  },
 };
 
 const breadcrumb = {
@@ -38,19 +51,19 @@ export default function JoinPage() {
           <div className="mb-10">
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Why Join the Westerville Lions?</h2>
             <div className="grid md:grid-cols-3 gap-6 mb-8">
-              <div className="text-center p-4">
-                <div className="text-3xl mb-2">🤝</div>
-                <h3 className="font-semibold text-gray-900 mb-1">Serve Your Community</h3>
+              <div className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-6 text-center">
+                <div className="text-4xl mb-3">🤝</div>
+                <h3 className="font-semibold text-lions-blue mb-2">Serve Your Community</h3>
                 <p className="text-sm text-gray-600">Make a real difference in Westerville and surrounding areas through hands-on service projects.</p>
               </div>
-              <div className="text-center p-4">
-                <div className="text-3xl mb-2">🌍</div>
-                <h3 className="font-semibold text-gray-900 mb-1">Global Network</h3>
+              <div className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-6 text-center">
+                <div className="text-4xl mb-3">🌍</div>
+                <h3 className="font-semibold text-lions-blue mb-2">Global Network</h3>
                 <p className="text-sm text-gray-600">Join 1.35 million Lions members across 206 countries working toward humanitarian goals.</p>
               </div>
-              <div className="text-center p-4">
-                <div className="text-3xl mb-2">👥</div>
-                <h3 className="font-semibold text-gray-900 mb-1">Build Friendships</h3>
+              <div className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-6 text-center">
+                <div className="text-4xl mb-3">👥</div>
+                <h3 className="font-semibold text-lions-blue mb-2">Build Friendships</h3>
                 <p className="text-sm text-gray-600">Connect with civic-minded neighbors who share your commitment to community.</p>
               </div>
             </div>
