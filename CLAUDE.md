@@ -236,6 +236,72 @@ toast.error("Error message");
 - Custom brand colors: `bg-lions-blue`, `text-lions-gold`, `bg-lions-blue-dark`
 - Responsive design: mobile-first approach
 
+## UX Guidelines
+
+These standards must be followed consistently across all pages.
+
+### Card Styles
+
+**Interactive cards** (clickable, hoverable — events, groups, service areas, campaigns):
+```
+bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden
+```
+
+**Non-interactive cards** (informational — member list items, detail panels):
+```
+bg-white rounded-2xl shadow-sm overflow-hidden
+```
+
+Never mix `rounded-xl` and `rounded-2xl` in card containers. Always use `rounded-2xl`.
+
+### Empty States
+```
+bg-gray-50 rounded-2xl p-10 text-center text-gray-500
+```
+
+### Buttons
+
+**Primary button:**
+```
+bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition
+```
+
+**Secondary button (outlined):**
+```
+border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue/5 transition
+```
+
+**Always use `rounded-lg`** — never `rounded-full` for buttons, even in hero sections.
+
+Hero buttons may use larger padding (`px-8 py-4`) and `text-lg`, but must still use `rounded-lg`.
+
+### Colors
+
+- **On dark (blue) backgrounds:** social icon hover = `hover:text-lions-gold`
+- **On light backgrounds:** social icon hover = `hover:text-lions-blue`
+- Use `lions-gold` as an accent (badges, highlights, section labels), not as a card border
+- Do not use `lions-red` — it is not defined in the theme and renders transparent
+
+### Page Hero Banners
+
+**Public pages** (`py-20` with blue gradient):
+```
+bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-20
+```
+
+**Member portal pages** (`py-12` — secondary context):
+```
+bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-12
+```
+
+Public page subtitles use a gold eyebrow label with `uppercase tracking-widest text-sm text-lions-gold mb-2`.
+
+### Links
+
+- Back links: `text-lions-blue hover:underline` with `&larr;` arrow
+- Inline "learn more" / "see all" links: `text-sm font-semibold text-lions-blue hover:text-lions-blue-dark` with SVG arrow icon
+- All interactive links must have `focus:outline-none focus:ring-2 focus:ring-lions-blue rounded` for accessibility
+
 ## Content Guidelines
 
 ### Writing Tone
