@@ -151,9 +151,7 @@ export default async function HomePage() {
             Serving Our Community Since 1928
           </p>
           <p className="text-xl md:text-2xl max-w-4xl mx-auto font-light leading-relaxed mb-10">
-            Creating and fostering a spirit of understanding among all people
-            for humanitarian needs by providing voluntary services through
-            community involvement.
+            Helping our community thrive through service and care.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <a
