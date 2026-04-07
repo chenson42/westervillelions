@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, date, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -35,6 +35,7 @@ export const members = pgTable("members", {
   gender: text("gender"),
   spouseName: text("spouse_name"),
   joinDate: timestamp("join_date"),
+  membershipEndedDate: date("membership_ended_date"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

@@ -55,6 +55,7 @@ export async function PATCH(
         branch: data.branch || null,
         dateOfBirth: data.dateOfBirth || null,
         joinDate: data.joinDate ? new Date(data.joinDate) : null,
+        membershipEndedDate: data.membershipEndedDate || null,
         isActive: newIsActive,
         updatedAt: new Date(),
       })

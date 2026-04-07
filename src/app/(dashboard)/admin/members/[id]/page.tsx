@@ -40,6 +40,7 @@ export default async function EditMemberPage({
     branch: member.branch,
     dateOfBirth: member.dateOfBirth,
     joinDate: member.joinDate ? member.joinDate.toISOString().split("T")[0] : null,
+    membershipEndedDate: member.membershipEndedDate ?? null,
     isActive: member.isActive,
   };
 

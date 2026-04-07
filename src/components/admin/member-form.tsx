@@ -17,6 +17,7 @@ export interface MemberFormData {
   branch?: string | null;
   dateOfBirth?: string | null;
   joinDate?: string | null;
+  membershipEndedDate?: string | null;
   isActive: boolean;
 }
 
@@ -232,6 +233,23 @@ export default function MemberForm({
               id="joinDate"
               name="joinDate"
               value={formData.joinDate || ""}
+              onChange={handleChange}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="membershipEndedDate"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Membership Ended
+            </label>
+            <input
+              type="date"
+              id="membershipEndedDate"
+              name="membershipEndedDate"
+              value={formData.membershipEndedDate || ""}
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
