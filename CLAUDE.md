@@ -275,6 +275,31 @@ border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold ho
 
 Hero buttons may use larger padding (`px-8 py-4`) and `text-lg`, but must still use `rounded-lg`.
 
+### Confirm / Destructive Actions
+
+**Never use `window.confirm()`, `window.alert()`, or `window.prompt()`.** These are browser-native dialogs that cannot be styled, block the main thread, and are inconsistent across platforms.
+
+Always use `<ConfirmDialog>` from `@/components/ui/confirm-dialog` instead:
+
+```tsx
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+
+const [deleteOpen, setDeleteOpen] = useState(false);
+
+<button onClick={() => setDeleteOpen(true)}>Delete</button>
+<ConfirmDialog
+  open={deleteOpen}
+  onOpenChange={setDeleteOpen}
+  title="Delete item?"
+  description="This action cannot be undone."
+  confirmLabel="Delete"
+  destructive
+  onConfirm={handleDelete}
+/>
+```
+
+Use `destructive` prop for irreversible actions — renders the confirm button in red.
+
 ### Colors
 
 - **On dark (blue) backgrounds:** social icon hover = `hover:text-lions-gold`

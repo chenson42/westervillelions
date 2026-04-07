@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ImageCropper } from "@/components/admin/image-cropper";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 export interface EventFormData {
   title: string;
@@ -136,6 +137,7 @@ export default function EventForm({
 }) {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [formData, setFormData] = useState<EventFormData>(
     event || {
       title: "",
@@ -209,7 +211,7 @@ export default function EventForm({
   };
 
   const handleDelete = async () => {
-    if (!eventId || !confirm("Are you sure you want to delete this event?")) return;
+    if (!eventId) return;
 
     try {
       const response = await fetch(`/api/admin/events/${eventId}`, { method: "DELETE" });
@@ -500,13 +502,24 @@ export default function EventForm({
       {/* Actions */}
       <div className="flex justify-between">
         {eventId && (
-          <button
-            type="button"
-            onClick={handleDelete}
-            className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50"
-          >
-            Delete Event
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setDeleteOpen(true)}
+              className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50"
+            >
+              Delete Event
+            </button>
+            <ConfirmDialog
+              open={deleteOpen}
+              onOpenChange={setDeleteOpen}
+              title="Delete event?"
+              description="This will permanently delete the event and all associated RSVPs. This action cannot be undone."
+              confirmLabel="Delete Event"
+              destructive
+              onConfirm={handleDelete}
+            />
+          </>
         )}
         <div className="flex gap-4 ml-auto">
           <button

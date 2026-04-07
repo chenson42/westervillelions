@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 type GroupType = { id: string; name: string };
 type Group = {
@@ -31,6 +32,7 @@ export function GroupForm({
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [emailPrefix, setEmailPrefix] = useState(group?.emailPrefix ?? "");
   const [syncedAt, setSyncedAt] = useState<string | null>(
     group?.googleGroupSyncedAt ? new Date(group.googleGroupSyncedAt).toLocaleString() : null
@@ -87,8 +89,6 @@ export function GroupForm({
 
   async function handleDelete() {
     if (!group) return;
-    if (!confirm(`Delete "${group.name}"? This will also remove all memberships.`)) return;
-
     setIsDeleting(true);
     try {
       const res = await fetch(`/api/admin/groups/${group.id}`, { method: "DELETE" });
@@ -303,14 +303,25 @@ export function GroupForm({
           </a>
         </div>
         {isEdit && (
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={isDeleting}
-            className="rounded-md px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-          >
-            {isDeleting ? "Deleting..." : "Delete Group"}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setDeleteOpen(true)}
+              disabled={isDeleting}
+              className="rounded-md px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+            >
+              {isDeleting ? "Deleting..." : "Delete Group"}
+            </button>
+            <ConfirmDialog
+              open={deleteOpen}
+              onOpenChange={setDeleteOpen}
+              title={`Delete "${group?.name}"?`}
+              description="This will permanently delete the group and remove all memberships. This action cannot be undone."
+              confirmLabel="Delete Group"
+              destructive
+              onConfirm={handleDelete}
+            />
+          </>
         )}
       </div>
     </form>
