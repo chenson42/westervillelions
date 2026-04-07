@@ -107,12 +107,12 @@ export function Footer() {
             <h4 className="font-semibold mb-4 text-lions-gold">Connect</h4>
             <ul className="space-y-2 text-sm">
               <li>
-                <Link href="/contact" className="text-gray-400 hover:text-white transition">
+                <Link href="/connect" className="text-gray-400 hover:text-white transition">
                   Contact Us
                 </Link>
               </li>
               <li>
-                <Link href="/contact#newsletter" className="text-gray-400 hover:text-white transition">
+                <Link href="/connect#newsletter" className="text-gray-400 hover:text-white transition">
                   Newsletter
                 </Link>
               </li>

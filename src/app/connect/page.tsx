@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   description:
     "Get in touch with the Westerville Lions Club. Send a message, subscribe to our newsletter, or stop by one of our meetings in Westerville, Ohio.",
   alternates: {
-    canonical: "https://westervillelions.org/contact",
+    canonical: "https://westervillelions.org/connect",
   },
 };
 
@@ -17,7 +17,7 @@ const breadcrumb = {
   "@type": "BreadcrumbList",
   itemListElement: [
     { "@type": "ListItem", position: 1, name: "Home", item: "https://westervillelions.org" },
-    { "@type": "ListItem", position: 2, name: "Connect", item: "https://westervillelions.org/contact" },
+    { "@type": "ListItem", position: 2, name: "Connect", item: "https://westervillelions.org/connect" },
   ],
 };
 

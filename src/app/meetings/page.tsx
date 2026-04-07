@@ -76,7 +76,7 @@ export default function MeetingsPage() {
               introduce yourself! It&apos;s a great way to learn about our club and meet our members.
             </p>
             <a
-              href="/contact"
+              href="/connect"
               className="inline-block bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition"
             >
               Contact Us

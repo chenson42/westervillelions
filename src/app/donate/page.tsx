@@ -168,7 +168,7 @@ export default async function DonatePage() {
               <ul className="space-y-3 text-gray-700">
                 <li>
                   <strong>Mail a Check:</strong> Payable to &ldquo;Westerville Lions Club Foundation&rdquo; —{" "}
-                  <a href="/contact" className="text-lions-blue hover:underline">contact us</a> for the mailing address.
+                  <a href="/connect" className="text-lions-blue hover:underline">contact us</a> for the mailing address.
                 </li>
                 <li>
                   <strong>Donate Items:</strong> We accept eyeglass donations and other items for our service programs.

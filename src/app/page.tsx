@@ -163,7 +163,7 @@ export default async function HomePage() {
               Join the Club
             </a>
             <a
-              href="/contact"
+              href="/connect"
               aria-label="Find out when and where we meet"
               className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition"
             >
@@ -298,7 +298,7 @@ export default async function HomePage() {
               Support Our Mission
             </a>
             <a
-              href="/contact"
+              href="/connect"
               className="bg-white text-lions-blue border-2 border-lions-blue px-10 py-4 rounded-lg font-bold text-lg hover:bg-gray-50 transition shadow-lg"
             >
               Get in Touch

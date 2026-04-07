@@ -74,7 +74,7 @@ export default async function AccessPendingPage() {
           </Link>
 
           <Link
-            href="/contact"
+            href="/connect"
             className="block w-full rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
           >
             Contact Support

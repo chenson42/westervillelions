@@ -169,7 +169,7 @@ export default function RegisterPage() {
 
           <div className="text-center text-sm text-gray-500">
             Not a member yet?{" "}
-            <Link href="/contact" className="font-medium text-lions-blue hover:text-lions-blue-dark">
+            <Link href="/connect" className="font-medium text-lions-blue hover:text-lions-blue-dark">
               Contact us
             </Link>{" "}
             to join the club.
