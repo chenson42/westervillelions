@@ -1,4 +1,8 @@
 import { MembershipApplicationForm } from "@/components/membership-application-form";
+import TestimonialCarousel from "@/components/join/testimonial-carousel";
+import { db } from "@/lib/db";
+import { testimonials } from "@/lib/db/schema";
+import { asc, eq } from "drizzle-orm";
 
 export const metadata = {
   title: "Join the Westerville Lions Club",
@@ -30,7 +34,13 @@ const breadcrumb = {
   ],
 };
 
-export default function JoinPage() {
+export default async function JoinPage() {
+  const activeTestimonials = await db
+    .select()
+    .from(testimonials)
+    .where(eq(testimonials.isActive, true))
+    .orderBy(asc(testimonials.sortOrder), asc(testimonials.createdAt));
+
   return (
     <div className="min-h-screen bg-white">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
@@ -67,6 +77,10 @@ export default function JoinPage() {
                 <p className="text-sm text-gray-600">Connect with civic-minded neighbors who share your commitment to community.</p>
               </div>
             </div>
+            {activeTestimonials.length > 0 && (
+              <TestimonialCarousel testimonials={activeTestimonials} />
+            )}
+
             <p className="text-gray-700">
               We meet twice monthly at The Landings (350 County Line Rd W, Westerville, OH 43082).
               Visitors are always welcome — feel free to attend a meeting before applying.

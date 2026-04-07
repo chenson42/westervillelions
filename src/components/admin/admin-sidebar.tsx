@@ -72,6 +72,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
   },
   {
+    name: "Testimonials",
+    href: "/admin/testimonials",
+    icon: "💬",
+    requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
+  },
+  {
     name: "Contact",
     href: "/admin/contact",
     icon: "✉️",

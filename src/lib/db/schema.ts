@@ -266,6 +266,20 @@ export const homepageAnnouncements = pgTable("homepage_announcements", {
 export type HomepageAnnouncement = typeof homepageAnnouncements.$inferSelect;
 export type NewHomepageAnnouncement = typeof homepageAnnouncements.$inferInsert;
 
+// Testimonials (public-facing member quotes)
+export const testimonials = pgTable("testimonials", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  quote: text("quote").notNull(),
+  authorName: text("author_name").notNull(),
+  authorTitle: text("author_title"),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type Testimonial = typeof testimonials.$inferSelect;
+export type NewTestimonial = typeof testimonials.$inferInsert;
+
 // NextAuth required tables
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),

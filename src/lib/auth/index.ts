@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { users, accounts, members, userRoles, roles, roleFeatures, features } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { Resend } from "resend";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
@@ -100,6 +101,28 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // fire and forget — don't block the JWT callback
         if (user.id) {
           db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id)).catch(() => {});
+
+          // Notify admins if this user has no linked member record
+          db.query.members.findFirst({ where: eq(members.userId, user.id) })
+            .then((member) => {
+              if (!member && process.env.RESEND_API_KEY) {
+                const resend = new Resend(process.env.RESEND_API_KEY);
+                const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+                resend.emails.send({
+                  from: `Westerville Lions Portal <${fromEmail}>`,
+                  to: ["info@westervillelions.org"],
+                  subject: "New portal user needs member record review",
+                  html: `
+                    <h2>Unlinked User Alert</h2>
+                    <p>A user signed in to the member portal but is not linked to any member record.</p>
+                    <p><strong>Name:</strong> ${user.name ?? "(unknown)"}</p>
+                    <p><strong>Email:</strong> ${user.email}</p>
+                    <p>Please review this account in the <a href="https://westervillelions.org/admin/users">Admin → Users</a> page and link them to a member record if appropriate.</p>
+                  `,
+                }).catch(() => {});
+              }
+            })
+            .catch(() => {});
         }
       }
 
