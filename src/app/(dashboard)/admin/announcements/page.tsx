@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { homepageAnnouncements } from "@/lib/db/schema";
 import { asc } from "drizzle-orm";
 import Link from "next/link";
+import DeleteAnnouncementButton from "./delete-button";
 
 function formatDateRange(
   startsAt: Date | null,
@@ -113,12 +114,15 @@ export default async function AdminAnnouncementsPage() {
                     {formatDateRange(announcement.startsAt, announcement.endsAt)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
-                    <Link
-                      href={`/admin/announcements/${announcement.id}`}
-                      className="inline-block rounded-md border border-lions-blue px-3 py-1.5 text-sm font-medium text-lions-blue hover:bg-lions-blue hover:text-white transition"
-                    >
-                      Edit
-                    </Link>
+                    <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/admin/announcements/${announcement.id}`}
+                        className="inline-block rounded-md border border-lions-blue px-3 py-1.5 text-sm font-medium text-lions-blue hover:bg-lions-blue hover:text-white transition"
+                      >
+                        Edit
+                      </Link>
+                      <DeleteAnnouncementButton id={announcement.id} />
+                    </div>
                   </td>
                 </tr>
               ))}
