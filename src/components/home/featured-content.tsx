@@ -98,12 +98,7 @@ function AnnouncementList({
   announcements: HomepageAnnouncement[];
 }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white shadow-sm h-full">
-      <div className="px-6 pt-6 pb-2">
-        <h3 className="text-base font-bold text-gray-900 uppercase tracking-wide">
-          Announcements
-        </h3>
-      </div>
+    <div className="rounded-2xl bg-white shadow-lg overflow-hidden h-full">
       <ul>
         {announcements.map((item, index) => {
           const body =
@@ -114,8 +109,8 @@ function AnnouncementList({
 
           return (
             <li key={item.id}>
-              {index > 0 && <hr className="border-gray-100 mx-6" />}
-              <div className="px-6 py-4">
+              {index > 0 && <hr className="border-gray-100 mx-8" />}
+              <div className="px-8 py-5">
                 <p className="font-semibold text-gray-900 text-sm leading-snug">
                   {item.title}
                 </p>
@@ -215,6 +210,12 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
       )}
       {hasAnnouncements && (
         <div className={hasEvents ? "md:col-span-1" : "w-full"}>
+          {/* Badge above card — matches Upcoming Events badge */}
+          <div className="mb-3">
+            <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
+              Announcements
+            </span>
+          </div>
           <AnnouncementList announcements={activeAnnouncements} />
         </div>
       )}
