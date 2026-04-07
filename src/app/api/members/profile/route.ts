@@ -15,9 +15,11 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const member = await db.query.members.findFirst({
-      where: eq(members.userId, session.user.id),
-    });
+    const member = session.user.memberId
+      ? await db.query.members.findFirst({
+          where: eq(members.id, session.user.memberId),
+        })
+      : null;
 
     return NextResponse.json(member ?? null);
   } catch (error) {
@@ -37,9 +39,11 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const member = await db.query.members.findFirst({
-      where: eq(members.userId, session.user.id),
-    });
+    const member = session.user.memberId
+      ? await db.query.members.findFirst({
+          where: eq(members.id, session.user.memberId),
+        })
+      : null;
 
     if (!member) {
       return NextResponse.json(

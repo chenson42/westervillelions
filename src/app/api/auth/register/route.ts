@@ -65,9 +65,9 @@ export async function POST(request: NextRequest) {
 
     // Link user to member record
     await db
-      .update(members)
-      .set({ userId: newUser.id })
-      .where(eq(members.id, matchingMember.id));
+      .update(users)
+      .set({ memberId: matchingMember.id })
+      .where(eq(users.id, newUser.id));
 
     // Assign member role
     const memberRole = await db.query.roles.findFirst({

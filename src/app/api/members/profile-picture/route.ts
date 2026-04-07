@@ -18,9 +18,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const member = await db.query.members.findFirst({
-      where: eq(members.userId, session.user.id),
-    });
+    const member = session.user.memberId
+      ? await db.query.members.findFirst({
+          where: eq(members.id, session.user.memberId),
+        })
+      : null;
 
     if (!member) {
       return NextResponse.json(
@@ -72,9 +74,11 @@ export async function DELETE() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const member = await db.query.members.findFirst({
-      where: eq(members.userId, session.user.id),
-    });
+    const member = session.user.memberId
+      ? await db.query.members.findFirst({
+          where: eq(members.id, session.user.memberId),
+        })
+      : null;
 
     if (!member) {
       return NextResponse.json(

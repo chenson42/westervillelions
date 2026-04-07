@@ -61,12 +61,12 @@ export async function PATCH(
       .where(eq(members.id, id))
       .returning();
 
-    // Sync isActive to the linked user account when it changes
-    if (existing.userId && existing.isActive !== newIsActive) {
+    // Sync isActive to all linked user accounts when it changes
+    if (existing.isActive !== newIsActive) {
       await db
         .update(users)
         .set({ isActive: newIsActive, updatedAt: new Date() })
-        .where(eq(users.id, existing.userId));
+        .where(eq(users.memberId, existing.id));
     }
 
     // Fire-and-forget club list sync

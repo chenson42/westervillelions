@@ -4,7 +4,7 @@ import Credentials from "next-auth/providers/credentials";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { db } from "@/lib/db";
 import { users, accounts, members, userRoles, roles, roleFeatures, features } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, ilike } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { Resend } from "resend";
 
@@ -102,10 +102,40 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (user.id) {
           db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id)).catch(() => {});
 
+          // Auto-match @westervillelions.org Google sign-ins to member records by name
+          if (user.email?.endsWith("@westervillelions.org")) {
+            db.query.users.findFirst({ where: eq(users.id, user.id!), columns: { memberId: true } })
+              .then(async (dbU) => {
+                if (dbU?.memberId) return; // already linked — nothing to do
+                const nameParts = (user.name ?? "").trim().split(/\s+/);
+                if (nameParts.length < 2) return;
+                const first = nameParts[0];
+                const last = nameParts[nameParts.length - 1];
+                const matchedMember = await db.query.members.findFirst({
+                  where: and(
+                    ilike(members.firstName, first),
+                    ilike(members.lastName, last),
+                    eq(members.isActive, true)
+                  ),
+                });
+                if (!matchedMember) return;
+                // Ensure no other user is already linked to this member
+                const conflict = await db
+                  .select({ id: users.id })
+                  .from(users)
+                  .where(eq(users.memberId, matchedMember.id))
+                  .limit(1);
+                if (conflict.length > 0) return; // another user already owns this member link
+                await db.update(users).set({ memberId: matchedMember.id }).where(eq(users.id, user.id!));
+                token.memberId = matchedMember.id;
+              })
+              .catch(() => {});
+          }
+
           // Notify admins if this user has no linked member record
-          db.query.members.findFirst({ where: eq(members.userId, user.id) })
-            .then((member) => {
-              if (!member && process.env.RESEND_API_KEY) {
+          db.query.users.findFirst({ where: eq(users.id, user.id!), columns: { memberId: true } })
+            .then((u) => {
+              if (!u?.memberId && process.env.RESEND_API_KEY) {
                 const resend = new Resend(process.env.RESEND_API_KEY);
                 const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
                 resend.emails.send({
@@ -181,11 +211,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
 
         // Check if user is linked to a member record
-        const member = await db.query.members.findFirst({
-          where: eq(members.userId, userId),
+        const dbUserForMember = await db.query.users.findFirst({
+          where: eq(users.id, userId),
+          columns: { memberId: true },
         });
-
-        token.memberId = member?.id;
+        token.memberId = dbUserForMember?.memberId ?? undefined;
       }
 
       return token;

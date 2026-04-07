@@ -9,6 +9,7 @@ export const users = pgTable("users", {
   image: text("image"),
   role: text("role").notNull().default("member"), // 'admin' | 'member' | 'guest'
   isActive: boolean("is_active").notNull().default(true),
+  memberId: uuid("member_id").references((): AnyPgColumn => members.id, { onDelete: "set null" }),
   emailVerified: timestamp("email_verified"),
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -18,7 +19,6 @@ export const users = pgTable("users", {
 // Members table for club members
 export const members = pgTable("members", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").references(() => users.id),
   memberNumber: integer("member_number").unique(), // Lions International member number
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),

@@ -43,14 +43,15 @@ export default async function UsersPage({
     .innerJoin(roles, eq(userRoles.roleId, roles.id))
     .orderBy(roles.sortOrder);
 
-  // Fetch member links
+  // Fetch member links (users.member_id → members.first_name)
   const memberLinks = await db
     .select({
-      userId: members.userId,
+      userId: users.id,
+      memberId: users.memberId,
       memberName: members.firstName,
-      memberId: members.id,
     })
-    .from(members);
+    .from(users)
+    .innerJoin(members, eq(users.memberId, members.id));
 
   // Fetch OAuth providers (left join — password users have no account row)
   const accountData = await db

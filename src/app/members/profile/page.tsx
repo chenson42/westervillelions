@@ -14,9 +14,9 @@ export default async function ProfilePage() {
     redirect("/signin");
   }
 
-  const member = session.user.id
+  const member = session.user.memberId
     ? await db.query.members.findFirst({
-        where: eq(members.userId, session.user.id),
+        where: eq(members.id, session.user.memberId),
       })
     : null;
 

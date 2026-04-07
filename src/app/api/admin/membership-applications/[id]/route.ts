@@ -122,9 +122,8 @@ export async function PATCH(
       await sendWelcomeEmail(application.email, fullName, token);
     }
 
-    // Create the member record, linked to the user account
-    await db.insert(members).values({
-      userId: userId ?? undefined,
+    // Create the member record
+    const [newMember] = await db.insert(members).values({
       firstName: application.firstName,
       lastName: application.lastName,
       email: application.email,
@@ -135,7 +134,12 @@ export async function PATCH(
       zip: application.zip,
       joinDate: new Date(),
       isActive: true,
-    });
+    }).returning({ id: members.id });
+
+    // Link the user account to the new member record
+    if (userId && newMember) {
+      await db.update(users).set({ memberId: newMember.id }).where(eq(users.id, userId));
+    }
   }
 
   return NextResponse.json({ success: true });
