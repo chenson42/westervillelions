@@ -173,7 +173,9 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
 
           {/* Cards */}
           {nextEvents.length === 1 ? (
-            <NextEventCard event={nextEvents[0]} />
+            <div className={hasAnnouncements ? "" : "max-w-2xl"}>
+              <NextEventCard event={nextEvents[0]} />
+            </div>
           ) : (
             <div className={`grid gap-4 ${eventsOnlyGrid}`}>
               {nextEvents.map((event) => (
