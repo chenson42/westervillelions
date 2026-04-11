@@ -173,7 +173,7 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
 
           {/* Cards */}
           {nextEvents.length === 1 ? (
-            <div className={hasAnnouncements ? "" : "max-w-2xl"}>
+            <div className={hasAnnouncements ? "" : "max-w-2xl mx-auto"}>
               <NextEventCard event={nextEvents[0]} />
             </div>
           ) : (
