@@ -23,6 +23,41 @@ const nextConfig: NextConfig = {
         destination: "/mission",
         permanent: true,
       },
+      {
+        source: "/our-organization",
+        destination: "/about",
+        permanent: true,
+      },
+      {
+        source: "/upcoming-events",
+        destination: "/events",
+        permanent: true,
+      },
+      {
+        source: "/lions-member-area",
+        destination: "/members",
+        permanent: true,
+      },
+      {
+        source: "/lions-member-area-old",
+        destination: "/members",
+        permanent: true,
+      },
+      {
+        source: "/team/:slug",
+        destination: "/about",
+        permanent: true,
+      },
+      {
+        source: "/pulledporkdinner",
+        destination: "/events",
+        permanent: true,
+      },
+      {
+        source: "/thank-you",
+        destination: "/",
+        permanent: true,
+      },
     ];
   },
   images: {
