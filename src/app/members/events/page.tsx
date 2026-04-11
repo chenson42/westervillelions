@@ -1,13 +1,16 @@
+import { unstable_noStore as noStore } from "next/cache";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { events, eventRsvps } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { format } from "date-fns";
+import Link from "next/link";
 import { EventRsvp } from "@/components/members/event-rsvp";
 import MarkdownContent from "@/components/markdown-content";
 
 export default async function MemberEventsPage() {
+  noStore();
   const session = await auth();
 
   if (!session?.user) {
@@ -54,13 +57,20 @@ export default async function MemberEventsPage() {
             {upcoming.map((event) => (
               <div key={event.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition transform hover:-translate-y-1">
                 {event.image && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={event.image} alt={event.title} className="w-full aspect-[7/2] object-cover" />
+                  <Link href={`/members/events/${event.id}`} className="block">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={event.image} alt={event.title} className="w-full aspect-[7/2] object-cover" />
+                  </Link>
                 )}
                 <div className="p-6">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                     <div className="flex-1">
-                      <h3 className="text-xl font-semibold text-gray-900 mb-1">{event.title}</h3>
+                      <Link href={`/members/events/${event.id}`} className="group inline-flex items-center gap-2 hover:text-lions-blue transition mb-1">
+                        <h3 className="text-xl font-semibold text-gray-900 group-hover:text-lions-blue transition">{event.title}</h3>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400 group-hover:text-lions-blue flex-shrink-0 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                      </Link>
                       <p className="text-gray-600 text-sm mb-1">
                         {format(new Date(event.startDate), "EEEE, MMMM d, yyyy")} at{" "}
                         {format(new Date(event.startDate), "h:mm a")}
