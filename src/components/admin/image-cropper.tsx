@@ -4,7 +4,7 @@ import { useState, useRef } from "react";
 import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 
-// Matches the events page display ratio: w-full h-64 (256px) at max-w-4xl (896px) ≈ 3.5:1
+// Matches the events page display ratio: aspect-[7/2] = 3.5:1, output 1400×400px
 const ASPECT = 7 / 2;
 const OUTPUT_WIDTH = 1400;
 const OUTPUT_HEIGHT = 400;

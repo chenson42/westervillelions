@@ -42,7 +42,7 @@ function NextEventCard({ event }: { event: NextEvent }) {
   return (
     <article className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden h-full flex flex-col">
       {event.image && (
-        <div className="relative w-full h-48 shrink-0">
+        <div className="relative w-full aspect-[7/2] shrink-0">
           <Image
             src={event.image}
             alt={event.title}

@@ -55,7 +55,7 @@ export default async function MemberEventsPage() {
               <div key={event.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition transform hover:-translate-y-1">
                 {event.image && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={event.image} alt={event.title} className="w-full aspect-video object-cover" />
+                  <img src={event.image} alt={event.title} className="w-full aspect-[7/2] object-cover" />
                 )}
                 <div className="p-6">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">

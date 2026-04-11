@@ -86,7 +86,7 @@ export default async function EventDetailPage({ params }: Props) {
 
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         {event.image && (
-          <div className="relative w-full aspect-video rounded-2xl overflow-hidden shadow-lg mb-10">
+          <div className="relative w-full aspect-[7/2] rounded-2xl overflow-hidden shadow-lg mb-10">
             <Image
               src={event.image}
               alt={event.title}
