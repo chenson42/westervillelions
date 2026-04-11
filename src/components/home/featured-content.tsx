@@ -164,6 +164,7 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
     <div className={`grid gap-6 max-w-6xl mx-auto ${hasEvents && hasAnnouncements ? "md:grid-cols-3" : ""}`}>
       {hasEvents && (
         <div className={hasAnnouncements ? "md:col-span-2" : "w-full"}>
+          <div className={!hasAnnouncements && nextEvents.length === 1 ? "max-w-2xl mx-auto" : ""}>
           {/* Badge above cards */}
           <div className="mb-3">
             <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
@@ -173,9 +174,7 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
 
           {/* Cards */}
           {nextEvents.length === 1 ? (
-            <div className={hasAnnouncements ? "" : "max-w-2xl mx-auto"}>
-              <NextEventCard event={nextEvents[0]} />
-            </div>
+            <NextEventCard event={nextEvents[0]} />
           ) : (
             <div className={`grid gap-4 ${eventsOnlyGrid}`}>
               {nextEvents.map((event) => (
@@ -207,6 +206,7 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
                 />
               </svg>
             </Link>
+          </div>
           </div>
         </div>
       )}
