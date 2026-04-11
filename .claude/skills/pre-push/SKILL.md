@@ -44,7 +44,18 @@ This runs `next build` without database changes. If the build fails:
    export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate
    ```
 
-## Step 5: Documentation & Housekeeping
+## Step 5: Release Notes & Version Bump
+
+**This step is required before every push to main.**
+
+1. Run `cat RELEASE_NOTES.md | head -20` to see the current version
+2. Run `git log origin/main..HEAD --oneline` to see all commits being pushed
+3. Invoke the `/release-notes` skill to write release notes and bump `package.json` version
+4. The release notes commit must be included in the push
+
+**Do NOT push without updated release notes.**
+
+## Step 6: Documentation & Housekeeping
 
 Check the following (treat as advisory warnings, not hard blockers unless user decides otherwise):
 
@@ -63,11 +74,12 @@ grep -r "console.log" src/ --include="*.ts" --include="*.tsx" | grep -v "// " | 
 git diff --name-only | grep -E "\.env"
 ```
 
-## Step 6: Summary
+## Step 7: Summary
 
 Report results:
 - Build status (pass/fail)
 - Migration status (up to date / needs attention)
+- Release notes (updated / missing)
 - Any warnings found
 - Ready to push? (yes/no)
 
