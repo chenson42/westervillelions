@@ -96,7 +96,7 @@ export default async function WhatWeDoPage() {
                   return (
                     <div key={event.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition transform hover:-translate-y-1">
                       {event.image && (
-                        <div className="relative w-full h-64">
+                        <div className="relative w-full aspect-video">
                           <Image
                             src={event.image}
                             alt={event.title}
