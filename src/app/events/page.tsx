@@ -96,7 +96,7 @@ export default async function WhatWeDoPage() {
                   return (
                     <div key={event.id} className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition transform hover:-translate-y-1">
                       {event.image && (
-                        <div className="relative w-full aspect-video">
+                        <Link href={`/events/${event.id}`} className="block relative w-full aspect-video">
                           <Image
                             src={event.image}
                             alt={event.title}
@@ -105,13 +105,18 @@ export default async function WhatWeDoPage() {
                             sizes="(max-width: 768px) 100vw, 896px"
                             unoptimized={event.image.startsWith("http")}
                           />
-                        </div>
+                        </Link>
                       )}
                       <div className="p-6">
                         <div className="flex flex-wrap items-center gap-2 mb-2">
-                          <h3 className="text-2xl font-semibold text-gray-900">
-                            {event.title}
-                          </h3>
+                          <Link href={`/events/${event.id}`} className="group flex items-center gap-2 hover:text-lions-blue transition">
+                            <h3 className="text-2xl font-semibold text-gray-900 group-hover:text-lions-blue transition">
+                              {event.title}
+                            </h3>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400 group-hover:text-lions-blue flex-shrink-0 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                            </svg>
+                          </Link>
                           {event.isRecurring && (
                             <span className="inline-block rounded-full bg-lions-blue/10 px-2.5 py-0.5 text-xs font-medium text-lions-blue">
                               Recurring
