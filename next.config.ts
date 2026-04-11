@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
         destination: "/connect",
         permanent: true,
       },
+      {
+        source: "/what-we-do",
+        destination: "/mission",
+        permanent: true,
+      },
     ];
   },
   images: {
