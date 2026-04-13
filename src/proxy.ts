@@ -19,7 +19,11 @@ export async function proxy(request: NextRequest) {
 
   // Public routes - no auth required
   const publicPaths = ["/", "/about", "/mission", "/causes", "/campaigns", "/events", "/donate", "/connect", "/join", "/signin", "/register", "/forgot-password", "/reset-password", "/robots.txt", "/sitemap.xml"];
-  if (publicPaths.some((path) => request.nextUrl.pathname === path)) {
+  const publicPrefixes = ["/events/"];
+  if (
+    publicPaths.some((path) => request.nextUrl.pathname === path) ||
+    publicPrefixes.some((prefix) => request.nextUrl.pathname.startsWith(prefix))
+  ) {
     return NextResponse.next();
   }
 
@@ -85,10 +89,6 @@ export async function proxy(request: NextRequest) {
     {
       pattern: /^\/members/,
       requiredFeatures: [FEATURES.MEMBERS_VIEW],
-    },
-    {
-      pattern: /^\/events/,
-      requiredFeatures: [FEATURES.EVENTS_VIEW],
     },
   ];
 
