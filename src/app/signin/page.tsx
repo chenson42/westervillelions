@@ -51,7 +51,13 @@ export default function SignInPage() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Member Login
           </h1>
-          <p className="text-gray-600">Sign in to access the member portal</p>
+          <p className="text-gray-600 mb-3">Access is for <strong>Westerville Lions Club members only.</strong></p>
+          <p className="text-gray-600 text-sm">Sign in with the email address you used when you joined the club. If this is your first time logging in, you&apos;ll need to{" "}
+            <Link href="/register" className="text-lions-blue hover:text-lions-blue-dark font-medium">
+              create an account here
+            </Link>{" "}
+            before signing in.
+          </p>
         </div>
 
         <div className="bg-white p-8 rounded-lg shadow-md">
@@ -149,13 +155,10 @@ export default function SignInPage() {
 
         <div className="mt-6 text-center text-sm text-gray-600">
           <p>
-            Don&apos;t have an account?{" "}
-            <Link
-              href="/register"
-              className="text-lions-blue hover:text-lions-blue-dark font-medium"
-            >
-              Create one here
-            </Link>
+            Questions? Contact{" "}
+            <a href="mailto:info@westervillelions.org" className="text-lions-blue hover:text-lions-blue-dark font-medium">
+              info@westervillelions.org
+            </a>
           </p>
         </div>
       </div>
