@@ -112,7 +112,7 @@ export default async function EventDetailPage({ params }: Props) {
           </div>
         )}
 
-        {(
+        {event.requiresRsvp && (
           <div className="mb-10">
             <PublicRsvpForm
               eventId={event.id}
