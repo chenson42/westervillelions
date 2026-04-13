@@ -188,6 +188,7 @@ export const events = pgTable("events", {
   recurrenceType: text("recurrence_type"), // 'weekly' | 'biweekly' | 'monthly'
   recurrenceDays: integer("recurrence_days").array(), // days of week [0=Sun..6=Sat] for weekly/biweekly
   recurrenceEndDate: timestamp("recurrence_end_date"), // when the series ends
+  allowGuestCount: boolean("allow_guest_count").notNull().default(false),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -197,7 +198,9 @@ export const events = pgTable("events", {
 export const eventRsvps = pgTable("event_rsvps", {
   id: uuid("id").primaryKey().defaultRandom(),
   eventId: uuid("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }), // nullable for anonymous RSVPs
+  rsvpName: text("rsvp_name"), // for anonymous RSVPs
+  rsvpEmail: text("rsvp_email"), // for anonymous RSVPs
   status: text("status").notNull().default("attending"), // 'attending' | 'maybe' | 'declined'
   guestCount: integer("guest_count").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),

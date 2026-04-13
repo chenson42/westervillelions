@@ -18,11 +18,13 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
         status: eventRsvps.status,
         guestCount: eventRsvps.guestCount,
         createdAt: eventRsvps.createdAt,
+        rsvpName: eventRsvps.rsvpName,
+        rsvpEmail: eventRsvps.rsvpEmail,
         userName: users.name,
         userEmail: users.email,
       })
       .from(eventRsvps)
-      .innerJoin(users, eq(eventRsvps.userId, users.id))
+      .leftJoin(users, eq(eventRsvps.userId, users.id))
       .where(eq(eventRsvps.eventId, id))
       .orderBy(eventRsvps.createdAt),
   ]);
@@ -73,6 +75,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
           isPublic: event.isPublic,
           isFeatured: event.isFeatured,
           requiresRsvp: event.requiresRsvp,
+          allowGuestCount: event.allowGuestCount,
           maxAttendees: event.maxAttendees,
           isRecurring: event.isRecurring,
           recurrenceType: event.recurrenceType,
@@ -132,9 +135,14 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                     <tr key={rsvp.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
                         <div className="text-sm font-medium text-gray-900">
-                          {rsvp.userName || "—"}
+                          {rsvp.userName || rsvp.rsvpName || "—"}
                         </div>
-                        <div className="text-xs text-gray-500">{rsvp.userEmail}</div>
+                        <div className="text-xs text-gray-500">
+                          {rsvp.userEmail || rsvp.rsvpEmail || ""}
+                          {rsvp.rsvpEmail && (
+                            <span className="ml-1 text-gray-400">(guest)</span>
+                          )}
+                        </div>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <span className={statusBadge(rsvp.status)}>

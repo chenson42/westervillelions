@@ -4,10 +4,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { format } from "date-fns";
 import { formatRecurrence } from "@/lib/events";
 import MarkdownContent from "@/components/markdown-content";
+import { auth } from "@/lib/auth";
+import { PublicRsvpForm } from "@/components/public/public-rsvp-form";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -16,7 +18,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const event = await db
     .select()
     .from(events)
-    .where(and(eq(events.id, id), eq(events.isPublic, true)))
+    .where(eq(events.id, id))
     .then((r) => r[0]);
 
   if (!event) return { title: "Event Not Found" };
@@ -38,14 +40,19 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function EventDetailPage({ params }: Props) {
   const { id } = await params;
-  const event = await db
-    .select()
-    .from(events)
-    .where(and(eq(events.id, id), eq(events.isPublic, true)))
-    .then((r) => r[0]);
+
+  const [event, session] = await Promise.all([
+    db
+      .select()
+      .from(events)
+      .where(eq(events.id, id))
+      .then((r) => r[0]),
+    auth(),
+  ]);
 
   if (!event) notFound();
 
+  const isLoggedIn = !!session?.user;
   const recurrenceLabel = formatRecurrence(event);
 
   return (
@@ -102,6 +109,16 @@ export default async function EventDetailPage({ params }: Props) {
         {event.description && (
           <div className="prose prose-lg max-w-none text-gray-700 mb-10">
             <MarkdownContent>{event.description}</MarkdownContent>
+          </div>
+        )}
+
+        {event.requiresRsvp && (
+          <div className="mb-10">
+            <PublicRsvpForm
+              eventId={event.id}
+              allowGuestCount={event.allowGuestCount}
+              isLoggedIn={isLoggedIn}
+            />
           </div>
         )}
 

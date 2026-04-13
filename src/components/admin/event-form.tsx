@@ -16,6 +16,7 @@ export interface EventFormData {
   isPublic: boolean;
   isFeatured: boolean;
   requiresRsvp: boolean;
+  allowGuestCount: boolean;
   maxAttendees?: number | null;
   isRecurring: boolean;
   recurrenceType?: string | null;
@@ -145,6 +146,7 @@ export default function EventForm({
       isPublic: false,
       isFeatured: false,
       requiresRsvp: false,
+      allowGuestCount: false,
       isRecurring: false,
     }
   );
@@ -478,23 +480,43 @@ export default function EventForm({
             </div>
           </div>
 
-          <div>
-            <div className="flex items-center">
-              <input
-                type="checkbox"
-                id="requiresRsvp"
-                name="requiresRsvp"
-                checked={formData.requiresRsvp}
-                onChange={handleChange}
-                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
-              />
-              <label htmlFor="requiresRsvp" className="ml-2 block text-sm text-gray-700">
-                Requires RSVP
-              </label>
+          <div className="space-y-3">
+            <div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="requiresRsvp"
+                  name="requiresRsvp"
+                  checked={formData.requiresRsvp}
+                  onChange={handleChange}
+                  className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+                />
+                <label htmlFor="requiresRsvp" className="ml-2 block text-sm text-gray-700">
+                  Requires RSVP
+                </label>
+              </div>
+              <p className="mt-1 ml-6 text-xs text-gray-500">
+                Attendees will be prompted to RSVP for this event
+              </p>
             </div>
-            <p className="mt-1 ml-6 text-xs text-gray-500">
-              Members will be prompted to RSVP for this event
-            </p>
+            <div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="allowGuestCount"
+                  name="allowGuestCount"
+                  checked={formData.allowGuestCount}
+                  onChange={handleChange}
+                  className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+                />
+                <label htmlFor="allowGuestCount" className="ml-2 block text-sm text-gray-700">
+                  Allow guest count
+                </label>
+              </div>
+              <p className="mt-1 ml-6 text-xs text-gray-500">
+                Attendees can indicate how many guests they&apos;re bringing
+              </p>
+            </div>
           </div>
         </div>
       </div>

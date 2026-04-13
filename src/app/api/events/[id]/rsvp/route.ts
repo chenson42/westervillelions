@@ -6,7 +6,8 @@ import { and, eq } from "drizzle-orm";
 
 /**
  * POST /api/events/[id]/rsvp
- * Create or update an RSVP for an event
+ * Create or update an RSVP for an event.
+ * Authentication is optional — logged-in users key on userId, anonymous users key on rsvpEmail.
  */
 export async function POST(
   request: NextRequest,
@@ -14,12 +15,9 @@ export async function POST(
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { id: eventId } = await params;
-    const { status, guestCount = 0 } = await request.json();
+    const body = await request.json();
+    const { status, guestCount = 0, name, email } = body;
 
     if (!["attending", "maybe", "declined"].includes(status)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
@@ -33,27 +31,60 @@ export async function POST(
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }
 
-    // Upsert RSVP
-    const existing = await db.query.eventRsvps.findFirst({
-      where: and(
-        eq(eventRsvps.eventId, eventId),
-        eq(eventRsvps.userId, session.user.id)
-      ),
-    });
+    if (session?.user?.id) {
+      // Authenticated user: upsert by (eventId, userId)
+      const existing = await db.query.eventRsvps.findFirst({
+        where: and(
+          eq(eventRsvps.eventId, eventId),
+          eq(eventRsvps.userId, session.user.id)
+        ),
+      });
 
-    if (existing) {
-      const [updated] = await db
-        .update(eventRsvps)
-        .set({ status, guestCount, updatedAt: new Date() })
-        .where(eq(eventRsvps.id, existing.id))
-        .returning();
-      return NextResponse.json(updated);
+      if (existing) {
+        const [updated] = await db
+          .update(eventRsvps)
+          .set({ status, guestCount, updatedAt: new Date() })
+          .where(eq(eventRsvps.id, existing.id))
+          .returning();
+        return NextResponse.json(updated);
+      } else {
+        const [created] = await db
+          .insert(eventRsvps)
+          .values({ eventId, userId: session.user.id, status, guestCount })
+          .returning();
+        return NextResponse.json(created, { status: 201 });
+      }
     } else {
-      const [created] = await db
-        .insert(eventRsvps)
-        .values({ eventId, userId: session.user.id, status, guestCount })
-        .returning();
-      return NextResponse.json(created, { status: 201 });
+      // Anonymous user: require name + email
+      if (!email) {
+        return NextResponse.json({ error: "Email is required for anonymous RSVPs" }, { status: 400 });
+      }
+      if (!name) {
+        return NextResponse.json({ error: "Name is required for anonymous RSVPs" }, { status: 400 });
+      }
+
+      // Upsert by (eventId, rsvpEmail)
+      const existing = await db.query.eventRsvps.findFirst({
+        where: and(
+          eq(eventRsvps.eventId, eventId),
+          eq(eventRsvps.rsvpEmail, email)
+        ),
+      });
+
+      if (existing) {
+        const [updated] = await db
+          .update(eventRsvps)
+          .set({ status, guestCount, rsvpName: name, updatedAt: new Date() })
+          .where(eq(eventRsvps.id, existing.id))
+          .returning();
+        return NextResponse.json(updated);
+      } else {
+        const [created] = await db
+          .insert(eventRsvps)
+          .values({ eventId, rsvpName: name, rsvpEmail: email, status, guestCount })
+          .returning();
+        return NextResponse.json(created, { status: 201 });
+      }
     }
   } catch (error) {
     console.error("Error saving RSVP:", error);
@@ -63,28 +94,41 @@ export async function POST(
 
 /**
  * DELETE /api/events/[id]/rsvp
- * Remove an RSVP
+ * Remove an RSVP.
+ * Authenticated users delete by userId; anonymous users delete by email in body.
  */
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { id: eventId } = await params;
 
-    await db
-      .delete(eventRsvps)
-      .where(
-        and(
-          eq(eventRsvps.eventId, eventId),
-          eq(eventRsvps.userId, session.user.id)
-        )
-      );
+    if (session?.user?.id) {
+      await db
+        .delete(eventRsvps)
+        .where(
+          and(
+            eq(eventRsvps.eventId, eventId),
+            eq(eventRsvps.userId, session.user.id)
+          )
+        );
+    } else {
+      const body = await request.json().catch(() => ({}));
+      const { email } = body;
+      if (!email) {
+        return NextResponse.json({ error: "Email is required" }, { status: 400 });
+      }
+      await db
+        .delete(eventRsvps)
+        .where(
+          and(
+            eq(eventRsvps.eventId, eventId),
+            eq(eventRsvps.rsvpEmail, email)
+          )
+        );
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {
