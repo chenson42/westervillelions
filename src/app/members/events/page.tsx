@@ -6,7 +6,6 @@ import { events, eventRsvps } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
-import { EventRsvp } from "@/components/members/event-rsvp";
 import MarkdownContent from "@/components/markdown-content";
 
 export default async function MemberEventsPage() {
@@ -89,11 +88,26 @@ export default async function MemberEventsPage() {
                         </p>
                       )}
                     </div>
-                    <div className="shrink-0">
-                      <EventRsvp
-                        eventId={event.id}
-                        initialStatus={(rsvpByEvent.get(event.id) ?? null) as "attending" | "maybe" | "declined" | null}
-                      />
+                    <div className="shrink-0 flex flex-col items-end gap-2">
+                      {rsvpByEvent.get(event.id) && (
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold capitalize ${
+                          rsvpByEvent.get(event.id) === "attending"
+                            ? "bg-green-100 text-green-800"
+                            : rsvpByEvent.get(event.id) === "maybe"
+                            ? "bg-yellow-100 text-yellow-800"
+                            : "bg-gray-100 text-gray-600"
+                        }`}>
+                          {rsvpByEvent.get(event.id)}
+                        </span>
+                      )}
+                      {event.requiresRsvp && (
+                        <Link
+                          href={`/events/${event.id}`}
+                          className="bg-lions-blue text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition"
+                        >
+                          {rsvpByEvent.get(event.id) ? "Update RSVP" : "RSVP"}
+                        </Link>
+                      )}
                     </div>
                   </div>
                   {event.isPublic && (

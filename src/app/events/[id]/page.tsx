@@ -3,8 +3,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { events } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { events, eventRsvps } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { format } from "date-fns";
 import { formatRecurrence } from "@/lib/events";
 import MarkdownContent from "@/components/markdown-content";
@@ -51,6 +51,12 @@ export default async function EventDetailPage({ params }: Props) {
   ]);
 
   if (!event) notFound();
+
+  const userRsvp = session?.user?.id
+    ? await db.query.eventRsvps.findFirst({
+        where: and(eq(eventRsvps.eventId, id), eq(eventRsvps.userId, session.user.id)),
+      })
+    : undefined;
 
   const isLoggedIn = !!session?.user;
   const recurrenceLabel = formatRecurrence(event);
@@ -118,6 +124,8 @@ export default async function EventDetailPage({ params }: Props) {
               eventId={event.id}
               allowGuestCount={event.allowGuestCount}
               isLoggedIn={isLoggedIn}
+              initialStatus={userRsvp?.status ?? null}
+              initialGuestCount={userRsvp?.guestCount ?? 0}
             />
           </div>
         )}
