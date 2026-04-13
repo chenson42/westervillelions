@@ -6,25 +6,18 @@ import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { eq } from "drizzle-orm";
 import { generateResetToken } from "@/lib/auth/password-reset";
-import { Resend } from "resend";
+import { sendEmail } from "@/lib/email";
 import crypto from "crypto";
 import { passwordResetTokens } from "@/lib/db/schema";
 
 async function sendWelcomeEmail(email: string, name: string, token: string) {
   const appUrl = process.env.NEXTAUTH_URL ?? "https://westervillelions.org";
   const setPasswordUrl = `${appUrl}/reset-password?token=${token}`;
-
-  if (!process.env.RESEND_API_KEY) {
-    console.log(`[Membership Approval] Welcome email for ${name} <${email}>: ${setPasswordUrl}`);
-    return;
-  }
-
-  const resend = new Resend(process.env.RESEND_API_KEY);
   const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
 
-  await resend.emails.send({
+  await sendEmail({
     from: `Westerville Lions Club <${fromEmail}>`,
-    to: [email],
+    to: email,
     subject: "Welcome to the Westerville Lions Club — Set Up Your Account",
     html: `
       <p>Hi ${name},</p>

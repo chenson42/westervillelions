@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { users, accounts, members, userRoles, roles, roleFeatures, features } from "@/lib/db/schema";
 import { and, eq, ilike } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { Resend } from "resend";
+import { sendEmail } from "@/lib/email";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
@@ -135,12 +135,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // Notify admins if this user has no linked member record
           db.query.users.findFirst({ where: eq(users.id, user.id!), columns: { memberId: true } })
             .then((u) => {
-              if (!u?.memberId && process.env.RESEND_API_KEY) {
-                const resend = new Resend(process.env.RESEND_API_KEY);
+              if (!u?.memberId) {
                 const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
-                resend.emails.send({
+                sendEmail({
                   from: `Westerville Lions Portal <${fromEmail}>`,
-                  to: ["info@westervillelions.org"],
+                  to: "info@westervillelions.org",
                   subject: "New portal user needs member record review",
                   html: `
                     <h2>Unlinked User Alert</h2>

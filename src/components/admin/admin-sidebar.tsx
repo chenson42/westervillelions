@@ -96,6 +96,11 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.CONTACT_VIEW,
   },
   {
+    name: "Email Queue",
+    href: "/admin/email-queue",
+    icon: "📨",
+  },
+  {
     name: "Release Notes",
     href: "/admin/release-notes",
     icon: "📝",

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Resend } from "resend";
 import { db } from "@/lib/db";
 import { contactSubmissions } from "@/lib/db/schema";
+import { sendEmail } from "@/lib/email";
 
 async function verifyTurnstile(token: string): Promise<boolean> {
   // Use test secret if no real one is configured
@@ -36,19 +36,12 @@ export async function POST(request: NextRequest) {
     // Always save to database
     await db.insert(contactSubmissions).values({ name, email, subject, message });
 
-    if (!process.env.RESEND_API_KEY) {
-      console.log(`[Contact Form] From: ${name} <${email}>, Subject: ${subject}\n${message}`);
-      return NextResponse.json({ success: true });
-    }
-
-    const resend = new Resend(process.env.RESEND_API_KEY);
-
     const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
 
-    await resend.emails.send({
+    // Admin notification
+    await sendEmail({
       from: `Westerville Lions Website <${fromEmail}>`,
-      to: ["info@westervillelions.org"],
-      replyTo: email,
+      to: "info@westervillelions.org",
       subject: `Website Contact: ${subject}`,
       html: `
         <h2>Contact Form Submission</h2>
@@ -60,9 +53,10 @@ export async function POST(request: NextRequest) {
       `,
     });
 
-    await resend.emails.send({
+    // Submitter confirmation
+    await sendEmail({
       from: `Westerville Lions Club <${fromEmail}>`,
-      to: [email],
+      to: email,
       subject: "We received your message!",
       html: `
         <p>Hi ${name},</p>

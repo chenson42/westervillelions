@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPasswordResetToken } from "@/lib/auth/password-reset";
-import { Resend } from "resend";
+import { sendEmail } from "@/lib/email";
 
 /**
  * POST /api/auth/forgot-password
@@ -24,22 +24,17 @@ export async function POST(request: NextRequest) {
     if (token) {
       const resetUrl = `${process.env.NEXTAUTH_URL}/reset-password?token=${token}`;
 
-      if (process.env.RESEND_API_KEY) {
-        const resend = new Resend(process.env.RESEND_API_KEY);
-        await resend.emails.send({
-          from: "Westerville Lions <noreply@westervillelions.org>",
-          to: [email],
-          subject: "Reset your password",
-          html: `
-            <h2>Password Reset Request</h2>
-            <p>You requested a password reset for your Westerville Lions Club account.</p>
-            <p><a href="${resetUrl}" style="background:#1a56db;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin:16px 0;">Reset Password</a></p>
-            <p>This link expires in 24 hours. If you did not request a reset, you can ignore this email.</p>
-          `,
-        });
-      } else {
-        console.log(`[Password Reset] Reset link for ${email}: ${resetUrl}`);
-      }
+      await sendEmail({
+        from: "Westerville Lions <noreply@westervillelions.org>",
+        to: email,
+        subject: "Reset your password",
+        html: `
+          <h2>Password Reset Request</h2>
+          <p>You requested a password reset for your Westerville Lions Club account.</p>
+          <p><a href="${resetUrl}" style="background:#1a56db;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin:16px 0;">Reset Password</a></p>
+          <p>This link expires in 24 hours. If you did not request a reset, you can ignore this email.</p>
+        `,
+      });
     }
 
     // Always return success to prevent email enumeration

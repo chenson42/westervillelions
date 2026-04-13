@@ -281,6 +281,24 @@ export const testimonials = pgTable("testimonials", {
 export type Testimonial = typeof testimonials.$inferSelect;
 export type NewTestimonial = typeof testimonials.$inferInsert;
 
+// Email queue for persistent delivery with retry support
+export const emailQueue = pgTable("email_queue", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  to: text("to").notNull(),
+  from: text("from").notNull(),
+  subject: text("subject").notNull(),
+  html: text("html").notNull(),
+  status: text("status").notNull().default("pending"), // 'pending' | 'sent' | 'failed'
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  sentAt: timestamp("sent_at"),
+  nextRetryAt: timestamp("next_retry_at"),
+});
+
+export type EmailQueueItem = typeof emailQueue.$inferSelect;
+export type NewEmailQueueItem = typeof emailQueue.$inferInsert;
+
 // NextAuth required tables
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
