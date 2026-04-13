@@ -171,6 +171,7 @@ export default async function UsersPage({
 
       {/* Users table */}
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow">
+        <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -293,6 +294,7 @@ export default async function UsersPage({
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Summary */}
