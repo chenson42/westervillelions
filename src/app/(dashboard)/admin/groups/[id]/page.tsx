@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { GroupForm } from "@/components/admin/group-form";
 import { GroupMemberships } from "@/components/admin/group-memberships";
+import { SyncBoardRoleButton } from "@/components/admin/sync-board-role-button";
 
 export default async function EditGroupPage({
   params,
@@ -43,9 +44,12 @@ export default async function EditGroupPage({
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">{group.name}</h1>
-        <p className="mt-2 text-gray-600">Edit group details and manage members</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">{group.name}</h1>
+          <p className="mt-2 text-gray-600">Edit group details and manage members</p>
+        </div>
+        {group.name === "Board of Directors" && <SyncBoardRoleButton />}
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow">
