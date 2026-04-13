@@ -42,14 +42,21 @@ export async function POST(request: NextRequest) {
     await sendEmail({
       from: `Westerville Lions Website <${fromEmail}>`,
       to: "info@westervillelions.org",
+      replyTo: email,
       subject: `Website Contact: ${subject}`,
       html: `
-        <h2>Contact Form Submission</h2>
+        <h2>New Contact Form Submission</h2>
         <p><strong>Name:</strong> ${name}</p>
         <p><strong>Email:</strong> <a href="mailto:${email}">${email}</a></p>
         <p><strong>Subject:</strong> ${subject}</p>
         <hr />
         <p>${message.replace(/\n/g, "<br>")}</p>
+        <hr />
+        <p style="color:#666;font-size:13px;">
+          This message was submitted via the contact form at
+          <a href="https://westervillelions.org/connect">westervillelions.org/connect</a>.
+          To reply, click <strong>Reply</strong> in your email client — replies go directly to ${name} at ${email}.
+        </p>
       `,
     });
 

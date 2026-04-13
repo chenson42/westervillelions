@@ -8,6 +8,7 @@ interface SendEmailOptions {
   from: string;
   subject: string;
   html: string;
+  replyTo?: string;
 }
 
 interface SendEmailResult {
@@ -29,7 +30,7 @@ function sleep(ms: number): Promise<void> {
  * failed deliveries can be retried later via the admin retry endpoint.
  */
 export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
-  const { to, from, subject, html } = options;
+  const { to, from, subject, html, replyTo } = options;
 
   // Persist to queue first
   const [queued] = await db
@@ -52,7 +53,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      await resend.emails.send({ from, to: [to], subject, html });
+      await resend.emails.send({ from, to: [to], subject, html, ...(replyTo && { replyTo }) });
 
       await db
         .update(emailQueue)
