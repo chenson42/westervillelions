@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
-import { events } from "@/lib/db/schema";
+import { events, eventRsvps } from "@/lib/db/schema";
 import Link from "next/link";
-import { asc, desc, gte, lt, and, sql } from "drizzle-orm";
+import { asc, desc, gte, lt, and, sql, inArray } from "drizzle-orm";
+import { EventTableRow, type RsvpSummary } from "@/components/admin/event-table-row";
 
 const PAGE_SIZE = 20;
 
@@ -33,6 +34,30 @@ export default async function AdminEventsPage({
   ]);
 
   const totalPages = Math.ceil(count / PAGE_SIZE);
+
+  const rsvpEventIds = eventList.filter((e) => e.requiresRsvp).map((e) => e.id);
+
+  const rsvpRows = rsvpEventIds.length > 0
+    ? await db
+        .select({
+          eventId: eventRsvps.eventId,
+          status: eventRsvps.status,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(eventRsvps)
+        .where(inArray(eventRsvps.eventId, rsvpEventIds))
+        .groupBy(eventRsvps.eventId, eventRsvps.status)
+    : [];
+
+  const rsvpMap = new Map<string, RsvpSummary>();
+  for (const row of rsvpRows) {
+    const s = rsvpMap.get(row.eventId) ?? { attending: 0, maybe: 0, declined: 0, total: 0 };
+    if (row.status === "attending") s.attending = row.count;
+    else if (row.status === "maybe") s.maybe = row.count;
+    else if (row.status === "declined") s.declined = row.count;
+    s.total += row.count;
+    rsvpMap.set(row.eventId, s);
+  }
 
   function pageUrl(p: number) {
     const params = new URLSearchParams();
@@ -121,56 +146,18 @@ export default async function AdminEventsPage({
                 </td>
               </tr>
             ) : (
-              eventList.map((event) => (
-                <tr key={event.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <div className="font-medium text-gray-900">{event.title}</div>
-                    {event.description && (
-                      <div className="mt-1 text-sm text-gray-500 line-clamp-1">
-                        {event.description}
-                      </div>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {new Date(event.startDate).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {event.location || "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4">
-                    <div className="flex flex-wrap gap-1">
-                      <span
-                        className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
-                          event.isPublic
-                            ? "bg-green-100 text-green-800"
-                            : "bg-gray-100 text-gray-800"
-                        }`}
-                      >
-                        {event.isPublic ? "Public" : "Members only"}
-                      </span>
-                      {event.requiresRsvp && (
-                        <span className="inline-flex rounded-full px-2 text-xs font-semibold leading-5 bg-lions-blue/10 text-lions-blue">
-                          RSVP
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                    <Link
-                      href={`/admin/events/${event.id}`}
-                      className="text-lions-blue hover:text-lions-blue-dark"
-                    >
-                      Edit
-                    </Link>
-                  </td>
-                </tr>
-              ))
+              eventList.map((event) => {
+                const rsvpSummary = rsvpMap.get(event.id) ?? null;
+                const defaultExpanded = !isPast && (rsvpSummary?.total ?? 0) > 0;
+                return (
+                  <EventTableRow
+                    key={event.id}
+                    event={event}
+                    rsvpSummary={rsvpSummary}
+                    defaultExpanded={defaultExpanded}
+                  />
+                );
+              })
             )}
           </tbody>
         </table>
