@@ -8,7 +8,13 @@ CREATE TABLE IF NOT EXISTS glasses_dropoff_locations (
   updated_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_glasses_dropoff_name ON glasses_dropoff_locations(name);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE tablename = 'glasses_dropoff_locations' AND indexname = 'uq_glasses_dropoff_name'
+  ) THEN
+    CREATE UNIQUE INDEX uq_glasses_dropoff_name ON glasses_dropoff_locations(name);
+  END IF;
+END $$;
 
 INSERT INTO glasses_dropoff_locations (name, address, sort_order) VALUES
   ('Central College Christian School', '975 S. Sunbury Rd', 0),
