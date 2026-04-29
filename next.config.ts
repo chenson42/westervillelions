@@ -18,7 +18,7 @@ const securityHeaders = [
       "img-src 'self' data: blob: https: lh3.googleusercontent.com",
       "font-src 'self'",
       "connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com",
-      "frame-src https://challenges.cloudflare.com https://maps.google.com https://widget.givebutter.com",
+      "frame-src https://challenges.cloudflare.com https://maps.google.com https://www.google.com https://widget.givebutter.com",
       "worker-src 'self' blob:",
     ].join("; "),
   },
