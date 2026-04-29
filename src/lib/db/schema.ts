@@ -332,3 +332,17 @@ export const verificationTokens = pgTable("verification_tokens", {
   token: text("token").notNull().unique(),
   expires: timestamp("expires").notNull(),
 });
+
+// Eyeglass drop-off locations (configurable by admin)
+export const glassesDropoffLocations = pgTable("glasses_dropoff_locations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  address: text("address").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type GlassesDropoffLocation = typeof glassesDropoffLocations.$inferSelect;
+export type NewGlassesDropoffLocation = typeof glassesDropoffLocations.$inferInsert;

@@ -78,6 +78,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
   },
   {
+    name: "Programs",
+    href: "/admin/programs",
+    icon: "👓",
+    requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
+  },
+  {
     name: "Contact",
     href: "/admin/contact",
     icon: "✉️",

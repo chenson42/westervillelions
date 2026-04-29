@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { db } from "@/lib/db";
+import { glassesDropoffLocations } from "@/lib/db/schema";
+import { asc, eq } from "drizzle-orm";
 
 export const metadata: Metadata = {
   title: "Community Programs",
@@ -28,7 +31,13 @@ const breadcrumb = {
   ],
 };
 
-export default function ProgramsPage() {
+export default async function ProgramsPage() {
+  const dropoffLocations = await db
+    .select()
+    .from(glassesDropoffLocations)
+    .where(eq(glassesDropoffLocations.isActive, true))
+    .orderBy(asc(glassesDropoffLocations.sortOrder), asc(glassesDropoffLocations.name));
+
   return (
     <div className="min-h-screen bg-white">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
@@ -152,17 +161,28 @@ export default function ProgramsPage() {
                 </div>
 
                 <div className="mt-auto bg-blue-50 border border-lions-blue/20 rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-1">Drop-off Locations</h3>
-                  <p className="text-sm text-gray-600">
-                    Drop-off locations coming soon &mdash; check back shortly or{" "}
-                    <Link
-                      href="/connect"
-                      className="text-lions-blue font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
-                    >
-                      contact us
-                    </Link>{" "}
-                    for details.
-                  </p>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Drop-off Locations</h3>
+                  {dropoffLocations.length === 0 ? (
+                    <p className="text-sm text-gray-600">
+                      Locations coming soon &mdash; check back shortly or{" "}
+                      <Link
+                        href="/connect"
+                        className="text-lions-blue font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                      >
+                        contact us
+                      </Link>{" "}
+                      for details.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {dropoffLocations.map((loc) => (
+                        <li key={loc.id} className="text-sm">
+                          <span className="font-medium text-gray-900">{loc.name}</span>
+                          <span className="text-gray-500"> &mdash; {loc.address}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             </article>
