@@ -22,7 +22,7 @@ export async function PATCH(
 
     await db
       .update(contactSubmissions)
-      .set({ isRead })
+      .set({ isRead, handledBy: isRead ? (session.user.name ?? "Unknown") : null })
       .where(eq(contactSubmissions.id, id));
 
     return NextResponse.json({ success: true });

@@ -18,7 +18,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // Public routes - no auth required
-  const publicPaths = ["/", "/about", "/mission", "/causes", "/campaigns", "/events", "/donate", "/connect", "/join", "/signin", "/register", "/forgot-password", "/reset-password", "/robots.txt", "/sitemap.xml"];
+  const publicPaths = ["/", "/about", "/mission", "/causes", "/campaigns", "/events", "/donate", "/connect", "/join", "/programs", "/signin", "/register", "/forgot-password", "/reset-password", "/robots.txt", "/sitemap.xml"];
   const publicPrefixes = ["/events/"];
   if (
     publicPaths.some((path) => request.nextUrl.pathname === path) ||

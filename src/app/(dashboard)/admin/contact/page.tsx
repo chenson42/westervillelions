@@ -65,7 +65,7 @@ export default async function AdminContactPage({
         </div>
         {unreadCount > 0 && (
           <span className="inline-flex items-center rounded-full bg-lions-blue px-3 py-1 text-sm font-semibold text-white">
-            {unreadCount} unread
+            {unreadCount} unhandled
           </span>
         )}
       </div>
@@ -80,7 +80,7 @@ export default async function AdminContactPage({
               : "bg-gray-100 text-gray-700 hover:bg-gray-200"
           }`}
         >
-          Unread {unreadCount > 0 ? `(${unreadCount})` : ""}
+          Unhandled {unreadCount > 0 ? `(${unreadCount})` : ""}
         </a>
         <a
           href="/admin/contact?view=all"
@@ -98,7 +98,7 @@ export default async function AdminContactPage({
       {submissions.length === 0 ? (
         <div className="rounded-lg border border-gray-200 bg-white p-12 text-center shadow">
           <p className="text-lg font-medium text-gray-500">
-            {showAll ? "No submissions yet" : "No unread messages"}
+            {showAll ? "No submissions yet" : "No unhandled submissions"}
           </p>
         </div>
       ) : (
@@ -138,7 +138,7 @@ export default async function AdminContactPage({
                   <p className="text-sm text-gray-700 whitespace-pre-wrap">{sub.message}</p>
                 </div>
                 <div className="flex-shrink-0 flex flex-col items-end gap-2">
-                  <MarkReadButton id={sub.id} isRead={sub.isRead} />
+                  <MarkReadButton id={sub.id} isRead={sub.isRead} handledBy={sub.handledBy ?? null} />
                   <a
                     href={`mailto:${sub.email}?subject=Re: ${encodeURIComponent(sub.subject)}`}
                     className="text-sm text-lions-blue hover:text-lions-blue-dark font-medium"

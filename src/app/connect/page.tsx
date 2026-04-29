@@ -148,6 +148,22 @@ export default function ContactPage() {
             </div>
           </div>
 
+          {/* Programs callout */}
+          <div className="bg-blue-50 border border-lions-blue/20 rounded-2xl p-8">
+            <h2 className="text-2xl font-bold mb-3 text-gray-900">Looking for Drop-Off Locations?</h2>
+            <p className="text-lg text-gray-700 mb-6">
+              We accept donations of gently used eyeglasses and collect plastic film for recycling.
+              Visit our Programs page to learn more about what we accept and find drop-off locations
+              near you.
+            </p>
+            <Link
+              href="/programs"
+              className="inline-block bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
+            >
+              View Our Programs
+            </Link>
+          </div>
+
           {/* Join CTA */}
           <div className="bg-lions-gold/10 p-8 rounded-lg">
             <h2 className="text-2xl font-bold mb-4 text-gray-900">Interested in Joining?</h2>

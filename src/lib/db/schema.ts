@@ -215,6 +215,7 @@ export const contactSubmissions = pgTable("contact_submissions", {
   subject: text("subject").notNull(),
   message: text("message").notNull(),
   isRead: boolean("is_read").notNull().default(false),
+  handledBy: text("handled_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
