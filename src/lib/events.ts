@@ -1,4 +1,4 @@
-import { format, addDays, addWeeks, addMonths, setDate, isBefore, isAfter } from "date-fns";
+import { format, addDays, addWeeks, addMonths, setDate, isBefore, isAfter, differenceInCalendarWeeks } from "date-fns";
 
 export type RecurringEvent = {
   startDate: Date;
@@ -127,4 +127,97 @@ function findNextDayOfWeek(
   }
 
   return null;
+}
+
+/**
+ * Generates all occurrence dates for a recurring event, ordered ascending.
+ * For non-recurring events returns [event.startDate].
+ *
+ * @param event     Event fields needed to compute recurrence
+ * @param from      Start of window (default: now). Occurrences before this are excluded.
+ * @param maxWeeks  Maximum weeks to generate into the future (default: 52).
+ *                  Ignored if recurrenceEndDate is set and is sooner.
+ */
+export function generateOccurrences(
+  event: RecurringEvent,
+  from: Date = new Date(),
+  maxWeeks = 52
+): Date[] {
+  if (!event.isRecurring) {
+    return [new Date(event.startDate)];
+  }
+
+  const start = new Date(event.startDate);
+  const seriesEnd = event.recurrenceEndDate ? new Date(event.recurrenceEndDate) : null;
+  const windowEnd = seriesEnd
+    ? (isBefore(seriesEnd, addWeeks(from, maxWeeks)) ? seriesEnd : addWeeks(from, maxWeeks))
+    : addWeeks(from, maxWeeks);
+
+  // Walk from the later of series start or from
+  const walkStart = isBefore(start, from) ? from : start;
+
+  const occurrences: Date[] = [];
+  const MAX_OCCURRENCES = 200;
+  const type = event.recurrenceType;
+
+  if (type === "monthly") {
+    const dayOfMonth = start.getDate();
+    // Align to the first candidate month
+    let candidate = setDate(new Date(walkStart.getFullYear(), walkStart.getMonth(), 1), dayOfMonth);
+    // Inherit time from startDate
+    candidate.setHours(start.getHours(), start.getMinutes(), 0, 0);
+    // If this candidate is before walkStart, advance one month
+    if (isBefore(candidate, walkStart)) {
+      candidate = setDate(addMonths(candidate, 1), dayOfMonth);
+      candidate.setHours(start.getHours(), start.getMinutes(), 0, 0);
+    }
+
+    while (!isAfter(candidate, windowEnd) && occurrences.length < MAX_OCCURRENCES) {
+      occurrences.push(new Date(candidate));
+      candidate = setDate(addMonths(candidate, 1), dayOfMonth);
+      candidate.setHours(start.getHours(), start.getMinutes(), 0, 0);
+    }
+  } else if (type === "weekly" || type === "biweekly") {
+    const intervalWeeks = type === "biweekly" ? 2 : 1;
+    const days =
+      event.recurrenceDays && event.recurrenceDays.length > 0
+        ? event.recurrenceDays
+        : [start.getDay()];
+
+    let candidate = new Date(walkStart);
+    candidate.setHours(start.getHours(), start.getMinutes(), 0, 0);
+    // If setting the time pushed candidate before walkStart, advance one day
+    if (isBefore(candidate, walkStart)) {
+      candidate = addDays(candidate, 1);
+      candidate.setHours(start.getHours(), start.getMinutes(), 0, 0);
+    }
+
+    while (!isAfter(candidate, windowEnd) && occurrences.length < MAX_OCCURRENCES) {
+      const dow = candidate.getDay();
+      if (days.includes(dow)) {
+        // For biweekly: verify this week is a valid occurrence week
+        if (intervalWeeks > 1) {
+          const weeksDiff = differenceInCalendarWeeks(candidate, start);
+          if (weeksDiff % intervalWeeks === 0) {
+            occurrences.push(new Date(candidate));
+          }
+        } else {
+          occurrences.push(new Date(candidate));
+        }
+      }
+      candidate = addDays(candidate, 1);
+      candidate.setHours(start.getHours(), start.getMinutes(), 0, 0);
+    }
+  }
+
+  return occurrences;
+}
+
+/**
+ * Returns true if `candidate` matches any occurrence in `occurrences` within ±1 minute.
+ * Uses minute-precision comparison to handle minor clock drift or timezone serialization.
+ */
+export function isValidOccurrence(candidate: Date, occurrences: Date[]): boolean {
+  const t = Math.round(candidate.getTime() / 60000);
+  return occurrences.some((o) => Math.round(o.getTime() / 60000) === t);
 }

@@ -203,6 +203,7 @@ export const eventRsvps = pgTable("event_rsvps", {
   rsvpEmail: text("rsvp_email"), // for anonymous RSVPs
   status: text("status").notNull().default("attending"), // 'attending' | 'maybe' | 'declined'
   guestCount: integer("guest_count").notNull().default(0),
+  occurrenceDate: timestamp("occurrence_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

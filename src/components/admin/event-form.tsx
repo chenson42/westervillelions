@@ -492,11 +492,11 @@ export default function EventForm({
                   className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
                 />
                 <label htmlFor="requiresRsvp" className="ml-2 block text-sm text-gray-700">
-                  Requires RSVP
+                  Allow Signups / RSVP
                 </label>
               </div>
               <p className="mt-1 ml-6 text-xs text-gray-500">
-                Attendees will be prompted to RSVP for this event
+                Members can sign up for this event. For recurring events, signups are per occurrence.
               </p>
             </div>
             <div>

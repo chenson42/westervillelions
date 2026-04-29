@@ -3,13 +3,16 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { events, eventRsvps } from "@/lib/db/schema";
-import { and, eq } from "drizzle-orm";
+import { events, eventRsvps, users } from "@/lib/db/schema";
+import { and, eq, ne } from "drizzle-orm";
 import { format } from "date-fns";
-import { formatRecurrence } from "@/lib/events";
+import { formatRecurrence, generateOccurrences } from "@/lib/events";
 import MarkdownContent from "@/components/markdown-content";
 import { auth } from "@/lib/auth";
 import { PublicRsvpForm } from "@/components/public/public-rsvp-form";
+import { OccurrenceSignupList } from "@/components/events/occurrence-signup-list";
+import { SingleEventSignup } from "@/components/events/single-event-signup";
+import type { OccurrenceRow } from "@/types/events";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -52,14 +55,66 @@ export default async function EventDetailPage({ params }: Props) {
 
   if (!event) notFound();
 
-  const userRsvp = session?.user?.id
-    ? await db.query.eventRsvps.findFirst({
-        where: and(eq(eventRsvps.eventId, id), eq(eventRsvps.userId, session.user.id)),
-      })
-    : undefined;
-
   const isLoggedIn = !!session?.user;
   const recurrenceLabel = formatRecurrence(event);
+
+  // Per-occurrence signup data (only when signups are enabled)
+  let occurrenceRows: OccurrenceRow[] = [];
+  const signupsByDate = new Map<string, number>();
+  const userSignupDates = new Set<string>();
+
+  const signeesByDate = new Map<string, string[]>();
+
+  if (event.requiresRsvp) {
+    const allRsvps = await db
+      .select({
+        occurrenceDate: eventRsvps.occurrenceDate,
+        userId: eventRsvps.userId,
+        status: eventRsvps.status,
+        userName: users.name,
+      })
+      .from(eventRsvps)
+      .leftJoin(users, eq(eventRsvps.userId, users.id))
+      .where(and(eq(eventRsvps.eventId, id), ne(eventRsvps.status, "declined")));
+
+    for (const r of allRsvps) {
+      const key = r.occurrenceDate?.toISOString() ?? "null";
+      signupsByDate.set(key, (signupsByDate.get(key) ?? 0) + 1);
+      if (r.userId === session?.user?.id) userSignupDates.add(key);
+      if (r.userName) {
+        const names = signeesByDate.get(key) ?? [];
+        names.push(r.userName);
+        signeesByDate.set(key, names);
+      }
+    }
+
+    if (event.isRecurring) {
+      const now = new Date();
+      const occurrenceDates = generateOccurrences(event, now);
+
+      occurrenceRows = occurrenceDates.map((d) => {
+        const key = d.toISOString();
+        const count = signupsByDate.get(key) ?? 0;
+        return {
+          date: key,
+          displayDate: format(d, "EEE, MMM d 'at' h:mm a"),
+          signedUpCount: count,
+          isSignedUp: userSignupDates.has(key),
+          isFull: event.maxAttendees != null && count >= event.maxAttendees,
+          isPast: d < now,
+          signees: signeesByDate.get(key) ?? [],
+        };
+      });
+    }
+  }
+
+  // Fetch existing RSVP for the PublicRsvpForm (non-recurring only)
+  const userRsvp =
+    !event.isRecurring && session?.user?.id
+      ? await db.query.eventRsvps.findFirst({
+          where: and(eq(eventRsvps.eventId, id), eq(eventRsvps.userId, session.user.id)),
+        })
+      : undefined;
 
   return (
     <div className="min-h-screen bg-white">
@@ -119,14 +174,49 @@ export default async function EventDetailPage({ params }: Props) {
         )}
 
         {event.requiresRsvp && (
-          <div className="mb-10">
-            <PublicRsvpForm
-              eventId={event.id}
-              allowGuestCount={event.allowGuestCount}
-              isLoggedIn={isLoggedIn}
-              initialStatus={userRsvp?.status ?? null}
-              initialGuestCount={userRsvp?.guestCount ?? 0}
-            />
+          <div className="mt-8 mb-10">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">
+              {event.isRecurring ? "Sign Up for a Date" : "Sign Up"}
+            </h2>
+            {event.isRecurring ? (
+              <OccurrenceSignupList
+                eventId={event.id}
+                occurrences={occurrenceRows}
+                maxAttendees={event.maxAttendees ?? null}
+                isLoggedIn={isLoggedIn}
+              />
+            ) : (
+              <>
+                <SingleEventSignup
+                  eventId={event.id}
+                  signedUpCount={signupsByDate.get("null") ?? 0}
+                  maxAttendees={event.maxAttendees ?? null}
+                  isSignedUp={userSignupDates.has("null")}
+                  isLoggedIn={isLoggedIn}
+                />
+                {isLoggedIn && (signeesByDate.get("null") ?? []).length > 0 && (
+                  <div className="mt-4 bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm font-semibold text-gray-700 mb-2">Signed up:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {(signeesByDate.get("null") ?? []).map((name) => (
+                        <span key={name} className="text-sm text-gray-600 bg-white border border-gray-200 rounded-lg px-3 py-1">
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="mt-6">
+                  <PublicRsvpForm
+                    eventId={event.id}
+                    allowGuestCount={event.allowGuestCount}
+                    isLoggedIn={isLoggedIn}
+                    initialStatus={userRsvp?.status ?? null}
+                    initialGuestCount={userRsvp?.guestCount ?? 0}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
 
