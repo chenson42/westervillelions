@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS glasses_dropoff_locations (
   updated_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
-ALTER TABLE glasses_dropoff_locations ADD CONSTRAINT IF NOT EXISTS uq_glasses_dropoff_name UNIQUE (name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_glasses_dropoff_name ON glasses_dropoff_locations(name);
 
 INSERT INTO glasses_dropoff_locations (name, address, sort_order) VALUES
   ('Central College Christian School', '975 S. Sunbury Rd', 0),
