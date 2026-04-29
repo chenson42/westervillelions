@@ -47,17 +47,29 @@ export default function SignInPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4">
       <div className="max-w-md w-full">
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Member Login
           </h1>
-          <p className="text-gray-600 mb-3">Access is for <strong>Westerville Lions Club members only.</strong></p>
-          <p className="text-gray-600 text-sm">Sign in with the email address you used when you joined the club. If this is your first time logging in, you&apos;ll need to{" "}
-            <Link href="/register" className="text-lions-blue hover:text-lions-blue-dark font-medium">
-              create an account here
-            </Link>{" "}
-            before signing in.
+          <p className="text-gray-600">Westerville Lions Club members only.</p>
+        </div>
+
+        {/* First-time callout — prominent, above the form */}
+        <div className="bg-lions-gold/15 border border-lions-gold/40 rounded-xl p-5 mb-6">
+          <p className="text-sm font-bold text-gray-900 mb-1">First time signing in?</p>
+          <p className="text-sm text-gray-700 mb-3">
+            You must create an account before you can log in. Use the <strong>same email address the club has on file</strong> for you.
+            Not sure which email that is?{" "}
+            <a href="mailto:info@westervillelions.org" className="text-lions-blue hover:underline font-medium">
+              Contact us
+            </a>.
           </p>
+          <Link
+            href="/register"
+            className="inline-block bg-lions-blue text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition"
+          >
+            Create My Account &rarr;
+          </Link>
         </div>
 
         <div className="bg-white p-8 rounded-lg shadow-md">
