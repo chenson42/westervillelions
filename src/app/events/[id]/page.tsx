@@ -184,6 +184,7 @@ export default async function EventDetailPage({ params }: Props) {
                 occurrences={occurrenceRows}
                 maxAttendees={event.maxAttendees ?? null}
                 isLoggedIn={isLoggedIn}
+                currentUserName={session?.user?.name ?? null}
               />
             ) : (
               <>
@@ -193,19 +194,9 @@ export default async function EventDetailPage({ params }: Props) {
                   maxAttendees={event.maxAttendees ?? null}
                   isSignedUp={userSignupDates.has("null")}
                   isLoggedIn={isLoggedIn}
+                  currentUserName={session?.user?.name ?? null}
+                  initialSignees={signeesByDate.get("null") ?? []}
                 />
-                {isLoggedIn && (signeesByDate.get("null") ?? []).length > 0 && (
-                  <div className="mt-4 bg-gray-50 rounded-xl p-4">
-                    <p className="text-sm font-semibold text-gray-700 mb-2">Signed up:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {(signeesByDate.get("null") ?? []).map((name) => (
-                        <span key={name} className="text-sm text-gray-600 bg-white border border-gray-200 rounded-lg px-3 py-1">
-                          {name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 <div className="mt-6">
                   <PublicRsvpForm
                     eventId={event.id}

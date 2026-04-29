@@ -10,6 +10,7 @@ interface OccurrenceSignupListProps {
   occurrences: OccurrenceRow[];
   maxAttendees: number | null;
   isLoggedIn: boolean;
+  currentUserName?: string | null;
 }
 
 export function OccurrenceSignupList({
@@ -17,6 +18,7 @@ export function OccurrenceSignupList({
   occurrences,
   maxAttendees,
   isLoggedIn,
+  currentUserName,
 }: OccurrenceSignupListProps) {
   const [rows, setRows] = useState<OccurrenceRow[]>(occurrences);
   const [loadingDate, setLoadingDate] = useState<string | null>(null);
@@ -38,6 +40,11 @@ export function OccurrenceSignupList({
                 maxAttendees != null
                   ? (!wasSignedUp ? r.signedUpCount + 1 : r.signedUpCount - 1) >= maxAttendees
                   : false,
+              signees: currentUserName
+                ? wasSignedUp
+                  ? r.signees.filter((n) => n !== currentUserName)
+                  : [...r.signees, currentUserName]
+                : r.signees,
             }
           : r
       )
@@ -57,7 +64,13 @@ export function OccurrenceSignupList({
         setRows((prev) =>
           prev.map((r) =>
             r.date === row.date
-              ? { ...r, isSignedUp: false, isFull: true, signedUpCount: r.signedUpCount - 1 }
+              ? {
+                  ...r,
+                  isSignedUp: false,
+                  isFull: true,
+                  signedUpCount: r.signedUpCount - 1,
+                  signees: currentUserName ? r.signees.filter((n) => n !== currentUserName) : r.signees,
+                }
               : r
           )
         );
@@ -83,6 +96,11 @@ export function OccurrenceSignupList({
                   maxAttendees != null
                     ? (wasSignedUp ? r.signedUpCount + 1 : r.signedUpCount - 1) >= maxAttendees
                     : false,
+                signees: currentUserName
+                  ? wasSignedUp
+                    ? [...r.signees, currentUserName]
+                    : r.signees.filter((n) => n !== currentUserName)
+                  : r.signees,
               }
             : r
         )
@@ -123,7 +141,13 @@ export function OccurrenceSignupList({
                     : `${row.signedUpCount} signed up`}
                 </p>
                 {isLoggedIn && row.signees.length > 0 && (
-                  <p className="mt-1 text-xs text-gray-400">{row.signees.join(", ")}</p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {row.signees.map((name) => (
+                      <span key={name} className="inline-block bg-lions-blue/10 text-lions-blue text-xs font-medium px-2 py-0.5 rounded-full">
+                        {name}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
 

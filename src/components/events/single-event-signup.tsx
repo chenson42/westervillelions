@@ -10,6 +10,8 @@ interface SingleEventSignupProps {
   maxAttendees: number | null;
   isSignedUp: boolean;
   isLoggedIn: boolean;
+  currentUserName?: string | null;
+  initialSignees?: string[];
 }
 
 export function SingleEventSignup({
@@ -18,10 +20,13 @@ export function SingleEventSignup({
   maxAttendees,
   isSignedUp: initialSignedUp,
   isLoggedIn,
+  currentUserName,
+  initialSignees = [],
 }: SingleEventSignupProps) {
   const [isSignedUp, setIsSignedUp] = useState(initialSignedUp);
   const [count, setCount] = useState(initialCount);
   const [loading, setLoading] = useState(false);
+  const [signees, setSignees] = useState<string[]>(initialSignees);
 
   const isFull = maxAttendees != null && count >= maxAttendees && !isSignedUp;
 
@@ -33,6 +38,11 @@ export function SingleEventSignup({
     // Optimistic update
     setIsSignedUp(!wasSignedUp);
     setCount((c) => (wasSignedUp ? c - 1 : c + 1));
+    if (currentUserName) {
+      setSignees((prev) =>
+        wasSignedUp ? prev.filter((n) => n !== currentUserName) : [...prev, currentUserName]
+      );
+    }
     setLoading(true);
 
     try {
@@ -47,6 +57,11 @@ export function SingleEventSignup({
         // Revert — slot was taken
         setIsSignedUp(wasSignedUp);
         setCount((c) => (wasSignedUp ? c + 1 : c - 1));
+        if (currentUserName) {
+          setSignees((prev) =>
+            wasSignedUp ? [...prev, currentUserName] : prev.filter((n) => n !== currentUserName)
+          );
+        }
         toast.error("This event is now full.");
         return;
       }
@@ -60,6 +75,11 @@ export function SingleEventSignup({
       // Revert optimistic update
       setIsSignedUp(wasSignedUp);
       setCount((c) => (wasSignedUp ? c + 1 : c - 1));
+      if (currentUserName) {
+        setSignees((prev) =>
+          wasSignedUp ? [...prev, currentUserName] : prev.filter((n) => n !== currentUserName)
+        );
+      }
       toast.error("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
@@ -67,7 +87,7 @@ export function SingleEventSignup({
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-lg p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="bg-white rounded-2xl shadow-lg p-6 flex flex-col gap-4">
       {/* Count display */}
       <p className="text-sm text-gray-600">
         {maxAttendees != null ? (
@@ -110,6 +130,19 @@ export function SingleEventSignup({
         >
           {loading ? "..." : "Sign Up"}
         </button>
+      )}
+
+      {isLoggedIn && signees.length > 0 && (
+        <div className="pt-2 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 mb-1.5">Signed up:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {signees.map((name) => (
+              <span key={name} className="inline-block bg-lions-blue/10 text-lions-blue text-xs font-medium px-2 py-0.5 rounded-full">
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
