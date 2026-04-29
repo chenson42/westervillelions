@@ -97,7 +97,7 @@ export default async function UsersPage({
     return true;
   });
 
-  const unlinkedCount = filteredList.filter((u) => !memberLinkMap.has(u.id)).length;
+  const unlinkedCount = filteredList.filter((u) => !memberLinkMap.has(u.id) && u.isActive).length;
 
   return (
     <div className="space-y-6">
