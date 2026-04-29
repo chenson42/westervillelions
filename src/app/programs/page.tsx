@@ -8,6 +8,15 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "https://westervillelions.org/programs",
   },
+  openGraph: {
+    title: "Community Programs | Westerville Lions Club",
+    description:
+      "Learn about the Westerville Lions Club community drop-off programs — donate gently used eyeglasses and recycle plastic film to make a difference close to home.",
+    url: "https://westervillelions.org/programs",
+    siteName: "Westerville Lions Club",
+    locale: "en_US",
+    type: "website",
+  },
 };
 
 const breadcrumb = {

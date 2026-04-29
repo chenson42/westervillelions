@@ -3,6 +3,7 @@ import { users, userRoles, roles, members, accounts } from "@/lib/db/schema";
 import { eq, ilike, or } from "drizzle-orm";
 import Link from "next/link";
 import { format } from "date-fns";
+import { SuspendUserButton } from "@/components/admin/suspend-user-button";
 
 /**
  * Users List Page
@@ -22,6 +23,7 @@ export default async function UsersPage({
       id: users.id,
       email: users.email,
       name: users.name,
+      isActive: users.isActive,
       createdAt: users.createdAt,
       lastLoginAt: users.lastLoginAt,
     })
@@ -193,6 +195,9 @@ export default async function UsersPage({
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                 Last Login
               </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                Status
+              </th>
               <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                 Actions
               </th>
@@ -201,7 +206,7 @@ export default async function UsersPage({
           <tbody className="divide-y divide-gray-200 bg-white">
             {filteredList.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-12 text-center">
+                <td colSpan={8} className="px-6 py-12 text-center">
                   <div className="text-gray-500">
                     <p className="text-lg font-medium">No users found</p>
                   </div>
@@ -215,7 +220,7 @@ export default async function UsersPage({
                 const isLinked = !!linkedMember;
 
                 return (
-                  <tr key={user.id} className={`hover:bg-gray-50 ${!isLinked ? "bg-amber-50/40" : ""}`}>
+                  <tr key={user.id} className={`hover:bg-gray-50 ${!user.isActive ? "bg-red-50/30" : !isLinked ? "bg-amber-50/40" : ""}`}>
                     <td className="whitespace-nowrap px-6 py-4">
                       <div>
                         <div className="font-medium text-gray-900">
@@ -280,13 +285,31 @@ export default async function UsersPage({
                         <span className="text-gray-400">Never</span>
                       )}
                     </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm">
+                      {user.isActive ? (
+                        <span className="inline-flex rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">
+                          Active
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
+                          Suspended
+                        </span>
+                      )}
+                    </td>
                     <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                      <Link
-                        href={`/admin/users/${user.id}`}
-                        className="text-lions-blue hover:text-lions-blue-dark"
-                      >
-                        Manage Roles
-                      </Link>
+                      <div className="flex items-center justify-end gap-4">
+                        <Link
+                          href={`/admin/users/${user.id}`}
+                          className="text-lions-blue hover:text-lions-blue-dark"
+                        >
+                          Manage Roles
+                        </Link>
+                        <SuspendUserButton
+                          userId={user.id}
+                          userName={user.name ?? user.email}
+                          isActive={user.isActive}
+                        />
+                      </div>
                     </td>
                   </tr>
                 );

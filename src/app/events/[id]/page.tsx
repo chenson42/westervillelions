@@ -116,8 +116,31 @@ export default async function EventDetailPage({ params }: Props) {
         })
       : undefined;
 
+  const eventJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Event",
+    name: event.title,
+    description: event.description ?? undefined,
+    url: `https://westervillelions.org/events/${event.id}`,
+    ...(event.image && { image: event.image }),
+    startDate: new Date(event.startDate).toISOString(),
+    ...(event.endDate && { endDate: new Date(event.endDate).toISOString() }),
+    ...(event.location && {
+      location: {
+        "@type": "Place",
+        name: event.location,
+      },
+    }),
+    organizer: {
+      "@type": "Organization",
+      name: "Westerville Lions Club",
+      url: "https://westervillelions.org",
+    },
+  };
+
   return (
     <div className="min-h-screen bg-white">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(eventJsonLd) }} />
       {/* Hero */}
       <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-20">
         <div className="container mx-auto px-4 max-w-4xl">

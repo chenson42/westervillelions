@@ -38,6 +38,13 @@ export async function POST(request: NextRequest) {
 
     const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
 
+    const esc = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+    const safeName = esc(name);
+    const safeEmail = esc(email);
+    const safeMessage = esc(message).replace(/\n/g, "<br>");
+
     // Admin notification
     await sendEmail({
       from: `Westerville Lions Website <${fromEmail}>`,
@@ -46,16 +53,16 @@ export async function POST(request: NextRequest) {
       subject: `Website Contact: ${subject}`,
       html: `
         <h2>New Contact Form Submission</h2>
-        <p><strong>Name:</strong> ${name}</p>
-        <p><strong>Email:</strong> <a href="mailto:${email}">${email}</a></p>
+        <p><strong>Name:</strong> ${safeName}</p>
+        <p><strong>Email:</strong> <a href="mailto:${safeEmail}">${safeEmail}</a></p>
         <p><strong>Subject:</strong> ${subject}</p>
         <hr />
-        <p>${message.replace(/\n/g, "<br>")}</p>
+        <p>${safeMessage}</p>
         <hr />
         <p style="color:#666;font-size:13px;">
           This message was submitted via the contact form at
           <a href="https://westervillelions.org/connect">westervillelions.org/connect</a>.
-          To reply, click <strong>Reply</strong> in your email client — replies go directly to ${name} at ${email}.
+          To reply, click <strong>Reply</strong> in your email client — replies go directly to ${safeName} at ${safeEmail}.
         </p>
       `,
     });
@@ -66,7 +73,7 @@ export async function POST(request: NextRequest) {
       to: email,
       subject: "We received your message!",
       html: `
-        <p>Hi ${name},</p>
+        <p>Hi ${safeName},</p>
         <p>Thank you for reaching out to the Westerville Lions Club. We've received your message and a member of our team will be in touch with you soon.</p>
         <p>In the meantime, feel free to visit our website at <a href="https://westervillelions.org">westervillelions.org</a> to learn more about our community and upcoming events.</p>
         <br />
