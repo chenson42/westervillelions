@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { glassesDropoffLocations } from "@/lib/db/schema";
 import { asc, eq } from "drizzle-orm";
 
+export const revalidate = 3600;
+
 export const metadata: Metadata = {
   title: "Community Programs",
   description:

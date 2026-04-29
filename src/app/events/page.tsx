@@ -20,6 +20,9 @@ export const metadata: Metadata = {
     description:
       "Find upcoming events and service projects hosted by the Westerville Lions Club in Westerville, Ohio. All are welcome.",
     url: "https://westervillelions.org/events",
+    siteName: "Westerville Lions Club",
+    locale: "en_US",
+    type: "website",
     images: [
       {
         url: "https://westervillelions.org/images/hero-bg.jpg",

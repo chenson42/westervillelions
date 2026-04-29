@@ -14,6 +14,9 @@ export const metadata = {
     title: "Join the Westerville Lions Club",
     description: "Apply for membership in the Westerville Lions Club and make a difference in your community.",
     url: "https://westervillelions.org/join",
+    siteName: "Westerville Lions Club",
+    locale: "en_US",
+    type: "website",
     images: [
       {
         url: "https://westervillelions.org/images/hero-bg.jpg",

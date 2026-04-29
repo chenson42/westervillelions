@@ -19,6 +19,9 @@ export const metadata: Metadata = {
     description:
       "Serving Westerville, Ohio since 1928 through youth programs, hunger relief, humanitarian aid, and hands-on community service.",
     url: "https://westervillelions.org",
+    siteName: "Westerville Lions Club",
+    locale: "en_US",
+    type: "website",
     images: [
       {
         url: "https://westervillelions.org/images/hero-bg.jpg",

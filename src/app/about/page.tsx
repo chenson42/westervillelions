@@ -4,6 +4,8 @@ import { groups, groupMemberships, members } from "@/lib/db/schema";
 import { eq, asc, sql } from "drizzle-orm";
 import { LeadershipAvatar } from "@/components/members/leadership-avatar";
 
+export const revalidate = 3600;
+
 export const metadata: Metadata = {
   title: "About Us",
   description:
@@ -16,6 +18,9 @@ export const metadata: Metadata = {
     description:
       "Learn about the Westerville Lions Club — a community service organization serving Westerville, Ohio since 1928 as part of Lions Clubs International.",
     url: "https://westervillelions.org/about",
+    siteName: "Westerville Lions Club",
+    locale: "en_US",
+    type: "website",
     images: [
       {
         url: "https://westervillelions.org/images/hero-bg.jpg",
