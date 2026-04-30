@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import UserRoleManager from "@/components/admin/user-role-manager";
+import { EditUserForm } from "@/components/admin/edit-user-form";
 
 /**
  * User Role Management Page
@@ -57,29 +58,22 @@ export default async function UserRolePage({
           <span className="text-gray-900">{user.name || user.email}</span>
         </div>
         <h1 className="mt-2 text-3xl font-bold text-gray-900">
-          Manage User Roles
+          Manage User
         </h1>
       </div>
 
-      {/* User info */}
+      {/* Edit user */}
       <div className="rounded-lg border border-gray-200 bg-white p-6">
-        <h2 className="text-lg font-semibold text-gray-900">User Information</h2>
-        <dl className="mt-4 space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-gray-600">Name:</dt>
-            <dd className="font-medium text-gray-900">{user.name || "—"}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-gray-600">Email:</dt>
-            <dd className="font-medium text-gray-900">{user.email}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-gray-600">Joined:</dt>
-            <dd className="font-medium text-gray-900">
-              {new Date(user.createdAt).toLocaleDateString()}
-            </dd>
-          </div>
-        </dl>
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">User Information</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Joined {new Date(user.createdAt).toLocaleDateString()}
+          {user.lastLoginAt && ` · Last login ${new Date(user.lastLoginAt).toLocaleDateString()}`}
+        </p>
+        <EditUserForm
+          userId={user.id}
+          initialName={user.name}
+          initialEmail={user.email}
+        />
       </div>
 
       {/* Role manager */}
