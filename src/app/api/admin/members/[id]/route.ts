@@ -62,12 +62,17 @@ export async function PATCH(
       .where(eq(members.id, id))
       .returning();
 
-    // Sync isActive to all linked user accounts when it changes
-    if (existing.isActive !== newIsActive) {
-      await db
-        .update(users)
-        .set({ isActive: newIsActive, updatedAt: new Date() })
-        .where(eq(users.memberId, existing.id));
+    // Sync name, email, and isActive to the linked user account
+    const nameChanged = data.firstName !== existing.firstName || data.lastName !== existing.lastName;
+    const emailChanged = (data.email || null) !== existing.email;
+    const activeChanged = existing.isActive !== newIsActive;
+
+    if (nameChanged || emailChanged || activeChanged) {
+      const userUpdate: Record<string, unknown> = { updatedAt: new Date() };
+      if (nameChanged) userUpdate.name = `${data.firstName} ${data.lastName}`.trim();
+      if (emailChanged && data.email) userUpdate.email = data.email;
+      if (activeChanged) userUpdate.isActive = newIsActive;
+      await db.update(users).set(userUpdate).where(eq(users.memberId, existing.id));
     }
 
     // Fire-and-forget club list sync

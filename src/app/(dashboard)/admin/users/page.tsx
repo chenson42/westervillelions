@@ -302,7 +302,7 @@ export default async function UsersPage({
                           href={`/admin/users/${user.id}`}
                           className="text-lions-blue hover:text-lions-blue-dark"
                         >
-                          Manage Roles
+                          Edit
                         </Link>
                         <SuspendUserButton
                           userId={user.id}
