@@ -99,7 +99,7 @@ export function EventTableRow({ event, rsvpSummary, defaultExpanded }: Props) {
                 <span className="text-gray-400">·</span>
                 <span className="text-gray-600">{rsvpSummary.total} total</span>
                 <Link
-                  href={`/admin/events/${event.id}`}
+                  href={`/admin/events/${event.id}#attendance`}
                   className="ml-auto text-xs text-lions-blue hover:underline"
                 >
                   View all RSVPs →

@@ -1,9 +1,10 @@
 import { db } from "@/lib/db";
 import { users, userRoles, roles, members, accounts } from "@/lib/db/schema";
-import { eq, ilike, or } from "drizzle-orm";
+import { eq, ilike, or, asc } from "drizzle-orm";
 import Link from "next/link";
 import { format } from "date-fns";
 import { SuspendUserButton } from "@/components/admin/suspend-user-button";
+import { CreateUserDialog } from "@/components/admin/create-user-dialog";
 
 /**
  * Users List Page
@@ -85,6 +86,13 @@ export default async function UsersPage({
   // Get all role names for the filter dropdown
   const allRoles = await db.select({ name: roles.name }).from(roles).orderBy(roles.sortOrder);
 
+  // Fetch all active members for the create-user dialog
+  const allMembers = await db
+    .select({ id: members.id, firstName: members.firstName, lastName: members.lastName })
+    .from(members)
+    .where(eq(members.isActive, true))
+    .orderBy(asc(members.lastName), asc(members.firstName));
+
   // Apply role + login filters
   const filteredList = userList.filter((u) => {
     if (roleFilter) {
@@ -109,6 +117,7 @@ export default async function UsersPage({
             Manage user accounts and role assignments
           </p>
         </div>
+        <CreateUserDialog allMembers={allMembers} />
       </div>
 
       {/* Unlinked users alert */}

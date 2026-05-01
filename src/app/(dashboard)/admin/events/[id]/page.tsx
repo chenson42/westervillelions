@@ -137,7 +137,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
       />
 
       {showRsvpSection && (
-        <div className="rounded-lg border border-gray-200 bg-white p-6">
+        <div id="attendance" className="rounded-lg border border-gray-200 bg-white p-6">
           <h2 className="text-lg font-semibold text-gray-900">
             {event.isRecurring ? "Signups by Occurrence" : "RSVP Details"}
           </h2>
