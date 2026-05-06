@@ -4,6 +4,7 @@ import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { auth } from "@/lib/auth";
 import Script from "next/script";
+import { Toaster } from "sonner";
 
 const siteUrl = "https://westervillelions.org";
 
@@ -108,6 +109,7 @@ export default async function RootLayout({
           {children}
         </main>
         <Footer />
+        <Toaster richColors position="top-center" />
       </body>
     </html>
   );

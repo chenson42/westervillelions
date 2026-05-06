@@ -23,12 +23,6 @@ export async function POST(request: NextRequest) {
   const conflict = await db.query.users.findFirst({ where: eq(users.email, email.trim()) });
   if (conflict) return NextResponse.json({ error: "An account with this email already exists" }, { status: 409 });
 
-  if (memberId) {
-    const alreadyLinked = await db.query.users.findFirst({ where: eq(users.memberId, memberId) });
-    if (alreadyLinked)
-      return NextResponse.json({ error: "That member record is already linked to another user account" }, { status: 409 });
-  }
-
   const hashedPassword = await bcrypt.hash(password, 10);
 
   let resolvedName = name?.trim() || null;

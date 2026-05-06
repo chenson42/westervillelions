@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
+import { users, members } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
@@ -36,15 +36,16 @@ export async function POST(
       );
     }
 
-    // Check if another user is already linked to this member
-    const existing = await db.query.users.findFirst({
-      where: eq(users.memberId, memberId),
+    // Verify the member record exists (multiple users may link to the same member)
+    const member = await db.query.members.findFirst({
+      where: eq(members.id, memberId),
+      columns: { id: true },
     });
 
-    if (existing && existing.id !== id) {
+    if (!member) {
       return NextResponse.json(
-        { error: "Another user is already linked to this member" },
-        { status: 409 }
+        { error: "Member not found" },
+        { status: 404 }
       );
     }
 
