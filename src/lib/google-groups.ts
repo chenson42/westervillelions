@@ -7,16 +7,79 @@
 
 import { google } from "googleapis";
 import { db } from "@/lib/db";
-import { groups, groupMemberships, members } from "@/lib/db/schema";
+import { groups, groupMemberships, members, googleGroupSyncLog } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 
 const CLUB_GROUP_EMAIL = "club@westervillelions.org";
 
+export type SyncTriggerSource = "manual" | "member_added" | "member_removed" | "member_updated";
+
+interface SyncContext {
+  triggeredByUserId?: string | null;
+  triggerSource?: SyncTriggerSource;
+}
+
+async function writeSyncLog(params: {
+  groupEmail: string;
+  groupId?: string | null;
+  triggeredByUserId?: string | null;
+  triggerSource: SyncTriggerSource;
+  success: boolean;
+  added: string[];
+  removed: string[];
+  failed: SyncFailure[];
+  error?: string | null;
+}) {
+  try {
+    await db.insert(googleGroupSyncLog).values({
+      groupEmail: params.groupEmail,
+      groupId: params.groupId ?? null,
+      triggeredByUserId: params.triggeredByUserId ?? null,
+      triggerSource: params.triggerSource,
+      success: params.success,
+      added: params.added,
+      removed: params.removed,
+      failed: params.failed,
+      error: params.error ?? null,
+    });
+  } catch (logErr) {
+    console.error("[google-groups] Failed to write sync log:", logErr);
+  }
+}
+
+export interface SyncFailure {
+  email: string;
+  op: "add" | "remove";
+  error: string;
+}
+
+export interface SyncResult {
+  success: boolean;
+  added?: string[];
+  removed?: string[];
+  failed?: SyncFailure[];
+  error?: string;
+}
+
+function describeApiError(err: unknown): string {
+  if (err && typeof err === "object") {
+    // googleapis errors expose a structured response on err.response.data.error
+    const e = err as { response?: { data?: { error?: { message?: string; code?: number } } }; message?: string };
+    const apiMessage = e.response?.data?.error?.message;
+    if (apiMessage) return apiMessage;
+    if (e.message) return e.message;
+  }
+  return String(err);
+}
+
 /**
  * Sync all active members to club@westervillelions.org.
- * Fire-and-forget safe — catches all errors internally.
+ * Fire-and-forget safe — catches all errors internally. A bad email
+ * (e.g. typo, deleted Gmail) is logged and skipped; the rest of the
+ * batch continues. Every run is recorded in google_group_sync_log.
  */
-export async function syncClubMembersList(): Promise<{ success: boolean; added?: string[]; removed?: string[]; error?: string }> {
+export async function syncClubMembersList(ctx: SyncContext = {}): Promise<SyncResult> {
+  const triggerSource = ctx.triggerSource ?? "manual";
   try {
     const auth = getOAuthClient();
     const adminClient = google.admin({ version: "directory_v1", auth });
@@ -63,21 +126,59 @@ export async function syncClubMembersList(): Promise<{ success: boolean; added?:
         .filter((e): e is string => Boolean(e))
     );
 
-    // Add missing, remove extra
+    // Add missing, remove extra — per-email try/catch so one failure
+    // doesn't stop the whole batch.
     const toAdd = [...portalMemberEmails].filter((e) => !googleMemberEmails.has(e));
     const toRemove = [...googleMemberEmails].filter((e) => !portalMemberEmails.has(e));
+    const added: string[] = [];
+    const removed: string[] = [];
+    const failed: SyncFailure[] = [];
 
     for (const email of toAdd) {
-      await adminClient.members.insert({ groupKey: CLUB_GROUP_EMAIL, requestBody: { email, role: "MEMBER" } });
+      try {
+        await adminClient.members.insert({ groupKey: CLUB_GROUP_EMAIL, requestBody: { email, role: "MEMBER" } });
+        added.push(email);
+      } catch (err) {
+        const message = describeApiError(err);
+        console.warn(`[google-groups] Failed to add ${email} to ${CLUB_GROUP_EMAIL}: ${message}`);
+        failed.push({ email, op: "add", error: message });
+      }
     }
     for (const email of toRemove) {
-      await adminClient.members.delete({ groupKey: CLUB_GROUP_EMAIL, memberKey: email });
+      try {
+        await adminClient.members.delete({ groupKey: CLUB_GROUP_EMAIL, memberKey: email });
+        removed.push(email);
+      } catch (err) {
+        const message = describeApiError(err);
+        console.warn(`[google-groups] Failed to remove ${email} from ${CLUB_GROUP_EMAIL}: ${message}`);
+        failed.push({ email, op: "remove", error: message });
+      }
     }
 
-    return { success: true, added: toAdd, removed: toRemove };
+    await writeSyncLog({
+      groupEmail: CLUB_GROUP_EMAIL,
+      triggeredByUserId: ctx.triggeredByUserId,
+      triggerSource,
+      success: true,
+      added,
+      removed,
+      failed,
+    });
+
+    return { success: true, added, removed, failed };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeApiError(err);
     console.error("[google-groups] syncClubMembersList failed:", err);
+    await writeSyncLog({
+      groupEmail: CLUB_GROUP_EMAIL,
+      triggeredByUserId: ctx.triggeredByUserId,
+      triggerSource,
+      success: false,
+      added: [],
+      removed: [],
+      failed: [],
+      error: message,
+    });
     return { success: false, error: message };
   }
 }
@@ -96,9 +197,9 @@ function getOAuthClient() {
   return auth;
 }
 
-export async function syncGoogleGroup(
-  groupId: string
-): Promise<{ success: boolean; added?: string[]; removed?: string[]; error?: string }> {
+export async function syncGoogleGroup(groupId: string, ctx: SyncContext = {}): Promise<SyncResult> {
+  const triggerSource = ctx.triggerSource ?? "manual";
+  let resolvedGroupEmail: string | null = null;
   try {
     // 1. Load the portal group
     const group = await db.query.groups.findFirst({
@@ -115,6 +216,7 @@ export async function syncGoogleGroup(
     }
 
     const groupEmail = `${group.emailPrefix}@${DOMAIN}`;
+    resolvedGroupEmail = groupEmail;
     const auth = getOAuthClient();
     const adminClient = google.admin({ version: "directory_v1", auth });
 
@@ -175,35 +277,81 @@ export async function syncGoogleGroup(
         .filter((e): e is string => Boolean(e))
     );
 
-    // 6. Add missing members
+    // 6. Add missing members — per-email try/catch
     const toAdd = [...portalMemberEmails].filter((e) => !googleMemberEmails.has(e));
+    const toRemove = [...googleMemberEmails].filter((e) => !portalMemberEmails.has(e));
+    const added: string[] = [];
+    const removed: string[] = [];
+    const failed: SyncFailure[] = [];
+
     for (const email of toAdd) {
-      await adminClient.members.insert({
-        groupKey: groupEmail,
-        requestBody: { email, role: "MEMBER" },
-      });
+      try {
+        await adminClient.members.insert({
+          groupKey: groupEmail,
+          requestBody: { email, role: "MEMBER" },
+        });
+        added.push(email);
+      } catch (err) {
+        const message = describeApiError(err);
+        console.warn(`[google-groups] Failed to add ${email} to ${groupEmail}: ${message}`);
+        failed.push({ email, op: "add", error: message });
+      }
     }
 
     // 7. Remove extra members (those in Google but not in portal)
-    const toRemove = [...googleMemberEmails].filter((e) => !portalMemberEmails.has(e));
     for (const email of toRemove) {
-      await adminClient.members.delete({ groupKey: groupEmail, memberKey: email });
+      try {
+        await adminClient.members.delete({ groupKey: groupEmail, memberKey: email });
+        removed.push(email);
+      } catch (err) {
+        const message = describeApiError(err);
+        console.warn(`[google-groups] Failed to remove ${email} from ${groupEmail}: ${message}`);
+        failed.push({ email, op: "remove", error: message });
+      }
     }
 
-    // 8. Update sync status — success
+    // 8. Update sync status — success even with per-email failures so
+    // the partial sync is recorded; surface failure summary in the error column.
+    const syncError = failed.length > 0
+      ? `${failed.length} member${failed.length === 1 ? "" : "s"} failed: ${failed.map((f) => `${f.email} (${f.error})`).join("; ")}`
+      : null;
+
     await db
       .update(groups)
       .set({
         googleGroupSyncedAt: new Date(),
-        googleGroupSyncError: null,
+        googleGroupSyncError: syncError,
         updatedAt: new Date(),
       })
       .where(eq(groups.id, groupId));
 
-    return { success: true, added: toAdd, removed: toRemove };
+    await writeSyncLog({
+      groupEmail,
+      groupId,
+      triggeredByUserId: ctx.triggeredByUserId,
+      triggerSource,
+      success: true,
+      added,
+      removed,
+      failed,
+    });
+
+    return { success: true, added, removed, failed };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeApiError(err);
     console.error(`[google-groups] syncGoogleGroup failed for ${groupId}:`, err);
+
+    await writeSyncLog({
+      groupEmail: resolvedGroupEmail ?? `(group:${groupId})`,
+      groupId,
+      triggeredByUserId: ctx.triggeredByUserId,
+      triggerSource,
+      success: false,
+      added: [],
+      removed: [],
+      failed: [],
+      error: message,
+    });
 
     // Persist the error so it appears in the admin UI
     try {

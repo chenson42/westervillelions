@@ -20,7 +20,7 @@ export async function POST() {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const result = await syncClubMembersList();
+    const result = await syncClubMembersList({ triggeredByUserId: session.user.id, triggerSource: "manual" });
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
     console.error("Error syncing club members list:", error);

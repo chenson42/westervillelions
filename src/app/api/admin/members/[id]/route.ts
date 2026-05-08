@@ -76,7 +76,8 @@ export async function PATCH(
     }
 
     // Fire-and-forget club list sync
-    syncClubMembersList().catch((e) => console.error("[sync] club list:", e));
+    syncClubMembersList({ triggeredByUserId: session.user.id, triggerSource: "member_updated" })
+      .catch((e) => console.error("[sync] club list:", e));
 
     return NextResponse.json(updated);
   } catch (error) {
@@ -121,7 +122,8 @@ export async function DELETE(
     await db.delete(members).where(eq(members.id, id));
 
     // Fire-and-forget club list sync
-    syncClubMembersList().catch((e) => console.error("[sync] club list:", e));
+    syncClubMembersList({ triggeredByUserId: session.user.id, triggerSource: "member_removed" })
+      .catch((e) => console.error("[sync] club list:", e));
 
     return NextResponse.json({ success: true });
   } catch (error) {

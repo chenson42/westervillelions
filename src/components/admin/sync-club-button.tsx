@@ -14,13 +14,24 @@ export default function SyncClubButton() {
       if (data.success) {
         const added = data.added?.length ?? 0;
         const removed = data.removed?.length ?? 0;
-        if (added === 0 && removed === 0) {
+        const failed: { email: string; op: string; error: string }[] = data.failed ?? [];
+        const parts: string[] = [];
+        if (added > 0) parts.push(`${added} added (${data.added.join(", ")})`);
+        if (removed > 0) parts.push(`${removed} removed (${data.removed.join(", ")})`);
+
+        if (parts.length === 0 && failed.length === 0) {
           toast.success("club@ is already up to date — no changes needed");
-        } else {
-          const parts = [];
-          if (added > 0) parts.push(`${added} added (${data.added.join(", ")})`);
-          if (removed > 0) parts.push(`${removed} removed (${data.removed.join(", ")})`);
+        } else if (parts.length > 0) {
           toast.success(`club@ synced: ${parts.join(" · ")}`);
+        }
+
+        if (failed.length > 0) {
+          const summary = failed
+            .map((f) => `${f.email} (${f.op}: ${f.error})`)
+            .join("; ");
+          toast.warning(`${failed.length} email${failed.length === 1 ? "" : "s"} skipped — ${summary}`, {
+            duration: 10000,
+          });
         }
       } else {
         toast.error(data.error || "Sync failed");

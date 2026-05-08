@@ -20,7 +20,7 @@ export async function POST(
     }
 
     const { id } = await params;
-    const result = await syncGoogleGroup(id);
+    const result = await syncGoogleGroup(id, { triggeredByUserId: session.user.id, triggerSource: "manual" });
 
     if (!result.success) {
       return NextResponse.json({ success: false, error: result.error }, { status: 500 });

@@ -85,7 +85,8 @@ export async function POST(request: NextRequest) {
       .returning();
 
     // Fire-and-forget club list sync
-    syncClubMembersList().catch((e) => console.error("[sync] club list:", e));
+    syncClubMembersList({ triggeredByUserId: session.user.id, triggerSource: "member_added" })
+      .catch((e) => console.error("[sync] club list:", e));
 
     return NextResponse.json(newMember, { status: 201 });
   } catch (error) {

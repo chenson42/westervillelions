@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, date, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -332,6 +332,24 @@ export const verificationTokens = pgTable("verification_tokens", {
   token: text("token").notNull().unique(),
   expires: timestamp("expires").notNull(),
 });
+
+// Audit log of every Google Group sync run
+export const googleGroupSyncLog = pgTable("google_group_sync_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  groupEmail: text("group_email").notNull(),
+  groupId: uuid("group_id").references(() => groups.id, { onDelete: "set null" }),
+  triggeredByUserId: uuid("triggered_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  triggerSource: text("trigger_source").notNull().default("manual"), // 'manual' | 'member_added' | 'member_removed' | 'member_updated'
+  success: boolean("success").notNull(),
+  added: jsonb("added").$type<string[]>().notNull().default([]),
+  removed: jsonb("removed").$type<string[]>().notNull().default([]),
+  failed: jsonb("failed").$type<{ email: string; op: "add" | "remove"; error: string }[]>().notNull().default([]),
+  error: text("error"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type GoogleGroupSyncLog = typeof googleGroupSyncLog.$inferSelect;
+export type NewGoogleGroupSyncLog = typeof googleGroupSyncLog.$inferInsert;
 
 // Suggestion box submissions from members
 export const suggestions = pgTable("suggestions", {

@@ -114,6 +114,11 @@ const navigation: NavItem[] = [
     icon: "📨",
   },
   {
+    name: "Sync Log",
+    href: "/admin/sync-log",
+    icon: "🔄",
+  },
+  {
     name: "Release Notes",
     href: "/admin/release-notes",
     icon: "📝",
