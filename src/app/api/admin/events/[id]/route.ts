@@ -34,6 +34,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     recurrenceType,
     recurrenceDays,
     recurrenceEndDate,
+    extraQuestion,
+    extraQuestionType,
+    extraQuestionOptions,
+    extraQuestionRequired,
   } = body;
 
   const recurring = isRecurring ?? existing.isRecurring;
@@ -56,6 +60,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       recurrenceType: recurring ? (recurrenceType || null) : null,
       recurrenceDays: recurring ? (recurrenceDays || null) : null,
       recurrenceEndDate: recurring && recurrenceEndDate ? new Date(recurrenceEndDate) : null,
+      extraQuestion: extraQuestion || null,
+      extraQuestionType: extraQuestion ? (extraQuestionType === "select" ? "select" : "text") : "text",
+      extraQuestionOptions: Array.isArray(extraQuestionOptions) ? extraQuestionOptions.filter((s) => typeof s === "string" && s.length > 0) : [],
+      extraQuestionRequired: Boolean(extraQuestion) && Boolean(extraQuestionRequired),
       updatedAt: new Date(),
     })
     .where(eq(events.id, id))

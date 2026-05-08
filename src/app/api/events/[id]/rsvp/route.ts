@@ -17,7 +17,7 @@ export async function POST(
     const session = await auth();
     const { id: eventId } = await params;
     const body = await request.json();
-    const { status, guestCount = 0, name, email } = body;
+    const { status, guestCount = 0, name, email, extraAnswer } = body;
 
     if (!["attending", "maybe", "declined"].includes(status)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
@@ -29,6 +29,25 @@ export async function POST(
     });
     if (!event) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
+    }
+
+    // Validate extra question answer if event has one and the user is attending/maybe
+    let cleanedExtraAnswer: string | null = null;
+    if (event.extraQuestion && status !== "declined") {
+      const trimmed = typeof extraAnswer === "string" ? extraAnswer.trim() : "";
+      if (event.extraQuestionRequired && trimmed.length === 0) {
+        return NextResponse.json(
+          { error: `${event.extraQuestion} is required` },
+          { status: 400 }
+        );
+      }
+      if (event.extraQuestionType === "select" && trimmed.length > 0) {
+        const options = (event.extraQuestionOptions ?? []) as string[];
+        if (!options.includes(trimmed)) {
+          return NextResponse.json({ error: "Invalid answer for question" }, { status: 400 });
+        }
+      }
+      cleanedExtraAnswer = trimmed.length > 0 ? trimmed : null;
     }
 
     if (session?.user?.id) {
@@ -43,14 +62,14 @@ export async function POST(
       if (existing) {
         const [updated] = await db
           .update(eventRsvps)
-          .set({ status, guestCount, updatedAt: new Date() })
+          .set({ status, guestCount, extraAnswer: cleanedExtraAnswer, updatedAt: new Date() })
           .where(eq(eventRsvps.id, existing.id))
           .returning();
         return NextResponse.json(updated);
       } else {
         const [created] = await db
           .insert(eventRsvps)
-          .values({ eventId, userId: session.user.id, status, guestCount })
+          .values({ eventId, userId: session.user.id, status, guestCount, extraAnswer: cleanedExtraAnswer })
           .returning();
         return NextResponse.json(created, { status: 201 });
       }
@@ -74,14 +93,14 @@ export async function POST(
       if (existing) {
         const [updated] = await db
           .update(eventRsvps)
-          .set({ status, guestCount, rsvpName: name, updatedAt: new Date() })
+          .set({ status, guestCount, rsvpName: name, extraAnswer: cleanedExtraAnswer, updatedAt: new Date() })
           .where(eq(eventRsvps.id, existing.id))
           .returning();
         return NextResponse.json(updated);
       } else {
         const [created] = await db
           .insert(eventRsvps)
-          .values({ eventId, rsvpName: name, rsvpEmail: email, status, guestCount })
+          .values({ eventId, rsvpName: name, rsvpEmail: email, status, guestCount, extraAnswer: cleanedExtraAnswer })
           .returning();
         return NextResponse.json(created, { status: 201 });
       }

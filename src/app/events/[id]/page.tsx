@@ -71,6 +71,7 @@ export default async function EventDetailPage({ params }: Props) {
         occurrenceDate: eventRsvps.occurrenceDate,
         userId: eventRsvps.userId,
         status: eventRsvps.status,
+        guestCount: eventRsvps.guestCount,
         userName: users.name,
       })
       .from(eventRsvps)
@@ -79,7 +80,9 @@ export default async function EventDetailPage({ params }: Props) {
 
     for (const r of allRsvps) {
       const key = r.occurrenceDate?.toISOString() ?? "null";
-      signupsByDate.set(key, (signupsByDate.get(key) ?? 0) + 1);
+      // Count the attendee + their guests
+      const attendeeTotal = 1 + (r.guestCount ?? 0);
+      signupsByDate.set(key, (signupsByDate.get(key) ?? 0) + attendeeTotal);
       if (r.userId === session?.user?.id) userSignupDates.add(key);
       if (r.userName) {
         const names = signeesByDate.get(key) ?? [];
@@ -208,6 +211,10 @@ export default async function EventDetailPage({ params }: Props) {
                 maxAttendees={event.maxAttendees ?? null}
                 isLoggedIn={isLoggedIn}
                 currentUserName={session?.user?.name ?? null}
+                extraQuestion={event.extraQuestion}
+                extraQuestionType={event.extraQuestionType}
+                extraQuestionOptions={event.extraQuestionOptions ?? []}
+                extraQuestionRequired={event.extraQuestionRequired}
               />
             ) : (
               <>
@@ -219,6 +226,11 @@ export default async function EventDetailPage({ params }: Props) {
                   isLoggedIn={isLoggedIn}
                   currentUserName={session?.user?.name ?? null}
                   initialSignees={signeesByDate.get("null") ?? []}
+                  extraQuestion={event.extraQuestion}
+                  extraQuestionType={event.extraQuestionType}
+                  extraQuestionOptions={event.extraQuestionOptions ?? []}
+                  extraQuestionRequired={event.extraQuestionRequired}
+                  initialExtraAnswer={userRsvp?.extraAnswer ?? null}
                 />
                 <div className="mt-6">
                   <PublicRsvpForm
@@ -227,6 +239,11 @@ export default async function EventDetailPage({ params }: Props) {
                     isLoggedIn={isLoggedIn}
                     initialStatus={userRsvp?.status ?? null}
                     initialGuestCount={userRsvp?.guestCount ?? 0}
+                    extraQuestion={event.extraQuestion}
+                    extraQuestionType={event.extraQuestionType}
+                    extraQuestionOptions={event.extraQuestionOptions ?? []}
+                    extraQuestionRequired={event.extraQuestionRequired}
+                    initialExtraAnswer={userRsvp?.extraAnswer ?? null}
                   />
                 </div>
               </>

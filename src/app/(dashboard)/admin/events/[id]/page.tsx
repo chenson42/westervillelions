@@ -20,6 +20,7 @@ type RsvpRow = {
   userName: string | null;
   userEmail: string | null;
   occurrenceDate: Date | null;
+  extraAnswer: string | null;
 };
 
 export default async function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
@@ -39,6 +40,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
         rsvpName: eventRsvps.rsvpName,
         rsvpEmail: eventRsvps.rsvpEmail,
         occurrenceDate: eventRsvps.occurrenceDate,
+        extraAnswer: eventRsvps.extraAnswer,
         userName: users.name,
         userEmail: users.email,
       })
@@ -96,6 +98,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
   const maybe = rsvpRows.filter((r) => r.status === "maybe");
   const declined = rsvpRows.filter((r) => r.status === "declined");
   const totalGuests = attending.reduce((sum, r) => sum + (r.guestCount ?? 0), 0);
+  const attendingTotal = attending.length + totalGuests;
 
   // memberList name is non-null due to isNotNull filter but TypeScript doesn't know that
   const safeMemberList = memberList.map((m) => ({ id: m.id, name: m.name! }));
@@ -133,6 +136,10 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
           recurrenceEndDate: event.recurrenceEndDate
             ? event.recurrenceEndDate.toISOString().slice(0, 10)
             : null,
+          extraQuestion: event.extraQuestion,
+          extraQuestionType: event.extraQuestionType,
+          extraQuestionOptions: event.extraQuestionOptions ?? [],
+          extraQuestionRequired: event.extraQuestionRequired,
         }}
       />
 
@@ -151,6 +158,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                 <AdminOccurrenceRsvpSection
                   eventId={id}
                   members={safeMemberList}
+                  extraQuestion={event.extraQuestion}
                   occurrenceGroups={occurrenceGroups.map((g) => ({
                     date: g.date.toISOString(),
                     displayDate: g.displayDate,
@@ -164,6 +172,8 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                       name: r.userName || r.rsvpName || null,
                       email: r.userEmail || r.rsvpEmail || null,
                       isGuest: !!r.rsvpEmail,
+                      guestCount: r.guestCount,
+                      extraAnswer: r.extraAnswer,
                     })),
                   }))}
                 />
@@ -174,8 +184,11 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
             <>
               <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <div className="rounded-md bg-green-50 p-3 text-center">
-                  <div className="text-2xl font-bold text-green-800">{attending.length}</div>
+                  <div className="text-2xl font-bold text-green-800">{attendingTotal}</div>
                   <div className="text-xs font-medium text-green-700">Attending</div>
+                  <div className="text-[11px] text-green-700/80 mt-0.5">
+                    {attending.length} member{attending.length === 1 ? "" : "s"} + {totalGuests} guest{totalGuests === 1 ? "" : "s"}
+                  </div>
                 </div>
                 <div className="rounded-md bg-yellow-50 p-3 text-center">
                   <div className="text-2xl font-bold text-yellow-800">{maybe.length}</div>
@@ -187,7 +200,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                 </div>
                 <div className="rounded-md bg-blue-50 p-3 text-center">
                   <div className="text-2xl font-bold text-blue-800">{totalGuests}</div>
-                  <div className="text-xs font-medium text-blue-700">Total Guests</div>
+                  <div className="text-xs font-medium text-blue-700">Guests</div>
                 </div>
               </div>
 
@@ -195,6 +208,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                 <AdminEventRsvpTable
                   eventId={id}
                   members={safeMemberList}
+                  extraQuestion={event.extraQuestion}
                   rows={rsvpRows.map((r) => ({
                     id: r.id,
                     userId: r.userId,
@@ -205,6 +219,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                     userEmail: r.userEmail,
                     rsvpName: r.rsvpName,
                     rsvpEmail: r.rsvpEmail,
+                    extraAnswer: r.extraAnswer,
                   }))}
                 />
               </div>

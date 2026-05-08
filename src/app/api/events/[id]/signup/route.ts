@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { eventRsvps, events } from "@/lib/db/schema";
-import { and, count, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { generateOccurrences, isValidOccurrence } from "@/lib/events";
 
 /**
@@ -51,7 +51,26 @@ export async function POST(
     }
 
     // Parse body (allow empty body for non-recurring events)
-    const body = await request.json().catch(() => ({})) as { occurrenceDate?: string };
+    const body = await request.json().catch(() => ({})) as { occurrenceDate?: string; extraAnswer?: string };
+
+    // Validate the extra question (signing up means attending)
+    let cleanedExtraAnswer: string | null = null;
+    if (event.extraQuestion) {
+      const trimmed = typeof body.extraAnswer === "string" ? body.extraAnswer.trim() : "";
+      if (event.extraQuestionRequired && trimmed.length === 0) {
+        return NextResponse.json(
+          { error: `${event.extraQuestion} is required` },
+          { status: 400 }
+        );
+      }
+      if (event.extraQuestionType === "select" && trimmed.length > 0) {
+        const options = (event.extraQuestionOptions ?? []) as string[];
+        if (!options.includes(trimmed)) {
+          return NextResponse.json({ error: "Invalid answer for question" }, { status: 400 });
+        }
+      }
+      cleanedExtraAnswer = trimmed.length > 0 ? trimmed : null;
+    }
 
     let parsedDate: Date | null = null;
 
@@ -108,10 +127,12 @@ export async function POST(
       return NextResponse.json({ alreadySignedUp: true }, { status: 200 });
     }
 
-    // Cap check: count attending/maybe rows for this event + occurrenceDate slot
+    // Cap check: total attendees = number of RSVPs + sum of their guests
     if (event.maxAttendees !== null && event.maxAttendees !== undefined) {
-      const [{ count: attendeeCount }] = await db
-        .select({ count: count() })
+      const [{ total: attendeeTotal }] = await db
+        .select({
+          total: sql<number>`COALESCE(SUM(1 + COALESCE(${eventRsvps.guestCount}, 0)), 0)::int`,
+        })
         .from(eventRsvps)
         .where(
           and(
@@ -123,7 +144,7 @@ export async function POST(
           )
         );
 
-      if (Number(attendeeCount) >= event.maxAttendees) {
+      if (Number(attendeeTotal) >= event.maxAttendees) {
         return NextResponse.json({ error: "This occurrence is full" }, { status: 409 });
       }
     }
@@ -134,7 +155,7 @@ export async function POST(
         // Row exists but status is 'declined' — update to 'attending'
         const [updated] = await db
           .update(eventRsvps)
-          .set({ status: "attending", updatedAt: new Date() })
+          .set({ status: "attending", extraAnswer: cleanedExtraAnswer, updatedAt: new Date() })
           .where(eq(eventRsvps.id, existingRsvp.id))
           .returning();
         return NextResponse.json(
@@ -157,6 +178,7 @@ export async function POST(
           userId: session.user.id,
           occurrenceDate: parsedDate ?? null,
           status: "attending",
+          extraAnswer: cleanedExtraAnswer,
         })
         .returning();
 

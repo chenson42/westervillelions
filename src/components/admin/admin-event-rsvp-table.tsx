@@ -14,12 +14,14 @@ interface RsvpRow {
   userEmail: string | null;
   rsvpName: string | null;
   rsvpEmail: string | null;
+  extraAnswer: string | null;
 }
 
 interface AdminEventRsvpTableProps {
   eventId: string;
   rows: RsvpRow[];
   members: { id: string; name: string }[];
+  extraQuestion?: string | null;
 }
 
 function statusBadgeClass(status: string): string {
@@ -30,7 +32,7 @@ function statusBadgeClass(status: string): string {
   return "inline-flex rounded-full px-2 text-xs font-semibold leading-5 bg-red-100 text-red-800";
 }
 
-export function AdminEventRsvpTable({ eventId, rows: initialRows, members }: AdminEventRsvpTableProps) {
+export function AdminEventRsvpTable({ eventId, rows: initialRows, members, extraQuestion }: AdminEventRsvpTableProps) {
   const router = useRouter();
   const [rows, setRows] = useState<RsvpRow[]>(initialRows);
   const [selectedUserId, setSelectedUserId] = useState("");
@@ -93,6 +95,7 @@ export function AdminEventRsvpTable({ eventId, rows: initialRows, members }: Adm
           userEmail: null,
           rsvpName: null,
           rsvpEmail: null,
+          extraAnswer: null,
         },
       ]);
       setSelectedUserId("");
@@ -119,6 +122,11 @@ export function AdminEventRsvpTable({ eventId, rows: initialRows, members }: Adm
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Guests
                 </th>
+                {extraQuestion && (
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    {extraQuestion}
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Date RSVPd
                 </th>
@@ -149,6 +157,11 @@ export function AdminEventRsvpTable({ eventId, rows: initialRows, members }: Adm
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
                     {rsvp.guestCount ?? 0}
                   </td>
+                  {extraQuestion && (
+                    <td className="px-4 py-3 text-sm text-gray-700">
+                      {rsvp.extraAnswer || <span className="text-gray-400">—</span>}
+                    </td>
+                  )}
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
                     {new Date(rsvp.createdAt).toLocaleDateString("en-US", {
                       month: "short",

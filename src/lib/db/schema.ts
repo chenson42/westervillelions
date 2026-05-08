@@ -189,6 +189,11 @@ export const events = pgTable("events", {
   recurrenceDays: integer("recurrence_days").array(), // days of week [0=Sun..6=Sat] for weekly/biweekly
   recurrenceEndDate: timestamp("recurrence_end_date"), // when the series ends
   allowGuestCount: boolean("allow_guest_count").notNull().default(false),
+  // Optional single custom question asked at RSVP/signup time (e.g. "What dish are you bringing?")
+  extraQuestion: text("extra_question"),
+  extraQuestionType: text("extra_question_type").notNull().default("text"), // 'text' | 'select'
+  extraQuestionOptions: jsonb("extra_question_options").$type<string[]>().notNull().default([]),
+  extraQuestionRequired: boolean("extra_question_required").notNull().default(false),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -204,6 +209,7 @@ export const eventRsvps = pgTable("event_rsvps", {
   status: text("status").notNull().default("attending"), // 'attending' | 'maybe' | 'declined'
   guestCount: integer("guest_count").notNull().default(0),
   occurrenceDate: timestamp("occurrence_date"),
+  extraAnswer: text("extra_answer"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

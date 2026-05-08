@@ -12,6 +12,11 @@ interface SingleEventSignupProps {
   isLoggedIn: boolean;
   currentUserName?: string | null;
   initialSignees?: string[];
+  extraQuestion?: string | null;
+  extraQuestionType?: string | null;
+  extraQuestionOptions?: string[] | null;
+  extraQuestionRequired?: boolean;
+  initialExtraAnswer?: string | null;
 }
 
 export function SingleEventSignup({
@@ -22,11 +27,17 @@ export function SingleEventSignup({
   isLoggedIn,
   currentUserName,
   initialSignees = [],
+  extraQuestion,
+  extraQuestionType,
+  extraQuestionOptions,
+  extraQuestionRequired,
+  initialExtraAnswer,
 }: SingleEventSignupProps) {
   const [isSignedUp, setIsSignedUp] = useState(initialSignedUp);
   const [count, setCount] = useState(initialCount);
   const [loading, setLoading] = useState(false);
   const [signees, setSignees] = useState<string[]>(initialSignees);
+  const [extraAnswer, setExtraAnswer] = useState<string>(initialExtraAnswer ?? "");
 
   const isFull = maxAttendees != null && count >= maxAttendees && !isSignedUp;
 
@@ -34,6 +45,17 @@ export function SingleEventSignup({
     if (loading) return;
 
     const wasSignedUp = isSignedUp;
+
+    // Validate required extra question on signup
+    if (
+      !wasSignedUp &&
+      extraQuestion &&
+      extraQuestionRequired &&
+      extraAnswer.trim().length === 0
+    ) {
+      toast.error(`${extraQuestion} is required`);
+      return;
+    }
 
     // Optimistic update
     setIsSignedUp(!wasSignedUp);
@@ -50,7 +72,7 @@ export function SingleEventSignup({
       const res = await fetch(`/api/events/${eventId}/signup`, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(wasSignedUp ? {} : { extraAnswer: extraAnswer.trim() }),
       });
 
       if (res.status === 409) {
@@ -86,21 +108,66 @@ export function SingleEventSignup({
     }
   }
 
+  const showExtraQuestion = Boolean(extraQuestion) && isLoggedIn;
+  const options = (extraQuestionOptions ?? []) as string[];
+  const inputClass =
+    "mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue";
+
   return (
     <div className="bg-white rounded-2xl shadow-lg p-6 flex flex-col gap-4">
-      {/* Count display */}
+      {/* Count display — total includes guests */}
       <p className="text-sm text-gray-600">
         {maxAttendees != null ? (
           <>
             <span className="font-semibold text-gray-900">{count}</span> of{" "}
             <span className="font-semibold text-gray-900">{maxAttendees}</span> spots filled
+            <span className="text-gray-400"> (incl. guests)</span>
           </>
         ) : (
           <>
-            <span className="font-semibold text-gray-900">{count}</span> signed up
+            <span className="font-semibold text-gray-900">{count}</span> attendees
+            <span className="text-gray-400"> (incl. guests)</span>
           </>
         )}
       </p>
+
+      {showExtraQuestion && !isSignedUp && (
+        <div>
+          <label htmlFor="single-extra-answer" className="block text-sm font-medium text-gray-700">
+            {extraQuestion}
+            {extraQuestionRequired && <span className="text-red-600"> *</span>}
+          </label>
+          {extraQuestionType === "select" ? (
+            <select
+              id="single-extra-answer"
+              value={extraAnswer}
+              onChange={(e) => setExtraAnswer(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {options.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id="single-extra-answer"
+              type="text"
+              value={extraAnswer}
+              onChange={(e) => setExtraAnswer(e.target.value)}
+              className={inputClass}
+            />
+          )}
+        </div>
+      )}
+
+      {showExtraQuestion && isSignedUp && extraAnswer && (
+        <p className="text-sm text-gray-600">
+          <span className="font-medium">{extraQuestion}</span> {extraAnswer}
+        </p>
+      )}
 
       {/* Action */}
       {!isLoggedIn ? (

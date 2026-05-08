@@ -12,6 +12,8 @@ interface RsvpRowData {
   name: string | null;
   email: string | null;
   isGuest: boolean;
+  guestCount: number | null;
+  extraAnswer: string | null;
 }
 
 interface OccurrenceGroup {
@@ -26,6 +28,7 @@ interface AdminOccurrenceRsvpSectionProps {
   occurrenceGroups: OccurrenceGroup[];
   eventId: string;
   members: { id: string; name: string }[];
+  extraQuestion?: string | null;
 }
 
 function statusBadgeClass(status: string): string {
@@ -40,10 +43,12 @@ function OccurrenceAccordionRow({
   group,
   eventId,
   members,
+  extraQuestion,
 }: {
   group: OccurrenceGroup;
   eventId: string;
   members: { id: string; name: string }[];
+  extraQuestion?: string | null;
 }) {
   // Past occurrences with no signups start collapsed; all others start expanded if they have signups
   const [expanded, setExpanded] = useState(!group.isPast && group.rows.length > 0);
@@ -54,7 +59,11 @@ function OccurrenceAccordionRow({
 
   const existingUserIds = rows.map((r) => r.userId).filter(Boolean) as string[];
   const availableMembers = members.filter((m) => !existingUserIds.includes(m.id));
-  const attendingCount = rows.filter((r) => r.status === "attending").length;
+  const attendingRows = rows.filter((r) => r.status === "attending");
+  const attendingTotal = attendingRows.reduce(
+    (sum, r) => sum + 1 + (r.guestCount ?? 0),
+    0
+  );
 
   async function handleRemove(row: RsvpRowData) {
     if (!row.userId) return;
@@ -106,6 +115,8 @@ function OccurrenceAccordionRow({
           name: member?.name ?? null,
           email: null,
           isGuest: false,
+          guestCount: 0,
+          extraAnswer: null,
         },
       ]);
       setSelectedUserId("");
@@ -140,13 +151,14 @@ function OccurrenceAccordionRow({
         <div className="flex-shrink-0 text-sm text-gray-600 text-right">
           {group.maxAttendees != null ? (
             <span>
-              <span className="font-semibold">{attendingCount}</span>
+              <span className="font-semibold">{attendingTotal}</span>
               <span className="text-gray-400"> / {group.maxAttendees}</span>
+              <span className="text-gray-400"> (incl. guests)</span>
             </span>
           ) : (
             <span>
-              <span className="font-semibold">{attendingCount}</span>
-              <span className="text-gray-400"> signed up</span>
+              <span className="font-semibold">{attendingTotal}</span>
+              <span className="text-gray-400"> attendees (incl. guests)</span>
             </span>
           )}
         </div>
@@ -167,6 +179,11 @@ function OccurrenceAccordionRow({
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Status
                   </th>
+                  {extraQuestion && (
+                    <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      {extraQuestion}
+                    </th>
+                  )}
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Signed Up
                   </th>
@@ -196,6 +213,11 @@ function OccurrenceAccordionRow({
                         {row.status.charAt(0).toUpperCase() + row.status.slice(1)}
                       </span>
                     </td>
+                    {extraQuestion && (
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {row.extraAnswer || <span className="text-gray-400">—</span>}
+                      </td>
+                    )}
                     <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
                       {new Date(row.createdAt).toLocaleDateString("en-US", {
                         month: "short",
@@ -256,6 +278,7 @@ export function AdminOccurrenceRsvpSection({
   occurrenceGroups,
   eventId,
   members,
+  extraQuestion,
 }: AdminOccurrenceRsvpSectionProps) {
   return (
     <div className="space-y-2">
@@ -265,6 +288,7 @@ export function AdminOccurrenceRsvpSection({
           group={group}
           eventId={eventId}
           members={members}
+          extraQuestion={extraQuestion}
         />
       ))}
     </div>

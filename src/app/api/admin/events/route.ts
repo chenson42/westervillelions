@@ -38,6 +38,10 @@ export async function POST(request: NextRequest) {
     recurrenceType,
     recurrenceDays,
     recurrenceEndDate,
+    extraQuestion,
+    extraQuestionType,
+    extraQuestionOptions,
+    extraQuestionRequired,
   } = body;
 
   if (!title || !startDate) {
@@ -62,6 +66,10 @@ export async function POST(request: NextRequest) {
       recurrenceType: isRecurring ? (recurrenceType || null) : null,
       recurrenceDays: isRecurring ? (recurrenceDays || null) : null,
       recurrenceEndDate: isRecurring && recurrenceEndDate ? new Date(recurrenceEndDate) : null,
+      extraQuestion: extraQuestion || null,
+      extraQuestionType: extraQuestion ? (extraQuestionType === "select" ? "select" : "text") : "text",
+      extraQuestionOptions: Array.isArray(extraQuestionOptions) ? extraQuestionOptions.filter((s) => typeof s === "string" && s.length > 0) : [],
+      extraQuestionRequired: Boolean(extraQuestion) && Boolean(extraQuestionRequired),
       createdBy: session.user.id,
     })
     .returning();

@@ -11,6 +11,11 @@ interface Props {
   isLoggedIn: boolean;
   initialStatus?: string | null;
   initialGuestCount?: number;
+  extraQuestion?: string | null;
+  extraQuestionType?: string | null;
+  extraQuestionOptions?: string[] | null;
+  extraQuestionRequired?: boolean;
+  initialExtraAnswer?: string | null;
 }
 
 const STATUS_BUTTONS: { value: RsvpStatus; label: string; activeClass: string }[] = [
@@ -29,89 +34,140 @@ function AuthenticatedRsvpForm({
   allowGuestCount,
   initialStatus,
   initialGuestCount,
+  extraQuestion,
+  extraQuestionType,
+  extraQuestionOptions,
+  extraQuestionRequired,
+  initialExtraAnswer,
 }: {
   eventId: string;
   allowGuestCount: boolean;
   initialStatus?: string | null;
   initialGuestCount?: number;
+  extraQuestion?: string | null;
+  extraQuestionType?: string | null;
+  extraQuestionOptions?: string[] | null;
+  extraQuestionRequired?: boolean;
+  initialExtraAnswer?: string | null;
 }) {
-  const [status, setStatus] = useState<RsvpStatus | null>(
+  // `selectedStatus` is the user's current draft (radio selection).
+  // `savedStatus` is what the server has — null if no RSVP yet.
+  const [selectedStatus, setSelectedStatus] = useState<RsvpStatus | null>(
+    (initialStatus as RsvpStatus) ?? null
+  );
+  const [savedStatus, setSavedStatus] = useState<RsvpStatus | null>(
     (initialStatus as RsvpStatus) ?? null
   );
   const [guestCount, setGuestCount] = useState<number>(initialGuestCount ?? 0);
+  const [savedGuestCount, setSavedGuestCount] = useState<number>(initialGuestCount ?? 0);
+  const [extraAnswer, setExtraAnswer] = useState<string>(initialExtraAnswer ?? "");
+  const [savedExtraAnswer, setSavedExtraAnswer] = useState<string>(initialExtraAnswer ?? "");
   const [isSaving, setIsSaving] = useState(false);
+  const [isRemoving, setIsRemoving] = useState(false);
 
-  async function handleRsvp(newStatus: RsvpStatus) {
-    if (isSaving) return;
+  const isDirty =
+    selectedStatus !== savedStatus ||
+    guestCount !== savedGuestCount ||
+    extraAnswer.trim() !== (savedExtraAnswer ?? "").trim();
 
-    // Toggle off if clicking the current status
-    const targetStatus = status === newStatus ? null : newStatus;
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (isSaving || !selectedStatus) return;
+
+    if (
+      selectedStatus !== "declined" &&
+      extraQuestion &&
+      extraQuestionRequired &&
+      extraAnswer.trim().length === 0
+    ) {
+      toast.error(`${extraQuestion} is required`);
+      return;
+    }
+
     setIsSaving(true);
-
     try {
-      if (targetStatus === null) {
-        const res = await fetch(`/api/events/${eventId}/rsvp`, { method: "DELETE" });
-        if (!res.ok) throw new Error("Failed to remove RSVP");
-        setStatus(null);
-        toast.success("RSVP removed");
-      } else {
-        const res = await fetch(`/api/events/${eventId}/rsvp`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: targetStatus, guestCount }),
-        });
-        if (!res.ok) throw new Error("Failed to save RSVP");
-        setStatus(targetStatus);
-        const labels: Record<RsvpStatus, string> = {
-          attending: "You're attending!",
-          maybe: "Marked as maybe",
-          declined: "RSVP declined",
-        };
-        toast.success(labels[targetStatus]);
+      const res = await fetch(`/api/events/${eventId}/rsvp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: selectedStatus,
+          guestCount,
+          extraAnswer: extraAnswer.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Failed to save RSVP");
       }
+      setSavedStatus(selectedStatus);
+      setSavedGuestCount(guestCount);
+      setSavedExtraAnswer(extraAnswer.trim());
+      const labels: Record<RsvpStatus, string> = {
+        attending: "You're attending!",
+        maybe: "Marked as maybe",
+        declined: "RSVP declined",
+      };
+      toast.success(labels[selectedStatus]);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update RSVP");
+      toast.error(err instanceof Error ? err.message : "Failed to save RSVP");
     } finally {
       setIsSaving(false);
     }
   }
 
-  async function handleGuestCountChange(count: number) {
-    if (!status) return;
-    setGuestCount(count);
+  async function handleRemove() {
+    if (isRemoving) return;
+    setIsRemoving(true);
     try {
-      const res = await fetch(`/api/events/${eventId}/rsvp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, guestCount: count }),
-      });
-      if (!res.ok) throw new Error("Failed to update guest count");
-    } catch {
-      toast.error("Failed to update guest count");
+      const res = await fetch(`/api/events/${eventId}/rsvp`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to remove RSVP");
+      setSelectedStatus(null);
+      setSavedStatus(null);
+      setGuestCount(0);
+      setSavedGuestCount(0);
+      setExtraAnswer("");
+      setSavedExtraAnswer("");
+      toast.success("RSVP removed");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove RSVP");
+    } finally {
+      setIsRemoving(false);
     }
   }
 
+  const showExtraQuestion = Boolean(extraQuestion) && selectedStatus !== "declined";
+  const options = (extraQuestionOptions ?? []) as string[];
+
+  const savedLabels: Record<RsvpStatus, string> = {
+    attending: "✓ You're attending",
+    maybe: "✓ Marked as maybe",
+    declined: "✓ RSVP declined",
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-medium text-gray-600 mr-1">Your response:</span>
-        {STATUS_BUTTONS.map((btn) => (
-          <button
-            key={btn.value}
-            onClick={() => handleRsvp(btn.value)}
-            disabled={isSaving}
-            className={`px-4 py-2 text-sm rounded-lg border font-medium transition disabled:opacity-50 ${
-              status === btn.value
-                ? btn.activeClass
-                : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
-            }`}
-          >
-            {btn.label}
-          </button>
-        ))}
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div>
+        <p className="text-sm font-semibold text-gray-700 mb-2">Will you attend?</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          {STATUS_BUTTONS.map((btn) => (
+            <button
+              key={btn.value}
+              type="button"
+              onClick={() => setSelectedStatus(btn.value)}
+              disabled={isSaving || isRemoving}
+              className={`px-4 py-2 text-sm rounded-lg border font-medium transition disabled:opacity-50 ${
+                selectedStatus === btn.value
+                  ? btn.activeClass
+                  : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
+              }`}
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {allowGuestCount && status === "attending" && (
+      {allowGuestCount && selectedStatus === "attending" && (
         <div className="flex items-center gap-3">
           <label htmlFor="auth-guest-count" className="text-sm font-medium text-gray-700">
             Guests bringing:
@@ -122,12 +178,78 @@ function AuthenticatedRsvpForm({
             min={0}
             max={20}
             value={guestCount}
-            onChange={(e) => handleGuestCountChange(parseInt(e.target.value, 10) || 0)}
-            className="w-20 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            onChange={(e) => setGuestCount(parseInt(e.target.value, 10) || 0)}
+            disabled={isSaving || isRemoving}
+            className="w-20 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-50"
           />
         </div>
       )}
-    </div>
+
+      {showExtraQuestion && (
+        <div>
+          <label htmlFor="auth-extra-answer" className="block text-sm font-medium text-gray-700">
+            {extraQuestion}
+            {extraQuestionRequired && <span className="text-red-600"> *</span>}
+          </label>
+          {extraQuestionType === "select" ? (
+            <select
+              id="auth-extra-answer"
+              value={extraAnswer}
+              onChange={(e) => setExtraAnswer(e.target.value)}
+              disabled={isSaving || isRemoving}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {options.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id="auth-extra-answer"
+              type="text"
+              value={extraAnswer}
+              onChange={(e) => setExtraAnswer(e.target.value)}
+              disabled={isSaving || isRemoving}
+              className={inputClass}
+            />
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 flex-wrap pt-1">
+        <button
+          type="submit"
+          disabled={!selectedStatus || isSaving || isRemoving || (!isDirty && savedStatus !== null)}
+          className="bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition disabled:opacity-50"
+        >
+          {isSaving
+            ? "Saving…"
+            : savedStatus
+            ? isDirty
+              ? "Update RSVP"
+              : "RSVP saved"
+            : "Submit RSVP"}
+        </button>
+        {savedStatus && !isDirty && (
+          <span className="text-sm font-medium text-green-700">
+            {savedLabels[savedStatus]}
+          </span>
+        )}
+        {savedStatus && (
+          <button
+            type="button"
+            onClick={handleRemove}
+            disabled={isSaving || isRemoving}
+            className="text-sm font-medium text-gray-500 hover:text-red-600 transition disabled:opacity-50"
+          >
+            {isRemoving ? "Removing…" : "Remove RSVP"}
+          </button>
+        )}
+      </div>
+    </form>
   );
 }
 
@@ -136,14 +258,23 @@ function AuthenticatedRsvpForm({
 function AnonymousRsvpForm({
   eventId,
   allowGuestCount,
+  extraQuestion,
+  extraQuestionType,
+  extraQuestionOptions,
+  extraQuestionRequired,
 }: {
   eventId: string;
   allowGuestCount: boolean;
+  extraQuestion?: string | null;
+  extraQuestionType?: string | null;
+  extraQuestionOptions?: string[] | null;
+  extraQuestionRequired?: boolean;
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<RsvpStatus>("attending");
   const [guestCount, setGuestCount] = useState(0);
+  const [extraAnswer, setExtraAnswer] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [confirmed, setConfirmed] = useState<{ name: string; status: RsvpStatus } | null>(null);
 
@@ -157,13 +288,28 @@ function AnonymousRsvpForm({
       toast.error("Please enter your email address");
       return;
     }
+    if (
+      extraQuestion &&
+      extraQuestionRequired &&
+      status !== "declined" &&
+      extraAnswer.trim().length === 0
+    ) {
+      toast.error(`${extraQuestion} is required`);
+      return;
+    }
 
     setIsSubmitting(true);
     try {
       const res = await fetch(`/api/events/${eventId}/rsvp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), email: email.trim(), status, guestCount }),
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          status,
+          guestCount,
+          extraAnswer: extraAnswer.trim(),
+        }),
       });
 
       if (!res.ok) {
@@ -266,6 +412,38 @@ function AnonymousRsvpForm({
         </div>
       )}
 
+      {extraQuestion && status !== "declined" && (
+        <div>
+          <label htmlFor="anon-extra-answer" className="block text-sm font-medium text-gray-700">
+            {extraQuestion}
+            {extraQuestionRequired && <span className="text-red-600"> *</span>}
+          </label>
+          {extraQuestionType === "select" ? (
+            <select
+              id="anon-extra-answer"
+              value={extraAnswer}
+              onChange={(e) => setExtraAnswer(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {((extraQuestionOptions ?? []) as string[]).map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id="anon-extra-answer"
+              type="text"
+              value={extraAnswer}
+              onChange={(e) => setExtraAnswer(e.target.value)}
+              className={inputClass}
+            />
+          )}
+        </div>
+      )}
+
       <button
         type="submit"
         disabled={isSubmitting}
@@ -285,6 +463,11 @@ export function PublicRsvpForm({
   isLoggedIn,
   initialStatus,
   initialGuestCount,
+  extraQuestion,
+  extraQuestionType,
+  extraQuestionOptions,
+  extraQuestionRequired,
+  initialExtraAnswer,
 }: Props) {
   return (
     <div className="bg-white rounded-2xl shadow-lg p-6">
@@ -295,13 +478,25 @@ export function PublicRsvpForm({
           allowGuestCount={allowGuestCount}
           initialStatus={initialStatus}
           initialGuestCount={initialGuestCount}
+          extraQuestion={extraQuestion}
+          extraQuestionType={extraQuestionType}
+          extraQuestionOptions={extraQuestionOptions}
+          extraQuestionRequired={extraQuestionRequired}
+          initialExtraAnswer={initialExtraAnswer}
         />
       ) : (
         <>
           <p className="text-sm text-gray-500 mb-4">
             No account needed — just enter your name and email below.
           </p>
-          <AnonymousRsvpForm eventId={eventId} allowGuestCount={allowGuestCount} />
+          <AnonymousRsvpForm
+            eventId={eventId}
+            allowGuestCount={allowGuestCount}
+            extraQuestion={extraQuestion}
+            extraQuestionType={extraQuestionType}
+            extraQuestionOptions={extraQuestionOptions}
+            extraQuestionRequired={extraQuestionRequired}
+          />
         </>
       )}
     </div>

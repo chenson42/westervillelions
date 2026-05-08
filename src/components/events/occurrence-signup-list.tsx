@@ -11,6 +11,10 @@ interface OccurrenceSignupListProps {
   maxAttendees: number | null;
   isLoggedIn: boolean;
   currentUserName?: string | null;
+  extraQuestion?: string | null;
+  extraQuestionType?: string | null;
+  extraQuestionOptions?: string[] | null;
+  extraQuestionRequired?: boolean;
 }
 
 export function OccurrenceSignupList({
@@ -19,14 +23,30 @@ export function OccurrenceSignupList({
   maxAttendees,
   isLoggedIn,
   currentUserName,
+  extraQuestion,
+  extraQuestionType,
+  extraQuestionOptions,
+  extraQuestionRequired,
 }: OccurrenceSignupListProps) {
   const [rows, setRows] = useState<OccurrenceRow[]>(occurrences);
   const [loadingDate, setLoadingDate] = useState<string | null>(null);
+  const [extraAnswer, setExtraAnswer] = useState<string>("");
 
   async function handleToggle(row: OccurrenceRow) {
     if (loadingDate) return;
 
     const wasSignedUp = row.isSignedUp;
+
+    // Validate required extra question on signup
+    if (
+      !wasSignedUp &&
+      extraQuestion &&
+      extraQuestionRequired &&
+      extraAnswer.trim().length === 0
+    ) {
+      toast.error(`${extraQuestion} is required`);
+      return;
+    }
 
     // Optimistic update
     setRows((prev) =>
@@ -56,7 +76,11 @@ export function OccurrenceSignupList({
       const res = await fetch(`/api/events/${eventId}/signup`, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ occurrenceDate: row.date }),
+        body: JSON.stringify(
+          wasSignedUp
+            ? { occurrenceDate: row.date }
+            : { occurrenceDate: row.date, extraAnswer: extraAnswer.trim() }
+        ),
       });
 
       if (res.status === 409) {
@@ -119,8 +143,47 @@ export function OccurrenceSignupList({
     );
   }
 
+  const showExtraQuestion = Boolean(extraQuestion) && isLoggedIn;
+  const options = (extraQuestionOptions ?? []) as string[];
+  const inputClass =
+    "mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue";
+
   return (
     <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
+      {showExtraQuestion && (
+        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
+          <label htmlFor="occ-extra-answer" className="block text-sm font-medium text-gray-700">
+            {extraQuestion}
+            {extraQuestionRequired && <span className="text-red-600"> *</span>}
+          </label>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Your answer will be saved with each date you sign up for.
+          </p>
+          {extraQuestionType === "select" ? (
+            <select
+              id="occ-extra-answer"
+              value={extraAnswer}
+              onChange={(e) => setExtraAnswer(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {options.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id="occ-extra-answer"
+              type="text"
+              value={extraAnswer}
+              onChange={(e) => setExtraAnswer(e.target.value)}
+              className={inputClass}
+            />
+          )}
+        </div>
+      )}
       <ul className="divide-y divide-gray-100">
         {rows.map((row) => {
           const isLoading = loadingDate === row.date;
@@ -137,8 +200,8 @@ export function OccurrenceSignupList({
                 <p className="text-sm font-semibold text-gray-900">{row.displayDate}</p>
                 <p className="mt-0.5 text-xs text-gray-500">
                   {maxAttendees != null
-                    ? `${row.signedUpCount} / ${maxAttendees} spots`
-                    : `${row.signedUpCount} signed up`}
+                    ? `${row.signedUpCount} / ${maxAttendees} spots (incl. guests)`
+                    : `${row.signedUpCount} attendees (incl. guests)`}
                 </p>
                 {isLoggedIn && row.signees.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">

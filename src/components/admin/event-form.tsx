@@ -22,6 +22,10 @@ export interface EventFormData {
   recurrenceType?: string | null;
   recurrenceDays?: number[] | null;
   recurrenceEndDate?: string | null;
+  extraQuestion?: string | null;
+  extraQuestionType?: string | null;
+  extraQuestionOptions?: string[] | null;
+  extraQuestionRequired?: boolean;
 }
 
 // ── DateTime helpers ─────────────────────────────────────────────────────────
@@ -148,6 +152,10 @@ export default function EventForm({
       requiresRsvp: false,
       allowGuestCount: false,
       isRecurring: false,
+      extraQuestion: null,
+      extraQuestionType: "text",
+      extraQuestionOptions: [],
+      extraQuestionRequired: false,
     }
   );
 
@@ -198,7 +206,7 @@ export default function EventForm({
           ? (e.target as HTMLInputElement).checked
           : type === "number"
           ? parseInt(value, 10) || null
-          : value || null,
+          : value,
     }));
   };
 
@@ -245,7 +253,7 @@ export default function EventForm({
               id="title"
               name="title"
               required
-              value={formData.title}
+              value={formData.title ?? ""}
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
@@ -518,6 +526,91 @@ export default function EventForm({
               </p>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Custom RSVP question */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-gray-900">Custom RSVP question</h2>
+        <p className="mt-1 text-sm text-gray-600">
+          Optional — ask attendees one extra question at RSVP/signup time (e.g. &quot;What dish are you bringing?&quot;).
+        </p>
+        <div className="mt-6 space-y-4">
+          <div>
+            <label htmlFor="extraQuestion" className="block text-sm font-medium text-gray-700">
+              Question
+            </label>
+            <input
+              type="text"
+              id="extraQuestion"
+              name="extraQuestion"
+              value={formData.extraQuestion ?? ""}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, extraQuestion: e.target.value || null }))
+              }
+              placeholder="Leave blank to disable"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            />
+          </div>
+
+          {formData.extraQuestion && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="extraQuestionType" className="block text-sm font-medium text-gray-700">
+                  Answer type
+                </label>
+                <select
+                  id="extraQuestionType"
+                  name="extraQuestionType"
+                  value={formData.extraQuestionType ?? "text"}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, extraQuestionType: e.target.value }))
+                  }
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+                >
+                  <option value="text">Free text</option>
+                  <option value="select">Pick one (dropdown)</option>
+                </select>
+              </div>
+              <div className="flex items-center sm:pt-6">
+                <input
+                  type="checkbox"
+                  id="extraQuestionRequired"
+                  checked={formData.extraQuestionRequired ?? false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, extraQuestionRequired: e.target.checked }))
+                  }
+                  className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+                />
+                <label htmlFor="extraQuestionRequired" className="ml-2 block text-sm text-gray-700">
+                  Required answer
+                </label>
+              </div>
+              {formData.extraQuestionType === "select" && (
+                <div className="sm:col-span-2">
+                  <label htmlFor="extraQuestionOptions" className="block text-sm font-medium text-gray-700">
+                    Dropdown options
+                  </label>
+                  <textarea
+                    id="extraQuestionOptions"
+                    rows={4}
+                    value={(formData.extraQuestionOptions ?? []).join("\n")}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        extraQuestionOptions: e.target.value
+                          .split("\n")
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      }))
+                    }
+                    placeholder={"One option per line, e.g.\nAppetizer\nMain dish\nDessert\nDrinks"}
+                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
