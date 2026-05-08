@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -29,6 +29,7 @@ export function GroupForm({
   group?: Group;
 }) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -40,17 +41,14 @@ export function GroupForm({
   const [syncError, setSyncError] = useState<string | null>(group?.googleGroupSyncError ?? null);
   const isEdit = !!group;
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setIsSaving(true);
-
-    const formData = new FormData(e.currentTarget);
+  function buildPayload(form: HTMLFormElement) {
+    const formData = new FormData(form);
     const positionsRaw = (formData.get("availablePositions") as string || "").trim();
     const positions = positionsRaw
       ? positionsRaw.split("\n").map((p) => p.trim()).filter(Boolean)
       : [];
 
-    const data = {
+    return {
       name: formData.get("name"),
       description: formData.get("description") || null,
       groupTypeId: formData.get("groupTypeId"),
@@ -61,6 +59,27 @@ export function GroupForm({
       isActive: formData.get("isActive") === "true",
       emailPrefix: (formData.get("emailPrefix") as string || "").trim() || null,
     };
+  }
+
+  async function saveCurrent() {
+    if (!group || !formRef.current) return;
+    const data = buildPayload(formRef.current);
+    const res = await fetch(`/api/admin/groups/${group.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to save");
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setIsSaving(true);
+
+    const data = buildPayload(e.currentTarget);
 
     try {
       const res = await fetch(
@@ -108,6 +127,8 @@ export function GroupForm({
     setIsSyncing(true);
     setSyncError(null);
     try {
+      // Persist any pending edits (especially a new emailPrefix) before syncing.
+      await saveCurrent();
       const res = await fetch(`/api/admin/groups/${group.id}/sync`, { method: "POST" });
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -137,7 +158,7 @@ export function GroupForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-4 max-w-lg">
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">Group Name</label>
         <input

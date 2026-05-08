@@ -72,6 +72,29 @@ function describeApiError(err: unknown): string {
   return String(err);
 }
 
+function isNotFoundError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: number; status?: number; response?: { status?: number; data?: { error?: { code?: number } } } };
+  const code = e.code ?? e.status ?? e.response?.status ?? e.response?.data?.error?.code;
+  return code === 404;
+}
+
+// Newly created Google Groups are not always immediately queryable by groupKey —
+// propagation typically takes a few seconds. Retry on 404 with backoff.
+async function retryOnNotFound<T>(fn: () => Promise<T>, attempts = 4, delayMs = 2000): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isNotFoundError(err) || i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * Sync all active members to club@westervillelions.org.
  * Fire-and-forget safe — catches all errors internally. A bad email
@@ -238,28 +261,36 @@ export async function syncGoogleGroup(groupId: string, ctx: SyncContext = {}): P
         },
       });
 
-      // Apply group settings — best-effort, do not fail the sync if this errors
+      // Apply group settings — best-effort, do not fail the sync if this errors.
+      // Wrap in retryOnNotFound because the freshly created group may not yet
+      // be visible to settings API.
       try {
         const settingsClient = google.groupssettings({ version: "v1", auth });
-        await settingsClient.groups.patch({
-          groupUniqueId: groupEmail,
-          requestBody: {
-            whoCanPostMessage: "ANYONE",
-            whoCanViewMembership: "ALL_MEMBERS_CAN_VIEW",
-          },
-        });
+        await retryOnNotFound(() =>
+          settingsClient.groups.patch({
+            groupUniqueId: groupEmail,
+            requestBody: {
+              whoCanPostMessage: "ANYONE",
+              whoCanViewMembership: "ALL_MEMBERS_CAN_VIEW",
+            },
+          })
+        );
       } catch (settingsErr) {
         console.warn("[google-groups] Failed to apply group settings:", settingsErr);
       }
     }
 
-    // 4. Fetch current Google Group members
-    const googleMembersRes = await adminClient.members.list({ groupKey: groupEmail });
-    const googleMemberEmails = new Set<string>(
-      (googleMembersRes.data.members ?? [])
-        .map((m) => m.email?.toLowerCase())
-        .filter((e): e is string => Boolean(e))
-    );
+    // 4. Fetch current Google Group members. A freshly created group is empty
+    // by definition and may not be queryable yet due to propagation, so skip
+    // the API round-trip in that case.
+    const googleMemberEmails = new Set<string>();
+    if (googleGroupExists) {
+      const googleMembersRes = await adminClient.members.list({ groupKey: groupEmail });
+      for (const m of googleMembersRes.data.members ?? []) {
+        const email = m.email?.toLowerCase();
+        if (email) googleMemberEmails.add(email);
+      }
+    }
 
     // 5. Fetch portal group members with email addresses
     const portalMemberships = await db
@@ -286,10 +317,12 @@ export async function syncGoogleGroup(groupId: string, ctx: SyncContext = {}): P
 
     for (const email of toAdd) {
       try {
-        await adminClient.members.insert({
-          groupKey: groupEmail,
-          requestBody: { email, role: "MEMBER" },
-        });
+        await retryOnNotFound(() =>
+          adminClient.members.insert({
+            groupKey: groupEmail,
+            requestBody: { email, role: "MEMBER" },
+          })
+        );
         added.push(email);
       } catch (err) {
         const message = describeApiError(err);
@@ -301,7 +334,9 @@ export async function syncGoogleGroup(groupId: string, ctx: SyncContext = {}): P
     // 7. Remove extra members (those in Google but not in portal)
     for (const email of toRemove) {
       try {
-        await adminClient.members.delete({ groupKey: groupEmail, memberKey: email });
+        await retryOnNotFound(() =>
+          adminClient.members.delete({ groupKey: groupEmail, memberKey: email })
+        );
         removed.push(email);
       } catch (err) {
         const message = describeApiError(err);

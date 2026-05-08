@@ -26,7 +26,12 @@ export async function POST(
       return NextResponse.json({ success: false, error: result.error }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      added: result.added ?? [],
+      removed: result.removed ?? [],
+      failed: result.failed ?? [],
+    });
   } catch (error) {
     console.error("Error syncing Google Group:", error);
     return NextResponse.json({ error: "Failed to sync Google Group" }, { status: 500 });
