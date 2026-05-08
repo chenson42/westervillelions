@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { members, groups, groupMemberships } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { MemberDirectory } from "@/components/members/member-directory";
+import { SuggestionBoxLauncher } from "@/components/suggestion-box-launcher";
 
 export default async function MembersPage() {
   const session = await auth();
@@ -109,9 +110,15 @@ export default async function MembersPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-12">
-        <div className="container mx-auto px-4">
-          <h1 className="text-4xl font-bold mb-2">Member Portal</h1>
-          <p className="text-xl">Welcome, {session.user.name}!</p>
+        <div className="container mx-auto px-4 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-4xl font-bold mb-2">Member Portal</h1>
+            <p className="text-xl">Welcome, {session.user.name}!</p>
+          </div>
+          <SuggestionBoxLauncher className="inline-flex items-center gap-2 self-start md:self-auto bg-lions-gold text-lions-blue-dark px-5 py-3 rounded-lg font-semibold hover:brightness-95 transition shadow-md focus:outline-none focus:ring-2 focus:ring-white">
+            <span aria-hidden="true">💡</span>
+            <span>Suggestion Box</span>
+          </SuggestionBoxLauncher>
         </div>
       </div>
 

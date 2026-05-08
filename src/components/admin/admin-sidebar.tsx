@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FEATURES } from "@/lib/permissions";
 import { useState, useEffect } from "react";
+import { SuggestionBoxDialog } from "@/components/suggestion-box-dialog";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { version } = require("../../../package.json") as { version: string };
 
@@ -90,6 +91,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.CONTACT_VIEW,
   },
   {
+    name: "Suggestions",
+    href: "/admin/suggestions",
+    icon: "💡",
+    requiredFeature: FEATURES.SUGGESTIONS_VIEW,
+  },
+  {
     name: "Membership",
     href: "/admin/membership",
     icon: "📋",
@@ -123,6 +130,7 @@ export default function AdminSidebar({
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [returnTo, setReturnTo] = useState("/");
+  const [suggestionOpen, setSuggestionOpen] = useState(false);
 
   useEffect(() => {
     // On first entry to admin, save the referrer if it's not an admin page
@@ -246,6 +254,17 @@ export default function AdminSidebar({
 
         {/* Footer */}
         <div className="border-t border-gray-200 p-4 space-y-1">
+          <button
+            type="button"
+            onClick={() => {
+              setSuggestionOpen(true);
+              setIsMobileMenuOpen(false);
+            }}
+            className="flex w-full items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+          >
+            <span className="text-lg" aria-hidden="true">💡</span>
+            <span>Suggestion Box</span>
+          </button>
           <Link
             href={returnTo}
             onClick={() => sessionStorage.removeItem(RETURN_KEY)}
@@ -278,6 +297,8 @@ export default function AdminSidebar({
 
       {/* Spacer for mobile */}
       <div className="h-16 lg:hidden" />
+
+      <SuggestionBoxDialog open={suggestionOpen} onOpenChange={setSuggestionOpen} />
     </>
   );
 }

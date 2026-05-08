@@ -32,6 +32,9 @@ export const FEATURES = {
   // Contact features
   CONTACT_VIEW: "contact.view",
 
+  // Suggestions features
+  SUGGESTIONS_VIEW: "suggestions.view",
+
   // Announcements features
   ANNOUNCEMENTS_MANAGE: "announcements.manage",
 
@@ -86,6 +89,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.ADMIN_ROLES]: "Manage roles and permissions",
 
   [FEATURES.CONTACT_VIEW]: "View contact form submissions",
+
+  [FEATURES.SUGGESTIONS_VIEW]: "View member suggestion box submissions",
 
   [FEATURES.MEMBERSHIP_MANAGE]: "View and manage membership applications",
 

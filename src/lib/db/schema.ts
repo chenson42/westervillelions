@@ -333,6 +333,21 @@ export const verificationTokens = pgTable("verification_tokens", {
   expires: timestamp("expires").notNull(),
 });
 
+// Suggestion box submissions from members
+export const suggestions = pgTable("suggestions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  category: text("category").notNull(),
+  message: text("message").notNull(),
+  isAnonymous: boolean("is_anonymous").notNull().default(false),
+  isRead: boolean("is_read").notNull().default(false),
+  handledBy: text("handled_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type Suggestion = typeof suggestions.$inferSelect;
+export type NewSuggestion = typeof suggestions.$inferInsert;
+
 // Eyeglass drop-off locations (configurable by admin)
 export const glassesDropoffLocations = pgTable("glasses_dropoff_locations", {
   id: uuid("id").primaryKey().defaultRandom(),

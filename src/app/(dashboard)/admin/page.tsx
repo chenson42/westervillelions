@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { members, events, campaigns, contactSubmissions, membershipApplications, newsletterSubscriptions } from "@/lib/db/schema";
+import { members, events, campaigns, contactSubmissions, membershipApplications, newsletterSubscriptions, suggestions } from "@/lib/db/schema";
 import { sql, gte, eq } from "drizzle-orm";
 import Link from "next/link";
 
@@ -23,6 +23,7 @@ export default async function AdminDashboardPage() {
     unreadContactsResult,
     pendingApplicationsResult,
     recentNewsletterResult,
+    unreadSuggestionsResult,
   ] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(members).where(eq(members.isActive, true)),
     db.select({ count: sql<number>`count(*)::int` }).from(events).where(gte(events.startDate, today)),
@@ -30,6 +31,7 @@ export default async function AdminDashboardPage() {
     db.select({ count: sql<number>`count(*)::int` }).from(contactSubmissions).where(eq(contactSubmissions.isRead, false)),
     db.select({ count: sql<number>`count(*)::int` }).from(membershipApplications).where(eq(membershipApplications.status, "pending")),
     db.select({ count: sql<number>`count(*)::int` }).from(newsletterSubscriptions).where(eq(newsletterSubscriptions.isActive, true)),
+    db.select({ count: sql<number>`count(*)::int` }).from(suggestions).where(eq(suggestions.isRead, false)),
   ]);
 
   const membersCount = membersResult[0]?.count || 0;
@@ -38,8 +40,9 @@ export default async function AdminDashboardPage() {
   const unreadContacts = unreadContactsResult[0]?.count || 0;
   const pendingApplications = pendingApplicationsResult[0]?.count || 0;
   const newsletterCount = recentNewsletterResult[0]?.count || 0;
+  const unreadSuggestions = unreadSuggestionsResult[0]?.count || 0;
 
-  const needsAttention = unreadContacts > 0 || pendingApplications > 0;
+  const needsAttention = unreadContacts > 0 || pendingApplications > 0 || unreadSuggestions > 0;
 
   return (
     <div className="space-y-6">
@@ -75,6 +78,17 @@ export default async function AdminDashboardPage() {
                   {unreadContacts}
                 </span>
                 Unread Contact Message{unreadContacts !== 1 ? "s" : ""}
+              </Link>
+            )}
+            {unreadSuggestions > 0 && (
+              <Link
+                href="/admin/suggestions"
+                className="flex items-center gap-2 rounded-md bg-white border border-amber-300 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+              >
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">
+                  {unreadSuggestions}
+                </span>
+                Unhandled Suggestion{unreadSuggestions !== 1 ? "s" : ""}
               </Link>
             )}
           </div>
