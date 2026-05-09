@@ -220,4 +220,21 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return token;
     },
   },
+  events: {
+    // The DrizzleAdapter creates the users row on first OAuth sign-in but
+    // doesn't touch user_roles. Assign the default "member" role here so
+    // every new user lands with at least one role.
+    async createUser({ user }) {
+      if (!user.id) return;
+      const memberRole = await db.query.roles.findFirst({
+        where: eq(roles.name, "member"),
+      });
+      if (!memberRole) return;
+      const existing = await db.query.userRoles.findFirst({
+        where: and(eq(userRoles.userId, user.id), eq(userRoles.roleId, memberRole.id)),
+      });
+      if (existing) return;
+      await db.insert(userRoles).values({ userId: user.id, roleId: memberRole.id });
+    },
+  },
 });

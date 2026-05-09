@@ -3,6 +3,8 @@ import { events, eventRsvps } from "@/lib/db/schema";
 import Link from "next/link";
 import { asc, desc, gte, lt, and, sql, inArray } from "drizzle-orm";
 import { EventTableRow, type RsvpSummary } from "@/components/admin/event-table-row";
+import { getNextOccurrence } from "@/lib/events";
+import { format } from "date-fns";
 
 const PAGE_SIZE = 20;
 
@@ -42,19 +44,51 @@ export default async function AdminEventsPage({
         .select({
           eventId: eventRsvps.eventId,
           status: eventRsvps.status,
+          occurrenceDate: eventRsvps.occurrenceDate,
           count: sql<number>`count(*)::int`,
         })
         .from(eventRsvps)
         .where(inArray(eventRsvps.eventId, rsvpEventIds))
-        .groupBy(eventRsvps.eventId, eventRsvps.status)
+        .groupBy(eventRsvps.eventId, eventRsvps.status, eventRsvps.occurrenceDate)
     : [];
+
+  // For recurring events, the row's count should reflect just the next upcoming
+  // occurrence, not every future occurrence summed together. Compute the target
+  // date per event; null means "count all rows" (non-recurring, or recurring
+  // series that has ended).
+  const occurrenceFilter = new Map<string, string | null>();
+  for (const event of eventList) {
+    if (!event.requiresRsvp) continue;
+    if (!event.isRecurring) {
+      occurrenceFilter.set(event.id, null);
+      continue;
+    }
+    const next = getNextOccurrence(
+      {
+        isRecurring: event.isRecurring,
+        startDate: event.startDate,
+        recurrenceType: event.recurrenceType,
+        recurrenceDays: event.recurrenceDays,
+        recurrenceEndDate: event.recurrenceEndDate,
+      },
+      now
+    );
+    occurrenceFilter.set(event.id, next ? format(next, "yyyy-MM-dd") : null);
+  }
 
   const rsvpMap = new Map<string, RsvpSummary>();
   for (const row of rsvpRows) {
+    const targetDate = occurrenceFilter.get(row.eventId);
+    if (targetDate) {
+      const rowDate = row.occurrenceDate
+        ? format(new Date(row.occurrenceDate), "yyyy-MM-dd")
+        : null;
+      if (rowDate !== targetDate) continue;
+    }
     const s = rsvpMap.get(row.eventId) ?? { attending: 0, maybe: 0, declined: 0, total: 0 };
-    if (row.status === "attending") s.attending = row.count;
-    else if (row.status === "maybe") s.maybe = row.count;
-    else if (row.status === "declined") s.declined = row.count;
+    if (row.status === "attending") s.attending += row.count;
+    else if (row.status === "maybe") s.maybe += row.count;
+    else if (row.status === "declined") s.declined += row.count;
     s.total += row.count;
     rsvpMap.set(row.eventId, s);
   }
