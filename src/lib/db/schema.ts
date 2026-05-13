@@ -377,6 +377,7 @@ export const glassesDropoffLocations = pgTable("glasses_dropoff_locations", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   address: text("address").notNull(),
+  phone: text("phone"),
   isActive: boolean("is_active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),

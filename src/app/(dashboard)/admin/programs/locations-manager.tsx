@@ -9,10 +9,11 @@ import type { GlassesDropoffLocation } from "@/lib/db/schema";
 interface FormState {
   name: string;
   address: string;
+  phone: string;
   sortOrder: string;
 }
 
-const emptyForm: FormState = { name: "", address: "", sortOrder: "0" };
+const emptyForm: FormState = { name: "", address: "", phone: "", sortOrder: "0" };
 
 export default function LocationsManager({
   initialLocations,
@@ -36,7 +37,12 @@ export default function LocationsManager({
 
   function openEdit(loc: GlassesDropoffLocation) {
     setEditingId(loc.id);
-    setForm({ name: loc.name, address: loc.address, sortOrder: String(loc.sortOrder) });
+    setForm({
+      name: loc.name,
+      address: loc.address,
+      phone: loc.phone ?? "",
+      sortOrder: String(loc.sortOrder),
+    });
     setShowForm(true);
   }
 
@@ -58,6 +64,7 @@ export default function LocationsManager({
       const payload = {
         name: form.name.trim(),
         address: form.address.trim(),
+        phone: form.phone.trim(),
         sortOrder: parseInt(form.sortOrder, 10) || 0,
       };
 
@@ -186,20 +193,34 @@ export default function LocationsManager({
                   type="text"
                   value={form.address}
                   onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
-                  placeholder="e.g. 114 N. State St"
+                  placeholder="e.g. 114 N. State St, Westerville, OH 43081"
                   className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
                   required
                 />
               </div>
             </div>
-            <div className="w-32">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Sort Order</label>
-              <input
-                type="number"
-                value={form.sortOrder}
-                onChange={(e) => setForm((f) => ({ ...f, sortOrder: e.target.value }))}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
-              />
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Phone <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                  placeholder="e.g. 614-882-0851"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+                />
+              </div>
+              <div className="w-32">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Sort Order</label>
+                <input
+                  type="number"
+                  value={form.sortOrder}
+                  onChange={(e) => setForm((f) => ({ ...f, sortOrder: e.target.value }))}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+                />
+              </div>
             </div>
             <div className="flex gap-3">
               <button
@@ -252,9 +273,15 @@ export default function LocationsManager({
                     <td className="px-6 py-4">
                       <p className="text-sm font-medium text-gray-900">{loc.name}</p>
                       <p className="text-xs text-gray-500 sm:hidden mt-0.5">{loc.address}</p>
+                      {loc.phone && (
+                        <p className="text-xs text-gray-500 sm:hidden mt-0.5">{loc.phone}</p>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap hidden sm:table-cell">
                       <p className="text-sm text-gray-700">{loc.address}</p>
+                      {loc.phone && (
+                        <p className="text-xs text-gray-500 mt-0.5">{loc.phone}</p>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <button

@@ -39,6 +39,10 @@ export async function PATCH(
 
     if (data.name !== undefined) updateFields.name = data.name.trim();
     if (data.address !== undefined) updateFields.address = data.address.trim();
+    if (data.phone !== undefined) {
+      const trimmed = typeof data.phone === "string" ? data.phone.trim() : "";
+      updateFields.phone = trimmed || null;
+    }
     if (typeof data.isActive === "boolean") updateFields.isActive = data.isActive;
     if (data.sortOrder !== undefined) updateFields.sortOrder = Number(data.sortOrder);
 

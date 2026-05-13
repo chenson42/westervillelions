@@ -181,6 +181,18 @@ export default async function ProgramsPage() {
                         <li key={loc.id} className="text-sm">
                           <span className="font-medium text-gray-900">{loc.name}</span>
                           <span className="text-gray-500"> &mdash; {loc.address}</span>
+                          {loc.phone && (
+                            <>
+                              {" "}
+                              &middot;{" "}
+                              <a
+                                href={`tel:${loc.phone.replace(/[^0-9+]/g, "")}`}
+                                className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                              >
+                                {loc.phone}
+                              </a>
+                            </>
+                          )}
                         </li>
                       ))}
                     </ul>

@@ -53,11 +53,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Address is required" }, { status: 400 });
     }
 
+    const phone = typeof data.phone === "string" ? data.phone.trim() : "";
+
     const [location] = await db
       .insert(glassesDropoffLocations)
       .values({
         name: data.name.trim(),
         address: data.address.trim(),
+        phone: phone || null,
         isActive: data.isActive ?? true,
         sortOrder: data.sortOrder ?? 0,
       })
