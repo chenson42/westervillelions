@@ -297,7 +297,7 @@ export default async function ProgramsPage() {
                   </ul>
                 </div>
 
-                <div className="mt-auto bg-blue-50 border border-lions-blue/20 rounded-xl p-4">
+                <div className="bg-blue-50 border border-lions-blue/20 rounded-xl p-4">
                   <h3 className="text-sm font-semibold text-gray-900 mb-1">Drop-off Location</h3>
                   <p className="text-sm text-gray-600">
                     <a
