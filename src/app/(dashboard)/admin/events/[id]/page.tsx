@@ -1,10 +1,10 @@
 import EventForm from "@/components/admin/event-form";
 import { db } from "@/lib/db";
-import { events, eventRsvps, users } from "@/lib/db/schema";
+import { events, eventRsvps, users, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { eq, isNotNull } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { generateOccurrences } from "@/lib/events";
+import { generateOccurrences, parseWallClock, dateKey } from "@/lib/events";
 import { format } from "date-fns";
 import { AdminOccurrenceRsvpSection } from "@/components/admin/occurrence-rsvp-section";
 import { AdminEventRsvpTable } from "@/components/admin/admin-event-rsvp-table";
@@ -19,14 +19,24 @@ type RsvpRow = {
   rsvpEmail: string | null;
   userName: string | null;
   userEmail: string | null;
-  occurrenceDate: Date | null;
+  occurrenceDate: string | null; // wall-clock string from DB (mode:"string")
   extraAnswer: string | null;
+};
+
+type OccurrenceGroupData = {
+  date: Date;
+  displayDate: string;
+  isPast: boolean;
+  isCancelled: boolean;
+  cancellationReason: string | null;
+  isOrphan: boolean; // true when date falls outside current recurrence window (DECISION-003)
+  rows: RsvpRow[];
 };
 
 export default async function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const [event, rsvpRows, memberList] = await Promise.all([
+  const [event, rsvpRows, memberList, overrides] = await Promise.all([
     db.query.events.findFirst({
       where: eq(events.id, id),
     }),
@@ -53,44 +63,91 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
       .from(users)
       .where(isNotNull(users.name))
       .orderBy(users.name),
+    db
+      .select({
+        occurrenceDate: eventOccurrenceOverrides.occurrenceDate,
+        cancellationReason: eventOccurrenceOverrides.cancellationReason,
+      })
+      .from(eventOccurrenceOverrides)
+      .where(eq(eventOccurrenceOverrides.eventId, id)),
   ]);
 
   if (!event) notFound();
 
-  // Format dates for datetime-local input (YYYY-MM-DDTHH:mm)
-  const toInputValue = (date: Date | null) =>
-    date ? new Date(date).toISOString().slice(0, 16) : "";
+  // Format wall-clock strings for datetime-local input (YYYY-MM-DDTHH:mm).
+  // event dates are now "YYYY-MM-DD HH:MM:SS" strings (mode:"string"). No UTC conversion.
+  const toInputValue = (s: string | null) =>
+    s ? s.slice(0, 10) + "T" + s.slice(11, 16) : "";
 
   const showRsvpSection = event.requiresRsvp || rsvpRows.length > 0;
 
   // ── Recurring: group rsvpRows by occurrence date ──────────────────────────
-  let occurrenceGroups: Array<{
-    date: Date;
-    displayDate: string;
-    isPast: boolean;
-    rows: RsvpRow[];
-  }> = [];
+  let occurrenceGroups: OccurrenceGroupData[] = [];
 
   if (event.isRecurring) {
-    // Get all occurrences from series start so admins can see historical data
-    const allOccurrenceDates = generateOccurrences(event, event.startDate, 520);
+    // Get all occurrences from series start so admins can see historical data.
+    // event.startDate is now a wall-clock string; parse it to Date for the `from` arg.
+    const allOccurrenceDates = generateOccurrences(event, parseWallClock(event.startDate), 520);
     const now = new Date();
 
-    // Build a lookup: occurrenceDate ISO key → RsvpRow[]
+    // Build cancellation map: YYYY-MM-DD → { reason }
+    const cancelledMap = new Map(
+      overrides.map((o) => [o.occurrenceDate, { reason: o.cancellationReason }])
+    );
+
+    // Build a lookup: occurrenceDate wall-clock string → RsvpRow[]
+    // occurrenceDate is now a string from DB (mode:"string"). Use it directly.
+    // See DECISION-007 for the key format decision.
     const rsvpByDate = new Map<string, RsvpRow[]>();
     for (const row of rsvpRows) {
-      const key = row.occurrenceDate?.toISOString() ?? "null";
+      const key = row.occurrenceDate ?? "null";
       const existing = rsvpByDate.get(key) ?? [];
       existing.push(row);
       rsvpByDate.set(key, existing);
     }
 
-    occurrenceGroups = allOccurrenceDates.map((d) => ({
-      date: d,
-      displayDate: format(d, "EEE, MMM d, yyyy 'at' h:mm a"),
-      isPast: d < now,
-      rows: rsvpByDate.get(d.toISOString()) ?? [],
-    }));
+    // Track which YYYY-MM-DD keys appear in the generated window
+    const generatedDateKeys = new Set<string>();
+
+    occurrenceGroups = allOccurrenceDates.map((d) => {
+      // Use dateKey() (local components) for cancellation lookup. See DECISION-005.
+      const dk = dateKey(d);
+      generatedDateKeys.add(dk);
+      const cancelled = cancelledMap.get(dk);
+      // Lookup key must match rsvpByDate which uses wall-clock "YYYY-MM-DD HH:MM:SS" format.
+      // See DECISION-007.
+      const rsvpKey = format(d, "yyyy-MM-dd HH:mm:ss");
+      return {
+        date: d,
+        displayDate: format(d, "EEE, MMM d, yyyy 'at' h:mm a"),
+        isPast: d < now,
+        isCancelled: cancelled !== undefined,
+        cancellationReason: cancelled?.reason ?? null,
+        isOrphan: false,
+        rows: rsvpByDate.get(rsvpKey) ?? [],
+      };
+    });
+
+    // DECISION-003: surface orphaned cancellation records — those that fall outside
+    // the current generated window. Append as extra rows so admins can restore them.
+    for (const [dateKey, { reason }] of cancelledMap) {
+      if (generatedDateKeys.has(dateKey)) continue; // already in the list
+      // Parse the YYYY-MM-DD string as a local-noon date to avoid UTC midnight weirdness
+      const [year, month, day] = dateKey.split("-").map(Number);
+      const orphanDate = new Date(year, month - 1, day, 12, 0, 0);
+      occurrenceGroups.push({
+        date: orphanDate,
+        displayDate: `${format(orphanDate, "EEE, MMM d, yyyy")} — Cancelled (outside current recurrence rule)`,
+        isPast: orphanDate < now,
+        isCancelled: true,
+        cancellationReason: reason,
+        isOrphan: true,
+        rows: [],
+      });
+    }
+
+    // Sort chronologically (generated + orphaned together)
+    occurrenceGroups.sort((a, b) => a.date.getTime() - b.date.getTime());
   }
 
   // ── Non-recurring: flat summary numbers ───────────────────────────────────
@@ -134,8 +191,9 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
           recurrenceType: event.recurrenceType,
           recurrenceDays: event.recurrenceDays,
           recurrenceEndDate: event.recurrenceEndDate
-            ? event.recurrenceEndDate.toISOString().slice(0, 10)
+            ? event.recurrenceEndDate.slice(0, 10)
             : null,
+          isAllDay: event.isAllDay,
           extraQuestion: event.extraQuestion,
           extraQuestionType: event.extraQuestionType,
           extraQuestionOptions: event.extraQuestionOptions ?? [],
@@ -161,8 +219,12 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                   extraQuestion={event.extraQuestion}
                   occurrenceGroups={occurrenceGroups.map((g) => ({
                     date: g.date.toISOString(),
+                    dateKey: dateKey(g.date),
                     displayDate: g.displayDate,
                     isPast: g.isPast,
+                    isCancelled: g.isCancelled,
+                    cancellationReason: g.cancellationReason,
+                    isOrphan: g.isOrphan,
                     maxAttendees: event.maxAttendees ?? null,
                     rows: g.rows.map((r) => ({
                       id: r.id,

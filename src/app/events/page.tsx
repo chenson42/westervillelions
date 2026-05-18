@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import { db } from "@/lib/db";
-import { events } from "@/lib/db/schema";
+import { events, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, or, gt, isNull } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
-import { formatRecurrence, getNextOccurrence } from "@/lib/events";
+import { formatRecurrence, getNextOccurrence, formatEventWhen } from "@/lib/events";
 import MarkdownContent from "@/components/markdown-content";
 
 export const metadata: Metadata = {
@@ -45,29 +45,46 @@ const breadcrumb = {
 
 export default async function WhatWeDoPage() {
   const now = new Date();
+  // Drizzle mode:"string" columns require string comparisons in WHERE clauses.
+  const nowStr = format(now, "yyyy-MM-dd HH:mm:ss");
 
   // Include future one-time events AND active recurring series
-  const rawEvents = await db
-    .select()
-    .from(events)
-    .where(
-      and(
-        eq(events.isPublic, true),
-        or(
-          gt(events.startDate, now),
-          and(
-            eq(events.isRecurring, true),
-            or(isNull(events.recurrenceEndDate), gt(events.recurrenceEndDate, now))
+  const [rawEvents, allOverrides] = await Promise.all([
+    db
+      .select()
+      .from(events)
+      .where(
+        and(
+          eq(events.isPublic, true),
+          or(
+            gt(events.startDate, nowStr),
+            and(
+              eq(events.isRecurring, true),
+              or(isNull(events.recurrenceEndDate), gt(events.recurrenceEndDate, nowStr))
+            )
           )
         )
-      )
-    );
+      ),
+    db
+      .select({
+        eventId: eventOccurrenceOverrides.eventId,
+        occurrenceDate: eventOccurrenceOverrides.occurrenceDate,
+      })
+      .from(eventOccurrenceOverrides),
+  ]);
+
+  // Build a per-event cancelled date set for getNextOccurrence to skip
+  const cancelledByEvent = new Map<string, Set<string>>();
+  for (const o of allOverrides) {
+    if (!cancelledByEvent.has(o.eventId)) cancelledByEvent.set(o.eventId, new Set());
+    cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
+  }
 
   // Sort by next occurrence so recurring series appear at the right position
   const publicEvents = rawEvents
     .map((event) => ({
       ...event,
-      nextOccurrence: getNextOccurrence(event, now),
+      nextOccurrence: getNextOccurrence(event, now, cancelledByEvent.get(event.id) ?? new Set()),
     }))
     .filter((event) => event.nextOccurrence !== null)
     .sort((a, b) => a.nextOccurrence!.getTime() - b.nextOccurrence!.getTime());
@@ -128,12 +145,7 @@ export default async function WhatWeDoPage() {
                         </div>
                         <div className="flex flex-wrap items-center gap-x-2 text-gray-600 mb-3">
                           <span className="font-medium">
-                            {recurrenceLabel ?? (
-                              <>
-                                {format(new Date(event.startDate), "MMMM d, yyyy")} at{" "}
-                                {format(new Date(event.startDate), "h:mm a")}
-                              </>
-                            )}
+                            {recurrenceLabel ?? formatEventWhen(event)}
                           </span>
                           {event.location && (
                             <>

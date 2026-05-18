@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { members, events, campaigns, contactSubmissions, membershipApplications, newsletterSubscriptions, suggestions } from "@/lib/db/schema";
 import { sql, gte, eq } from "drizzle-orm";
+import { format } from "date-fns";
 import Link from "next/link";
 
 /**
@@ -14,6 +15,8 @@ export default async function AdminDashboardPage() {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  // Drizzle mode:"string" columns require string comparisons in WHERE clauses.
+  const todayStr = format(today, "yyyy-MM-dd HH:mm:ss");
 
   // Fetch statistics
   const [
@@ -26,7 +29,7 @@ export default async function AdminDashboardPage() {
     unreadSuggestionsResult,
   ] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(members).where(eq(members.isActive, true)),
-    db.select({ count: sql<number>`count(*)::int` }).from(events).where(gte(events.startDate, today)),
+    db.select({ count: sql<number>`count(*)::int` }).from(events).where(gte(events.startDate, todayStr)),
     db.select({ count: sql<number>`count(*)::int` }).from(campaigns).where(eq(campaigns.isActive, true)),
     db.select({ count: sql<number>`count(*)::int` }).from(contactSubmissions).where(eq(contactSubmissions.isRead, false)),
     db.select({ count: sql<number>`count(*)::int` }).from(membershipApplications).where(eq(membershipApplications.status, "pending")),

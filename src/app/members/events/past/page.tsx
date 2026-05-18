@@ -2,11 +2,11 @@ import { unstable_noStore as noStore } from "next/cache";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { eventRsvps } from "@/lib/db/schema";
+import { eventRsvps, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
-import { getNextOccurrence } from "@/lib/events";
+import { getNextOccurrence, parseWallClock } from "@/lib/events";
 
 export default async function MemberPastEventsPage() {
   noStore();
@@ -16,27 +16,39 @@ export default async function MemberPastEventsPage() {
     redirect("/signin");
   }
 
-  const allEvents = await db.query.events.findMany();
-
-  const userRsvps = session.user.id
-    ? await db.query.eventRsvps.findMany({
-        where: eq(eventRsvps.userId, session.user.id),
+  const [allEvents, userRsvps, allOverrides] = await Promise.all([
+    db.query.events.findMany(),
+    session.user.id
+      ? db.query.eventRsvps.findMany({ where: eq(eventRsvps.userId, session.user.id) })
+      : Promise.resolve([]),
+    db
+      .select({
+        eventId: eventOccurrenceOverrides.eventId,
+        occurrenceDate: eventOccurrenceOverrides.occurrenceDate,
       })
-    : [];
+      .from(eventOccurrenceOverrides),
+  ]);
 
   const rsvpByEvent = new Map(userRsvps.map((r) => [r.eventId, r.status]));
 
   const now = new Date();
 
+  // Build a per-event cancelled date set for getNextOccurrence to skip
+  const cancelledByEvent = new Map<string, Set<string>>();
+  for (const o of allOverrides) {
+    if (!cancelledByEvent.has(o.eventId)) cancelledByEvent.set(o.eventId, new Set());
+    cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
+  }
+
   const past = allEvents
     .map((e) => ({
       ...e,
-      nextOccurrence: getNextOccurrence(e, now),
+      nextOccurrence: getNextOccurrence(e, now, cancelledByEvent.get(e.id) ?? new Set()),
     }))
     .filter((e) => e.nextOccurrence === null)
     .map((e) => ({
       ...e,
-      effectiveEnd: new Date(e.recurrenceEndDate ?? e.startDate),
+      effectiveEnd: parseWallClock(e.recurrenceEndDate ?? e.startDate),
     }))
     .sort((a, b) => b.effectiveEnd.getTime() - a.effectiveEnd.getTime());
 

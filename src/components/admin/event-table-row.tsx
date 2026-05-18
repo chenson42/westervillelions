@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { format } from "date-fns";
+import { parseWallClock } from "@/lib/events";
 
 export type RsvpSummary = {
   attending: number;
@@ -16,7 +17,8 @@ type EventRow = {
   id: string;
   title: string;
   description: string | null;
-  startDate: Date;
+  startDate: string; // wall-clock string from DB (mode:"string")
+  isAllDay: boolean;
   location: string | null;
   isPublic: boolean;
   requiresRsvp: boolean;
@@ -58,7 +60,10 @@ export function EventTableRow({ event, rsvpSummary, defaultExpanded }: Props) {
           </div>
         </td>
         <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-          {format(new Date(event.startDate), "MMM d, yyyy, h:mm a")}
+          {format(
+            parseWallClock(event.startDate),
+            event.isAllDay ? "MMM d, yyyy" : "MMM d, yyyy, h:mm a"
+          )}
         </td>
         <td className="px-6 py-4 text-sm text-gray-500">
           {event.location || "—"}

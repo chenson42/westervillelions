@@ -18,6 +18,7 @@ export interface EventFormData {
   requiresRsvp: boolean;
   allowGuestCount: boolean;
   maxAttendees?: number | null;
+  isAllDay: boolean;
   isRecurring: boolean;
   recurrenceType?: string | null;
   recurrenceDays?: number[] | null;
@@ -69,12 +70,14 @@ function DateTimePicker({
   onDateChange,
   onTimeChange,
   required,
+  allDay,
 }: {
   id: string;
   value: string;
   onDateChange: (newValue: string) => void;
   onTimeChange: (newValue: string) => void;
   required?: boolean;
+  allDay?: boolean;
 }) {
   const { date, hour, minute, isPm } = parseDateTime(value);
 
@@ -85,38 +88,44 @@ function DateTimePicker({
         id={id}
         required={required}
         value={date}
-        onChange={(e) => onDateChange(buildDateTime(e.target.value, hour, minute, isPm))}
+        onChange={(e) => {
+          const newDate = e.target.value;
+          // When all-day, force time to 00:00; otherwise preserve existing time
+          onDateChange(allDay ? `${newDate}T00:00` : buildDateTime(newDate, hour, minute, isPm));
+        }}
         className={dtInputClass}
       />
-      <div className="flex items-center gap-1">
-        <select
-          value={hour}
-          onChange={(e) => onTimeChange(buildDateTime(date, Number(e.target.value), minute, isPm))}
-          className={dtInputClass}
-        >
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((h) => (
-            <option key={h} value={h}>{h}</option>
-          ))}
-        </select>
-        <span className="text-gray-500 text-sm">:</span>
-        <select
-          value={minute}
-          onChange={(e) => onTimeChange(buildDateTime(date, hour, Number(e.target.value), isPm))}
-          className={dtInputClass}
-        >
-          {[0, 15, 30, 45].map((m) => (
-            <option key={m} value={m}>{m.toString().padStart(2, "0")}</option>
-          ))}
-        </select>
-        <select
-          value={isPm ? "PM" : "AM"}
-          onChange={(e) => onTimeChange(buildDateTime(date, hour, minute, e.target.value === "PM"))}
-          className={dtInputClass}
-        >
-          <option value="AM">AM</option>
-          <option value="PM">PM</option>
-        </select>
-      </div>
+      {!allDay && (
+        <div className="flex items-center gap-1">
+          <select
+            value={hour}
+            onChange={(e) => onTimeChange(buildDateTime(date, Number(e.target.value), minute, isPm))}
+            className={dtInputClass}
+          >
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((h) => (
+              <option key={h} value={h}>{h}</option>
+            ))}
+          </select>
+          <span className="text-gray-500 text-sm">:</span>
+          <select
+            value={minute}
+            onChange={(e) => onTimeChange(buildDateTime(date, hour, Number(e.target.value), isPm))}
+            className={dtInputClass}
+          >
+            {[0, 15, 30, 45].map((m) => (
+              <option key={m} value={m}>{m.toString().padStart(2, "0")}</option>
+            ))}
+          </select>
+          <select
+            value={isPm ? "PM" : "AM"}
+            onChange={(e) => onTimeChange(buildDateTime(date, hour, minute, e.target.value === "PM"))}
+            className={dtInputClass}
+          >
+            <option value="AM">AM</option>
+            <option value="PM">PM</option>
+          </select>
+        </div>
+      )}
     </div>
   );
 }
@@ -151,6 +160,7 @@ export default function EventForm({
       isFeatured: false,
       requiresRsvp: false,
       allowGuestCount: false,
+      isAllDay: false,
       isRecurring: false,
       extraQuestion: null,
       extraQuestionType: "text",
@@ -293,15 +303,42 @@ export default function EventForm({
       {/* Date & Time */}
       <div className="rounded-lg border border-gray-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-gray-900">Date &amp; Time</h2>
-        <div className="mt-6 grid gap-6 sm:grid-cols-2">
+        <div className="mt-4 mb-4">
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="isAllDay"
+              name="isAllDay"
+              checked={formData.isAllDay}
+              onChange={(e) => {
+                const allDay = e.target.checked;
+                setFormData((prev) => ({
+                  ...prev,
+                  isAllDay: allDay,
+                  // When switching to all-day, force time to 00:00 and clear end date
+                  startDate: allDay && prev.startDate
+                    ? prev.startDate.slice(0, 10) + "T00:00"
+                    : prev.startDate,
+                  endDate: allDay ? null : prev.endDate,
+                }));
+              }}
+              className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+            />
+            <label htmlFor="isAllDay" className="ml-2 block text-sm text-gray-700">
+              All-day event
+            </label>
+          </div>
+        </div>
+        <div className="mt-2 grid gap-6 sm:grid-cols-2">
           <div>
             <label htmlFor="startDate" className="block text-sm font-medium text-gray-700">
-              Start Date &amp; Time *
+              {formData.isAllDay ? "Date *" : "Start Date & Time *"}
             </label>
             <DateTimePicker
               id="startDate"
               value={formData.startDate || ""}
               required
+              allDay={formData.isAllDay}
               onDateChange={(newStart) => {
                 const newDatePart = newStart.slice(0, 10);
                 // Sync end date to match; keep existing end time or mirror start time
@@ -311,7 +348,7 @@ export default function EventForm({
                 setFormData((prev) => ({
                   ...prev,
                   startDate: newStart,
-                  endDate: newDatePart ? `${newDatePart}${endTimeSuffix}` : prev.endDate,
+                  endDate: newDatePart && !prev.isAllDay ? `${newDatePart}${endTimeSuffix}` : prev.endDate,
                 }));
               }}
               onTimeChange={(newStart) => {
@@ -322,19 +359,26 @@ export default function EventForm({
                 }));
               }}
             />
+            {!formData.isAllDay && (
+              <p className="mt-1 text-xs text-gray-500">
+                Times are Westerville local (Eastern Time).
+              </p>
+            )}
           </div>
 
-          <div>
-            <label htmlFor="endDate" className="block text-sm font-medium text-gray-700">
-              End Date &amp; Time
-            </label>
-            <DateTimePicker
-              id="endDate"
-              value={formData.endDate || ""}
-              onDateChange={(newEnd) => setFormData((prev) => ({ ...prev, endDate: newEnd || null }))}
-              onTimeChange={(newEnd) => setFormData((prev) => ({ ...prev, endDate: newEnd || null }))}
-            />
-          </div>
+          {!formData.isAllDay && (
+            <div>
+              <label htmlFor="endDate" className="block text-sm font-medium text-gray-700">
+                End Date &amp; Time
+              </label>
+              <DateTimePicker
+                id="endDate"
+                value={formData.endDate || ""}
+                onDateChange={(newEnd) => setFormData((prev) => ({ ...prev, endDate: newEnd || null }))}
+                onTimeChange={(newEnd) => setFormData((prev) => ({ ...prev, endDate: newEnd || null }))}
+              />
+            </div>
+          )}
         </div>
       </div>
 

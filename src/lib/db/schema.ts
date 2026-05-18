@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -176,18 +176,22 @@ export const events = pgTable("events", {
   id: uuid("id").primaryKey().defaultRandom(),
   title: text("title").notNull(),
   description: text("description"),
-  startDate: timestamp("start_date").notNull(),
-  endDate: timestamp("end_date"),
+  // mode: "string" — Drizzle returns the raw Postgres "YYYY-MM-DD HH:MM:SS" string
+  // rather than constructing a Date object. This is a TypeScript-only annotation;
+  // it emits no DDL. See DECISION-005 in docs/decisions.md.
+  startDate: timestamp("start_date", { mode: "string" }).notNull(),
+  endDate: timestamp("end_date", { mode: "string" }),
   location: text("location"),
   image: text("image"), // Event photo path
   isPublic: boolean("is_public").notNull().default(false), // public events shown on website
   isFeatured: boolean("is_featured").notNull().default(false), // featured on homepage
   requiresRsvp: boolean("requires_rsvp").notNull().default(false),
   maxAttendees: integer("max_attendees"),
+  isAllDay: boolean("is_all_day").notNull().default(false),
   isRecurring: boolean("is_recurring").notNull().default(false),
   recurrenceType: text("recurrence_type"), // 'weekly' | 'biweekly' | 'monthly'
   recurrenceDays: integer("recurrence_days").array(), // days of week [0=Sun..6=Sat] for weekly/biweekly
-  recurrenceEndDate: timestamp("recurrence_end_date"), // when the series ends
+  recurrenceEndDate: timestamp("recurrence_end_date", { mode: "string" }), // when the series ends
   allowGuestCount: boolean("allow_guest_count").notNull().default(false),
   // Optional single custom question asked at RSVP/signup time (e.g. "What dish are you bringing?")
   extraQuestion: text("extra_question"),
@@ -208,7 +212,8 @@ export const eventRsvps = pgTable("event_rsvps", {
   rsvpEmail: text("rsvp_email"), // for anonymous RSVPs
   status: text("status").notNull().default("attending"), // 'attending' | 'maybe' | 'declined'
   guestCount: integer("guest_count").notNull().default(0),
-  occurrenceDate: timestamp("occurrence_date"),
+  // mode: "string" — same wall-clock treatment as events.startDate. See DECISION-005.
+  occurrenceDate: timestamp("occurrence_date", { mode: "string" }),
   extraAnswer: text("extra_answer"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -386,3 +391,28 @@ export const glassesDropoffLocations = pgTable("glasses_dropoff_locations", {
 
 export type GlassesDropoffLocation = typeof glassesDropoffLocations.$inferSelect;
 export type NewGlassesDropoffLocation = typeof glassesDropoffLocations.$inferInsert;
+
+// Per-occurrence cancellation overrides for recurring events
+export const eventOccurrenceOverrides = pgTable(
+  "event_occurrence_overrides",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    // Plain date column (YYYY-MM-DD string in JS) — no timezone, no time component.
+    // Architecturally locked: see DECISION-001.
+    occurrenceDate: date("occurrence_date").notNull(),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }).notNull(),
+    cancelledByUserId: uuid("cancelled_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    cancellationReason: text("cancellation_reason"),
+  },
+  (t) => [
+    unique("event_occurrence_overrides_event_id_occurrence_date_key").on(t.eventId, t.occurrenceDate),
+  ]
+);
+
+export type EventOccurrenceOverride = typeof eventOccurrenceOverrides.$inferSelect;
+export type NewEventOccurrenceOverride = typeof eventOccurrenceOverrides.$inferInsert;

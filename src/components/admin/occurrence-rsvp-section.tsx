@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import * as Dialog from "@radix-ui/react-dialog";
 
 interface RsvpRowData {
   id: string;
@@ -17,9 +19,13 @@ interface RsvpRowData {
 }
 
 interface OccurrenceGroup {
-  date: string; // ISO
+  date: string; // ISO timestamp, sent as `occurrenceDate` to signup/RSVP APIs (preserves wall-clock time)
+  dateKey: string; // YYYY-MM-DD wall-clock date, derived server-side via dateKey() — used for the cancel URL segment
   displayDate: string;
   isPast: boolean;
+  isCancelled: boolean;
+  cancellationReason: string | null;
+  isOrphan: boolean;
   maxAttendees: number | null;
   rows: RsvpRowData[];
 }
@@ -56,6 +62,79 @@ function OccurrenceAccordionRow({
   const [selectedUserId, setSelectedUserId] = useState("");
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+
+  // Cancellation state — managed locally so the UI updates immediately after API call
+  const [isCancelled, setIsCancelled] = useState(group.isCancelled);
+  const [cancellationReason, setCancellationReason] = useState<string | null>(
+    group.cancellationReason
+  );
+
+  // Cancel dialog (with reason textarea) — uses Radix Dialog directly since ConfirmDialog
+  // has no children prop and we need a textarea inside the modal
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+
+  // Restore dialog — simple confirm, uses ConfirmDialog
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  // Wall-clock date key computed server-side via dateKey() — never round-trips through UTC.
+  // Slicing group.date.slice(0,10) here would silently produce the wrong date for late-evening
+  // or early-morning events whenever server or client timezone shifts the ISO past midnight.
+  const occurrenceDateKey = group.dateKey;
+
+  async function handleCancel() {
+    setCancelling(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${eventId}/occurrences/${occurrenceDateKey}/cancel`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cancelled: true, reason: cancelReason.trim() }),
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Failed to cancel occurrence. Please try again.");
+        return;
+      }
+      const data = await res.json();
+      setIsCancelled(true);
+      setCancellationReason(data.cancellationReason ?? null);
+      setCancelReason("");
+      setCancelDialogOpen(false);
+      toast.success("Occurrence cancelled.");
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  async function handleRestore() {
+    setRestoring(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${eventId}/occurrences/${occurrenceDateKey}/cancel`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cancelled: false }),
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Failed to restore occurrence. Please try again.");
+        return;
+      }
+      setIsCancelled(false);
+      setCancellationReason(null);
+      setRestoreDialogOpen(false);
+      toast.success("Occurrence restored.");
+    } finally {
+      setRestoring(false);
+    }
+  }
 
   const existingUserIds = rows.map((r) => r.userId).filter(Boolean) as string[];
   const availableMembers = members.filter((m) => !existingUserIds.includes(m.id));
@@ -127,48 +206,105 @@ function OccurrenceAccordionRow({
   }
 
   return (
-    <div className={`rounded-md border border-gray-200 overflow-hidden ${group.isPast ? "opacity-60" : ""}`}>
+    <div
+      className={`rounded-md border overflow-hidden ${
+        isCancelled ? "border-amber-200" : "border-gray-200"
+      } ${group.isPast ? "opacity-60" : ""}`}
+    >
       {/* Header row — always visible */}
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-gray-50 hover:bg-gray-100 transition text-left"
-        aria-expanded={expanded}
+      <div
+        className={`flex items-center justify-between gap-3 px-4 py-3 ${
+          isCancelled ? "bg-amber-50" : "bg-gray-50"
+        }`}
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex-1 flex items-center gap-2 min-w-0 text-left hover:opacity-80 transition"
+          aria-expanded={expanded}
+        >
           {expanded ? (
             <ChevronDown className="h-4 w-4 flex-shrink-0 text-gray-400" />
           ) : (
             <ChevronRight className="h-4 w-4 flex-shrink-0 text-gray-400" />
           )}
-          <span className="text-sm font-semibold text-gray-900 truncate">{group.displayDate}</span>
-          {group.isPast && (
+          <span className="text-sm font-semibold text-gray-900 truncate">
+            {group.displayDate}
+          </span>
+          {group.isPast && !isCancelled && (
             <span className="flex-shrink-0 text-xs font-medium text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">
               Past
             </span>
           )}
-        </div>
-        <div className="flex-shrink-0 text-sm text-gray-600 text-right">
-          {group.maxAttendees != null ? (
-            <span>
-              <span className="font-semibold">{attendingTotal}</span>
-              <span className="text-gray-400"> / {group.maxAttendees}</span>
-              <span className="text-gray-400"> (incl. guests)</span>
-            </span>
-          ) : (
-            <span>
-              <span className="font-semibold">{attendingTotal}</span>
-              <span className="text-gray-400"> attendees (incl. guests)</span>
+          {isCancelled && (
+            <span className="flex-shrink-0 text-xs font-semibold text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">
+              Cancelled
             </span>
           )}
+        </button>
+
+        {/* Count + cancel/restore buttons */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <span className="text-sm text-gray-600">
+            {group.maxAttendees != null ? (
+              <>
+                <span className="font-semibold">{attendingTotal}</span>
+                <span className="text-gray-400"> / {group.maxAttendees}</span>
+                <span className="text-gray-400"> (incl. guests)</span>
+              </>
+            ) : (
+              <>
+                <span className="font-semibold">{attendingTotal}</span>
+                <span className="text-gray-400"> attendees (incl. guests)</span>
+              </>
+            )}
+          </span>
+
+          {/* Cancel / Restore button — not shown on orphan rows since they are already
+              cancelled but have no ISO timestamp to derive a valid occurrence date from */}
+          {!group.isOrphan && (
+            isCancelled ? (
+              <button
+                type="button"
+                onClick={() => setRestoreDialogOpen(true)}
+                disabled={restoring}
+                className="text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition disabled:opacity-50"
+              >
+                Restore
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCancelDialogOpen(true)}
+                disabled={cancelling}
+                className="text-xs font-semibold text-gray-500 hover:text-amber-700 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            )
+          )}
         </div>
-      </button>
+      </div>
+
+      {/* Cancellation reason (shown under header when cancelled) */}
+      {isCancelled && cancellationReason && (
+        <div className="px-4 py-2 bg-amber-50 border-t border-amber-100 text-xs text-amber-800">
+          Reason: {cancellationReason}
+        </div>
+      )}
 
       {/* Expanded content */}
       {expanded && (
         <div className="bg-white">
+          {isCancelled && rows.length > 0 && (
+            <p className="px-4 pt-3 text-xs text-gray-400 italic">
+              Signups below were recorded before this occurrence was cancelled.
+            </p>
+          )}
           {rows.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-gray-400 italic">No signups for this occurrence.</p>
+            <p className="px-4 py-3 text-sm text-gray-400 italic">
+              {isCancelled ? "No signups were recorded for this occurrence." : "No signups for this occurrence."}
+            </p>
           ) : (
             <table className="min-w-full divide-y divide-gray-100">
               <thead className="bg-gray-50">
@@ -226,7 +362,7 @@ function OccurrenceAccordionRow({
                       })}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      {row.userId && (
+                      {row.userId && !isCancelled && (
                         <button
                           type="button"
                           onClick={() => handleRemove(row)}
@@ -243,8 +379,8 @@ function OccurrenceAccordionRow({
             </table>
           )}
 
-          {/* Add Member form */}
-          {availableMembers.length > 0 && (
+          {/* Add Member form — suppressed on cancelled occurrences */}
+          {!isCancelled && availableMembers.length > 0 && (
             <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-100">
               <select
                 value={selectedUserId}
@@ -270,6 +406,65 @@ function OccurrenceAccordionRow({
           )}
         </div>
       )}
+
+      {/* Cancel dialog — uses Radix Dialog directly to include the optional reason textarea */}
+      <Dialog.Root open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/40 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+            <Dialog.Title className="text-lg font-semibold text-gray-900">
+              Cancel this occurrence?
+            </Dialog.Title>
+            <Dialog.Description className="mt-2 text-sm text-gray-600">
+              Members will see a &ldquo;Cancelled&rdquo; badge for this date. This action is
+              reversible — you can restore it at any time.
+            </Dialog.Description>
+            <div className="mt-4">
+              <label
+                htmlFor="cancel-reason"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Reason <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <textarea
+                id="cancel-reason"
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                maxLength={500}
+                rows={3}
+                placeholder="e.g. No market on July 4"
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue resize-none"
+              />
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <Dialog.Close
+                disabled={cancelling}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                Dismiss
+              </Dialog.Close>
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition disabled:opacity-50"
+              >
+                {cancelling ? "Cancelling…" : "Cancel Occurrence"}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      {/* Restore dialog — simple confirm via ConfirmDialog */}
+      <ConfirmDialog
+        open={restoreDialogOpen}
+        onOpenChange={setRestoreDialogOpen}
+        title="Restore this occurrence?"
+        description="The occurrence will be marked as active again and members will be able to sign up."
+        confirmLabel={restoring ? "Restoring…" : "Restore"}
+        onConfirm={handleRestore}
+      />
     </div>
   );
 }

@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
     requiresRsvp,
     allowGuestCount,
     maxAttendees,
+    isAllDay,
     isRecurring,
     recurrenceType,
     recurrenceDays,
@@ -48,13 +49,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Title and start date are required" }, { status: 400 });
   }
 
+  // Validate startDate shape: "YYYY-MM-DDTHH:MM" wall-clock string
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(startDate)) {
+    return NextResponse.json({ error: "startDate must be a YYYY-MM-DDTHH:MM string" }, { status: 400 });
+  }
+
   const [newEvent] = await db
     .insert(events)
     .values({
       title,
       description: description || null,
-      startDate: new Date(startDate),
-      endDate: endDate ? new Date(endDate) : null,
+      // Pass wall-clock strings directly — no new Date() wrapping. See DECISION-005.
+      startDate,
+      endDate: endDate || null,
       location: location || null,
       image: image || null,
       isPublic: isPublic ?? false,
@@ -62,10 +69,11 @@ export async function POST(request: NextRequest) {
       requiresRsvp: requiresRsvp ?? false,
       allowGuestCount: allowGuestCount ?? false,
       maxAttendees: maxAttendees || null,
+      isAllDay: isAllDay ?? false,
       isRecurring: isRecurring ?? false,
       recurrenceType: isRecurring ? (recurrenceType || null) : null,
       recurrenceDays: isRecurring ? (recurrenceDays || null) : null,
-      recurrenceEndDate: isRecurring && recurrenceEndDate ? new Date(recurrenceEndDate) : null,
+      recurrenceEndDate: isRecurring && recurrenceEndDate ? recurrenceEndDate : null,
       extraQuestion: extraQuestion || null,
       extraQuestionType: extraQuestion ? (extraQuestionType === "select" ? "select" : "text") : "text",
       extraQuestionOptions: Array.isArray(extraQuestionOptions) ? extraQuestionOptions.filter((s) => typeof s === "string" && s.length > 0) : [],

@@ -6,6 +6,8 @@ export interface OccurrenceRow {
   isFull: boolean;
   isPast: boolean;
   signees: string[]; // member names signed up for this occurrence
+  isCancelled: boolean; // true when an event_occurrence_overrides row exists for this date
+  cancellationReason: string | null; // shown in subdued text when provided
 }
 
 export interface SignupApiRequest {

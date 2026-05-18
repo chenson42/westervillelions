@@ -3,9 +3,10 @@ import { ServiceCard } from "@/components/home/service-card";
 import { ZeffyButton } from "@/components/campaigns/zeffy-button";
 import FeaturedContent from "@/components/home/featured-content";
 import { db } from "@/lib/db";
-import { members, events, homepageAnnouncements } from "@/lib/db/schema";
+import { members, events, homepageAnnouncements, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { eq, count, gt, asc, lte, gte, isNull, or, and } from "drizzle-orm";
 import { getNextOccurrence } from "@/lib/events";
+import { format } from "date-fns";
 
 export const metadata: Metadata = {
   title: "Westerville Lions Club | Serving Westerville, OH Since 1928",
@@ -37,11 +38,14 @@ const FOUNDING_YEAR = 1928;
 
 export default async function HomePage() {
   const now = new Date();
+  // Drizzle mode:"string" columns require string comparisons in WHERE clauses.
+  const nowStr = format(now, "yyyy-MM-dd HH:mm:ss");
 
   const eventCols = {
     id: events.id,
     title: events.title,
     startDate: events.startDate,
+    isAllDay: events.isAllDay,
     location: events.location,
     description: events.description,
     image: events.image,
@@ -54,10 +58,10 @@ export default async function HomePage() {
   const upcomingPublic = and(
     eq(events.isPublic, true),
     or(
-      gt(events.startDate, now),
+      gt(events.startDate, nowStr),
       and(
         eq(events.isRecurring, true),
-        or(isNull(events.recurrenceEndDate), gt(events.recurrenceEndDate, now))
+        or(isNull(events.recurrenceEndDate), gt(events.recurrenceEndDate, nowStr))
       )
     )
   );
@@ -67,6 +71,7 @@ export default async function HomePage() {
     featuredEventRows,
     fallbackEventRows,
     activeAnnouncementRows,
+    allOverrides,
   ] = await Promise.all([
     db
       .select({ value: count() })
@@ -108,20 +113,36 @@ export default async function HomePage() {
         asc(homepageAnnouncements.createdAt)
       )
       .limit(5),
+
+    db
+      .select({
+        eventId: eventOccurrenceOverrides.eventId,
+        occurrenceDate: eventOccurrenceOverrides.occurrenceDate,
+      })
+      .from(eventOccurrenceOverrides),
   ]);
 
+  // Build a per-event cancelled date set for getNextOccurrence to skip
+  const cancelledByEvent = new Map<string, Set<string>>();
+  for (const o of allOverrides) {
+    if (!cancelledByEvent.has(o.eventId)) cancelledByEvent.set(o.eventId, new Set());
+    cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
+  }
+
   // Sort each pool by next occurrence so recurring events land in the right order
+  // startDate and recurrenceEndDate are now wall-clock strings (mode:"string").
   type EventRow = {
-    startDate: Date;
+    id: string;
+    startDate: string;
     isRecurring: boolean;
     recurrenceType: string | null;
     recurrenceDays: number[] | null;
-    recurrenceEndDate: Date | null;
+    recurrenceEndDate: string | null;
   };
   const sortByNextOccurrence = <T extends EventRow>(rows: T[]) =>
     [...rows].sort((a, b) => {
-      const aNext = getNextOccurrence(a, now)?.getTime() ?? Infinity;
-      const bNext = getNextOccurrence(b, now)?.getTime() ?? Infinity;
+      const aNext = getNextOccurrence(a, now, cancelledByEvent.get(a.id) ?? new Set())?.getTime() ?? Infinity;
+      const bNext = getNextOccurrence(b, now, cancelledByEvent.get(b.id) ?? new Set())?.getTime() ?? Infinity;
       return aNext - bNext;
     });
 

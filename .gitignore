@@ -40,6 +40,7 @@ next-env.d.ts
 
 # claude code local files
 .claude/projects/
+.claude/*.lock
 
 # drizzle (but keep migrations)
 drizzle/*

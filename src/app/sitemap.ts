@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
 import { eq, and, or, gt, isNull } from "drizzle-orm";
+import { format } from "date-fns";
 
 const siteUrl = "https://westervillelions.org";
 
@@ -12,7 +13,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     .where(
       and(
         eq(events.isPublic, true),
-        or(gt(events.endDate, new Date()), isNull(events.endDate), eq(events.isRecurring, true))
+        or(gt(events.endDate, format(new Date(), "yyyy-MM-dd HH:mm:ss")), isNull(events.endDate), eq(events.isRecurring, true))
       )
     );
 

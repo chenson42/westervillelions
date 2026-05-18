@@ -2,12 +2,12 @@ import { unstable_noStore as noStore } from "next/cache";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { eventRsvps } from "@/lib/db/schema";
+import { eventRsvps, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { format, subMonths } from "date-fns";
 import Link from "next/link";
 import MarkdownContent from "@/components/markdown-content";
-import { getNextOccurrence } from "@/lib/events";
+import { getNextOccurrence, parseWallClock, formatEventWhen } from "@/lib/events";
 
 export default async function MemberEventsPage() {
   noStore();
@@ -17,23 +17,34 @@ export default async function MemberEventsPage() {
     redirect("/signin");
   }
 
-  const allEvents = await db.query.events.findMany();
-
-  // Fetch current user's RSVPs
-  const userRsvps = session.user.id
-    ? await db.query.eventRsvps.findMany({
-        where: eq(eventRsvps.userId, session.user.id),
+  const [allEvents, userRsvps, allOverrides] = await Promise.all([
+    db.query.events.findMany(),
+    session.user.id
+      ? db.query.eventRsvps.findMany({ where: eq(eventRsvps.userId, session.user.id) })
+      : Promise.resolve([]),
+    db
+      .select({
+        eventId: eventOccurrenceOverrides.eventId,
+        occurrenceDate: eventOccurrenceOverrides.occurrenceDate,
       })
-    : [];
+      .from(eventOccurrenceOverrides),
+  ]);
 
   const rsvpByEvent = new Map(userRsvps.map((r) => [r.eventId, r.status]));
 
   const now = new Date();
   const sixMonthsAgo = subMonths(now, 6);
 
+  // Build a per-event cancelled date set for getNextOccurrence to skip
+  const cancelledByEvent = new Map<string, Set<string>>();
+  for (const o of allOverrides) {
+    if (!cancelledByEvent.has(o.eventId)) cancelledByEvent.set(o.eventId, new Set());
+    cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
+  }
+
   const enriched = allEvents.map((e) => ({
     ...e,
-    nextOccurrence: getNextOccurrence(e, now),
+    nextOccurrence: getNextOccurrence(e, now, cancelledByEvent.get(e.id) ?? new Set()),
   }));
 
   const upcoming = enriched
@@ -44,7 +55,7 @@ export default async function MemberEventsPage() {
     .filter((e) => e.nextOccurrence === null)
     .map((e) => ({
       ...e,
-      effectiveEnd: new Date(e.recurrenceEndDate ?? e.startDate),
+      effectiveEnd: parseWallClock(e.recurrenceEndDate ?? e.startDate),
     }))
     .sort((a, b) => b.effectiveEnd.getTime() - a.effectiveEnd.getTime());
 
@@ -89,8 +100,7 @@ export default async function MemberEventsPage() {
                         </svg>
                       </Link>
                       <p className="text-gray-600 text-sm mb-1">
-                        {format(new Date(event.startDate), "EEEE, MMMM d, yyyy")} at{" "}
-                        {format(new Date(event.startDate), "h:mm a")}
+                        {formatEventWhen(event)}
                       </p>
                       {event.location && (
                         <p className="text-gray-600 text-sm mb-2">{event.location}</p>

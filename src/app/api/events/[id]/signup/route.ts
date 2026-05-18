@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { eventRsvps, events } from "@/lib/db/schema";
+import { eventRsvps, events, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { generateOccurrences, isValidOccurrence } from "@/lib/events";
+import { format } from "date-fns";
+import { generateOccurrences, isValidOccurrence, dateKey, parseWallClock } from "@/lib/events";
 
 /**
  * POST /api/events/[id]/signup
@@ -73,6 +74,8 @@ export async function POST(
     }
 
     let parsedDate: Date | null = null;
+    // Wall-clock string for DB comparisons (mode:"string" column). Format matches Postgres output.
+    let parsedDateStr: string | null = null;
 
     if (event.isRecurring) {
       if (!body.occurrenceDate) {
@@ -86,8 +89,12 @@ export async function POST(
       if (isNaN(parsedDate.getTime())) {
         return NextResponse.json({ error: "Invalid occurrenceDate" }, { status: 400 });
       }
+      // Convert to wall-clock string for DB comparisons
+      parsedDateStr = format(parsedDate, "yyyy-MM-dd HH:mm:ss");
 
-      // Validate against the generated occurrence list
+      // Validate against the generated occurrence list.
+      // event.startDate is now a wall-clock string (mode:"string"). Parse it to Date
+      // for the `from` argument so generateOccurrences starts from the series start.
       const allOccurrences = generateOccurrences(
         {
           isRecurring: event.isRecurring,
@@ -96,7 +103,7 @@ export async function POST(
           recurrenceDays: event.recurrenceDays,
           recurrenceEndDate: event.recurrenceEndDate,
         },
-        event.startDate
+        parseWallClock(event.startDate)
       );
 
       if (!isValidOccurrence(parsedDate, allOccurrences)) {
@@ -110,6 +117,23 @@ export async function POST(
           { status: 400 }
         );
       }
+
+      // Reject signups for cancelled occurrences
+      // Match on YYYY-MM-DD string — same format stored in event_occurrence_overrides.occurrence_date
+      // Use dateKey() (local components) not toISOString().slice(0,10) (UTC). See DECISION-005.
+      const occurrenceDateKey = dateKey(parsedDate);
+      const cancellation = await db.query.eventOccurrenceOverrides.findFirst({
+        where: and(
+          eq(eventOccurrenceOverrides.eventId, eventId),
+          eq(eventOccurrenceOverrides.occurrenceDate, occurrenceDateKey)
+        ),
+      });
+      if (cancellation) {
+        return NextResponse.json(
+          { error: "This occurrence has been cancelled" },
+          { status: 400 }
+        );
+      }
     }
 
     // Idempotency: if the user is already signed up (status != 'declined'), return 200
@@ -117,8 +141,8 @@ export async function POST(
       where: and(
         eq(eventRsvps.eventId, eventId),
         eq(eventRsvps.userId, session.user.id),
-        parsedDate
-          ? eq(eventRsvps.occurrenceDate, parsedDate)
+        parsedDateStr
+          ? eq(eventRsvps.occurrenceDate, parsedDateStr)
           : isNull(eventRsvps.occurrenceDate)
       ),
     });
@@ -137,8 +161,8 @@ export async function POST(
         .where(
           and(
             eq(eventRsvps.eventId, eventId),
-            parsedDate
-              ? eq(eventRsvps.occurrenceDate, parsedDate)
+            parsedDateStr
+              ? eq(eventRsvps.occurrenceDate, parsedDateStr)
               : isNull(eventRsvps.occurrenceDate),
             ne(eventRsvps.status, "declined")
           )
@@ -163,7 +187,7 @@ export async function POST(
             id: updated.id,
             eventId: updated.eventId,
             userId: updated.userId,
-            occurrenceDate: updated.occurrenceDate?.toISOString() ?? null,
+            occurrenceDate: updated.occurrenceDate ?? null,
             status: updated.status,
             createdAt: updated.createdAt.toISOString(),
           },
@@ -176,7 +200,7 @@ export async function POST(
         .values({
           eventId,
           userId: session.user.id,
-          occurrenceDate: parsedDate ?? null,
+          occurrenceDate: parsedDateStr ?? null,
           status: "attending",
           extraAnswer: cleanedExtraAnswer,
         })
@@ -187,7 +211,7 @@ export async function POST(
           id: created.id,
           eventId: created.eventId,
           userId: created.userId,
-          occurrenceDate: created.occurrenceDate?.toISOString() ?? null,
+          occurrenceDate: created.occurrenceDate ?? null,
           status: created.status,
           createdAt: created.createdAt.toISOString(),
         },
@@ -243,12 +267,13 @@ export async function DELETE(
     // Parse optional body
     const body = await request.json().catch(() => ({})) as { occurrenceDate?: string };
 
-    let parsedDate: Date | null = null;
+    let parsedDateStr: string | null = null;
     if (body.occurrenceDate) {
-      parsedDate = new Date(body.occurrenceDate);
-      if (isNaN(parsedDate.getTime())) {
+      const parsed = new Date(body.occurrenceDate);
+      if (isNaN(parsed.getTime())) {
         return NextResponse.json({ error: "Invalid occurrenceDate" }, { status: 400 });
       }
+      parsedDateStr = format(parsed, "yyyy-MM-dd HH:mm:ss");
     }
 
     // Delete the matching row (idempotent — no error if row not found)
@@ -256,8 +281,8 @@ export async function DELETE(
       and(
         eq(eventRsvps.eventId, eventId),
         eq(eventRsvps.userId, session.user.id),
-        parsedDate
-          ? eq(eventRsvps.occurrenceDate, parsedDate)
+        parsedDateStr
+          ? eq(eventRsvps.occurrenceDate, parsedDateStr)
           : isNull(eventRsvps.occurrenceDate)
       )
     );

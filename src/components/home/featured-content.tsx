@@ -1,11 +1,13 @@
 import Link from "next/link";
 import Image from "next/image";
 import type { HomepageAnnouncement } from "@/lib/db/schema";
+import { formatEventWhen } from "@/lib/events";
 
 type NextEvent = {
   id: string;
   title: string;
-  startDate: Date;
+  startDate: string; // wall-clock string from DB (mode:"string")
+  isAllDay: boolean;
   location: string | null;
   description: string | null;
   image: string | null;
@@ -15,16 +17,6 @@ type Props = {
   nextEvents: NextEvent[];
   activeAnnouncements: HomepageAnnouncement[];
 };
-
-function formatEventDate(date: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
 
 function stripMarkdown(text: string): string {
   return text
@@ -56,7 +48,7 @@ function NextEventCard({ event }: { event: NextEvent }) {
       <div className="p-8 flex flex-col flex-1">
       <h3 className="text-xl font-bold text-lions-blue mb-2">{event.title}</h3>
       <p className="text-sm font-medium text-lions-blue mb-1">
-        {formatEventDate(event.startDate)}
+        {formatEventWhen(event)}
       </p>
       {event.location && (
         <p className="text-sm text-gray-500 mb-3 flex items-center gap-1">

@@ -3,10 +3,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { events, eventRsvps, users } from "@/lib/db/schema";
+import { events, eventRsvps, users, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { format } from "date-fns";
-import { formatRecurrence, generateOccurrences } from "@/lib/events";
+import { formatRecurrence, generateOccurrences, parseWallClock, dateKey, easternOffsetFor, formatEventWhen } from "@/lib/events";
 import MarkdownContent from "@/components/markdown-content";
 import { auth } from "@/lib/auth";
 import { PublicRsvpForm } from "@/components/public/public-rsvp-form";
@@ -66,20 +66,35 @@ export default async function EventDetailPage({ params }: Props) {
   const signeesByDate = new Map<string, string[]>();
 
   if (event.requiresRsvp) {
-    const allRsvps = await db
-      .select({
-        occurrenceDate: eventRsvps.occurrenceDate,
-        userId: eventRsvps.userId,
-        status: eventRsvps.status,
-        guestCount: eventRsvps.guestCount,
-        userName: users.name,
-      })
-      .from(eventRsvps)
-      .leftJoin(users, eq(eventRsvps.userId, users.id))
-      .where(and(eq(eventRsvps.eventId, id), ne(eventRsvps.status, "declined")));
+    const [allRsvps, overrides] = await Promise.all([
+      db
+        .select({
+          occurrenceDate: eventRsvps.occurrenceDate,
+          userId: eventRsvps.userId,
+          status: eventRsvps.status,
+          guestCount: eventRsvps.guestCount,
+          userName: users.name,
+        })
+        .from(eventRsvps)
+        .leftJoin(users, eq(eventRsvps.userId, users.id))
+        .where(and(eq(eventRsvps.eventId, id), ne(eventRsvps.status, "declined"))),
+      db
+        .select({
+          occurrenceDate: eventOccurrenceOverrides.occurrenceDate,
+          cancellationReason: eventOccurrenceOverrides.cancellationReason,
+        })
+        .from(eventOccurrenceOverrides)
+        .where(eq(eventOccurrenceOverrides.eventId, id)),
+    ]);
+
+    // Build cancellation map: YYYY-MM-DD → { reason }
+    const cancelledDates = new Map(
+      overrides.map((o) => [o.occurrenceDate, { reason: o.cancellationReason }])
+    );
 
     for (const r of allRsvps) {
-      const key = r.occurrenceDate?.toISOString() ?? "null";
+      // occurrenceDate is now a wall-clock string from DB (mode:"string"). Use it directly as key.
+      const key = r.occurrenceDate ?? "null";
       // Count the attendee + their guests
       const attendeeTotal = 1 + (r.guestCount ?? 0);
       signupsByDate.set(key, (signupsByDate.get(key) ?? 0) + attendeeTotal);
@@ -96,16 +111,24 @@ export default async function EventDetailPage({ params }: Props) {
       const occurrenceDates = generateOccurrences(event, now);
 
       occurrenceRows = occurrenceDates.map((d) => {
-        const key = d.toISOString();
+        // Key must match what was stored in eventRsvps.occurrenceDate (wall-clock string).
+        // format(d, "yyyy-MM-dd HH:mm:ss") produces the same format Postgres returns.
+        const key = format(d, "yyyy-MM-dd HH:mm:ss");
+        // Use dateKey() (local components) for cancellation lookup. See DECISION-005.
+        const occKey = dateKey(d); // YYYY-MM-DD — matches date column
         const count = signupsByDate.get(key) ?? 0;
+        const cancelled = cancelledDates.get(occKey);
+        const isAllDay = event.isAllDay;
         return {
-          date: key,
-          displayDate: format(d, "EEE, MMM d 'at' h:mm a"),
+          date: d.toISOString(), // ISO string passed to client for RSVP round-trip
+          displayDate: isAllDay ? format(d, "EEE, MMM d") : format(d, "EEE, MMM d 'at' h:mm a"),
           signedUpCount: count,
           isSignedUp: userSignupDates.has(key),
           isFull: event.maxAttendees != null && count >= event.maxAttendees,
           isPast: d < now,
           signees: signeesByDate.get(key) ?? [],
+          isCancelled: cancelled !== undefined,
+          cancellationReason: cancelled?.reason ?? null,
         };
       });
     }
@@ -119,6 +142,18 @@ export default async function EventDetailPage({ params }: Props) {
         })
       : undefined;
 
+  // JSON-LD startDate: date-only for all-day; DST-aware Eastern offset for timed events.
+  // See resolved Open Question 1 in Phase 1 work-log and DECISION-006.
+  const startDateParsed = parseWallClock(event.startDate);
+  const jsonLdStartDate = event.isAllDay
+    ? event.startDate.slice(0, 10)
+    : `${event.startDate.slice(0, 10)}T${event.startDate.slice(11, 16)}:00${easternOffsetFor(startDateParsed)}`;
+  const jsonLdEndDate = event.endDate
+    ? (event.isAllDay
+        ? event.endDate.slice(0, 10)
+        : `${event.endDate.slice(0, 10)}T${event.endDate.slice(11, 16)}:00${easternOffsetFor(parseWallClock(event.endDate))}`)
+    : undefined;
+
   const eventJsonLd = {
     "@context": "https://schema.org",
     "@type": "Event",
@@ -126,8 +161,8 @@ export default async function EventDetailPage({ params }: Props) {
     description: event.description ?? undefined,
     url: `https://westervillelions.org/events/${event.id}`,
     ...(event.image && { image: event.image }),
-    startDate: new Date(event.startDate).toISOString(),
-    ...(event.endDate && { endDate: new Date(event.endDate).toISOString() }),
+    startDate: jsonLdStartDate,
+    ...(jsonLdEndDate && { endDate: jsonLdEndDate }),
     ...(event.location && {
       location: {
         "@type": "Place",
@@ -153,14 +188,9 @@ export default async function EventDetailPage({ params }: Props) {
           <h1 className="text-4xl md:text-5xl font-bold mb-4 leading-tight">{event.title}</h1>
           <div className="flex flex-wrap items-center gap-x-3 text-blue-100 text-lg">
             <span>
-              {recurrenceLabel ?? (
-                <>
-                  {format(new Date(event.startDate), "MMMM d, yyyy")} at{" "}
-                  {format(new Date(event.startDate), "h:mm a")}
-                  {event.endDate && (
-                    <> &ndash; {format(new Date(event.endDate), "h:mm a")}</>
-                  )}
-                </>
+              {recurrenceLabel ?? formatEventWhen(event)}
+              {!recurrenceLabel && !event.isAllDay && event.endDate && (
+                <> &ndash; {format(parseWallClock(event.endDate), "h:mm a")}</>
               )}
             </span>
             {event.location && (

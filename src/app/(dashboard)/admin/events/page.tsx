@@ -1,10 +1,11 @@
 import { db } from "@/lib/db";
-import { events, eventRsvps } from "@/lib/db/schema";
+import { events, eventRsvps, eventOccurrenceOverrides } from "@/lib/db/schema";
 import Link from "next/link";
-import { asc, desc, gte, lt, and, sql, inArray } from "drizzle-orm";
+import { and, eq, gte, isNotNull, isNull, lt, or, sql, inArray } from "drizzle-orm";
 import { EventTableRow, type RsvpSummary } from "@/components/admin/event-table-row";
-import { getNextOccurrence } from "@/lib/events";
+import { getNextOccurrence, parseWallClock } from "@/lib/events";
 import { format } from "date-fns";
+
 
 const PAGE_SIZE = 20;
 
@@ -17,25 +18,78 @@ export default async function AdminEventsPage({
   const page = Math.max(1, parseInt(pageParam) || 1);
   const isPast = view === "past";
   const now = new Date();
+  // Drizzle mode:"string" columns require string comparisons in WHERE clauses.
+  const nowStr = format(now, "yyyy-MM-dd HH:mm:ss");
 
-  const condition = isPast ? lt(events.startDate, now) : gte(events.startDate, now);
-  const order = isPast ? desc(events.startDate) : asc(events.startDate);
+  // A recurring series is "upcoming" while it has no end date or its end date
+  // hasn't passed yet. "Past" is the inverse — non-recurring events whose
+  // startDate is in the past, plus recurring series whose recurrenceEndDate is
+  // in the past. Filtering by startDate alone would wrongly classify an active
+  // recurring series as past just because the series began long ago.
+  const condition = isPast
+    ? or(
+        and(eq(events.isRecurring, false), lt(events.startDate, nowStr)),
+        and(
+          eq(events.isRecurring, true),
+          isNotNull(events.recurrenceEndDate),
+          lt(events.recurrenceEndDate, nowStr)
+        )
+      )
+    : or(
+        and(eq(events.isRecurring, false), gte(events.startDate, nowStr)),
+        and(
+          eq(events.isRecurring, true),
+          or(isNull(events.recurrenceEndDate), gte(events.recurrenceEndDate, nowStr))
+        )
+      );
 
-  const [eventList, [{ count }]] = await Promise.all([
+  const [matchingEvents, allOverrides] = await Promise.all([
+    db.select().from(events).where(condition),
     db
-      .select()
-      .from(events)
-      .where(condition)
-      .orderBy(order)
-      .limit(PAGE_SIZE)
-      .offset((page - 1) * PAGE_SIZE),
-    db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(events)
-      .where(condition),
+      .select({
+        eventId: eventOccurrenceOverrides.eventId,
+        occurrenceDate: eventOccurrenceOverrides.occurrenceDate,
+      })
+      .from(eventOccurrenceOverrides),
   ]);
 
+  // Build a per-event cancelled date set for getNextOccurrence to skip
+  const cancelledByEvent = new Map<string, Set<string>>();
+  for (const o of allOverrides) {
+    if (!cancelledByEvent.has(o.eventId)) cancelledByEvent.set(o.eventId, new Set());
+    cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
+  }
+
+  // Sort by actual next-occurrence date (cancellation-aware) for upcoming;
+  // for past, sort by the most recent occurrence date (last day of the series
+  // for recurring; startDate for non-recurring), descending. SQL pagination by
+  // startDate alone would put recurring series whose startDate is old at the
+  // top of the upcoming list, which doesn't match user expectation.
+  const annotated = matchingEvents
+    .map((event) => {
+      const cancelled = cancelledByEvent.get(event.id) ?? new Set<string>();
+      const next = getNextOccurrence(event, now, cancelled);
+      // lastDate is now a wall-clock string; parse to Date for sort comparison.
+      const lastDateStr = event.isRecurring
+        ? (event.recurrenceEndDate ?? event.startDate)
+        : event.startDate;
+      const lastDate = parseWallClock(lastDateStr);
+      return { event, next, lastDate };
+    })
+    // Upcoming events with no next occurrence (e.g., every remaining date is
+    // cancelled) get filtered out so the row doesn't claim a date that isn't
+    // happening. Past events keep all matching rows.
+    .filter((row) => (isPast ? true : row.next !== null))
+    .sort((a, b) => {
+      if (isPast) return b.lastDate.getTime() - a.lastDate.getTime();
+      return (a.next?.getTime() ?? Infinity) - (b.next?.getTime() ?? Infinity);
+    });
+
+  const count = annotated.length;
   const totalPages = Math.ceil(count / PAGE_SIZE);
+  const eventList = annotated
+    .slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+    .map((row) => row.event);
 
   const rsvpEventIds = eventList.filter((e) => e.requiresRsvp).map((e) => e.id);
 
@@ -71,7 +125,8 @@ export default async function AdminEventsPage({
         recurrenceDays: event.recurrenceDays,
         recurrenceEndDate: event.recurrenceEndDate,
       },
-      now
+      now,
+      cancelledByEvent.get(event.id) ?? new Set()
     );
     occurrenceFilter.set(event.id, next ? format(next, "yyyy-MM-dd") : null);
   }
@@ -80,8 +135,9 @@ export default async function AdminEventsPage({
   for (const row of rsvpRows) {
     const targetDate = occurrenceFilter.get(row.eventId);
     if (targetDate) {
+      // occurrenceDate is now a wall-clock string "YYYY-MM-DD HH:MM:SS"; slice for date portion.
       const rowDate = row.occurrenceDate
-        ? format(new Date(row.occurrenceDate), "yyyy-MM-dd")
+        ? row.occurrenceDate.slice(0, 10)
         : null;
       if (rowDate !== targetDate) continue;
     }

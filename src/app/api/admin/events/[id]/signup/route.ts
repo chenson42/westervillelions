@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { eventRsvps, events } from "@/lib/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { FEATURES } from "@/lib/permissions";
+import { format } from "date-fns";
 
 /**
  * POST /api/admin/events/[id]/signup
@@ -54,12 +55,13 @@ export async function POST(
       );
     }
 
-    let parsedDate: Date | null = null;
+    let parsedDateStr: string | null = null;
     if (body.occurrenceDate) {
-      parsedDate = new Date(body.occurrenceDate);
+      const parsedDate = new Date(body.occurrenceDate);
       if (isNaN(parsedDate.getTime())) {
         return NextResponse.json({ error: "Invalid occurrenceDate" }, { status: 400 });
       }
+      parsedDateStr = format(parsedDate, "yyyy-MM-dd HH:mm:ss");
     }
 
     try {
@@ -68,7 +70,7 @@ export async function POST(
         .values({
           eventId,
           userId: body.userId,
-          occurrenceDate: parsedDate ?? null,
+          occurrenceDate: parsedDateStr ?? null,
           status: "attending",
         })
         .returning();
@@ -78,9 +80,11 @@ export async function POST(
           id: created.id,
           eventId: created.eventId,
           userId: created.userId,
-          occurrenceDate: created.occurrenceDate?.toISOString() ?? null,
+          occurrenceDate: created.occurrenceDate ?? null,
           status: created.status,
-          createdAt: created.createdAt.toISOString(),
+          createdAt: created.createdAt instanceof Date
+            ? created.createdAt.toISOString()
+            : created.createdAt,
         },
         { status: 201 }
       );
@@ -137,20 +141,21 @@ export async function DELETE(
       return NextResponse.json({ error: "userId is required" }, { status: 400 });
     }
 
-    let parsedDate: Date | null = null;
+    let parsedDateStr: string | null = null;
     if (body.occurrenceDate) {
-      parsedDate = new Date(body.occurrenceDate);
+      const parsedDate = new Date(body.occurrenceDate);
       if (isNaN(parsedDate.getTime())) {
         return NextResponse.json({ error: "Invalid occurrenceDate" }, { status: 400 });
       }
+      parsedDateStr = format(parsedDate, "yyyy-MM-dd HH:mm:ss");
     }
 
     await db.delete(eventRsvps).where(
       and(
         eq(eventRsvps.eventId, eventId),
         eq(eventRsvps.userId, body.userId),
-        parsedDate
-          ? eq(eventRsvps.occurrenceDate, parsedDate)
+        parsedDateStr
+          ? eq(eventRsvps.occurrenceDate, parsedDateStr)
           : isNull(eventRsvps.occurrenceDate)
       )
     );
