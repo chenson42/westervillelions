@@ -21,8 +21,8 @@ export async function GET(request: NextRequest) {
     }
     const files = readdirSync(RELEASE_NOTES_DIR)
       .filter((f) => f.endsWith(".md"))
-      .sort()
-      .reverse(); // newest first
+      // Numeric-aware sort so v1.10 ranks above v1.9 (plain string sort puts v1.10 between v1.0 and v1.2).
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); // newest first
     return NextResponse.json({ files });
   }
 

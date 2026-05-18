@@ -17,8 +17,8 @@ export default async function ReleaseNotesPage() {
   if (existsSync(RELEASE_NOTES_DIR)) {
     files = readdirSync(RELEASE_NOTES_DIR)
       .filter((f) => f.endsWith(".md"))
-      .sort()
-      .reverse();
+      // Numeric-aware sort so v1.10 ranks above v1.9 (plain string sort puts v1.10 between v1.0 and v1.2).
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
 
     if (files.length > 0) {
       initialFile = files[0];
