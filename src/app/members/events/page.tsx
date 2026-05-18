@@ -2,11 +2,12 @@ import { unstable_noStore as noStore } from "next/cache";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { events, eventRsvps } from "@/lib/db/schema";
+import { eventRsvps } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { format } from "date-fns";
+import { format, subMonths } from "date-fns";
 import Link from "next/link";
 import MarkdownContent from "@/components/markdown-content";
+import { getNextOccurrence } from "@/lib/events";
 
 export default async function MemberEventsPage() {
   noStore();
@@ -16,9 +17,7 @@ export default async function MemberEventsPage() {
     redirect("/signin");
   }
 
-  const allEvents = await db.query.events.findMany({
-    orderBy: (events, { asc }) => [asc(events.startDate)],
-  });
+  const allEvents = await db.query.events.findMany();
 
   // Fetch current user's RSVPs
   const userRsvps = session.user.id
@@ -30,8 +29,27 @@ export default async function MemberEventsPage() {
   const rsvpByEvent = new Map(userRsvps.map((r) => [r.eventId, r.status]));
 
   const now = new Date();
-  const upcoming = allEvents.filter((e) => new Date(e.startDate) >= now);
-  const past = allEvents.filter((e) => new Date(e.startDate) < now);
+  const sixMonthsAgo = subMonths(now, 6);
+
+  const enriched = allEvents.map((e) => ({
+    ...e,
+    nextOccurrence: getNextOccurrence(e, now),
+  }));
+
+  const upcoming = enriched
+    .filter((e) => e.nextOccurrence !== null)
+    .sort((a, b) => a.nextOccurrence!.getTime() - b.nextOccurrence!.getTime());
+
+  const pastAll = enriched
+    .filter((e) => e.nextOccurrence === null)
+    .map((e) => ({
+      ...e,
+      effectiveEnd: new Date(e.recurrenceEndDate ?? e.startDate),
+    }))
+    .sort((a, b) => b.effectiveEnd.getTime() - a.effectiveEnd.getTime());
+
+  const past = pastAll.filter((e) => e.effectiveEnd >= sixMonthsAgo);
+  const hasOlderPast = pastAll.length > past.length;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -131,24 +149,41 @@ export default async function MemberEventsPage() {
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Past Events</h2>
             <div className="space-y-3">
               {past.map((event) => (
-                <div key={event.id} className="bg-white rounded-2xl shadow-sm p-4 opacity-75">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h3 className="font-semibold text-gray-700">{event.title}</h3>
+                <Link
+                  key={event.id}
+                  href={`/events/${event.id}`}
+                  className="block bg-white rounded-2xl shadow-sm p-4 hover:shadow-md transition opacity-75 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+                >
+                  <div className="flex justify-between items-center gap-4">
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-gray-700 truncate">{event.title}</h3>
                       <p className="text-sm text-gray-500">
-                        {format(new Date(event.startDate), "MMMM d, yyyy")}
+                        {format(event.effectiveEnd, "MMMM d, yyyy")}
                         {event.location && ` · ${event.location}`}
                       </p>
                     </div>
                     {rsvpByEvent.get(event.id) && (
-                      <span className="text-xs text-gray-500 capitalize">
+                      <span className="text-xs text-gray-500 capitalize shrink-0">
                         {rsvpByEvent.get(event.id)}
                       </span>
                     )}
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
+            {hasOlderPast && (
+              <div className="mt-4">
+                <Link
+                  href="/members/events/past"
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-lions-blue hover:text-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                >
+                  See more past events
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </div>
+            )}
           </>
         )}
       </div>
