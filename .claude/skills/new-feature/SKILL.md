@@ -1,85 +1,80 @@
 ---
 name: new-feature
-description: Plan and scaffold a new feature with requirements doc and task entry before any implementation begins
+description: Walk a new feature through the 6-phase pipeline — gather intent, kick off Phase 1, and produce a work-log entry before any code is written
 argument-hint: "[feature-name]"
 ---
 
-# New Feature Scaffolding
+# New Feature
 
-When the user invokes `/new-feature`, gather information and create planning artifacts before any code is written. The feature name may be provided as `$ARGUMENTS`.
+When the user invokes `/new-feature`, do not write implementation code. Instead, gather intent, scaffold a work-log entry, and hand off to Phase 1 of the pipeline.
 
-## Step 1: Gather Information
+The feature name may be provided as `$ARGUMENTS`.
 
-Ask the user:
+## The Pipeline
 
-1. **Feature name** (if not provided)
-2. **Area** — Where does it live? Options: `public-site`, `member-portal`, `admin`, `api`, `integrations`
-3. **Value/purpose** — Why does this feature matter? What problem does it solve? (Required)
-4. **Brief description** — What does it do from the user's perspective?
-5. **Authentication** — Who can use it? Public? All logged-in members? Admins only?
-6. **Does it need a new permission?** — If admin or role-gated, should it use the permission system?
-7. **Estimated complexity** — Simple (< 1 day), Medium (1-3 days), Complex (1+ week)?
+Every feature on this project flows through the same six phases (see `CLAUDE.md` → **Development Pipeline** for the full definition). At a glance:
 
-## Step 2: Recommend a Workflow
+| Phase | Owner | Output |
+|-------|-------|--------|
+| 1 — Functional refinement | `analyst` | User-verbs, flows, gaps the request didn't address |
+| 2 — Architectural review | `architect` | Verdict on where the work lives and whether dependencies are needed |
+| 3 — Technical design | `tech-lead` | Design doc with API contract, data model, implementation order |
+| 4 — Implementation | `database-admin`, `api-developer`, `ux-developer`, or `full-stack-developer` | Working code, schema changes, idempotent migration |
+| 5 — Verification | `qa` | Typecheck, production build, dev-server smoke test, manual click-through, PASS/FAIL verdict |
+| 6 — Shipped vs intent | `analyst` | Final SHIP IT verdict comparing the build to the Phase 1 description |
 
-Based on complexity, recommend an SDLC workflow from `CLAUDE.md`:
+A SHIP IT from Phase 6 is the only verdict that closes a feature.
 
-- **Simple** → Fast Track (implement directly)
-- **Medium** → Standard Workflow (tech-lead design → implement → test)
-- **Complex** → Full Workflow (tech-lead → db-admin → api-developer → ux-developer → verify)
+## Step 1: Gather Intent
 
-## Step 3: Create a Requirements Doc (for Medium/Complex)
+Ask the user (if not already provided):
 
-Create `/docs/features/<feature-name>.md`:
+1. **Feature name** — short, slug-friendly (e.g., "Per-occurrence RSVP", "Volunteer hours tracker").
+2. **Surface** — public site, member portal `/(dashboard)`, admin `/(dashboard)/admin`, or a mix.
+3. **Value** — why this feature matters. The problem it solves or the user need it serves. *Required.*
+4. **User verbs** — what does the user *do*? (See the analyst agent's Phase 1 rubric.)
+5. **Permissions** — does it need a new `FEATURES` key? If so, which roles get it?
+6. **Complexity estimate** — small (one afternoon), medium (a day or two), or large (a week or more).
 
-```markdown
-# <Feature Name>
+## Step 2: Create the Work-Log Entry
 
-**Date:** <today's date>
-**Status:** Planning
-**Area:** <public-site | member-portal | admin | api | integrations>
+Today's date is the slug prefix. Create `docs/work-log/YYYY-MM-DD-<feature-slug>.md` from `docs/work-log/_template.md`. Fill in the metadata block.
 
-## Value
-<Why this feature matters — the problem it solves or the opportunity it captures>
-
-## Description
-<What the feature does from a user's perspective>
-
-## Users
-<Who can access this: public / all members / admin only / specific permissions>
-
-## Permissions
-<New permission needed? Which roles should have it?>
-
-## Functional Requirements
-- [ ] Requirement 1
-- [ ] Requirement 2
-
-## Data Model
-<New tables or columns needed, or "No schema changes required">
-
-## Routes
-<New pages and API routes>
-
-## Out of Scope
-<Things explicitly NOT included in this feature>
-
-## Test Cases
-- [ ] Test case 1
-- [ ] Test case 2
-
-## Open Questions
-- Question 1?
+```bash
+cp docs/work-log/_template.md docs/work-log/2026-05-18-volunteer-hours.md
 ```
 
-Make sure the `docs/features/` directory exists first.
+Then edit the new file to set:
 
-## Step 4: Present the Plan
+- **Slug**, **Title**, **Surface**, **Permission(s)**, **Estimated complexity**.
+- The **Per-Phase Status** table starts with Phase 1 as "In progress" and everything else "Pending".
+- The **Phase 1 — Functional Refinement** section is the next thing to write.
 
-Show the user:
-- The requirements doc path
-- Recommended workflow
-- Suggested first step (e.g., "Run `/tech-lead` to get a technical design before implementing")
-- Any permissions that need to be set up (point to `/add-permission`)
+## Step 3: Recommend Pipeline Mode
 
-**IMPORTANT**: Do NOT write any implementation code. This command only creates planning artifacts.
+Based on complexity, recommend a mode:
+
+- **Small** — accelerated pipeline. Phase 1 brief; Phase 2 may be skipped if the work is obviously within existing structure; Phase 3 may be a paragraph; Phase 4 + 5 + 6 still run.
+- **Medium** — full pipeline.
+- **Large** — full pipeline, and break the work into multiple work-log entries (one per phase or per shipping increment).
+
+**A small feature is not a skip.** It's a speed optimization. Phases 4, 5, and 6 always run.
+
+## Step 4: Hand Off to Phase 1
+
+Tell the user: "Phase 1 starts now. I'll invoke the analyst agent to refine [feature name] before tech-lead designs it."
+
+Then invoke the `analyst` agent with the user's intent description. The analyst writes the Phase 1 section of the work-log.
+
+## Important
+
+This skill **never writes implementation code**. It produces the work-log entry and hands off. The first line of actual code is written in Phase 4, after Phase 3's design exists.
+
+## Summary
+
+When you finish, the user should see:
+
+- A new file at `docs/work-log/YYYY-MM-DD-<slug>.md` with the metadata block filled in.
+- Phase 1 status set to "In progress".
+- A clear pointer to the next step ("invoke analyst").
+- Estimated path through the pipeline and which agents will be involved.

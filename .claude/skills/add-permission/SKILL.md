@@ -1,114 +1,116 @@
 ---
 name: add-permission
-description: Add a new feature permission to the permission system with migration and role assignment
+description: Add a new feature permission to the permission system with an idempotent migration and role binding
 argument-hint: "[permission.key]"
 ---
 
 # Add Feature Permission
 
-When the user invokes `/add-permission`, walk through adding a new feature permission. The permission key may be provided as `$ARGUMENTS` (e.g., `events.export`).
+When the user invokes `/add-permission`, walk through adding a new feature permission to the project's permission system. The permission key may be provided as `$ARGUMENTS` (e.g., `events.export`).
+
+This project uses `FEATURES` in `src/lib/permissions.ts` as the static catalog (client-safe), and `hasFeature()` for the runtime check. Role bindings live in the database — seeded and updated through idempotent migrations under `drizzle/migrations/`.
 
 ## Step 1: Gather Information
 
 Ask the user (if not already provided):
 
-1. **Permission key** — Dot-notation key (e.g., `members.export`, `events.create`)
-2. **Description** — Human-readable description for the admin UI
-3. **Default roles** — Which roles should have this permission by default? Check existing roles by looking at `drizzle/migrations/` seed data or querying the DB.
+1. **Permission key** — dot-notation (e.g., `events.export`, `members.invite`).
+2. **Constant name** — UPPER_SNAKE_CASE for the `FEATURES` object (e.g., `EVENTS_EXPORT`).
+3. **Human-readable name** — for the admin UI (e.g., "Export events").
+4. **Description** — one sentence; shown next to the name in the admin roles editor.
+5. **Category** — match an existing category (`members`, `events`, `campaigns`, `groups`, `announcements`, `admin`, `reports`) or add a new one.
+6. **Default roles** — which roles get this permission on a fresh install? Usually `Admin`. Sometimes also `Member`. Rarely none (the user assigns it manually later).
 
-## Step 2: Find or Create the FEATURES Constant
+## Step 2: Update `src/lib/permissions.ts`
 
-Check if a `FEATURES` constant exists anywhere in `src/lib/`:
-```bash
-grep -r "FEATURES" src/lib/ --include="*.ts" -l
-```
+Add the new key to the `FEATURES` constant (preserve the category ordering):
 
-If a permissions/features file exists (e.g., `src/lib/permissions.ts`), add to it:
 ```typescript
 export const FEATURES = {
-  // ... existing features ...
-  NEW_FEATURE_KEY: "permission.key",
+  // ... existing entries ...
+  EVENTS_EXPORT: "events.export",
 } as const;
 ```
 
-If no such file exists, create `src/lib/permissions.ts`:
+Add the matching `FEATURE_DESCRIPTIONS` entry if the file uses that map:
+
 ```typescript
-export const FEATURES = {
-  NEW_FEATURE_KEY: "permission.key",
-} as const;
+[FEATURES.EVENTS_EXPORT]: "Export events to CSV.",
 ```
 
-Follow the naming convention: constant name is UPPER_SNAKE_CASE, value is dot-notation.
+If a new category is needed, add it to `FEATURE_CATEGORIES`.
 
-## Step 3: Create a Migration
+## Step 3: Create the Migration
 
-Create a new numbered SQL migration file in `/drizzle/migrations/`:
+Find the next migration number:
 
-Check the highest existing number:
 ```bash
 ls drizzle/migrations/*.sql | sort | tail -3
 ```
 
-Create `drizzle/migrations/NNNN_add_permission_name.sql`:
+Create `drizzle/migrations/NNNN_add_events_export_permission.sql` with **idempotent** statements (every migration in this project re-runs on every deploy):
 
 ```sql
--- Add permission.key feature permission
-INSERT INTO features (name, description, category)
-SELECT 'permission.key', 'Human-readable description', 'category'
-WHERE NOT EXISTS (SELECT 1 FROM features WHERE name = 'permission.key');
+-- Add events.export feature permission
+INSERT INTO features (key, name, description, category)
+SELECT 'events.export', 'Export events', 'Export events to CSV.', 'events'
+WHERE NOT EXISTS (SELECT 1 FROM features WHERE key = 'events.export');
 
--- Assign to default roles (adjust role names/IDs based on your schema)
-INSERT INTO role_features (role_id, feature_id)
-SELECT r.id, f.id
-FROM roles r, features f
-WHERE r.name = 'Admin' AND f.name = 'permission.key'
+-- Bind to the Admin role
+INSERT INTO role_features (role_id, feature_key)
+SELECT r.id, 'events.export'
+FROM roles r
+WHERE r.name = 'Admin'
   AND NOT EXISTS (
     SELECT 1 FROM role_features rf
-    JOIN roles r2 ON rf.role_id = r2.id
-    JOIN features f2 ON rf.feature_id = f2.id
-    WHERE r2.name = 'Admin' AND f2.name = 'permission.key'
+    WHERE rf.role_id = r.id AND rf.feature_key = 'events.export'
   );
 ```
 
-> Note: Check the `features` and `role_features` table structure in `src/lib/db/schema.ts` to use the correct column names.
+> Check the actual column names in `src/lib/db/schema.ts` before writing the SQL — the columns are `key`/`name`/`description`/`category` on `features`, and `role_id`/`feature_key` on `role_features` (verify against the current schema).
 
-## Step 4: Update CLAUDE.md
+For an existing database, the migration will only *add* the binding; it will not revoke it from any role that already has the permission via custom assignment. That's the right behavior.
 
-If there is an Available Permissions table in `CLAUDE.md`, add the new entry:
-
-```
-| `permission.key` | Description |
-```
-
-## Step 5: Run the Migration
+## Step 4: Apply the Migration Locally
 
 ```bash
 export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate
 ```
 
-Verify it succeeded.
+Verify it succeeded. If your schema changes too, follow with `pnpm db:push`.
 
-## Step 6: Show Usage Examples
+## Step 5: Use the New Permission
 
+The two consumer patterns are:
+
+**API route handler / server action:**
 ```typescript
-// API route protection
-import { FEATURES } from "@/lib/permissions";
+import { auth } from "@/lib/auth";
+import { FEATURES, hasFeature } from "@/lib/permissions";
 
 const session = await auth();
-if (!session?.user?.features?.includes(FEATURES.NEW_FEATURE_KEY)) {
+if (!hasFeature(session?.user?.features, FEATURES.EVENTS_EXPORT)) {
   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 }
-
-// UI conditional rendering
-const canExport = session?.user?.features?.includes(FEATURES.NEW_FEATURE_KEY);
-{canExport && <ExportButton />}
 ```
+
+**UI conditional render:**
+```typescript
+const canExport = hasFeature(session?.user?.features, FEATURES.EVENTS_EXPORT);
+{canExport && <ExportEventsButton />}
+```
+
+## Step 6: Document and Release-Note
+
+- If `CLAUDE.md` maintains a feature/permission inventory, add the new row.
+- Run `/release-notes` to record the new permission in the current release notes file.
 
 ## Summary
 
-Present what was created/modified:
-- Permission key and description
-- Migration file path
+Present what changed:
+
+- New `FEATURES.<KEY>` constant in `src/lib/permissions.ts`
+- New migration file: `drizzle/migrations/NNNN_*.sql`
+- Role bindings added (which roles get it on fresh install): list
+- Local migration run: PASS / FAIL
 - Files modified
-- Roles with access
-- Migration run status

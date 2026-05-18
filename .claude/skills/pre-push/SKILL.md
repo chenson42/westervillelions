@@ -1,86 +1,164 @@
 ---
 name: pre-push
-description: Run pre-push checks including production build verification before pushing to main
+description: Run pre-push verification — typecheck, unit tests, build, e2e tests, schema/migration check, release notes, and a quick housekeeping sweep — before pushing to main
 ---
 
 # Pre-Push Checks
 
-When the user invokes `/pre-push`, run all verification steps required before pushing code to main.
+When the user invokes `/pre-push`, run every verification step required before pushing to `main`. This skill never pushes — it only reports readiness.
 
-## Step 1: Check Current State
+If `vitest.config.ts` / `playwright.config.ts` aren't present yet, **skip the corresponding test step with a note** rather than failing — they will be wired in over time. Don't pretend a missing runner passed.
 
-Run `git status` and `git log --oneline -5` to confirm:
-- What branch we're on
-- What changes are staged/unstaged
-- Recent commits that will be pushed
+## Step 1: Snapshot the Current State
 
-If there are uncommitted changes, **STOP**. Ask the user whether to commit them first or abort.
+Run, in parallel:
 
-## Step 2: Merge Main into Branch (if on a feature branch)
+- `git status`
+- `git log --oneline -10`
+- `git branch --show-current`
 
-1. Fetch latest: `git fetch origin main`
-2. Check for new commits: `git log HEAD..origin/main --oneline`
-3. If new commits exist, ask the user whether to merge before testing
+Confirm:
 
-## Step 3: Run Production Build
+- What branch we're on.
+- What's staged and unstaged.
+- What commits will be in the push.
+
+**If there are uncommitted changes:** STOP. Ask the user whether to commit them first or abort.
+
+## Step 2: Sync with `main` (if on a feature branch)
 
 ```bash
-source ~/.nvm/nvm.sh && nvm use 20 && pnpm build:only
+git fetch origin main
+git log HEAD..origin/main --oneline
 ```
 
-This runs `next build` without database changes. If the build fails:
-- Show the error output
-- Identify the failing file(s) and error type
-- Offer to fix the issues
+If `main` has new commits, ask the user whether to merge before continuing. Don't merge unilaterally — branch sync is an explicit user choice.
 
-**Do NOT proceed if the build fails.**
+## Step 3: Type Check
 
-## Step 4: Check for Pending Migrations
+```bash
+pnpm exec tsc --noEmit
+```
 
-1. Check `git diff main` for any new or modified `.sql` files in `/drizzle/migrations/`
-2. If new migrations exist, ask the user if they've been run locally
-3. If not run, offer to run them:
+If it fails:
+
+- Show the error output.
+- Identify the failing file(s) and error type.
+- Offer to fix the issues.
+
+**Do not proceed if typecheck fails.**
+
+## Step 4: Unit Tests (Vitest)
+
+```bash
+pnpm test
+```
+
+If `vitest.config.ts` is missing or the `test` script isn't in `package.json`, skip with a note ("unit-test runner not yet installed") and continue. Otherwise:
+
+- A single red test is a red build. Show the failing test name and `file:line`.
+- Offer to either fix the underlying defect or hand back to the implementer.
+
+**Do not proceed if any unit test fails** (when the runner is installed).
+
+## Step 5: Production Build
+
+```bash
+pnpm build:only
+```
+
+`next build` does its own type pass and catches things `tsc --noEmit` alone won't (the Next.js plugin, route inference, server/client boundary errors). If the build fails:
+
+- Show the failing route or module.
+- Offer to fix.
+
+**Do not proceed if the build fails.**
+
+After the build, eyeball the route list it prints — make sure no expected route silently dropped out.
+
+## Step 6: End-to-End Tests (Playwright)
+
+```bash
+# In one terminal:
+pnpm dev
+# In another:
+pnpm test:e2e
+```
+
+If `playwright.config.ts` or the `test:e2e` script is missing, skip with a note and continue. Playwright does **not** spawn the dev server, so confirm `pnpm dev` is up against `.env.local` before running.
+
+- A single red e2e test is a red build. Show the failing flow and the screenshot/trace path Playwright writes.
+- Flaky tests that pass on retry should still be flagged — flakiness is a bug.
+
+**Do not proceed if any e2e test fails** (when the runner is installed).
+
+## Step 7: Schema and Migration Check
+
+`src/lib/db/schema.ts` is the source of truth. Migrations under `drizzle/migrations/` re-run on every deploy, so **every statement must be idempotent**.
+
+1. Check whether `schema.ts` has changed since `main`:
    ```bash
-   export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate
+   git diff main -- src/lib/db/schema.ts
    ```
+2. If yes, check whether a corresponding SQL migration is committed under `drizzle/migrations/`:
+   ```bash
+   git status drizzle/migrations/ | head
+   git diff main -- drizzle/migrations/ | head -80
+   ```
+3. If the schema changed but no migration was added, ask the user whether they intended to:
+   - Add an idempotent SQL migration file (`drizzle/migrations/NNNN_*.sql`) — required so the deploy can re-apply it.
+   - Rely only on `drizzle-kit push` (the production build runs it). Acceptable for additive column changes; risky for anything else.
+4. If a new migration exists, scan it for non-idempotent statements:
+   ```bash
+   grep -nE "^\s*(CREATE TABLE |ALTER TABLE [^ ]+ ADD COLUMN |INSERT INTO |CREATE INDEX )" drizzle/migrations/<new>.sql | grep -vE "IF NOT EXISTS|ON CONFLICT|WHERE NOT EXISTS"
+   ```
+   Any hit is a likely re-run failure waiting to happen. Fix before pushing.
 
-## Step 5: Release Notes & Version Bump
+## Step 8: Release Notes and Version Bump
 
-**This step is required before every push to main.**
+**Required before every push to `main`.**
 
-1. Run `cat RELEASE_NOTES.md | head -20` to see the current version
-2. Run `git log origin/main..HEAD --oneline` to see all commits being pushed
-3. Invoke the `/release-notes` skill to write release notes and bump `package.json` version
-4. The release notes commit must be included in the push
+1. Read `package.json` to see the current version.
+2. Read the most recent `docs/release-notes/vX.Y.md` to see the latest entry.
+3. Run `git log origin/main..HEAD --oneline` to list the commits being pushed.
+4. Invoke `/release-notes` to write or extend the entry and bump `package.json`.
+5. Commit the release-notes change so it goes out with the push.
 
-**Do NOT push without updated release notes.**
+**Documentation-only changes don't need a version bump.** Bug fixes get a PATCH bump. New features get a MINOR. Breaking changes get a MAJOR.
 
-## Step 6: Documentation & Housekeeping
+## Step 9: Housekeeping Sweep
 
-Check the following (treat as advisory warnings, not hard blockers unless user decides otherwise):
+Treat these as advisory warnings, not hard blockers (unless the user decides otherwise):
 
-- [ ] **New environment variables?** — Are they documented in `CLAUDE.md` and `.env.example` (if it exists)?
-- [ ] **New database tables?** — Are they defined in `src/lib/db/schema.ts`?
-- [ ] **New API routes?** — Are auth checks present on protected endpoints?
-- [ ] **No console.log left in code?** — Run a quick grep
-- [ ] **No `.env.local` or credentials in git diff?** — Check `git diff --name-only`
+- **New environment variables?** Documented in `CLAUDE.md`?
+- **New tables or columns?** Defined in `src/lib/db/schema.ts` *and* the matching idempotent migration?
+- **New routes or actions?** Auth + feature gate present on every protected entry?
+- **No stray debug logs?**
+  ```bash
+  grep -r "console.log" src/ --include="*.ts" --include="*.tsx" | grep -v "// " | head -10
+  ```
+- **No native browser dialogs?**
+  ```bash
+  grep -rE "alert\(|confirm\(|prompt\(" src/ --include="*.ts" --include="*.tsx"
+  ```
+  Any hit should use `<ConfirmDialog>` from `@/components/ui/confirm-dialog` or a shadcn `Dialog`.
+- **No env files staged?**
+  ```bash
+  git diff --name-only | grep -E "\.env"
+  ```
 
-Quick checks:
-```bash
-# Check for debug logs
-grep -r "console.log" src/ --include="*.ts" --include="*.tsx" | grep -v "// " | head -10
-
-# Check for accidental env file staging
-git diff --name-only | grep -E "\.env"
-```
-
-## Step 7: Summary
+## Step 10: Summary
 
 Report results:
-- Build status (pass/fail)
-- Migration status (up to date / needs attention)
-- Release notes (updated / missing)
-- Any warnings found
-- Ready to push? (yes/no)
 
-**IMPORTANT**: Do NOT push to remote. Only report readiness. The user will push manually.
+- Type check: PASS / FAIL
+- Unit tests: PASS / FAIL / SKIPPED (runner not installed)
+- Production build: PASS / FAIL
+- E2E tests: PASS / FAIL / SKIPPED (runner not installed)
+- Schema and migrations: in sync and idempotent / pending (with details)
+- Release notes + version: updated / missing
+- Housekeeping warnings: list them
+- **Ready to push? yes / no**
+- If no: list each item that must be resolved first
+
+**Do not push.** The user pushes manually.

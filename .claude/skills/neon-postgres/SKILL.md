@@ -1,186 +1,120 @@
 ---
 name: neon-postgres
-description: Guides and best practices for working with Neon Serverless Postgres. Covers getting started, local development with Neon, choosing a connection method, Neon features, authentication (@neondatabase/auth), PostgREST-style data API (@neondatabase/neon-js), Neon CLI, and Neon's Platform API/SDKs. Use for any Neon-related questions.
+description: Patterns and guidance for working with Neon Postgres in this project — Drizzle Kit usage, idempotent migrations, branching for schema work, and the Neon docs as source of truth.
 ---
 
-# Neon Serverless Postgres
+# Neon Postgres in the Westerville Lions Club Website
 
-Neon is a serverless Postgres platform that separates compute and storage to offer autoscaling, branching, instant restore, and scale-to-zero. It's fully compatible with Postgres and works with any language, framework, or ORM that supports Postgres.
+This project uses Neon — a serverless Postgres platform that separates compute and storage to offer autoscaling, branching, instant restore, and scale-to-zero. It is fully Postgres-compatible and works with the Drizzle ORM stack this codebase uses.
+
+This skill captures the patterns most relevant to working in *this* codebase. For broader Neon questions, fall back to the official docs.
+
+## Environment Variables in This Project
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | Used by the app (`src/lib/db/index.ts`) and the migration runner (`drizzle/run-migrations.mjs`). Pooled (`-pooler`) host recommended. |
+
+If you add a Drizzle Kit step that needs DDL through a non-pooled connection, document the variable in `CLAUDE.md` first.
+
+## Drizzle Kit and Migration Commands
+
+The project ships three relevant commands:
+
+- **`pnpm db:migrate`** — runs `node drizzle/run-migrations.mjs`, which applies every SQL file under `drizzle/migrations/` against `DATABASE_URL`. Migrations re-run on every deploy and on every `pnpm dev` startup, so **every statement must be idempotent**.
+- **`pnpm db:push`** — runs `drizzle-kit push`, which compares `src/lib/db/schema.ts` to the live database and applies the difference. Fast and effective during development. The production build uses `drizzle-kit push --force` after the SQL migrations run.
+- **`pnpm build`** — runs the migration script, then `drizzle-kit push --force`, then `next build`. This is the production pipeline.
+
+`schema.ts` is the source of truth for the Drizzle Kit step. Anything in the live database that isn't in `schema.ts` will be dropped on `db:push`.
+
+## Idempotent Migration Patterns
+
+Because migrations re-run on every deploy, every SQL statement must be safe to execute repeatedly:
+
+```sql
+-- Table
+CREATE TABLE IF NOT EXISTS my_table (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Column
+ALTER TABLE my_table ADD COLUMN IF NOT EXISTS notes text;
+
+-- Seed
+INSERT INTO features (key, name, description, category)
+SELECT 'area.action', 'Display name', 'Description.', 'admin'
+WHERE NOT EXISTS (SELECT 1 FROM features WHERE key = 'area.action');
+
+-- Index (guarded)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'ix_my_table_created_at') THEN
+    CREATE INDEX ix_my_table_created_at ON my_table(created_at);
+  END IF;
+END $$;
+```
+
+When migrating data, try the old shape first, then the new — never reference a column that may not yet exist.
+
+## Branching for Schema Work
+
+Neon's killer feature is **branches** — instant, copy-on-write clones of your database with their own compute endpoint. Use them for any non-trivial schema change.
+
+The recommended loop:
+
+1. **Create a Neon branch** off `main` from the Neon console (or with the Neon CLI: `neonctl branches create --name feature/event-rsvps`).
+2. **Grab the branch's connection string** and point `.env.local`'s `DATABASE_URL` at it.
+3. **Iterate freely** — write the SQL migration, run `pnpm db:migrate`, run `pnpm db:push`, refine `schema.ts`, repeat.
+4. **When the migration is right, commit it.** It will re-run on the production deploy.
+5. **Delete the Neon branch** when the feature ships.
+
+The point is that schema mistakes never touch production data — they happen on a disposable branch that can be deleted with one command.
+
+## Pooled vs Direct Connections
+
+The app uses the pooled host (`-pooler` suffix in the URL) for runtime serverless workloads. Neon's PgBouncer multiplexes connections so a bursty serverless workload doesn't exhaust the Postgres connection limit. If you ever need a direct (unpooled) connection for a one-off script that runs DDL, get the unpooled connection string from the Neon console and use it locally — do not commit it to the repo.
+
+## Scale-to-Zero and Cold Starts
+
+By default, Neon's compute suspends after a few minutes of inactivity and resumes on the next query. The first query after suspend has a noticeable cold-start penalty (hundreds of milliseconds). This usually doesn't matter, but if you're benchmarking, that's why the second request is faster.
+
+Storage stays active while compute is suspended, so data is never paged out.
+
+## Useful Patterns
+
+### Working with the Drizzle client
+
+```typescript
+import { db } from "@/lib/db";
+import { members } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+
+const row = await db.query.members.findFirst({ where: eq(members.email, email) });
+```
+
+### Raw SQL escape hatch
+
+```typescript
+import { sql } from "drizzle-orm";
+const result = await db.execute(sql`SELECT count(*) FROM members`);
+```
+
+Use sparingly. Almost everything in this codebase can be expressed via Drizzle's query builder, and the type safety is worth keeping.
+
+### Connection in a one-off script
+
+The project's `scripts/` directory holds `tsx` scripts that connect via Drizzle. They typically use `dotenv -e .env.local` to load credentials so the script can be run locally without exporting env vars.
 
 ## Neon Documentation
 
-The Neon documentation is the source of truth for all Neon-related information. Always verify claims against the official docs before responding. Neon features and APIs evolve, so prefer fetching current docs over relying on training data.
-
-### Fetching Docs as Markdown
-
-Any Neon doc page can be fetched as markdown in two ways:
-
-1. **Append `.md` to the URL** (simplest): https://neon.com/docs/introduction/branching.md
-2. **Request `text/markdown`** on the standard URL: `curl -H "Accept: text/markdown" https://neon.com/docs/introduction/branching`
-
-Both return the same markdown content. Use whichever method your tools support.
-
-### Finding the Right Page
-
-The docs index lists every available page with its URL and a short description:
-
-```
-https://neon.com/docs/llms.txt
-```
-
-Common doc URLs are organized in the topic links below. If you need a page not listed here, search the docs index: https://neon.com/docs/llms.txt — don't guess URLs.
-
-## What Is Neon
-
-Use this for architecture explanations and terminology (organizations, projects, branches, endpoints) before giving implementation advice.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/what-is-neon.md
-
-## Getting Started
-
-Use this for first-time setup: org/project selection, connection strings, driver installation, optional auth, and initial schema setup.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/getting-started.md
-
-## Connection Methods & Drivers
-
-Use this when you need to pick the correct transport and driver based on runtime constraints (TCP, HTTP, WebSocket, edge, serverless, long-running).
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/connection-methods.md
-
-### Serverless Driver
-
-Use this for `@neondatabase/serverless` patterns, including HTTP queries, WebSocket transactions, and runtime-specific optimizations.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/neon-serverless.md
-
-### Neon JS SDK
-
-Use this for combined Neon Auth + Data API workflows with PostgREST-style querying and typed client setup.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/neon-js.md
-
-## Developer Tools
-
-Use this for local development enablement with `npx neonctl@latest init`, VSCode extension setup, and Neon MCP server configuration.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/devtools.md
-
-### Neon CLI
-
-Use this for terminal-first workflows, scripts, and CI/CD automation with `neonctl`.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/neon-cli.md
-
-## Neon Admin API
-
-The Neon Admin API can be used to manage Neon resources programmatically. It is used behind the scenes by the Neon CLI and MCP server, but can also be used directly for more complex automation workflows or when embedding Neon in other applications.
-
-### Neon REST API
-
-Use this for direct HTTP automation, endpoint-level control, API key auth, rate-limit handling, and operation polling.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/neon-rest-api.md
-
-### Neon TypeScript SDK
-
-Use this when implementing typed programmatic control of Neon resources in TypeScript via `@neondatabase/api-client`.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/neon-typescript-sdk.md
-
-### Neon Python SDK
-
-Use this when implementing programmatic Neon management in Python with the `neon-api` package.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/neon-python-sdk.md
-
-## Neon Auth
-
-Use this for managed user authentication setup, UI components, auth methods, and Neon Auth integration pitfalls in Next.js and React apps.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/neon-auth.md
-
-Neon Auth is also embedded in the Neon JS SDK - so depending on your use case, you may want to use the Neon JS SDK instead of Neon Auth. See https://neon.com/docs/ai/skills/neon-postgres/references/connection-methods.md for more details.
-
-## Branching
-
-Use this when the user is planning isolated environments, schema migration testing, preview deployments, or branch lifecycle automation.
-
-Key points:
-
-- Branches are instant, copy-on-write clones (no full data copy).
-- Each branch has its own compute endpoint.
-- Use the neonctl CLI or MCP server to create, inspect, and compare branches.
-
-Link: https://neon.com/docs/ai/skills/neon-postgres/references/branching.md
-
-## Autoscaling
-
-Use this when the user needs compute to scale automatically with workload and wants guidance on CU sizing and runtime behavior.
-
-Link: https://neon.com/docs/introduction/autoscaling.md
-
-## Scale to Zero
-
-Use this when optimizing idle costs and discussing suspend/resume behavior, including cold-start trade-offs.
-
-Key points:
-
-- Idle computes suspend automatically (default 5 minutes, configurable) (unless disabled - launch & scale plan only)
-- First query after suspend typically has a cold-start penalty (around hundreds of ms)
-- Storage remains active while compute is suspended.
-
-Link: https://neon.com/docs/introduction/scale-to-zero.md
-
-## Instant Restore
-
-Use this when the user needs point-in-time recovery or wants to restore data state without traditional backup restore workflows.
-
-Key points:
-
-- Restore windows depend on plan limits.
-- Users can create branches from historical points-in-time.
-- Time Travel queries can be used for historical inspection workflows.
-
-Link: https://neon.com/docs/introduction/branch-restore.md
-
-## Read Replicas
-
-Use this for read-heavy workloads where the user needs dedicated read-only compute without duplicating storage.
-
-Key points:
-
-- Replicas are read-only compute endpoints sharing the same storage.
-- Creation is fast and scaling is independent from primary compute.
-- Typical use cases: analytics, reporting, and read-heavy APIs.
-
-Link: https://neon.com/docs/introduction/read-replicas.md
-
-## Connection Pooling
-
-Use this when the user is in serverless or high-concurrency environments and needs safe, scalable Postgres connection management.
-
-Key points:
-
-- Neon pooling uses PgBouncer.
-- Add `-pooler` to endpoint hostnames to use pooled connections.
-- Pooling is especially important in serverless runtimes with bursty concurrency.
-
-Link: https://neon.com/docs/connect/connection-pooling.md
-
-## IP Allow Lists
-
-Use this when the user needs to restrict database access by trusted networks, IPs, or CIDR ranges.
-
-Link: https://neon.com/docs/introduction/ip-allow.md
-
-## Logical Replication
-
-Use this when integrating CDC pipelines, external Postgres sync, or replication-based data movement.
-
-Key points:
-
-- Neon supports native logical replication workflows.
-- Useful for replicating to/from external Postgres systems.
-
-Link: https://neon.com/docs/guides/logical-replication-guide.md
+The Neon docs are the source of truth for platform behavior. Always verify against the docs before relying on a feature claim — Neon evolves.
+
+- **Docs index:** https://neon.com/docs/llms.txt
+- **Branching:** https://neon.com/docs/introduction/branching
+- **Connection pooling:** https://neon.com/docs/connect/connection-pooling
+- **Scale to zero:** https://neon.com/docs/introduction/scale-to-zero
+- **Instant restore:** https://neon.com/docs/introduction/branch-restore
+- **Neon CLI (`neonctl`):** https://neon.com/docs/reference/neon-cli
+
+Any Neon doc page is available as Markdown by appending `.md` to the URL — useful when you want to fetch a single page rather than navigate the site.
