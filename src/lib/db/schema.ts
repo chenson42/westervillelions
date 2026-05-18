@@ -22,7 +22,7 @@ export const members = pgTable("members", {
   memberNumber: integer("member_number").unique(), // Lions International member number
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
-  email: text("email"),
+  email: text("email").notNull(), // NOT NULL + CI unique enforced via migration 0035
   phone: text("phone"),
   address: text("address"),
   city: text("city"),

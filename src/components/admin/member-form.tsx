@@ -8,7 +8,7 @@ export interface MemberFormData {
   memberNumber?: number | null;
   firstName: string;
   lastName: string;
-  email?: string | null;
+  email: string;
   phone?: string | null;
   address?: string | null;
   city?: string | null;
@@ -60,10 +60,12 @@ export default function MemberForm({
 }) {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [formData, setFormData] = useState<MemberFormData>(
     member || {
       firstName: "",
       lastName: "",
+      email: "",
       isActive: true,
     }
   );
@@ -81,6 +83,7 @@ export default function MemberForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setEmailError(null);
     setIsSubmitting(true);
 
     try {
@@ -96,8 +99,20 @@ export default function MemberForm({
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to save member");
+        const body = await response.json();
+        const message: string = body.error || "Failed to save member";
+
+        // Surface email-specific errors inline rather than just as a toast
+        if (
+          response.status === 409 ||
+          message.toLowerCase().includes("email")
+        ) {
+          setEmailError(message);
+          setIsSubmitting(false);
+          return;
+        }
+
+        throw new Error(message);
       }
 
       toast.success(memberId ? "Member updated successfully" : "Member created successfully");
@@ -175,16 +190,27 @@ export default function MemberForm({
               htmlFor="email"
               className="block text-sm font-medium text-gray-700"
             >
-              Email
+              Email <span className="text-red-500">*</span>
             </label>
             <input
               type="email"
               id="email"
               name="email"
+              required
               value={formData.email || ""}
-              onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+              onChange={(e) => {
+                setEmailError(null);
+                handleChange(e);
+              }}
+              className={`mt-1 block w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-lions-blue ${
+                emailError
+                  ? "border-amber-500 focus:border-amber-500"
+                  : "border-gray-300 focus:border-lions-blue"
+              }`}
             />
+            {emailError && (
+              <p className="mt-1 text-sm text-amber-700">{emailError}</p>
+            )}
           </div>
 
           <div>
