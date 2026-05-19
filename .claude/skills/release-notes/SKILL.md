@@ -127,13 +127,9 @@ When ready to merge, update `package.json` `version` to match the release-notes 
 
 - `GET /path` — Description
 - `POST /api/...` — Description
-
-#### Files Added
-- `path/to/file` — Description
-
-#### Files Modified
-- `path/to/file` — Description
 ```
+
+> **No file lists.** Release notes describe user-facing value and bug context — not implementation. Don't add `Files Added`, `Files Modified`, or any per-file inventory. If a reader needs a per-file diff, they can run `git log vA.B.C..vX.Y.Z`.
 
 ---
 
@@ -150,9 +146,6 @@ When ready to merge, update `package.json` `version` to match the release-notes 
 **Changes:**
 - [Change]
 - [Change]
-
-**Files Modified:**
-- `path/to/file` — Description
 ```
 
 ---
@@ -170,9 +163,6 @@ When ready to merge, update `package.json` `version` to match the release-notes 
 **Root Cause:** [Why it happened]
 
 **Fix:** [What was changed]
-
-**Files Modified:**
-- `path/to/file` — Description
 
 **Testing:**
 - [x] Manual click-through case 1
@@ -194,9 +184,6 @@ When ready to merge, update `package.json` `version` to match the release-notes 
 **Changes:**
 - [Change]
 - [Change]
-
-**Files Modified:**
-- `path/to/file` — Description
 ```
 
 ---
