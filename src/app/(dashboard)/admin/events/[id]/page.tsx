@@ -81,6 +81,13 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
 
   const showRsvpSection = event.requiresRsvp || rsvpRows.length > 0;
 
+  // ── Cancellation map: YYYY-MM-DD → { reason } ────────────────────────────
+  // Hoisted to module scope so both the occurrence-grouping block and the flat
+  // summary computation below can reference it without duplication.
+  const cancelledMap = new Map(
+    overrides.map((o) => [o.occurrenceDate, { reason: o.cancellationReason }])
+  );
+
   // ── Recurring: group rsvpRows by occurrence date ──────────────────────────
   let occurrenceGroups: OccurrenceGroupData[] = [];
 
@@ -89,11 +96,6 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
     // event.startDate is now a wall-clock string; parse it to Date for the `from` arg.
     const allOccurrenceDates = generateOccurrences(event, parseWallClock(event.startDate), 520);
     const now = new Date();
-
-    // Build cancellation map: YYYY-MM-DD → { reason }
-    const cancelledMap = new Map(
-      overrides.map((o) => [o.occurrenceDate, { reason: o.cancellationReason }])
-    );
 
     // Build a lookup: occurrenceDate wall-clock string → RsvpRow[]
     // occurrenceDate is now a string from DB (mode:"string"). Use it directly.
@@ -150,10 +152,21 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
     occurrenceGroups.sort((a, b) => a.date.getTime() - b.date.getTime());
   }
 
-  // ── Non-recurring: flat summary numbers ───────────────────────────────────
-  const attending = rsvpRows.filter((r) => r.status === "attending");
-  const maybe = rsvpRows.filter((r) => r.status === "maybe");
-  const declined = rsvpRows.filter((r) => r.status === "declined");
+  // ── Flat summary numbers ───────────────────────────────────────────────────
+  // For recurring events, exclude rows from cancelled occurrences before summing.
+  // cancelledMap is keyed by YYYY-MM-DD; row.occurrenceDate is a wall-clock string
+  // "YYYY-MM-DD HH:MM:SS" — slice(0,10) gives the matching key.
+  // For non-recurring events, cancelledMap is empty and summaryRows === rsvpRows.
+  const summaryRows = event.isRecurring
+    ? rsvpRows.filter((r) => {
+        if (!r.occurrenceDate) return true;
+        return !cancelledMap.has(r.occurrenceDate.slice(0, 10));
+      })
+    : rsvpRows;
+
+  const attending = summaryRows.filter((r) => r.status === "attending");
+  const maybe = summaryRows.filter((r) => r.status === "maybe");
+  const declined = summaryRows.filter((r) => r.status === "declined");
   const totalGuests = attending.reduce((sum, r) => sum + (r.guestCount ?? 0), 0);
   const attendingTotal = attending.length + totalGuests;
 
@@ -209,6 +222,30 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
 
           {event.isRecurring ? (
             // ── Recurring: grouped by occurrence ──────────────────────────
+            <>
+              {/* Series-level rollup — rendered for recurring events with RSVP enabled */}
+              {event.requiresRsvp && (
+                <div className="mt-4 rounded-md bg-blue-50 p-4">
+                  {(() => {
+                    const nonCancelledCount = occurrenceGroups.filter((g) => !g.isCancelled).length;
+                    if (nonCancelledCount === 0) {
+                      return (
+                        <p className="text-sm font-medium text-blue-800">All occurrences cancelled</p>
+                      );
+                    }
+                    return (
+                      <>
+                        <p className="text-sm font-semibold text-blue-900">
+                          {attendingTotal} attending across {nonCancelledCount} occurrence{nonCancelledCount === 1 ? "" : "s"}
+                        </p>
+                        <p className="mt-0.5 text-xs text-blue-700">
+                          {maybe.length} maybe · {declined.length} declined
+                        </p>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
             <div className="mt-4 space-y-3">
               {occurrenceGroups.length === 0 ? (
                 <p className="text-sm text-gray-500">No occurrences generated for this series.</p>
@@ -233,7 +270,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                       createdAt: r.createdAt.toISOString(),
                       name: r.userName || r.rsvpName || null,
                       email: r.userEmail || r.rsvpEmail || null,
-                      isGuest: !!r.rsvpEmail,
+                      isGuest: !r.userId,
                       guestCount: r.guestCount,
                       extraAnswer: r.extraAnswer,
                     })),
@@ -241,6 +278,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                 />
               )}
             </div>
+            </>
           ) : (
             // ── Non-recurring: client table with add/remove ────────────────
             <>
@@ -271,16 +309,16 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
                   eventId={id}
                   members={safeMemberList}
                   extraQuestion={event.extraQuestion}
+                  maxAttendees={event.maxAttendees ?? null}
                   rows={rsvpRows.map((r) => ({
                     id: r.id,
                     userId: r.userId,
                     status: r.status,
                     guestCount: r.guestCount,
                     createdAt: r.createdAt.toISOString(),
-                    userName: r.userName,
-                    userEmail: r.userEmail,
-                    rsvpName: r.rsvpName,
-                    rsvpEmail: r.rsvpEmail,
+                    name: r.userName || r.rsvpName || null,
+                    email: r.userEmail || r.rsvpEmail || null,
+                    isGuest: !r.userId,
                     extraAnswer: r.extraAnswer,
                   }))}
                 />

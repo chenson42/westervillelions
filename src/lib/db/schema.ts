@@ -217,6 +217,7 @@ export const eventRsvps = pgTable("event_rsvps", {
   extraAnswer: text("extra_answer"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
 });
 
 // Contact form submissions

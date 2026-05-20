@@ -5,18 +5,8 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import * as Dialog from "@radix-ui/react-dialog";
-
-interface RsvpRowData {
-  id: string;
-  userId: string | null;
-  status: string;
-  createdAt: string; // ISO
-  name: string | null;
-  email: string | null;
-  isGuest: boolean;
-  guestCount: number | null;
-  extraAnswer: string | null;
-}
+import { AdminRsvpRow } from "@/types/admin-rsvp";
+import { WriteInForm } from "@/components/admin/write-in-form";
 
 interface OccurrenceGroup {
   date: string; // ISO timestamp, sent as `occurrenceDate` to signup/RSVP APIs (preserves wall-clock time)
@@ -27,7 +17,7 @@ interface OccurrenceGroup {
   cancellationReason: string | null;
   isOrphan: boolean;
   maxAttendees: number | null;
-  rows: RsvpRowData[];
+  rows: AdminRsvpRow[];
 }
 
 interface AdminOccurrenceRsvpSectionProps {
@@ -58,7 +48,7 @@ function OccurrenceAccordionRow({
 }) {
   // Past occurrences with no signups start collapsed; all others start expanded if they have signups
   const [expanded, setExpanded] = useState(!group.isPast && group.rows.length > 0);
-  const [rows, setRows] = useState<RsvpRowData[]>(group.rows);
+  const [rows, setRows] = useState<AdminRsvpRow[]>(group.rows);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -78,6 +68,12 @@ function OccurrenceAccordionRow({
   // Restore dialog — simple confirm, uses ConfirmDialog
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
+
+  // Inline edit state for guest rows
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [saving, setSaving] = useState(false);
 
   // Wall-clock date key computed server-side via dateKey() — never round-trips through UTC.
   // Slicing group.date.slice(0,10) here would silently produce the wrong date for late-evening
@@ -144,14 +140,17 @@ function OccurrenceAccordionRow({
     0
   );
 
-  async function handleRemove(row: RsvpRowData) {
-    if (!row.userId) return;
+  async function handleRemove(row: AdminRsvpRow) {
+    if (!row.userId && !row.isGuest) return; // should never fire given the button guard
     setRemovingId(row.id);
     try {
+      const body = row.userId
+        ? { userId: row.userId, occurrenceDate: group.date }
+        : { rsvpId: row.id };
       const res = await fetch(`/api/admin/events/${eventId}/signup`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: row.userId, occurrenceDate: group.date }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -159,7 +158,7 @@ function OccurrenceAccordionRow({
         return;
       }
       setRows((prev) => prev.filter((r) => r.id !== row.id));
-      toast.success("Signup removed");
+      toast.success(row.isGuest ? "Guest removed" : "Signup removed");
     } finally {
       setRemovingId(null);
     }
@@ -172,7 +171,7 @@ function OccurrenceAccordionRow({
       const res = await fetch(`/api/admin/events/${eventId}/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: selectedUserId, occurrenceDate: group.date }),
+        body: JSON.stringify({ kind: "member", userId: selectedUserId, occurrenceDate: group.date }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok && !data.alreadyExists) {
@@ -202,6 +201,53 @@ function OccurrenceAccordionRow({
       toast.success("Member added");
     } finally {
       setAdding(false);
+    }
+  }
+
+  function startEdit(row: AdminRsvpRow) {
+    setEditingId(row.id);
+    setEditName(row.name ?? "");
+    setEditEmail(row.email ?? "");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditName("");
+    setEditEmail("");
+  }
+
+  async function handleSaveEdit(row: AdminRsvpRow) {
+    const trimmedName = editName.trim();
+    if (!trimmedName) {
+      toast.error("Guest name is required");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/admin/events/${eventId}/signup/${row.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guestName: trimmedName,
+          guestEmail: editEmail.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Failed to update guest.");
+        return;
+      }
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === row.id
+            ? { ...r, name: trimmedName, email: editEmail.trim() || null }
+            : r
+        )
+      );
+      setEditingId(null);
+      toast.success("Guest updated");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -245,20 +291,20 @@ function OccurrenceAccordionRow({
 
         {/* Count + cancel/restore buttons */}
         <div className="flex items-center gap-3 flex-shrink-0">
-          <span className="text-sm text-gray-600">
-            {group.maxAttendees != null ? (
-              <>
-                <span className="font-semibold">{attendingTotal}</span>
-                <span className="text-gray-400"> / {group.maxAttendees}</span>
-                <span className="text-gray-400"> (incl. guests)</span>
-              </>
-            ) : (
-              <>
-                <span className="font-semibold">{attendingTotal}</span>
-                <span className="text-gray-400"> attendees (incl. guests)</span>
-              </>
-            )}
-          </span>
+          {group.maxAttendees != null ? (
+            <span className="text-sm">
+              <span className={`font-semibold ${attendingTotal > group.maxAttendees ? "text-amber-600" : "text-gray-600"}`}>
+                {attendingTotal}
+              </span>
+              <span className="text-gray-400"> / {group.maxAttendees}</span>
+              <span className="text-gray-400"> (incl. guests)</span>
+            </span>
+          ) : (
+            <span className="text-sm text-gray-600">
+              <span className="font-semibold">{attendingTotal}</span>
+              <span className="text-gray-400"> attendees (incl. guests)</span>
+            </span>
+          )}
 
           {/* Cancel / Restore button — not shown on orphan rows since they are already
               cancelled but have no ISO timestamp to derive a valid occurrence date from */}
@@ -332,16 +378,69 @@ function OccurrenceAccordionRow({
                 {rows.map((row) => (
                   <tr key={row.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
-                      <div className="text-sm font-medium text-gray-900">
-                        {row.name || "—"}
-                      </div>
-                      {row.email && (
-                        <div className="text-xs text-gray-500">
-                          {row.email}
-                          {row.isGuest && (
-                            <span className="ml-1 text-gray-400">(guest)</span>
-                          )}
+                      {editingId === row.id ? (
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="text"
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            placeholder="Guest name"
+                            className="rounded-md border border-gray-300 text-sm px-2 py-1 focus:outline-none focus:ring-2 focus:ring-lions-blue min-w-0"
+                            autoFocus
+                          />
+                          <input
+                            type="email"
+                            value={editEmail}
+                            onChange={(e) => setEditEmail(e.target.value)}
+                            placeholder="Email (optional)"
+                            className="rounded-md border border-gray-300 text-sm px-2 py-1 focus:outline-none focus:ring-2 focus:ring-lions-blue min-w-0"
+                          />
+                          <div className="flex gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleSaveEdit(row)}
+                              disabled={saving}
+                              className="text-xs font-semibold text-white bg-lions-blue hover:bg-lions-blue-dark rounded px-2 py-1 transition disabled:opacity-50"
+                            >
+                              {saving ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelEdit}
+                              disabled={saving}
+                              className="text-xs font-semibold text-gray-600 hover:text-gray-900 rounded px-2 py-1 border border-gray-300 transition disabled:opacity-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
+                      ) : (
+                        <>
+                          <div className="text-sm font-medium text-gray-900 flex items-center gap-1.5">
+                            {row.isGuest && !isCancelled ? (
+                              <button
+                                type="button"
+                                onClick={() => startEdit(row)}
+                                className="hover:underline text-left"
+                                title="Click to edit"
+                              >
+                                {row.name || "—"}
+                              </button>
+                            ) : (
+                              <span>{row.name || "—"}</span>
+                            )}
+                            {row.isGuest && (
+                              <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs font-medium">
+                                Guest
+                              </span>
+                            )}
+                          </div>
+                          {row.email && (
+                            <div className="text-xs text-gray-500">
+                              {row.email}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
@@ -362,7 +461,7 @@ function OccurrenceAccordionRow({
                       })}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      {row.userId && !isCancelled && (
+                      {(row.userId || row.isGuest) && !isCancelled && (
                         <button
                           type="button"
                           onClick={() => handleRemove(row)}
@@ -403,6 +502,17 @@ function OccurrenceAccordionRow({
                 {adding ? "Adding…" : "Add"}
               </button>
             </div>
+          )}
+
+          {/* Write-in guest form — suppressed on cancelled occurrences */}
+          {!isCancelled && (
+            <WriteInForm
+              eventId={eventId}
+              occurrenceDate={group.date}
+              occurrenceCapacity={group.maxAttendees}
+              occurrenceAttendingCount={attendingTotal}
+              onAdded={(row) => setRows((prev) => [...prev, row])}
+            />
           )}
         </div>
       )}

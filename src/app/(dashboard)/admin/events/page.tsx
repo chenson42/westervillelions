@@ -106,40 +106,18 @@ export default async function AdminEventsPage({
         .groupBy(eventRsvps.eventId, eventRsvps.status, eventRsvps.occurrenceDate)
     : [];
 
-  // For recurring events, the row's count should reflect just the next upcoming
-  // occurrence, not every future occurrence summed together. Compute the target
-  // date per event; null means "count all rows" (non-recurring, or recurring
-  // series that has ended).
-  const occurrenceFilter = new Map<string, string | null>();
-  for (const event of eventList) {
-    if (!event.requiresRsvp) continue;
-    if (!event.isRecurring) {
-      occurrenceFilter.set(event.id, null);
-      continue;
-    }
-    const next = getNextOccurrence(
-      {
-        isRecurring: event.isRecurring,
-        startDate: event.startDate,
-        recurrenceType: event.recurrenceType,
-        recurrenceDays: event.recurrenceDays,
-        recurrenceEndDate: event.recurrenceEndDate,
-      },
-      now,
-      cancelledByEvent.get(event.id) ?? new Set()
-    );
-    occurrenceFilter.set(event.id, next ? format(next, "yyyy-MM-dd") : null);
-  }
-
+  // Build the rollup: count all non-cancelled RSVP rows per event.
+  // Recurring and non-recurring events both include all rows; cancelled-occurrence
+  // rows are excluded via the guard inside the loop below.
   const rsvpMap = new Map<string, RsvpSummary>();
   for (const row of rsvpRows) {
-    const targetDate = occurrenceFilter.get(row.eventId);
-    if (targetDate) {
-      // occurrenceDate is now a wall-clock string "YYYY-MM-DD HH:MM:SS"; slice for date portion.
-      const rowDate = row.occurrenceDate
-        ? row.occurrenceDate.slice(0, 10)
-        : null;
-      if (rowDate !== targetDate) continue;
+    // Skip rows from cancelled occurrences so they don't inflate the rollup.
+    // occurrenceDate is a wall-clock string "YYYY-MM-DD HH:MM:SS"; slice to get date key.
+    // Non-recurring rows have occurrenceDate = null — the guard is skipped for them.
+    if (row.occurrenceDate) {
+      const rowDateKey = row.occurrenceDate.slice(0, 10);
+      const cancelled = cancelledByEvent.get(row.eventId);
+      if (cancelled?.has(rowDateKey)) continue;
     }
     const s = rsvpMap.get(row.eventId) ?? { attending: 0, maybe: 0, declined: 0, total: 0 };
     if (row.status === "attending") s.attending += row.count;
