@@ -5,8 +5,9 @@ import { events, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, or, gt, isNull } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
-import { formatRecurrence, getNextOccurrence, formatEventWhen } from "@/lib/events";
+import { formatRecurrence, getNextOccurrence, formatEventWhen, dateKey, buildGoogleCalendarUrl, buildOutlookCalendarUrl, type IcsEventInput } from "@/lib/events";
 import MarkdownContent from "@/components/markdown-content";
+import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 
 export const metadata: Metadata = {
   title: "Upcoming Events",
@@ -80,12 +81,31 @@ export default async function WhatWeDoPage() {
     cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
   }
 
+  const siteUrl = process.env.NEXTAUTH_URL ?? "https://westervillelions.org";
+
   // Sort by next occurrence so recurring series appear at the right position
   const publicEvents = rawEvents
-    .map((event) => ({
-      ...event,
-      nextOccurrence: getNextOccurrence(event, now, cancelledByEvent.get(event.id) ?? new Set()),
-    }))
+    .map((event) => {
+      const nextOccurrence = getNextOccurrence(event, now, cancelledByEvent.get(event.id) ?? new Set());
+      if (!nextOccurrence) return { ...event, nextOccurrence: null, googleUrl: null as string | null, outlookUrl: null as string | null };
+      const icsInput: IcsEventInput = {
+        id: event.id,
+        title: event.title,
+        description: event.description,
+        location: event.location,
+        isAllDay: event.isAllDay,
+        startDate: event.startDate,
+        endDate: event.endDate,
+        isPublic: event.isPublic,
+        url: `${siteUrl}/events/${event.id}`,
+      };
+      return {
+        ...event,
+        nextOccurrence,
+        googleUrl: buildGoogleCalendarUrl(icsInput, nextOccurrence),
+        outlookUrl: buildOutlookCalendarUrl(icsInput, nextOccurrence),
+      };
+    })
     .filter((event) => event.nextOccurrence !== null)
     .sort((a, b) => a.nextOccurrence!.getTime() - b.nextOccurrence!.getTime());
 
@@ -159,6 +179,14 @@ export default async function WhatWeDoPage() {
                             {event.description}
                           </MarkdownContent>
                         )}
+                        <div className="mt-4">
+                          <AddToCalendarDropdown
+                            eventId={event.id}
+                            occurrence={dateKey(event.nextOccurrence!)}
+                            googleUrl={event.googleUrl}
+                            outlookUrl={event.outlookUrl}
+                          />
+                        </div>
                       </div>
                     </div>
                   );

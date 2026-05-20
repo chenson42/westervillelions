@@ -37,5 +37,6 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-05-20 | test-coverage | ICS feature: 93 unit tests (94.02% stmts / 85.03% branch on events.ts); 32 new ICS tests including wall-clock regression guard; build and typecheck pass; members.ts at 0% (pre-existing, e2e-covered); no new gaps introduced
 2026-05-18 | test-coverage | follow-up: 5 priority gaps closed; Vitest 59 (+20), Playwright 9 (+6); all gates pass; see 2026-05-18-test-coverage.md
 2026-05-18 | test-coverage | baseline established: 39 unit tests in events.ts (92.76% stmts, 83.33% branch); 3 e2e smoke tests pass; 0 of 9 cancel-occurrence flows and 0 of 8 wall-clock display flows have automated coverage; 5 priority gaps identified; see 2026-05-18-test-coverage.md

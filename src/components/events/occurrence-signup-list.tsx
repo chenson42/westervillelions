@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import type { OccurrenceRow } from "@/types/events";
+import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 
 interface OccurrenceSignupListProps {
   eventId: string;
@@ -15,6 +16,8 @@ interface OccurrenceSignupListProps {
   extraQuestionType?: string | null;
   extraQuestionOptions?: string[] | null;
   extraQuestionRequired?: boolean;
+  /** When true, renders a per-occurrence "Add to Calendar" anchor on each row. */
+  showCalendarButtons?: boolean;
 }
 
 export function OccurrenceSignupList({
@@ -27,6 +30,7 @@ export function OccurrenceSignupList({
   extraQuestionType,
   extraQuestionOptions,
   extraQuestionRequired,
+  showCalendarButtons = false,
 }: OccurrenceSignupListProps) {
   const [rows, setRows] = useState<OccurrenceRow[]>(occurrences);
   const [loadingDate, setLoadingDate] = useState<string | null>(null);
@@ -228,7 +232,15 @@ export function OccurrenceSignupList({
               </div>
 
               {/* Action */}
-              <div className="flex-shrink-0">
+              <div className="flex-shrink-0 flex flex-wrap items-center gap-2">
+                {showCalendarButtons && !row.isCancelled && (
+                  <AddToCalendarDropdown
+                    eventId={eventId}
+                    occurrence={row.dateKey}
+                    googleUrl={row.googleUrl}
+                    outlookUrl={row.outlookUrl}
+                  />
+                )}
                 {row.isCancelled ? (
                   <span className="inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-200 cursor-default">
                     Cancelled

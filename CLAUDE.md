@@ -123,14 +123,14 @@ docs/
 - **Homepage:** Hero section, mission statement, featured activities
 - **About:** Club history, leadership, meeting times/location
 - **Mission:** Service areas (youth, community, humanitarian, international)
-- **Events:** Public events calendar and past events
+- **Events:** Public events calendar and past events, with per-occurrence and full-series "Add to Calendar" (.ics) download
 - **Donate:** Integration with Givebutter donation platform
 - **Contact:** Contact form, meeting info, social media links
 
 ### Member Portal
 - **Login:** Google OAuth (via Google for Nonprofits) + password authentication
 - **Member Directory:** Contact information for club members
-- **Events:** Internal event calendar, per-occurrence RSVP system
+- **Events:** Internal event calendar, per-occurrence RSVP system, "Add to Calendar" (.ics) download
 - **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs
 
 ## Integrations

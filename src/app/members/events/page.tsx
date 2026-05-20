@@ -7,7 +7,8 @@ import { eq } from "drizzle-orm";
 import { format, subMonths } from "date-fns";
 import Link from "next/link";
 import MarkdownContent from "@/components/markdown-content";
-import { getNextOccurrence, parseWallClock, formatEventWhen } from "@/lib/events";
+import { getNextOccurrence, parseWallClock, formatEventWhen, dateKey, buildGoogleCalendarUrl, buildOutlookCalendarUrl, type IcsEventInput } from "@/lib/events";
+import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 
 export default async function MemberEventsPage() {
   noStore();
@@ -42,10 +43,31 @@ export default async function MemberEventsPage() {
     cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
   }
 
-  const enriched = allEvents.map((e) => ({
-    ...e,
-    nextOccurrence: getNextOccurrence(e, now, cancelledByEvent.get(e.id) ?? new Set()),
-  }));
+  const siteUrl = process.env.NEXTAUTH_URL ?? "https://westervillelions.org";
+
+  const enriched = allEvents.map((e) => {
+    const nextOccurrence = getNextOccurrence(e, now, cancelledByEvent.get(e.id) ?? new Set());
+    if (!nextOccurrence) {
+      return { ...e, nextOccurrence: null, googleUrl: null as string | null, outlookUrl: null as string | null };
+    }
+    const icsInput: IcsEventInput = {
+      id: e.id,
+      title: e.title,
+      description: e.description,
+      location: e.location,
+      isAllDay: e.isAllDay,
+      startDate: e.startDate,
+      endDate: e.endDate,
+      isPublic: e.isPublic,
+      url: `${siteUrl}/events/${e.id}`,
+    };
+    return {
+      ...e,
+      nextOccurrence,
+      googleUrl: buildGoogleCalendarUrl(icsInput, nextOccurrence),
+      outlookUrl: buildOutlookCalendarUrl(icsInput, nextOccurrence),
+    };
+  });
 
   const upcoming = enriched
     .filter((e) => e.nextOccurrence !== null)
@@ -136,6 +158,12 @@ export default async function MemberEventsPage() {
                           {rsvpByEvent.get(event.id) ? "Update RSVP" : "RSVP"}
                         </Link>
                       )}
+                      <AddToCalendarDropdown
+                        eventId={event.id}
+                        occurrence={dateKey(event.nextOccurrence!)}
+                        googleUrl={event.googleUrl}
+                        outlookUrl={event.outlookUrl}
+                      />
                     </div>
                   </div>
                   {event.isPublic && (

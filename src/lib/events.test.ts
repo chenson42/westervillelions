@@ -8,7 +8,15 @@ import {
   dateKey,
   easternOffsetFor,
   formatEventWhen,
+  buildIcsCalendar,
+  buildVEvent,
+  buildGoogleCalendarUrl,
+  buildOutlookCalendarUrl,
+  icsEscape,
+  icsFold,
+  toIcsFilename,
   type RecurringEvent,
+  type IcsEventInput,
 } from "./events";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -572,5 +580,639 @@ describe("DST boundary — wall-clock stability across spring-forward", () => {
     expect(dateKey(results[0])).toBe("2026-03-01");
     expect(dateKey(results[1])).toBe("2026-03-08");
     expect(dateKey(results[2])).toBe("2026-03-15");
+  });
+});
+
+// ── ICS generator ─────────────────────────────────────────────────────────────
+//
+// These tests are the primary guard against the wall-clock / naive-UTC bug
+// (DECISION-005, memory: project_naive_timestamp_tz_bug). Every test that
+// touches DTSTART must verify the local hour component is preserved, NOT
+// silently converted to UTC.
+
+const baseIcsEvent: IcsEventInput = {
+  id: "550e8400-e29b-41d4-a716-446655440000",
+  title: "Lions Club Monthly Meeting",
+  description: "Join us for our regular monthly meeting.",
+  location: "Westerville Community Center",
+  isAllDay: false,
+  startDate: "2026-07-04 12:30:00",
+  endDate: null,
+  isPublic: true,
+  url: "https://westervillelions.org/events/550e8400-e29b-41d4-a716-446655440000",
+};
+
+describe("icsEscape", () => {
+  it("escapes backslashes before other characters", () => {
+    expect(icsEscape("a\\b")).toBe("a\\\\b");
+  });
+
+  it("escapes semicolons", () => {
+    expect(icsEscape("a;b")).toBe("a\\;b");
+  });
+
+  it("escapes commas", () => {
+    expect(icsEscape("a,b")).toBe("a\\,b");
+  });
+
+  it("converts literal newlines to \\n escape sequences", () => {
+    expect(icsEscape("line1\nline2")).toBe("line1\\nline2");
+  });
+
+  it("escapes a string containing all four special characters", () => {
+    const input = "back\\slash;semi,comma\nnewline";
+    const result = icsEscape(input);
+    // Backslash is doubled; each special char gets a backslash prefix
+    expect(result).toBe("back\\\\slash\\;semi\\,comma\\nnewline");
+    // Must not contain unescaped semicolon, comma, or raw newline
+    expect(result).not.toMatch(/(?<!\\);/);
+    expect(result).not.toMatch(/(?<!\\),/);
+    expect(result).not.toContain("\n");
+  });
+});
+
+describe("icsFold", () => {
+  it("returns a short line unchanged (≤75 octets)", () => {
+    const line = "SUMMARY:Short title";
+    expect(icsFold(line)).toBe(line);
+  });
+
+  it("folds a line that exceeds 75 octets with CRLF + space continuation", () => {
+    // Construct a line that is exactly 80 ASCII characters
+    const line = "SUMMARY:" + "A".repeat(72); // "SUMMARY:" = 8 chars, total = 80
+    const folded = icsFold(line);
+    expect(folded).toContain("\r\n ");
+    // First segment must be exactly 75 bytes
+    const firstLine = folded.split("\r\n")[0];
+    expect(Buffer.byteLength(firstLine, "utf8")).toBe(75);
+  });
+
+  it("folds correctly on multibyte UTF-8 characters — must not split a multibyte sequence", () => {
+    // "é" is 2 bytes in UTF-8. Build a line long enough to need folding
+    // where the fold boundary would fall inside a 2-byte character if using char-length.
+    // "SUMMARY:" = 8 bytes. Fill with 33 ASCII chars (41 total), then 17 "é" chars = 34 bytes,
+    // total = 75 bytes — exactly at boundary. Next "é" starts at byte 76.
+    const prefix = "SUMMARY:" + "A".repeat(33); // 41 bytes
+    const accents = "é".repeat(20);              // 40 bytes → total 81 bytes
+    const line = prefix + accents;
+    const folded = icsFold(line);
+    // Must contain a fold
+    expect(folded).toContain("\r\n ");
+    // Reconstruct: remove CRLF+space continuations and verify round-trip
+    const reconstructed = folded.replace(/\r\n /g, "");
+    expect(reconstructed).toBe(line);
+  });
+
+  it("folds a very long description into multiple continuation lines", () => {
+    const longLine = "DESCRIPTION:" + "X".repeat(300);
+    const folded = icsFold(longLine);
+    const segments = folded.split("\r\n");
+    // First segment ≤ 75 bytes; each continuation starts with a space
+    expect(Buffer.byteLength(segments[0], "utf8")).toBeLessThanOrEqual(75);
+    for (const seg of segments.slice(1)) {
+      expect(seg.startsWith(" ")).toBe(true);
+      // Continuation body (excluding the leading space) ≤ 74 bytes
+      expect(Buffer.byteLength(seg.slice(1), "utf8")).toBeLessThanOrEqual(74);
+    }
+  });
+});
+
+describe("toIcsFilename", () => {
+  it("lowercases and replaces spaces with hyphens", () => {
+    expect(toIcsFilename("Lions Club Monthly Meeting")).toBe("lions-club-monthly-meeting.ics");
+  });
+
+  it("strips special characters and collapses runs to a single hyphen", () => {
+    expect(toIcsFilename("Summer Fun & BBQ!")).toBe("summer-fun-bbq.ics");
+  });
+
+  it("trims leading and trailing hyphens", () => {
+    expect(toIcsFilename("---Weird Title---")).toBe("weird-title.ics");
+  });
+
+  it("caps the base name at 60 characters", () => {
+    const long = "a".repeat(80);
+    const result = toIcsFilename(long);
+    // 60 chars + ".ics" = 64 chars total
+    expect(result.length).toBeLessThanOrEqual(64);
+    expect(result.endsWith(".ics")).toBe(true);
+  });
+});
+
+describe("buildVEvent — timed events (regression: wall-clock / naive-UTC bug)", () => {
+  it("emits DTSTART;TZID=America/New_York with wall-clock local time, NOT a UTC-shifted value", () => {
+    // This is the primary regression test for the naive-UTC bug.
+    // Event is at 12:30 PM Eastern. In EDT (UTC-4) that would be 16:30Z.
+    // The ICS output must show 12:30, never 16:30 or 08:30.
+    const occurrence = parseWallClock("2026-07-04 12:30:00"); // EDT (UTC-4)
+    const vevent = buildVEvent(baseIcsEvent, occurrence);
+
+    // Must contain TZID=America/New_York with the local time
+    expect(vevent).toContain("DTSTART;TZID=America/New_York:20260704T123000");
+    // Must NOT contain a UTC timestamp (trailing Z) for the start
+    expect(vevent).not.toMatch(/DTSTART[^:]*:20260704T163000Z/);
+    expect(vevent).not.toMatch(/DTSTART[^:]*:20260704T083000Z/);
+  });
+
+  it("emits DTSTART with wall-clock time in EST (UTC-5) during winter months", () => {
+    // January — standard time. If naive UTC were applied: 12:30 + 5h = 17:30Z.
+    const occurrence = parseWallClock("2026-01-15 12:30:00");
+    const vevent = buildVEvent(baseIcsEvent, occurrence);
+
+    expect(vevent).toContain("DTSTART;TZID=America/New_York:20260115T123000");
+    expect(vevent).not.toMatch(/DTSTART[^:]*:20260115T173000Z/);
+  });
+
+  it("derives DTEND as occurrence + 1 hour when endDate is null", () => {
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const vevent = buildVEvent(baseIcsEvent, occurrence);
+
+    expect(vevent).toContain("DTEND;TZID=America/New_York:20260704T133000");
+  });
+
+  it("uses endDate time component for DTEND when endDate is set", () => {
+    const eventWithEnd: IcsEventInput = {
+      ...baseIcsEvent,
+      endDate: "2026-07-04 15:00:00",
+    };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const vevent = buildVEvent(eventWithEnd, occurrence);
+
+    expect(vevent).toContain("DTEND;TZID=America/New_York:20260704T150000");
+  });
+
+  it("emits SUMMARY with the event title (escaped)", () => {
+    const vevent = buildVEvent(baseIcsEvent, parseWallClock("2026-07-04 12:30:00"));
+    expect(vevent).toContain("SUMMARY:Lions Club Monthly Meeting");
+  });
+
+  it("emits LOCATION when present (escaped)", () => {
+    const vevent = buildVEvent(baseIcsEvent, parseWallClock("2026-07-04 12:30:00"));
+    expect(vevent).toContain("LOCATION:Westerville Community Center");
+  });
+
+  it("omits LOCATION when null", () => {
+    const noLoc: IcsEventInput = { ...baseIcsEvent, location: null };
+    const vevent = buildVEvent(noLoc, parseWallClock("2026-07-04 12:30:00"));
+    expect(vevent).not.toContain("LOCATION:");
+  });
+
+  it("emits DESCRIPTION when present", () => {
+    const vevent = buildVEvent(baseIcsEvent, parseWallClock("2026-07-04 12:30:00"));
+    expect(vevent).toContain("DESCRIPTION:");
+  });
+
+  it("omits DESCRIPTION when null", () => {
+    const noDesc: IcsEventInput = { ...baseIcsEvent, description: null };
+    const vevent = buildVEvent(noDesc, parseWallClock("2026-07-04 12:30:00"));
+    expect(vevent).not.toContain("DESCRIPTION:");
+  });
+
+  it("emits stable UID based on eventId and occurrence date — same input = same UID", () => {
+    const occ1 = parseWallClock("2026-07-04 12:30:00");
+    const occ2 = parseWallClock("2026-07-04 12:30:00");
+    const uid1 = buildVEvent(baseIcsEvent, occ1).match(/^UID:(.+)$/m)?.[1];
+    const uid2 = buildVEvent(baseIcsEvent, occ2).match(/^UID:(.+)$/m)?.[1];
+    expect(uid1).toBe(uid2);
+    expect(uid1).toContain("event-550e8400-e29b-41d4-a716-446655440000-20260704");
+    expect(uid1).toContain("@westervillelions.org");
+  });
+
+  it("emits different UIDs for different occurrence dates — UID encodes the date", () => {
+    const occ1 = parseWallClock("2026-07-04 12:30:00");
+    const occ2 = parseWallClock("2026-07-11 12:30:00");
+    const uid1 = buildVEvent(baseIcsEvent, occ1).match(/^UID:(.+)$/m)?.[1];
+    const uid2 = buildVEvent(baseIcsEvent, occ2).match(/^UID:(.+)$/m)?.[1];
+    expect(uid1).not.toBe(uid2);
+  });
+
+  it("emits BEGIN:VEVENT and END:VEVENT", () => {
+    const vevent = buildVEvent(baseIcsEvent, parseWallClock("2026-07-04 12:30:00"));
+    expect(vevent).toContain("BEGIN:VEVENT");
+    expect(vevent).toContain("END:VEVENT");
+  });
+
+  it("emits DTSTAMP in UTC format (ends with Z)", () => {
+    const vevent = buildVEvent(baseIcsEvent, parseWallClock("2026-07-04 12:30:00"));
+    expect(vevent).toMatch(/DTSTAMP:\d{8}T\d{6}Z/);
+  });
+});
+
+describe("buildVEvent — all-day events (C2)", () => {
+  const allDayEvent: IcsEventInput = {
+    ...baseIcsEvent,
+    isAllDay: true,
+    startDate: "2026-07-04 00:00:00",
+    endDate: null,
+  };
+
+  it("emits DTSTART;VALUE=DATE:YYYYMMDD (no time, no TZID) for all-day events", () => {
+    const occurrence = parseWallClock("2026-07-04 00:00:00");
+    const vevent = buildVEvent(allDayEvent, occurrence);
+
+    expect(vevent).toContain("DTSTART;VALUE=DATE:20260704");
+    // Must NOT contain TZID on DTSTART for all-day
+    expect(vevent).not.toMatch(/DTSTART;TZID=/);
+    // Must NOT contain a time component
+    expect(vevent).not.toMatch(/DTSTART[^:]*:20260704T/);
+  });
+
+  it("emits DTEND;VALUE=DATE as start + 1 day for all-day events", () => {
+    const occurrence = parseWallClock("2026-07-04 00:00:00");
+    const vevent = buildVEvent(allDayEvent, occurrence);
+
+    expect(vevent).toContain("DTEND;VALUE=DATE:20260705");
+  });
+});
+
+describe("buildIcsCalendar", () => {
+  it("wraps VEVENTs in a valid VCALENDAR envelope", () => {
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const vevent = buildVEvent(baseIcsEvent, occurrence);
+    const ics = buildIcsCalendar([vevent]);
+
+    expect(ics).toMatch(/^BEGIN:VCALENDAR\r\n/);
+    expect(ics).toContain("VERSION:2.0");
+    expect(ics).toContain("PRODID:");
+    expect(ics).toContain("BEGIN:VEVENT");
+    expect(ics).toMatch(/END:VCALENDAR\r\n$/);
+  });
+
+  it("includes VTIMEZONE block for America/New_York exactly once", () => {
+    const occ1 = parseWallClock("2026-07-04 12:30:00");
+    const occ2 = parseWallClock("2026-07-11 12:30:00");
+    const vevents = [
+      buildVEvent(baseIcsEvent, occ1),
+      buildVEvent(baseIcsEvent, occ2),
+    ];
+    const ics = buildIcsCalendar(vevents);
+
+    // VTIMEZONE block must appear exactly once
+    const vtimezoneCount = (ics.match(/BEGIN:VTIMEZONE/g) ?? []).length;
+    expect(vtimezoneCount).toBe(1);
+    expect(ics).toContain("TZID:America/New_York");
+  });
+
+  it("produces a valid empty VCALENDAR (no VEVENTs) for C6 zero-occurrence case", () => {
+    const ics = buildIcsCalendar([]);
+
+    expect(ics).toMatch(/^BEGIN:VCALENDAR\r\n/);
+    expect(ics).toMatch(/END:VCALENDAR\r\n$/);
+    expect(ics).not.toContain("BEGIN:VEVENT");
+  });
+
+  it("uses CRLF line endings throughout the output", () => {
+    const vevent = buildVEvent(baseIcsEvent, parseWallClock("2026-07-04 12:30:00"));
+    const ics = buildIcsCalendar([vevent]);
+
+    // Every line break must be CRLF, never bare LF
+    // Split on CRLF and verify no remaining bare LF
+    const withoutCrLf = ics.replace(/\r\n/g, "");
+    expect(withoutCrLf).not.toContain("\n");
+    expect(withoutCrLf).not.toContain("\r");
+  });
+
+  it("includes multiple VEVENTs in a series download", () => {
+    const occ1 = parseWallClock("2026-07-04 12:30:00");
+    const occ2 = parseWallClock("2026-07-11 12:30:00");
+    const occ3 = parseWallClock("2026-07-18 12:30:00");
+    const vevents = [
+      buildVEvent(baseIcsEvent, occ1),
+      buildVEvent(baseIcsEvent, occ2),
+      buildVEvent(baseIcsEvent, occ3),
+    ];
+    const ics = buildIcsCalendar(vevents);
+
+    const veventCount = (ics.match(/BEGIN:VEVENT/g) ?? []).length;
+    expect(veventCount).toBe(3);
+  });
+
+  it("per-occurrence UID matches the corresponding series-download UID (UID stability across download types)", () => {
+    // A user who imports a single-occurrence download and then re-imports the
+    // series download should get an update, not a duplicate. UIDs must match.
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const singleVevent = buildVEvent(baseIcsEvent, occurrence);
+    const seriesVevents = [
+      buildVEvent(baseIcsEvent, occurrence),
+      buildVEvent(baseIcsEvent, parseWallClock("2026-07-11 12:30:00")),
+    ];
+
+    const singleUid = singleVevent.match(/^UID:(.+)$/m)?.[1];
+    const seriesUid = buildIcsCalendar(seriesVevents).match(/^UID:(.+)$/m)?.[1];
+
+    expect(singleUid).toBe(seriesUid);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildGoogleCalendarUrl
+// ─────────────────────────────────────────────────────────────────────────────
+
+const baseCalendarEvent: IcsEventInput = {
+  id: "550e8400-e29b-41d4-a716-446655440000",
+  title: "Lions Club Monthly Meeting",
+  description: "Join us for our regular monthly meeting.",
+  location: "Westerville Community Center",
+  isAllDay: false,
+  startDate: "2026-07-04 12:30:00",
+  endDate: "2026-07-04 13:30:00",
+  isPublic: true,
+  url: "https://westervillelions.org/events/550e8400-e29b-41d4-a716-446655440000",
+};
+
+describe("buildGoogleCalendarUrl — timed events (regression: wall-clock / naive-UTC bug)", () => {
+  it("EDT event (UTC-4): encodes correct UTC time and the naive-UTC value is absent", () => {
+    // July 4 at 12:30 PM EDT = UTC-4 → 16:30 UTC
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildGoogleCalendarUrl(baseCalendarEvent, occurrence);
+
+    // Decode the dates param to check the plain value
+    const datesMatch = url.match(/dates=([^&]+)/);
+    expect(datesMatch).not.toBeNull();
+    const datesDecoded = decodeURIComponent(datesMatch![1]);
+
+    // Correct UTC start: 12:30 EDT = 16:30 UTC
+    expect(datesDecoded).toContain("20260704T163000Z");
+    // Naive UTC (treating wall-clock as UTC) must NOT appear — regression guard
+    expect(datesDecoded).not.toContain("20260704T123000Z");
+    // Correct UTC end (13:30 EDT = 17:30 UTC)
+    expect(datesDecoded).toContain("20260704T173000Z");
+  });
+
+  it("EST event (UTC-5): encodes correct UTC time and the naive-UTC value is absent", () => {
+    // January 15 at 12:30 PM EST = UTC-5 → 17:30 UTC
+    const occurrence = parseWallClock("2026-01-15 12:30:00");
+    const url = buildGoogleCalendarUrl(baseCalendarEvent, occurrence);
+
+    const datesMatch = url.match(/dates=([^&]+)/);
+    const datesDecoded = decodeURIComponent(datesMatch![1]);
+
+    // Correct UTC start: 12:30 EST = 17:30 UTC
+    expect(datesDecoded).toContain("20260115T173000Z");
+    // Naive UTC must NOT appear — regression guard
+    expect(datesDecoded).not.toContain("20260115T123000Z");
+  });
+
+  it("uses the correct Google Calendar base URL and action=TEMPLATE", () => {
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildGoogleCalendarUrl(baseCalendarEvent, occurrence);
+
+    expect(url).toContain("https://calendar.google.com/calendar/render");
+    expect(url).toContain("action=TEMPLATE");
+  });
+
+  it("URL-encodes text values — ampersand in title does not break URL param parsing", () => {
+    const event = { ...baseCalendarEvent, title: "Lions & Club Event" };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildGoogleCalendarUrl(event, occurrence);
+
+    // The raw & must NOT appear unencoded in the title param (would break URL parsing)
+    // URLSearchParams encodes & as %26
+    expect(url).toContain("%26");
+    // Round-trip: decoded URL should recover the original title
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    expect(decoded).toContain("Lions & Club Event");
+  });
+
+  it("encodes title with spaces", () => {
+    const event = { ...baseCalendarEvent, title: "Hello World" };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildGoogleCalendarUrl(event, occurrence);
+
+    // URLSearchParams encodes spaces as + in query strings
+    // The title should appear encoded (either %20 or +) not as raw space
+    expect(url).not.toContain("Hello World");
+    // Decoded, the title should be recoverable
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    expect(decoded).toContain("Hello World");
+  });
+
+  it("omits details param when description is null", () => {
+    const event = { ...baseCalendarEvent, description: null };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildGoogleCalendarUrl(event, occurrence);
+
+    expect(url).not.toContain("details=");
+    expect(url).not.toContain("details=null");
+  });
+
+  it("omits location param when location is null", () => {
+    const event = { ...baseCalendarEvent, location: null };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildGoogleCalendarUrl(event, occurrence);
+
+    expect(url).not.toContain("location=");
+    expect(url).not.toContain("location=null");
+  });
+
+  it("truncates description at 1000 chars and appends footer when truncated", () => {
+    // Use a character unlikely to appear elsewhere in the URL
+    const longDesc = "X".repeat(1500);
+    const event = { ...baseCalendarEvent, description: longDesc };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildGoogleCalendarUrl(event, occurrence);
+
+    // Decode the URL to check the plain text content
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    // Footer must be present
+    expect(decoded).toContain("See the full event details at:");
+    // Characters at position 1001+ of the original description must not appear
+    const xCount = (decoded.match(/X/g) ?? []).length;
+    // Truncated at 1000 → no more than 1000 X's in decoded URL
+    expect(xCount).toBeLessThanOrEqual(1000);
+  });
+
+  it("appends footer even for short descriptions", () => {
+    const event = { ...baseCalendarEvent, description: "Short desc." };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildGoogleCalendarUrl(event, occurrence);
+
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    expect(decoded).toContain("See the full event details at:");
+    expect(decoded).toContain("westervillelions.org/events/");
+  });
+});
+
+describe("buildGoogleCalendarUrl — all-day events", () => {
+  const allDayEvent: IcsEventInput = {
+    ...baseCalendarEvent,
+    isAllDay: true,
+    startDate: "2026-07-04 00:00:00",
+    endDate: null,
+  };
+
+  it("single-day all-day: uses YYYYMMDD/YYYYMMDD format with end = start + 1 day", () => {
+    const occurrence = parseWallClock("2026-07-04 00:00:00");
+    const url = buildGoogleCalendarUrl(allDayEvent, occurrence);
+
+    expect(url).toContain("20260704%2F20260705");
+    // Must not contain T or Z in the dates portion
+    const datesMatch = url.match(/dates=([^&]+)/);
+    expect(datesMatch).not.toBeNull();
+    const datesDecoded = decodeURIComponent(datesMatch![1]);
+    expect(datesDecoded).toBe("20260704/20260705");
+    expect(datesDecoded).not.toContain("T");
+    expect(datesDecoded).not.toContain("Z");
+  });
+
+  it("multi-day all-day: end date = endDate + 1 day (exclusive end for Google)", () => {
+    const multiDayEvent: IcsEventInput = {
+      ...allDayEvent,
+      startDate: "2026-07-04 00:00:00",
+      endDate: "2026-07-06 00:00:00", // inclusive last day = July 6
+    };
+    const occurrence = parseWallClock("2026-07-04 00:00:00");
+    const url = buildGoogleCalendarUrl(multiDayEvent, occurrence);
+
+    const datesMatch = url.match(/dates=([^&]+)/);
+    const datesDecoded = decodeURIComponent(datesMatch![1]);
+    // Google requires exclusive end: July 6 + 1 = July 7
+    expect(datesDecoded).toBe("20260704/20260707");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildOutlookCalendarUrl
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("buildOutlookCalendarUrl — timed events (regression: wall-clock / naive-UTC bug)", () => {
+  it("EDT event (UTC-4): encodes correct UTC time and the naive-UTC value is absent", () => {
+    // July 4 at 12:30 PM EDT = UTC-4 → 16:30 UTC
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildOutlookCalendarUrl(baseCalendarEvent, occurrence);
+
+    // Decode startdt and enddt params to check the plain values
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    const startdtMatch = decoded.match(/startdt=([^&]+)/);
+    const enddtMatch = decoded.match(/enddt=([^&]+)/);
+    expect(startdtMatch).not.toBeNull();
+    expect(enddtMatch).not.toBeNull();
+
+    // Correct UTC start: 12:30 EDT = 16:30 UTC
+    expect(startdtMatch![1]).toBe("2026-07-04T16:30:00Z");
+    // Naive UTC (treating wall-clock as UTC) must NOT appear — regression guard
+    expect(startdtMatch![1]).not.toBe("2026-07-04T12:30:00Z");
+    // Correct UTC end: 13:30 EDT = 17:30 UTC
+    expect(enddtMatch![1]).toBe("2026-07-04T17:30:00Z");
+  });
+
+  it("EST event (UTC-5): encodes correct UTC time and the naive-UTC value is absent", () => {
+    // January 15 at 12:30 PM EST = UTC-5 → 17:30 UTC
+    const occurrence = parseWallClock("2026-01-15 12:30:00");
+    const url = buildOutlookCalendarUrl(baseCalendarEvent, occurrence);
+
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    const startdtMatch = decoded.match(/startdt=([^&]+)/);
+    expect(startdtMatch).not.toBeNull();
+
+    // Correct UTC start: 12:30 EST = 17:30 UTC
+    expect(startdtMatch![1]).toBe("2026-01-15T17:30:00Z");
+    // Naive UTC must NOT appear — regression guard
+    expect(startdtMatch![1]).not.toBe("2026-01-15T12:30:00Z");
+  });
+
+  it("uses the correct Outlook.com base URL", () => {
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildOutlookCalendarUrl(baseCalendarEvent, occurrence);
+
+    expect(url).toContain("https://outlook.live.com/calendar/0/deeplink/compose");
+  });
+
+  it("URL-encodes text values — ampersand in title appears encoded", () => {
+    const event = { ...baseCalendarEvent, title: "Lions & Club Event" };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildOutlookCalendarUrl(event, occurrence);
+
+    expect(url).toContain("%26");
+  });
+
+  it("encodes title with spaces", () => {
+    const event = { ...baseCalendarEvent, title: "Hello World" };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildOutlookCalendarUrl(event, occurrence);
+
+    // URLSearchParams encodes spaces as + — raw space must not appear
+    expect(url).not.toContain("Hello World");
+    // Decoded, the title should be recoverable
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    expect(decoded).toContain("Hello World");
+  });
+
+  it("omits body param when description is null", () => {
+    const event = { ...baseCalendarEvent, description: null };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildOutlookCalendarUrl(event, occurrence);
+
+    expect(url).not.toContain("body=");
+    expect(url).not.toContain("body=null");
+  });
+
+  it("omits location param when location is null", () => {
+    const event = { ...baseCalendarEvent, location: null };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildOutlookCalendarUrl(event, occurrence);
+
+    expect(url).not.toContain("location=");
+    expect(url).not.toContain("location=null");
+  });
+
+  it("truncates description at 1000 chars and appends footer when truncated", () => {
+    const longDesc = "B".repeat(1500);
+    const event = { ...baseCalendarEvent, description: longDesc };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildOutlookCalendarUrl(event, occurrence);
+
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    expect(decoded).toContain("See the full event details at:");
+    const bCount = (decoded.match(/B/g) ?? []).length;
+    expect(bCount).toBeLessThanOrEqual(1000);
+  });
+
+  it("appends footer even for short descriptions", () => {
+    const event = { ...baseCalendarEvent, description: "Short desc." };
+    const occurrence = parseWallClock("2026-07-04 12:30:00");
+    const url = buildOutlookCalendarUrl(event, occurrence);
+
+    const decoded = decodeURIComponent(url.replace(/\+/g, " "));
+    expect(decoded).toContain("See the full event details at:");
+    expect(decoded).toContain("westervillelions.org/events/");
+  });
+});
+
+describe("buildOutlookCalendarUrl — all-day events", () => {
+  const allDayEvent: IcsEventInput = {
+    ...baseCalendarEvent,
+    isAllDay: true,
+    startDate: "2026-07-04 00:00:00",
+    endDate: null,
+  };
+
+  it("single-day all-day: uses date-only startdt=enddt format with allday=true", () => {
+    const occurrence = parseWallClock("2026-07-04 00:00:00");
+    const url = buildOutlookCalendarUrl(allDayEvent, occurrence);
+
+    const decoded = decodeURIComponent(url);
+    expect(decoded).toContain("startdt=2026-07-04");
+    expect(decoded).toContain("enddt=2026-07-04");
+    expect(decoded).toContain("allday=true");
+    // Must not contain T or Z in the date portion
+    const startdtMatch = decoded.match(/startdt=([^&]+)/);
+    expect(startdtMatch![1]).not.toContain("T");
+    expect(startdtMatch![1]).not.toContain("Z");
+  });
+
+  it("multi-day all-day: end date = endDate as stored (inclusive end for Outlook)", () => {
+    const multiDayEvent: IcsEventInput = {
+      ...allDayEvent,
+      startDate: "2026-07-04 00:00:00",
+      endDate: "2026-07-06 00:00:00", // inclusive last day = July 6
+    };
+    const occurrence = parseWallClock("2026-07-04 00:00:00");
+    const url = buildOutlookCalendarUrl(multiDayEvent, occurrence);
+
+    const decoded = decodeURIComponent(url);
+    // Outlook uses inclusive end — endDate as stored, NOT +1 day
+    expect(decoded).toContain("enddt=2026-07-06");
+    expect(decoded).toContain("allday=true");
   });
 });

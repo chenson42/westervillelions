@@ -6,7 +6,8 @@ import { db } from "@/lib/db";
 import { events, eventRsvps, users, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { format } from "date-fns";
-import { formatRecurrence, generateOccurrences, parseWallClock, dateKey, easternOffsetFor, formatEventWhen } from "@/lib/events";
+import { formatRecurrence, generateOccurrences, parseWallClock, dateKey, easternOffsetFor, formatEventWhen, getNextOccurrence, buildGoogleCalendarUrl, buildOutlookCalendarUrl, type IcsEventInput } from "@/lib/events";
+import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 import MarkdownContent from "@/components/markdown-content";
 import { auth } from "@/lib/auth";
 import { PublicRsvpForm } from "@/components/public/public-rsvp-form";
@@ -110,6 +111,20 @@ export default async function EventDetailPage({ params }: Props) {
       const now = new Date();
       const occurrenceDates = generateOccurrences(event, now);
 
+      // Build IcsEventInput for per-occurrence URL generation
+      const siteUrl = process.env.NEXTAUTH_URL ?? "https://westervillelions.org";
+      const icsInputForOccurrences: IcsEventInput = {
+        id: event.id,
+        title: event.title,
+        description: event.description,
+        location: event.location,
+        isAllDay: event.isAllDay,
+        startDate: event.startDate,
+        endDate: event.endDate,
+        isPublic: event.isPublic,
+        url: `${siteUrl}/events/${event.id}`,
+      };
+
       occurrenceRows = occurrenceDates.map((d) => {
         // Key must match what was stored in eventRsvps.occurrenceDate (wall-clock string).
         // format(d, "yyyy-MM-dd HH:mm:ss") produces the same format Postgres returns.
@@ -121,6 +136,7 @@ export default async function EventDetailPage({ params }: Props) {
         const isAllDay = event.isAllDay;
         return {
           date: d.toISOString(), // ISO string passed to client for RSVP round-trip
+          dateKey: occKey,       // local YYYY-MM-DD for ICS occurrence param
           displayDate: isAllDay ? format(d, "EEE, MMM d") : format(d, "EEE, MMM d 'at' h:mm a"),
           signedUpCount: count,
           isSignedUp: userSignupDates.has(key),
@@ -129,6 +145,9 @@ export default async function EventDetailPage({ params }: Props) {
           signees: signeesByDate.get(key) ?? [],
           isCancelled: cancelled !== undefined,
           cancellationReason: cancelled?.reason ?? null,
+          // Pre-built provider URLs for AddToCalendarDropdown
+          googleUrl: buildGoogleCalendarUrl(icsInputForOccurrences, d),
+          outlookUrl: buildOutlookCalendarUrl(icsInputForOccurrences, d),
         };
       });
     }
@@ -141,6 +160,47 @@ export default async function EventDetailPage({ params }: Props) {
           where: and(eq(eventRsvps.eventId, id), eq(eventRsvps.userId, session.user.id)),
         })
       : undefined;
+
+  // ── Add to Calendar URL builders ──────────────────────────────────────────
+  // See: docs/work-log/2026-05-20-add-to-calendar-dropdown.md (Phase 3, §4)
+  const siteUrl = process.env.NEXTAUTH_URL ?? "https://westervillelions.org";
+  const icsInput: IcsEventInput = {
+    id: event.id,
+    title: event.title,
+    description: event.description,
+    location: event.location,
+    isAllDay: event.isAllDay,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    isPublic: event.isPublic,
+    url: `${siteUrl}/events/${event.id}`,
+  };
+
+  let calendarGoogleUrl: string | null = null;
+  let calendarOutlookUrl: string | null = null;
+
+  if (event.isRecurring) {
+    // Series-level button: target the next upcoming occurrence.
+    // Fetch cancellation overrides once — needed to determine which occurrences are active.
+    const overridesForSeries = await db
+      .select({ occurrenceDate: eventOccurrenceOverrides.occurrenceDate })
+      .from(eventOccurrenceOverrides)
+      .where(eq(eventOccurrenceOverrides.eventId, id));
+
+    const cancelledSetForSeries = new Set(overridesForSeries.map((o) => o.occurrenceDate));
+    const nextOccurrenceDate = getNextOccurrence(event, new Date(), cancelledSetForSeries);
+
+    if (nextOccurrenceDate !== null) {
+      calendarGoogleUrl = buildGoogleCalendarUrl(icsInput, nextOccurrenceDate);
+      calendarOutlookUrl = buildOutlookCalendarUrl(icsInput, nextOccurrenceDate);
+    }
+    // else: both remain null → dropdown items will be disabled (D12)
+  } else {
+    // Non-recurring: build directly from startDate
+    const startOccurrence = parseWallClock(event.startDate);
+    calendarGoogleUrl = buildGoogleCalendarUrl(icsInput, startOccurrence);
+    calendarOutlookUrl = buildOutlookCalendarUrl(icsInput, startOccurrence);
+  }
 
   // JSON-LD startDate: date-only for all-day; DST-aware Eastern offset for timed events.
   // See resolved Open Question 1 in Phase 1 work-log and DECISION-006.
@@ -245,6 +305,7 @@ export default async function EventDetailPage({ params }: Props) {
                 extraQuestionType={event.extraQuestionType}
                 extraQuestionOptions={event.extraQuestionOptions ?? []}
                 extraQuestionRequired={event.extraQuestionRequired}
+                showCalendarButtons
               />
             ) : (
               <>
@@ -288,6 +349,23 @@ export default async function EventDetailPage({ params }: Props) {
           >
             &larr; Back to Events
           </Link>
+          {/* C8: series button for recurring events; single button for non-recurring */}
+          {event.isRecurring ? (
+            <AddToCalendarDropdown
+              eventId={event.id}
+              label="Add full series to Calendar"
+              googleUrl={calendarGoogleUrl}
+              outlookUrl={calendarOutlookUrl}
+              isSeriesLevel
+            />
+          ) : (
+            <AddToCalendarDropdown
+              eventId={event.id}
+              occurrence={dateKey(parseWallClock(event.startDate))}
+              googleUrl={calendarGoogleUrl}
+              outlookUrl={calendarOutlookUrl}
+            />
+          )}
           <Link
             href="/join"
             className="bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition"
