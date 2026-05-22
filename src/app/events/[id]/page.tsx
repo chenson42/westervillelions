@@ -75,6 +75,7 @@ export default async function EventDetailPage({ params }: Props) {
           status: eventRsvps.status,
           guestCount: eventRsvps.guestCount,
           userName: users.name,
+          rsvpName: eventRsvps.rsvpName,
         })
         .from(eventRsvps)
         .leftJoin(users, eq(eventRsvps.userId, users.id))
@@ -100,9 +101,10 @@ export default async function EventDetailPage({ params }: Props) {
       const attendeeTotal = 1 + (r.guestCount ?? 0);
       signupsByDate.set(key, (signupsByDate.get(key) ?? 0) + attendeeTotal);
       if (r.userId === session?.user?.id) userSignupDates.add(key);
-      if (r.userName) {
+      const displayName = r.userName ?? r.rsvpName;
+      if (displayName) {
         const names = signeesByDate.get(key) ?? [];
-        names.push(r.userName);
+        names.push(displayName);
         signeesByDate.set(key, names);
       }
     }
