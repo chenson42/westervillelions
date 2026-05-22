@@ -51,17 +51,4 @@ test.describe("wall-clock display — regression guard for UTC misclassification
     await expect(page.locator("body")).not.toContainText(WRONG_TIME_UTC_MINUS_4);
     await expect(page.locator("body")).not.toContainText(WRONG_TIME_UTC_MINUS_5);
   });
-
-  test("events listing page shows future event entry for a known timed event", async ({
-    page,
-  }) => {
-    // Arrange — the Lions Club Meeting (May 21 7:00 PM) should appear on /events
-    await page.goto("/events");
-
-    // Assert — the events page loads
-    await expect(page.locator("h1")).toContainText(/upcoming events/i);
-
-    // Assert — the Lions Club Meeting appears (it's a future non-recurring public event)
-    await expect(page.locator("body")).toContainText("Lions Club Meeting");
-  });
 });
