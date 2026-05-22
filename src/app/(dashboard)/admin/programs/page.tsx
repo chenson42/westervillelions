@@ -1,11 +1,12 @@
 import { db } from "@/lib/db";
-import { glassesDropoffLocations } from "@/lib/db/schema";
+import { glassesDropoffLocations, plasticDropoffLocations } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { asc } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import LocationsManager from "./locations-manager";
+import PlasticLocationsManager from "./plastic-locations-manager";
 
 export default async function AdminProgramsPage() {
   const session = await auth();
@@ -14,10 +15,22 @@ export default async function AdminProgramsPage() {
   const canManage = await hasFeature(session.user.id, FEATURES.ANNOUNCEMENTS_MANAGE);
   if (!canManage) redirect("/admin");
 
-  const locations = await db
-    .select()
-    .from(glassesDropoffLocations)
-    .orderBy(asc(glassesDropoffLocations.sortOrder), asc(glassesDropoffLocations.createdAt));
+  const [glassesLocations, plasticLocations] = await Promise.all([
+    db
+      .select()
+      .from(glassesDropoffLocations)
+      .orderBy(asc(glassesDropoffLocations.sortOrder), asc(glassesDropoffLocations.createdAt)),
+    db
+      .select()
+      .from(plasticDropoffLocations)
+      .orderBy(asc(plasticDropoffLocations.sortOrder), asc(plasticDropoffLocations.createdAt)),
+  ]);
 
-  return <LocationsManager initialLocations={locations} />;
+  return (
+    <div className="space-y-12">
+      <LocationsManager initialLocations={glassesLocations} />
+      <hr className="border-gray-200" />
+      <PlasticLocationsManager initialLocations={plasticLocations} />
+    </div>
+  );
 }

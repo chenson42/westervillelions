@@ -393,6 +393,23 @@ export const glassesDropoffLocations = pgTable("glasses_dropoff_locations", {
 export type GlassesDropoffLocation = typeof glassesDropoffLocations.$inferSelect;
 export type NewGlassesDropoffLocation = typeof glassesDropoffLocations.$inferInsert;
 
+// Plastic film drop-off locations (configurable by admin)
+export const plasticDropoffLocations = pgTable("plastic_dropoff_locations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  address: text("address").notNull(),
+  phone: text("phone"),
+  entryInstructions: text("entry_instructions"),
+  hours: text("hours"),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type PlasticDropoffLocation = typeof plasticDropoffLocations.$inferSelect;
+export type NewPlasticDropoffLocation = typeof plasticDropoffLocations.$inferInsert;
+
 // Per-occurrence cancellation overrides for recurring events
 export const eventOccurrenceOverrides = pgTable(
   "event_occurrence_overrides",

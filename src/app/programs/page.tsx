@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { glassesDropoffLocations } from "@/lib/db/schema";
+import { glassesDropoffLocations, plasticDropoffLocations } from "@/lib/db/schema";
 import { asc, eq } from "drizzle-orm";
 
 export const revalidate = 3600;
@@ -33,12 +33,38 @@ const breadcrumb = {
   ],
 };
 
+function MapsLink({ address }: { address: string }) {
+  const href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Open ${address} in Google Maps`}
+      title="Open in Google Maps"
+      className="inline-flex items-center align-middle ml-1 text-lions-blue hover:text-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+    >
+      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.244-4.243a8 8 0 1111.314 0z" />
+        <circle cx="12" cy="11" r="3" />
+      </svg>
+    </a>
+  );
+}
+
 export default async function ProgramsPage() {
-  const dropoffLocations = await db
-    .select()
-    .from(glassesDropoffLocations)
-    .where(eq(glassesDropoffLocations.isActive, true))
-    .orderBy(asc(glassesDropoffLocations.sortOrder), asc(glassesDropoffLocations.name));
+  const [dropoffLocations, plasticLocations] = await Promise.all([
+    db
+      .select()
+      .from(glassesDropoffLocations)
+      .where(eq(glassesDropoffLocations.isActive, true))
+      .orderBy(asc(glassesDropoffLocations.sortOrder), asc(glassesDropoffLocations.name)),
+    db
+      .select()
+      .from(plasticDropoffLocations)
+      .where(eq(plasticDropoffLocations.isActive, true))
+      .orderBy(asc(plasticDropoffLocations.sortOrder), asc(plasticDropoffLocations.name)),
+  ]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -104,6 +130,44 @@ export default async function ProgramsPage() {
                   in need around the world.
                 </p>
 
+                <div className="bg-blue-50 border border-lions-blue/20 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Drop-off Locations</h3>
+                  {dropoffLocations.length === 0 ? (
+                    <p className="text-sm text-gray-600">
+                      Locations coming soon &mdash; check back shortly or{" "}
+                      <Link
+                        href="/connect"
+                        className="text-lions-blue font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                      >
+                        contact us
+                      </Link>{" "}
+                      for details.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {dropoffLocations.map((loc) => (
+                        <li key={loc.id} className="text-sm">
+                          <span className="font-medium text-gray-900">{loc.name}</span>
+                          <span className="text-gray-500"> &mdash; {loc.address}</span>
+                          <MapsLink address={loc.address} />
+                          {loc.phone && (
+                            <>
+                              {" "}
+                              &middot;{" "}
+                              <a
+                                href={`tel:${loc.phone.replace(/[^0-9+]/g, "")}`}
+                                className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                              >
+                                {loc.phone}
+                              </a>
+                            </>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
                 <div>
                   <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3">
                     What we accept
@@ -162,42 +226,6 @@ export default async function ProgramsPage() {
                   </ul>
                 </div>
 
-                <div className="mt-auto bg-blue-50 border border-lions-blue/20 rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Drop-off Locations</h3>
-                  {dropoffLocations.length === 0 ? (
-                    <p className="text-sm text-gray-600">
-                      Locations coming soon &mdash; check back shortly or{" "}
-                      <Link
-                        href="/connect"
-                        className="text-lions-blue font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
-                      >
-                        contact us
-                      </Link>{" "}
-                      for details.
-                    </p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {dropoffLocations.map((loc) => (
-                        <li key={loc.id} className="text-sm">
-                          <span className="font-medium text-gray-900">{loc.name}</span>
-                          <span className="text-gray-500"> &mdash; {loc.address}</span>
-                          {loc.phone && (
-                            <>
-                              {" "}
-                              &middot;{" "}
-                              <a
-                                href={`tel:${loc.phone.replace(/[^0-9+]/g, "")}`}
-                                className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
-                              >
-                                {loc.phone}
-                              </a>
-                            </>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
               </div>
             </article>
 
@@ -229,11 +257,54 @@ export default async function ProgramsPage() {
               <div className="px-8 pb-8 flex flex-col flex-1 gap-6">
                 <p className="text-gray-700 leading-relaxed">
                   Most curbside recycling programs do not accept plastic film &mdash; it jams sorting
-                  equipment and ends up in landfills. The club has partnered with{" "}
-                  <strong className="text-gray-900">Pure Roots</strong>, a local boutique in
-                  Westerville, to host a dedicated plastic film drop-off bin. Enter through the{" "}
-                  <strong className="text-gray-900">back door</strong> when dropping off.
+                  equipment and ends up in landfills. The club partners with local businesses to host
+                  dedicated plastic film drop-off bins so Westerville neighbors can recycle soft
+                  plastics with ease.
                 </p>
+
+                <div className="bg-blue-50 border border-lions-blue/20 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Drop-off Locations</h3>
+                  {plasticLocations.length === 0 ? (
+                    <p className="text-sm text-gray-600">
+                      Locations coming soon &mdash; check back shortly or{" "}
+                      <Link
+                        href="/connect"
+                        className="text-lions-blue font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                      >
+                        contact us
+                      </Link>{" "}
+                      for details.
+                    </p>
+                  ) : (
+                    <ul className="space-y-3">
+                      {plasticLocations.map((loc) => (
+                        <li key={loc.id} className="text-sm">
+                          <span className="font-medium text-gray-900">{loc.name}</span>
+                          <span className="text-gray-500"> &mdash; {loc.address}</span>
+                          <MapsLink address={loc.address} />
+                          {loc.phone && (
+                            <>
+                              {" "}
+                              &middot;{" "}
+                              <a
+                                href={`tel:${loc.phone.replace(/[^0-9+]/g, "")}`}
+                                className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                              >
+                                {loc.phone}
+                              </a>
+                            </>
+                          )}
+                          {loc.entryInstructions && (
+                            <p className="text-gray-500 mt-0.5">{loc.entryInstructions}</p>
+                          )}
+                          {loc.hours && (
+                            <p className="text-gray-500 mt-0.5">{loc.hours}</p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
 
                 <div>
                   <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3">
@@ -297,33 +368,6 @@ export default async function ProgramsPage() {
                   </ul>
                 </div>
 
-                <div className="bg-blue-50 border border-lions-blue/20 rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-1">Drop-off Location</h3>
-                  <p className="text-sm text-gray-600">
-                    <a
-                      href="https://www.purerootsboutique.com/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-lions-blue font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
-                    >
-                      Pure Roots
-                    </a>
-                    {" "}boutique, Westerville, OH &mdash; enter through the{" "}
-                    <strong className="text-gray-900">back door</strong>.
-                  </p>
-                  <div className="mt-3 rounded-lg overflow-hidden border border-lions-blue/10">
-                    <iframe
-                      title="Pure Roots drop-off location"
-                      src="https://maps.google.com/maps?q=Pure+Roots+Westerville+OH&output=embed&z=15"
-                      width="100%"
-                      height="200"
-                      style={{ border: 0 }}
-                      allowFullScreen
-                      loading="lazy"
-                      referrerPolicy="no-referrer-when-downgrade"
-                    />
-                  </div>
-                </div>
               </div>
             </article>
           </div>
