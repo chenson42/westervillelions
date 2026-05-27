@@ -114,7 +114,26 @@ If `playwright.config.ts` or the `test:e2e` script is missing, skip with a note 
    ```
    Any hit is a likely re-run failure waiting to happen. Fix before pushing.
 
-## Step 8: Release Notes and Version Bump
+## Step 8: Dependency CVE Audit
+
+Runs `pnpm audit` against the production tree. The 2026-05-27 dependencies review surfaced 14 high CVEs (8 in `next`, 1 SQL-injection in `drizzle-orm`, plus transitives) that had piled up since the previous monthly sweep. This step is the gate that catches the next pile-up before it hits production.
+
+```bash
+source "$HOME/.nvm/nvm.sh" && nvm use 20 > /dev/null 2>&1 || true
+pnpm audit --prod --audit-level=high
+```
+
+`--prod` skips devDependencies (test runners, type stubs, build tools). `--audit-level=high` exits 0 unless something is high or critical.
+
+**Do not proceed if `pnpm audit --prod --audit-level=high` exits non-zero.**
+
+- Report the affected package(s), severity, advisory ID(s), and the recommended fix path (direct bump vs. transitive).
+- Offer to bump the affected package(s) inline. A patch or minor bump to a CVE-patched version, with the test suite and build re-run, is the normal escape hatch.
+- If a CVE has no fix available (e.g., `xlsx`'s unpatched advisories — the SheetJS maintainers moved patched releases off npm), the user must explicitly acknowledge the unfixed CVE to override the gate. Log the override in the work-log or release-notes entry, not just in the skill output.
+
+Moderate or low CVEs are advisory. Mention any new ones the user hasn't seen, but they don't block the push.
+
+## Step 9: Release Notes and Version Bump
 
 **Required before every push to `main`.**
 
@@ -126,7 +145,7 @@ If `playwright.config.ts` or the `test:e2e` script is missing, skip with a note 
 
 **Documentation-only changes don't need a version bump.** Bug fixes get a PATCH bump. New features get a MINOR. Breaking changes get a MAJOR.
 
-## Step 9: Housekeeping Sweep
+## Step 10: Housekeeping Sweep
 
 Treat these as advisory warnings, not hard blockers (unless the user decides otherwise):
 
@@ -147,7 +166,7 @@ Treat these as advisory warnings, not hard blockers (unless the user decides oth
   git diff --name-only | grep -E "\.env"
   ```
 
-## Step 10: Summary
+## Step 11: Summary
 
 Report results:
 
@@ -156,6 +175,7 @@ Report results:
 - Production build: PASS / FAIL
 - E2E tests: PASS / FAIL / SKIPPED (runner not installed)
 - Schema and migrations: in sync and idempotent / pending (with details)
+- Dependency CVE audit: PASS / FAIL (advisory IDs if any)
 - Release notes + version: updated / missing
 - Housekeeping warnings: list them
 - **Ready to push? yes / no**

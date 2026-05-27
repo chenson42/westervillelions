@@ -143,6 +143,24 @@ Failures: [...]
 - `src/lib/permissions.ts`: X%
 - `src/lib/members.ts`: X%
 
+### Feature-Gate Audit (mandatory before PASS)
+
+For every protected route or server action this feature touches, confirm both gates are present and the correct `FEATURES.*` key is checked. A missing or wrong gate is a FAIL even if every test passes.
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `GET /api/admin/<route>` | yes / no | yes / no | `FEATURES.X` |
+| `<server action>` | yes / no | yes / no | `FEATURES.X` |
+
+**The audit is required because tests don't catch a missing gate.** A route that wrongly returns 200 to an under-privileged user still passes "happy path" tests. The 2026-05-27 reviews caught two such routes (`/api/admin/members/export`, `/api/admin/newsletter/export`) that had shipped without `hasFeature()` — happy-path tests would have passed against either version. Verify the gate by reading the route file, not by inferring it from passing tests.
+
+What to check, concretely:
+- Every `src/app/api/admin/**/route.ts` or `src/app/api/<protected>/**/route.ts` the feature added or changed.
+- Every server action (`"use server"`) the feature added or changed.
+- The right `FEATURES.*` key for the action: read-only endpoints typically take a `*_VIEW` key; mutation endpoints take a `*_EDIT` / `*_MANAGE` / `REPORTS_EXPORT` key. If the route returns bulk PII (member roster, subscriber list, RSVP responses, etc.), confirm the key restricts to the role that owns that data — not just any authenticated user.
+
+If the feature didn't add or change any protected routes, write "no protected routes touched" — don't skip the section silently.
+
 ### Verdict: PASS / FAIL
 
 The verdict is binary. There is no "mostly passes." A single red test is a red build.
