@@ -1,6 +1,6 @@
 {
   "name": "westerville-lions",
-  "version": "1.18.4",
+  "version": "1.18.5",
   "private": true,
   "engines": {
     "node": ">=20.9.0"
@@ -38,6 +38,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.3.0",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
     "googleapis": "^172.0.0",
     "lucide-react": "^0.562.0",
     "next": "16.2.6",
@@ -53,8 +54,7 @@
     "remark-gfm": "^4.0.1",
     "resend": "^6.12.4",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.6.0",
-    "xlsx": "^0.18.5"
+    "tailwind-merge": "^3.6.0"
   },
   "pnpm": {
     "overrides": {
@@ -78,6 +78,7 @@
     "tsx": "^4.22.3",
     "typescript": "^5",
     "vite-tsconfig-paths": "^6.1.1",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "xlsx": "^0.18.5"
   }
 }

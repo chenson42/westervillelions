@@ -5,7 +5,24 @@ import { newsletterSubscriptions } from "@/lib/db/schema";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { eq } from "drizzle-orm";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+
+const ZEFFY_COLUMNS = [
+  { header: "First Name", key: "firstName" },
+  { header: "Last Name", key: "lastName" },
+  { header: "Email", key: "email" },
+  { header: "Language (EN or FR)", key: "language" },
+  { header: "Address", key: "address" },
+  { header: "City", key: "city" },
+  { header: "Region", key: "region" },
+  { header: "Postal code", key: "postalCode" },
+  { header: "Country", key: "country" },
+  { header: "Phone", key: "phone" },
+  { header: "Lists", key: "lists" },
+  { header: "Note", key: "note" },
+  { header: "Subscription status", key: "subscriptionStatus" },
+  { header: "Company name", key: "companyName" },
+];
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -28,27 +45,28 @@ export async function GET(request: NextRequest) {
     .orderBy(newsletterSubscriptions.subscribedAt);
 
   if (format === "zeffy") {
-    const rows = subscribers.map((s) => ({
-      "First Name": s.firstName ?? "",
-      "Last Name": s.lastName ?? "",
-      Email: s.email,
-      "Language (EN or FR)": "EN",
-      Address: "",
-      City: "",
-      Region: "",
-      "Postal code": "",
-      Country: "",
-      Phone: "",
-      Lists: "Newsletter Subscribed",
-      Note: "",
-      "Subscription status": "subscribed",
-      "Company name": "",
-    }));
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Subscribers");
-    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet("Subscribers");
+    sheet.columns = ZEFFY_COLUMNS;
+    for (const s of subscribers) {
+      sheet.addRow({
+        firstName: s.firstName ?? "",
+        lastName: s.lastName ?? "",
+        email: s.email,
+        language: "EN",
+        address: "",
+        city: "",
+        region: "",
+        postalCode: "",
+        country: "",
+        phone: "",
+        lists: "Newsletter Subscribed",
+        note: "",
+        subscriptionStatus: "subscribed",
+        companyName: "",
+      });
+    }
+    const buf = await wb.xlsx.writeBuffer();
 
     return new NextResponse(buf, {
       status: 200,

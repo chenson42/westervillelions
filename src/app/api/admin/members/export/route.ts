@@ -5,45 +5,27 @@ import { members } from "@/lib/db/schema";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { eq } from "drizzle-orm";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 type ExportFormat = "zeffy";
 
-interface ZeffyRow {
-  "First Name": string;
-  "Last Name": string;
-  Email: string;
-  "Language (EN or FR)": string;
-  Address: string;
-  City: string;
-  Region: string;
-  "Postal code": string;
-  Country: string;
-  Phone: string;
-  Lists: string;
-  Note: string;
-  "Subscription status": string;
-  "Company name": string;
-}
-
-function toZeffyRows(memberList: Awaited<ReturnType<typeof fetchMembers>>): ZeffyRow[] {
-  return memberList.map((m) => ({
-    "First Name": m.firstName,
-    "Last Name": m.lastName,
-    Email: m.email ?? "",
-    "Language (EN or FR)": "EN",
-    Address: m.address ?? "",
-    City: m.city ?? "",
-    Region: m.state ?? "",
-    "Postal code": m.zip ?? "",
-    Country: "USA",
-    Phone: m.phone ?? "",
-    Lists: "Lions Members",
-    Note: "",
-    "Subscription status": "subscribed",
-    "Company name": "",
-  }));
-}
+// Zeffy import columns. Order is preserved in the rendered sheet.
+const ZEFFY_COLUMNS = [
+  { header: "First Name", key: "firstName" },
+  { header: "Last Name", key: "lastName" },
+  { header: "Email", key: "email" },
+  { header: "Language (EN or FR)", key: "language" },
+  { header: "Address", key: "address" },
+  { header: "City", key: "city" },
+  { header: "Region", key: "region" },
+  { header: "Postal code", key: "postalCode" },
+  { header: "Country", key: "country" },
+  { header: "Phone", key: "phone" },
+  { header: "Lists", key: "lists" },
+  { header: "Note", key: "note" },
+  { header: "Subscription status", key: "subscriptionStatus" },
+  { header: "Company name", key: "companyName" },
+];
 
 async function fetchMembers() {
   return db
@@ -70,11 +52,28 @@ export async function GET(request: NextRequest) {
   const memberList = await fetchMembers();
 
   if (format === "zeffy") {
-    const rows = toZeffyRows(memberList);
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Members");
-    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet("Members");
+    sheet.columns = ZEFFY_COLUMNS;
+    for (const m of memberList) {
+      sheet.addRow({
+        firstName: m.firstName,
+        lastName: m.lastName,
+        email: m.email ?? "",
+        language: "EN",
+        address: m.address ?? "",
+        city: m.city ?? "",
+        region: m.state ?? "",
+        postalCode: m.zip ?? "",
+        country: "USA",
+        phone: m.phone ?? "",
+        lists: "Lions Members",
+        note: "",
+        subscriptionStatus: "subscribed",
+        companyName: "",
+      });
+    }
+    const buf = await wb.xlsx.writeBuffer();
 
     return new NextResponse(buf, {
       status: 200,
