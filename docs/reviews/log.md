@@ -37,6 +37,12 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-05-27 | retrospective | first ever: PII-export cluster (code + security both flagged same routes), CVE cluster (Next.js + drizzle SQLi), specialist-split is a paper fiction (full-stack-developer owns 9/10 Phase 4); 5 proposed edits (2 must, 2 should, 1 could); see 2026-05-27-retrospective.md
+2026-05-27 | dependencies | 9 patch / 14 minor / 3 major outdated; 14 high CVEs in production (Next 16.1→16.2 fixes 8; drizzle-orm SQLi fix); xlsx unfixable, replace with exceljs; see 2026-05-27-dependencies.md
+2026-05-27 | security | 0 critical, 4 high, 3 medium, 3 low; high = Next CVEs, drizzle SQLi, xlsx unfixable, member/newsletter exports lack feature gate (bulk PII to any authed user); see 2026-05-27-security.md
+2026-05-27 | code | first ever: 0 high, 2 medium, 4 low (MEDIUM-2 retracted: src/proxy.ts is the Next.js 16 middleware convention, not dead code — architect applied pre-v16 framework knowledge); remaining medium = page-level defense-in-depth gap on 9 admin pages, two export endpoints lack feature gate (PII); see 2026-05-27-code.md
+2026-05-27 | documentation | first ever: 0 high, 2 medium, 5 low; medium = 6 env vars missing from CLAUDE.md (Google Groups + fallback aliases), dashboard routing structure wrong; see 2026-05-27-documentation.md
+2026-05-27 | agent-instruction | first ever: 4 low + 2 informational; nothing broken, sharpening edits only — specialist agents never spawned, deployment-engineer absorbed by /pre-push, add-permission skill references non-existent CLAUDE.md inventory; see 2026-05-27-agent-instruction.md
 2026-05-20 | test-coverage | ICS feature: 93 unit tests (94.02% stmts / 85.03% branch on events.ts); 32 new ICS tests including wall-clock regression guard; build and typecheck pass; members.ts at 0% (pre-existing, e2e-covered); no new gaps introduced
 2026-05-18 | test-coverage | follow-up: 5 priority gaps closed; Vitest 59 (+20), Playwright 9 (+6); all gates pass; see 2026-05-18-test-coverage.md
 2026-05-18 | test-coverage | baseline established: 39 unit tests in events.ts (92.76% stmts, 83.33% branch); 3 e2e smoke tests pass; 0 of 9 cancel-occurrence flows and 0 of 8 wall-clock display flows have automated coverage; 5 priority gaps identified; see 2026-05-18-test-coverage.md
