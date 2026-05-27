@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { emailQueue } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { redirect } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import RetryButton from "./retry-button";
@@ -9,10 +11,8 @@ export default async function AdminEmailQueuePage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
 
-  // Admin-only page
-  const isAdmin =
-    session.user.roles?.includes("admin") || session.user.role === "admin";
-  if (!isAdmin) redirect("/admin");
+  const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
+  if (!canManage) redirect("/admin");
 
   const [failed, recentSent] = await Promise.all([
     db

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailQueue } from "@/lib/db/schema";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { and, eq, lte } from "drizzle-orm";
 import { Resend } from "resend";
 
@@ -15,8 +17,8 @@ export async function POST() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Only admins
-  if (!session.user.roles?.includes("admin") && session.user.role !== "admin") {
+  const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
+  if (!canManage) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

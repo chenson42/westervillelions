@@ -98,60 +98,76 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (user) {
         token.sub = user.id;
         token.role = user.role;
-        // fire and forget — don't block the JWT callback
+        // Fire-and-forget so we don't block the JWT response, but serialize the
+        // three DB operations (lastLoginAt update, auto-link, admin notify) so
+        // they don't race each other.
         if (user.id) {
-          db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id)).catch(() => {});
+          const userId = user.id;
+          const userEmail = user.email ?? "";
+          const userName = user.name ?? "";
+          (async () => {
+            try {
+              const pre = await db.query.users.findFirst({
+                where: eq(users.id, userId),
+                columns: { memberId: true, lastLoginAt: true },
+              });
+              const isFirstLogin = pre?.lastLoginAt == null;
 
-          // Auto-match @westervillelions.org Google sign-ins to member records by name
-          if (user.email?.endsWith("@westervillelions.org")) {
-            db.query.users.findFirst({ where: eq(users.id, user.id!), columns: { memberId: true } })
-              .then(async (dbU) => {
-                if (dbU?.memberId) return; // already linked — nothing to do
-                const nameParts = (user.name ?? "").trim().split(/\s+/);
-                if (nameParts.length < 2) return;
-                const first = nameParts[0];
-                const last = nameParts[nameParts.length - 1];
-                const matchedMember = await db.query.members.findFirst({
-                  where: and(
-                    ilike(members.firstName, first),
-                    ilike(members.lastName, last),
-                    eq(members.isActive, true)
-                  ),
-                });
-                if (!matchedMember) return;
-                // Ensure no other user is already linked to this member
-                const conflict = await db
-                  .select({ id: users.id })
-                  .from(users)
-                  .where(eq(users.memberId, matchedMember.id))
-                  .limit(1);
-                if (conflict.length > 0) return; // another user already owns this member link
-                await db.update(users).set({ memberId: matchedMember.id }).where(eq(users.id, user.id!));
-                token.memberId = matchedMember.id;
-              })
-              .catch(() => {});
-          }
+              await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
 
-          // Notify admins if this user has no linked member record
-          db.query.users.findFirst({ where: eq(users.id, user.id!), columns: { memberId: true } })
-            .then((u) => {
-              if (!u?.memberId) {
+              // Auto-match @westervillelions.org Google sign-ins to member records by name
+              let linkedMemberId: string | null = pre?.memberId ?? null;
+              if (!linkedMemberId && userEmail.endsWith("@westervillelions.org")) {
+                const nameParts = userName.trim().split(/\s+/);
+                if (nameParts.length >= 2) {
+                  const first = nameParts[0];
+                  const last = nameParts[nameParts.length - 1];
+                  const matchedMember = await db.query.members.findFirst({
+                    where: and(
+                      ilike(members.firstName, first),
+                      ilike(members.lastName, last),
+                      eq(members.isActive, true)
+                    ),
+                  });
+                  if (matchedMember) {
+                    const conflict = await db
+                      .select({ id: users.id })
+                      .from(users)
+                      .where(eq(users.memberId, matchedMember.id))
+                      .limit(1);
+                    if (conflict.length === 0) {
+                      await db.update(users).set({ memberId: matchedMember.id }).where(eq(users.id, userId));
+                      token.memberId = matchedMember.id;
+                      linkedMemberId = matchedMember.id;
+                    }
+                  }
+                }
+              }
+
+              // Notify admins on the user's first-ever sign-in if they remain unlinked.
+              // Gating on isFirstLogin prevents an unlinked user from flooding the
+              // admin inbox by repeatedly signing in.
+              if (isFirstLogin && !linkedMemberId) {
+                const esc = (s: string) =>
+                  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
                 const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
-                sendEmail({
+                await sendEmail({
                   from: `Westerville Lions Portal <${fromEmail}>`,
                   to: "info@westervillelions.org",
                   subject: "New portal user needs member record review",
                   html: `
                     <h2>Unlinked User Alert</h2>
                     <p>A user signed in to the member portal but is not linked to any member record.</p>
-                    <p><strong>Name:</strong> ${user.name ?? "(unknown)"}</p>
-                    <p><strong>Email:</strong> ${user.email}</p>
+                    <p><strong>Name:</strong> ${esc(userName || "(unknown)")}</p>
+                    <p><strong>Email:</strong> ${esc(userEmail)}</p>
                     <p>Please review this account in the <a href="https://westervillelions.org/admin/users">Admin → Users</a> page and link them to a member record if appropriate.</p>
                   `,
-                }).catch(() => {});
+                });
               }
-            })
-            .catch(() => {});
+            } catch {
+              // Swallow — JWT callback must not throw.
+            }
+          })();
         }
       }
 
