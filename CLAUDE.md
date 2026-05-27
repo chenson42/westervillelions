@@ -35,7 +35,7 @@ Westerville Lions Club Website - A public-facing website and member portal for t
 - **Language:** TypeScript
 - **Database:** PostgreSQL with Drizzle ORM
 - **Authentication:** NextAuth.js 5.0
-- **Styling:** Tailwind CSS v4
+- **Styling:** Tailwind CSS v3 (3.4.x)
 - **UI Components:** shadcn/ui (Radix UI primitives)
 - **Package Manager:** pnpm
 - **Node Version:** 20.x (see .nvmrc)
@@ -78,10 +78,13 @@ src/
 │   ├── register/          # Account registration
 │   ├── forgot-password/, reset-password/  # Password reset flow
 │   ├── access-pending/    # Landing for authenticated users with no usable role
-│   ├── (dashboard)/       # Member portal (authenticated)
-│   │   ├── members/       # Member directory
+│   ├── (dashboard)/       # Admin portal (authenticated)
+│   │   └── admin/         # Admin functions (users, roles, members, events, groups, campaigns, announcements, programs, membership, subscriptions, suggestions, testimonials, email-queue, sync-log, release-notes, contact)
+│   ├── members/           # Member portal (authenticated — auth() per page)
 │   │   ├── events/        # Internal events & per-occurrence RSVP
-│   │   └── admin/         # Admin functions (users, roles, members, events, groups, campaigns, announcements, programs, etc.)
+│   │   ├── events/past/   # Past events list
+│   │   ├── groups/        # Member group list and detail
+│   │   └── profile/       # Member profile and picture upload
 │   ├── api/               # API routes
 │   ├── robots.ts          # robots.txt
 │   └── sitemap.ts         # sitemap.xml
@@ -94,6 +97,7 @@ src/
 ├── lib/                   # Utility libraries
 │   ├── db/                # Database connection & schema
 │   ├── auth/              # NextAuth config + password-reset helpers
+│   ├── hooks/             # Client-side React hooks (e.g., use-permissions)
 │   ├── permissions.ts     # FEATURES catalog + hasFeature() (client-safe)
 │   ├── permissions-server.ts  # Server-side permission helpers
 │   ├── email.ts           # sendEmail() + email_queue helpers
@@ -131,7 +135,7 @@ docs/
 - **Login:** Google OAuth (via Google for Nonprofits) + password authentication
 - **Member Directory:** Contact information for club members
 - **Events:** Internal event calendar, per-occurrence RSVP system, "Add to Calendar" (.ics) download
-- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs
+- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, in-app release notes, and contact submissions
 
 ## Integrations
 
@@ -162,14 +166,19 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 
 ### Environment Variables
 - `DATABASE_URL` - PostgreSQL connection string (pooled host)
+- `DB_URL` - Alias for `DATABASE_URL` (some deploy environments use the shorter name)
 - `NEXTAUTH_URL` - Application URL
 - `NEXTAUTH_SECRET` - NextAuth secret key
-- `GOOGLE_CLIENT_ID` - Google OAuth client ID
-- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
+- `AUTH_SECRET` - Alias for `NEXTAUTH_SECRET` (fallback used by `src/lib/auth/index.ts`)
+- `GOOGLE_CLIENT_ID` - Google OAuth client ID (sign-in)
+- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret (sign-in)
 - `RESEND_API_KEY` - Resend API key (outbound email)
 - `RESEND_FROM_EMAIL` - From-address for outbound mail (e.g., `Lions Club <noreply@your-domain>`)
 - `TURNSTILE_SECRET_KEY` / `NEXT_PUBLIC_TURNSTILE_SITE_KEY` - Cloudflare Turnstile (optional)
-- Google Workspace service-account variables - used by `src/lib/google-groups.ts` for Group sync
+- `GOOGLE_GROUPS_CLIENT_ID` - OAuth client ID used by `src/lib/google-groups.ts` for Group sync
+- `GOOGLE_GROUPS_CLIENT_SECRET` - OAuth client secret for Group sync
+- `GOOGLE_GROUPS_REFRESH_TOKEN` - Refresh token used by Group sync (domain-wide delegation)
+- `GOOGLE_ADMIN_EMAIL` - Workspace admin address used as the impersonation subject for Group sync
 
 ## Database Migrations
 

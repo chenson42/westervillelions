@@ -220,7 +220,7 @@ The architect's suggestion specified `generateOccurrences` should gain a `cancel
 
 ## DECISION-001: Cancel-occurrence table name, occurrence_date column type, and cancel API shape
 
-**Status:** Resolved
+**Status:** Resolved (Impact bullet about `generateOccurrences` partially superseded by [DECISION-002](#decision-002-generateoccurrences-signature-unchanged-only-getnextoccurrence-gains-cancellation-exclusion))
 **Date:** 2026-05-18
 
 **Decision:**
@@ -238,7 +238,7 @@ Three rulings for the "Cancel a Single Event Occurrence" feature (work-log: `doc
 - New file: `drizzle/migrations/0036_event_occurrence_overrides.sql` (idempotent: `CREATE TABLE IF NOT EXISTS`, unique constraint guarded with `IF NOT EXISTS`).
 - New table in `src/lib/db/schema.ts`: `eventOccurrenceOverrides`.
 - New route: `src/app/api/admin/events/[id]/occurrences/[date]/cancel/route.ts`.
-- `src/lib/events.ts` — `generateOccurrences()` gains an optional `cancelledDates: Set<string>` parameter.
+- ~~`src/lib/events.ts` — `generateOccurrences()` gains an optional `cancelledDates: Set<string>` parameter.~~ **Superseded by DECISION-002:** the parameter was placed on `getNextOccurrence` (and its `findNextDayOfWeek` helper) instead. `generateOccurrences` is unchanged.
 - `src/types/events.ts` — `OccurrenceRow` gains `isCancelled: boolean` and `cancellationReason: string | null`.
 - No new npm dependency. No new `FEATURES` key. No new role binding.
 
