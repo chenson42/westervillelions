@@ -100,15 +100,15 @@ export default async function AdminEventsPage({
           status: eventRsvps.status,
           occurrenceDate: eventRsvps.occurrenceDate,
           count: sql<number>`count(*)::int`,
+          guests: sql<number>`coalesce(sum(${eventRsvps.guestCount}), 0)::int`,
         })
         .from(eventRsvps)
         .where(inArray(eventRsvps.eventId, rsvpEventIds))
         .groupBy(eventRsvps.eventId, eventRsvps.status, eventRsvps.occurrenceDate)
     : [];
 
-  // Build the rollup: count all non-cancelled RSVP rows per event.
-  // Recurring and non-recurring events both include all rows; cancelled-occurrence
-  // rows are excluded via the guard inside the loop below.
+  // Build the rollup: each RSVP row represents (1 + guestCount) people in the
+  // chosen status. Cancelled-occurrence rows are excluded via the guard below.
   const rsvpMap = new Map<string, RsvpSummary>();
   for (const row of rsvpRows) {
     // Skip rows from cancelled occurrences so they don't inflate the rollup.
@@ -120,10 +120,11 @@ export default async function AdminEventsPage({
       if (cancelled?.has(rowDateKey)) continue;
     }
     const s = rsvpMap.get(row.eventId) ?? { attending: 0, maybe: 0, declined: 0, total: 0 };
-    if (row.status === "attending") s.attending += row.count;
-    else if (row.status === "maybe") s.maybe += row.count;
-    else if (row.status === "declined") s.declined += row.count;
-    s.total += row.count;
+    const people = row.count + row.guests;
+    if (row.status === "attending") s.attending += people;
+    else if (row.status === "maybe") s.maybe += people;
+    else if (row.status === "declined") s.declined += people;
+    s.total += people;
     rsvpMap.set(row.eventId, s);
   }
 
