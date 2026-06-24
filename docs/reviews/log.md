@@ -37,6 +37,7 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-06-24 | test-coverage | Ledger inc1 Phase 5: 191 unit tests PASS (11 new determine990 tests added); ledger.ts 100% stmts/funcs; events.ts 94.73%; FY boundary + transfer atomicity verified via DB; all 5 API routes gate-audited; no invariant violations
 2026-06-24 | test-coverage | 115 unit tests PASS; 18/22 e2e PASS; 2 failing specs are date-anchored rot in cancel-occurrence.spec.ts (CANCEL_DATE/SIGNUP_BLOCKED_DATE now past); donate.spec.ts adequate; events.ts 94.73% stmts; members.ts 0% (pre-existing); fix: advance hardcoded dates to Aug 2026; see 2026-06-24-test-coverage.md
 2026-06-24 | retrospective | donate-fix clean; deploy unblocked only after 3 unnecessary force-pushes to main — over-theorized an external Vercel account misconfiguration without ground truth; 2 new must-fix edits + 5 carry-forwards; see 2026-06-24-retrospective.md
 2026-05-27 | retrospective | first ever: PII-export cluster (code + security both flagged same routes), CVE cluster (Next.js + drizzle SQLi), specialist-split is a paper fiction (full-stack-developer owns 9/10 Phase 4); 5 proposed edits (2 must, 2 should, 1 could); see 2026-05-27-retrospective.md

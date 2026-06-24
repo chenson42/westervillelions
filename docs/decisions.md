@@ -28,6 +28,47 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-017: Ledger `flow` column stores `'income' | 'expense'` only; `transferGroupId` is the transfer discriminator
+
+**Status:** Resolved
+**Date:** 2026-06-24
+
+**Decision:**
+The `flow` column on `ledger_transactions` takes only two values: `'income'` and `'expense'`. It does NOT store a third value `'transfer'`. For a transfer pair (two linked rows per DECISION-016), the debit row stores `flow = 'expense'` and the credit row stores `flow = 'income'`. The `transferGroupId` UUID column (non-null on both rows of a pair) is the sole discriminator used to: (a) label rows as "Transfer" in the UI, (b) enforce two-row atomic delete/edit, and (c) join transfer pairs in the inc2 firewall guardrail. No check constraint on `flow` may include `'transfer'` as a valid value.
+
+**Rationale:**
+DECISION-016 established two linked rows so that `fundBalanceCents()` can be a single-pass sum with no special cases. That property only holds if `flow` encodes the sign direction (`'income'` = positive, `'expense'` = negative) on each row independently. If `flow = 'transfer'` were stored, the balance helper would need to know whether the queried fund is the source (debit) or destination (credit) of each transfer row — reintroducing exactly the asymmetry DECISION-016 was designed to eliminate. The spec and DECISION-016 text reference `flow = 'transfer'` as the *conceptual* category, not a literal column value; this decision binds the implementation to the reading that preserves the single-pass property.
+
+**Impact:**
+- `ledger_transactions.flow` check constraint (if any): `flow IN ('income', 'expense')` — no `'transfer'`.
+- `fundBalanceCents()` in `src/lib/ledger.ts`: income rows add, expense rows subtract, no other branch needed.
+- UI code that renders "Transfer" derives the label from `transferGroupId IS NOT NULL`, not from `flow = 'transfer'`.
+- The inc2 firewall guardrail joins on `transferGroupId` and checks `sourceFund.kind` vs `destFund.kind` — it does not filter on a `flow` value.
+
+---
+
+## DECISION-016: Ledger transfer representation — two linked rows via `transferGroupId`
+
+**Status:** Resolved
+**Date:** 2026-06-24
+
+**Decision:**
+Ledger transfers between funds are stored as **two linked rows** in `ledger_transactions`, not a single row with a `transferFromFundId` annotation. The debit row has `flow = 'expense'`, `fundId = sourceFundId`, and a UUID `transferGroupId`. The credit row has `flow = 'income'`, `fundId = destFundId`, and the same `transferGroupId`. Both rows share the same `entityId`, `txnDate`, `amountCents`, and `memo`. The server action that records a transfer inserts both rows atomically (a single DB transaction). Cross-entity transfers are not defined and must be rejected server-side.
+
+The `flow = 'transfer'` discriminator is retained on both rows (alongside `transferGroupId`) so the UI can render them with a "Transfer" label, suppress the `party` required-field validation on the debit row, and so the inc2 firewall guardrail can detect Activity→Admin flows by joining on `transferGroupId` to find pairs where source `fund.kind = 'activity'` and destination `fund.kind = 'administrative'`.
+
+**Rationale:**
+The single-row design (one row, `transferFromFundId` nullable) makes `fundBalanceCents()` asymmetric: the helper cannot be a simple sum over `(fundId, flow)` tuples because transfer rows serve double duty — income for the destination fund, expense for the source fund in the same row. Every balance query and the inc2 guardrail would need to special-case this. The two-row design keeps `fundBalanceCents()` a single-pass sum with no special cases: each fund sums only its own rows. The firewall guardrail becomes a straightforward join on `transferGroupId`. Both the debit and credit appear in their respective fund ledgers as first-class rows, satisfying the audit-trail requirement symmetrically.
+
+**Impact:**
+- `ledger_transactions` gains a nullable `transferGroupId uuid` column (no FK — it is a self-join key within the same table).
+- `src/lib/ledger.ts` — `fundBalanceCents()` sums all rows for a fund by sign (income positive, expense negative) with no transfer special-case.
+- The server action for recording a transfer inserts two rows in a single DB transaction. The form UI collects source fund, destination fund, amount, date, memo — one submission.
+- `flow = 'transfer'` is still a valid discriminator value and appears on both rows of a transfer pair.
+- `transferFromFundId` column from the spec prototype is dropped — that was a demo-prototype artifact, not a schema commitment.
+
+---
+
 ## DECISION-015: Fiscal-year convention is start-year, shared via `src/lib/fiscal-year.ts`
 
 **Status:** Resolved
