@@ -28,6 +28,22 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-015: Fiscal-year convention is start-year, shared via `src/lib/fiscal-year.ts`
+
+**Status:** Resolved
+**Date:** 2026-06-24
+
+**Decision:**
+The Lions fiscal year (Jul 1 – Jun 30) is labeled by its **starting** calendar year everywhere in the app: `FY2026 = Jul 1 2026 – Jun 30 2027`. The helpers `getFiscalYear` / `currentFiscalYear` / `fiscalYearLabel` are extracted from `src/lib/dues.ts` into a single shared module `src/lib/fiscal-year.ts` (re-exported from `dues.ts` for back-compat). The forthcoming Ledger accounting feature imports from `@/lib/fiscal-year` rather than redefining it.
+
+**Rationale:**
+The Ledger prototype (`Westerville_Lions_Ledger.html`) labeled the same 12 months by their **ending** year (`FY2026 = Jul 2025 – Jun 2026`) — off by one from the shipped dues feature. Two features disagreeing on what "FY2026" means would cause treasurers to record dues and accounting against different windows and mis-file. The transparency doc's per-capita cycle (Jul 2026 → Jun 2027 as one Lions year) matches the start-year labeling already shipped in dues, so we standardize on it and give it one home.
+
+**Impact:**
+New file `src/lib/fiscal-year.ts`; `dues.ts` now re-exports the three helpers (no behavior change — dues was already start-year, so no data migration). The Ledger spec (`docs/features/the-ledger-accounting.md`, §2) and all future ledger fiscal-year math depend on this module. The prototype's end-year labeling is explicitly dropped.
+
+---
+
 ## DECISION-014: Dues Tracking scope expansion — treasurer role, two-amount dues_settings, dues_category on members, new permission keys
 
 **Status:** Resolved
