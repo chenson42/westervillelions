@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -37,6 +37,7 @@ export const members = pgTable("members", {
   joinDate: timestamp("join_date"),
   membershipEndedDate: date("membership_ended_date"),
   isActive: boolean("is_active").notNull().default(true),
+  duesCategory: text("dues_category").notNull().default("individual"), // 'individual' | 'family'
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -434,3 +435,53 @@ export const eventOccurrenceOverrides = pgTable(
 
 export type EventOccurrenceOverride = typeof eventOccurrenceOverrides.$inferSelect;
 export type NewEventOccurrenceOverride = typeof eventOccurrenceOverrides.$inferInsert;
+
+// Dues payment records — one row per payment event per member per fiscal year
+export const duesPayments = pgTable(
+  "dues_payments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    fiscalYear: integer("fiscal_year").notNull(),
+    // Convention: starting calendar year. FY2026 = Jul 1 2026 – Jun 30 2027 → 2026.
+    paymentDate: date("payment_date").notNull(),
+    // Wall-clock date of payment (YYYY-MM-DD string in JS). Date-only, no timezone.
+    amountCents: integer("amount_cents").notNull(),
+    // Integer cents. Negative = refund/reversal. Zero disallowed at app layer.
+    method: text("method").notNull(),
+    // 'check' | 'cash' | 'zeffy' | 'other'
+    notes: text("notes"),
+    recordedByUserId: uuid("recorded_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_dues_payments_member_fiscal_year").on(t.memberId, t.fiscalYear),
+  ],
+);
+
+export type DuesPayment = typeof duesPayments.$inferSelect;
+export type NewDuesPayment = typeof duesPayments.$inferInsert;
+
+// Dues settings — one row per fiscal year, two amount columns (individual + family)
+export const duesSettings = pgTable("dues_settings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  fiscalYear: integer("fiscal_year").notNull().unique(),
+  individualAmountCents: integer("individual_amount_cents").notNull(),
+  // Standard annual dues in cents. FY2026 seed: 12000 ($120.00).
+  familyAmountCents: integer("family_amount_cents").notNull(),
+  // Family/discounted annual dues in cents. FY2026 seed: 9600 ($96.00).
+  notes: text("notes"),
+  isActive: boolean("is_active").notNull().default(false),
+  // Only one row may have is_active = true at a time (enforced by partial unique index in migration 0042).
+  // The active row determines the default FY shown on all dues surfaces.
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type DuesSettings = typeof duesSettings.$inferSelect;
+export type NewDuesSettings = typeof duesSettings.$inferInsert;

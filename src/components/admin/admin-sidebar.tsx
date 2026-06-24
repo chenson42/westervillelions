@@ -103,6 +103,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.MEMBERSHIP_MANAGE,
   },
   {
+    name: "Dues",
+    href: "/admin/dues",
+    icon: "💵",
+    requiredFeature: FEATURES.DUES_VIEW,
+  },
+  {
     name: "Newsletter",
     href: "/admin/subscriptions",
     icon: "📧",

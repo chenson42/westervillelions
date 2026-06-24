@@ -9,18 +9,36 @@ import { FEATURES } from "@/lib/permissions";
 import MemberSearch from "@/components/admin/member-search";
 import ExportMembersButton from "@/components/admin/export-members-button";
 import SyncClubButton from "@/components/admin/sync-club-button";
+import DuesStatusBadge from "@/components/admin/dues-status-badge";
+import { listMemberDuesStatus, getActiveFiscalYear } from "@/lib/dues-queries";
+import type { DuesStatus } from "@/lib/dues";
 
 export default async function MembersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ search?: string; branch?: string; status?: string; group?: string }>;
+  searchParams: Promise<{
+    search?: string;
+    branch?: string;
+    status?: string;
+    group?: string;
+    duesStatus?: string;
+  }>;
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
   const canAccess = await hasFeature(session.user.id, FEATURES.MEMBERS_EDIT);
   if (!canAccess) redirect("/admin");
 
-  const { search = "", branch = "", status = "active", group: groupFilter = "" } = await searchParams;
+  // Dues visibility is opt-in based on DUES_VIEW feature
+  const canViewDues = await hasFeature(session.user.id, FEATURES.DUES_VIEW);
+
+  const {
+    search = "",
+    branch = "",
+    status = "active",
+    group: groupFilter = "",
+    duesStatus = "",
+  } = await searchParams;
 
   // Build conditions
   const conditions = [];
@@ -103,6 +121,36 @@ export default async function MembersPage({
     memberGroupsMap.get(row.memberId)!.push(row);
   }
 
+  // ---- Dues status integration (DUES_VIEW gate) ----
+  // Performance note: listMemberDuesStatus fetches all active members for the FY
+  // regardless of the current search/branch/group filters on the member list.
+  // This is intentional — the dues map must cover all members so any member in
+  // the filtered list can be looked up. At club scale (50-200 members) this is
+  // a single aggregate SQL query and adds minimal overhead.
+  const fy = await getActiveFiscalYear();
+  const duesStatusMap = new Map<string, DuesStatus>();
+
+  if (canViewDues) {
+    const duesSummary = await listMemberDuesStatus(fy);
+    for (const d of duesSummary) {
+      duesStatusMap.set(d.memberId, d.status);
+    }
+  }
+
+  // Apply dues status filter in TypeScript (only when the viewer has dues access)
+  const effectiveDuesStatus = canViewDues && duesStatus ? (duesStatus as DuesStatus) : "";
+
+  const filteredMembers = effectiveDuesStatus
+    ? memberList.filter((m) => duesStatusMap.get(m.id) === effectiveDuesStatus)
+    : memberList;
+
+  const DUES_STATUS_OPTIONS = [
+    { value: "", label: "All Dues" },
+    { value: "paid", label: "Paid" },
+    { value: "partial", label: "Partial" },
+    { value: "unpaid", label: "Unpaid" },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -135,6 +183,41 @@ export default async function MembersPage({
         currentGroup={groupFilter}
       />
 
+      {/* Dues status filter — only when viewer has DUES_VIEW */}
+      {canViewDues && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-gray-500 font-medium">Dues:</span>
+          {DUES_STATUS_OPTIONS.map((opt) => {
+            const params = new URLSearchParams();
+            if (search) params.set("search", search);
+            if (branch) params.set("branch", branch);
+            if (status !== "active") params.set("status", status);
+            if (groupFilter) params.set("group", groupFilter);
+            if (opt.value) params.set("duesStatus", opt.value);
+            const href = `/admin/members${params.size > 0 ? `?${params}` : ""}`;
+            const isActive = effectiveDuesStatus === opt.value;
+            return (
+              <a
+                key={opt.value}
+                href={href}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[36px] inline-flex items-center ${
+                  isActive
+                    ? "bg-lions-blue text-white"
+                    : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                {opt.label}
+              </a>
+            );
+          })}
+          {effectiveDuesStatus && (
+            <span className="text-xs text-gray-400">
+              — FY{fy} filter active
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Members table */}
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow">
         <div className="overflow-x-auto">
@@ -156,15 +239,20 @@ export default async function MembersPage({
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                 Status
               </th>
+              {canViewDues && (
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Dues
+                </th>
+              )}
               <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                 Actions
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 bg-white">
-            {memberList.length === 0 ? (
+            {filteredMembers.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center">
+                <td colSpan={canViewDues ? 7 : 6} className="px-6 py-12 text-center">
                   <div className="text-gray-500">
                     <p className="text-lg font-medium">No members found</p>
                     <p className="mt-1 text-sm">Try adjusting your search or filters</p>
@@ -172,8 +260,9 @@ export default async function MembersPage({
                 </td>
               </tr>
             ) : (
-              memberList.map((member) => {
+              filteredMembers.map((member) => {
                 const memberGroups = memberGroupsMap.get(member.id) || [];
+                const memberDuesStatus = canViewDues ? duesStatusMap.get(member.id) : undefined;
                 return (
                   <tr
                     key={member.id}
@@ -215,6 +304,15 @@ export default async function MembersPage({
                         {member.isActive ? "Active" : "Inactive"}
                       </span>
                     </td>
+                    {canViewDues && (
+                      <td className="whitespace-nowrap px-6 py-4">
+                        {memberDuesStatus ? (
+                          <DuesStatusBadge status={memberDuesStatus} />
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </td>
+                    )}
                     <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
                       <Link
                         href={`/admin/members/${member.id}`}
@@ -234,7 +332,9 @@ export default async function MembersPage({
 
       {/* Summary */}
       <div className="text-sm text-gray-500">
-        Showing {memberList.length} member{memberList.length !== 1 ? "s" : ""}
+        Showing {filteredMembers.length}
+        {filteredMembers.length !== memberList.length && ` of ${memberList.length}`}{" "}
+        member{filteredMembers.length !== 1 ? "s" : ""}
         {status !== "all" && ` (${status} only)`}
       </div>
     </div>

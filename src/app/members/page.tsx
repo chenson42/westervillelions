@@ -152,6 +152,13 @@ export default async function MembersPage() {
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Profile</h3>
             <p className="text-gray-700">Update your contact information and preferences</p>
           </a>
+          <a
+            href="/members/dues"
+            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+          >
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Dues</h3>
+            <p className="text-gray-700">View your annual membership dues status and payment history</p>
+          </a>
         </div>
 
         {birthdaysThisMonth.length > 0 && (

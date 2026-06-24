@@ -44,6 +44,10 @@ export const FEATURES = {
   // Reports features
   REPORTS_VIEW: "reports.view",
   REPORTS_EXPORT: "reports.export",
+
+  // Dues features
+  DUES_VIEW: "dues.view",
+  DUES_MANAGE: "dues.manage",
 } as const;
 
 // Type for feature names
@@ -58,6 +62,7 @@ export const FEATURE_CATEGORIES = {
   ANNOUNCEMENTS: "announcements",
   ADMIN: "admin",
   REPORTS: "reports",
+  DUES: "dues",
 } as const;
 
 // Helper to get features by category
@@ -96,12 +101,16 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
 
   [FEATURES.REPORTS_VIEW]: "View reports and analytics",
   [FEATURES.REPORTS_EXPORT]: "Export reports and data",
+
+  [FEATURES.DUES_VIEW]: "View annual membership dues status and payment history",
+  [FEATURES.DUES_MANAGE]: "Record, edit, and delete dues payments; configure annual dues amounts",
 };
 
 // Default role names (should match database seed data)
 export const ROLES = {
   ADMIN: "admin",
   BOARD_MEMBER: "board_member",
+  TREASURER: "treasurer",
   MEMBER: "member",
   VOLUNTEER: "volunteer",
 } as const;
