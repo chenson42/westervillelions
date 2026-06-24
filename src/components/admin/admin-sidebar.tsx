@@ -109,6 +109,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.DUES_VIEW,
   },
   {
+    name: "Ledger",
+    href: "/admin/ledger",
+    icon: "📒",
+    requiredFeature: FEATURES.LEDGER_VIEW,
+  },
+  {
     name: "Newsletter",
     href: "/admin/subscriptions",
     icon: "📧",

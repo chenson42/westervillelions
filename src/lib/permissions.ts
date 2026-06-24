@@ -48,6 +48,11 @@ export const FEATURES = {
   // Dues features
   DUES_VIEW: "dues.view",
   DUES_MANAGE: "dues.manage",
+
+  // Ledger features (The Ledger — inc1: Books)
+  LEDGER_VIEW: "ledger.view",
+  LEDGER_RECORD: "ledger.record",
+  LEDGER_MANAGE: "ledger.manage",
 } as const;
 
 // Type for feature names
@@ -63,6 +68,7 @@ export const FEATURE_CATEGORIES = {
   ADMIN: "admin",
   REPORTS: "reports",
   DUES: "dues",
+  LEDGER: "ledger",
 } as const;
 
 // Helper to get features by category
@@ -104,6 +110,10 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
 
   [FEATURES.DUES_VIEW]: "View annual membership dues status and payment history",
   [FEATURES.DUES_MANAGE]: "Record, edit, and delete dues payments; configure annual dues amounts",
+
+  [FEATURES.LEDGER_VIEW]: "View ledger overview, fund reports, and transaction history",
+  [FEATURES.LEDGER_RECORD]: "Record, edit, and delete ledger transactions",
+  [FEATURES.LEDGER_MANAGE]: "Manage funds, budgets, entities, and opening balances",
 };
 
 // Default role names (should match database seed data)

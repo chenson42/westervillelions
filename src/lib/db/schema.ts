@@ -485,3 +485,196 @@ export const duesSettings = pgTable("dues_settings", {
 
 export type DuesSettings = typeof duesSettings.$inferSelect;
 export type NewDuesSettings = typeof duesSettings.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The Ledger — Increment 1: Books
+// Two-entity (Club 501c4 / Foundation 501c3) cash-basis accounting system.
+// All money is stored as integer cents.  Fiscal year is start-year (DECISION-015).
+// Transfers are two linked rows via transferGroupId (DECISION-016/017).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Legal / tax entities (Club = 501c4, Foundation = 501c3)
+export const ledgerEntities = pgTable("ledger_entities", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: text("slug").notNull().unique(), // 'club' | 'foundation'
+  name: text("name").notNull(),          // "Westerville Lions Club"
+  shortName: text("short_name"),         // "Club" | "Foundation"
+  taxClassification: text("tax_classification").notNull(), // '501c4' | '501c3'
+  charityStatus: text("charity_status"), // 'public_charity' | 'private_foundation' (Foundation only)
+  ein: text("ein"),                      // IRS EIN — placeholder; editable via ledger.manage
+  ohioEntityNumber: text("ohio_entity_number"), // Ohio SOS number
+  fiscalYearEnd: text("fiscal_year_end").notNull().default("06-30"), // MM-DD
+  donationsDeductible: boolean("donations_deductible").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type LedgerEntity = typeof ledgerEntities.$inferSelect;
+export type NewLedgerEntity = typeof ledgerEntities.$inferInsert;
+
+// Bank accounts per entity (one or more per entity; signers table deferred to inc2)
+export const ledgerBankAccounts = pgTable("ledger_bank_accounts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  entityId: uuid("entity_id")
+    .notNull()
+    .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),                // "Chase Checking"
+  institution: text("institution"),            // "JPMorgan Chase"
+  last4: text("last4"),                        // last four digits of account number
+  accountType: text("account_type").notNull().default("checking"), // 'checking' | 'savings' | 'investment'
+  requiredSigners: integer("required_signers").notNull().default(2),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type LedgerBankAccount = typeof ledgerBankAccounts.$inferSelect;
+export type NewLedgerBankAccount = typeof ledgerBankAccounts.$inferInsert;
+
+// Funds — administrative | activity | charitable | scholarship
+export const ledgerFunds = pgTable(
+  "ledger_funds",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(), // 'administrative' | 'activity' | 'charitable' | 'scholarship'
+    name: text("name").notNull(), // "Administrative Fund"
+    kind: text("kind").notNull(), // 'administrative' | 'activity' | 'charitable' | 'scholarship'
+    openingBalanceCents: integer("opening_balance_cents").notNull().default(0),
+    // Placeholder opening balance — set actual value via admin UI under LEDGER_MANAGE.
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ledger_funds_entity_slug_key").on(t.entityId, t.slug),
+    index("ix_ledger_funds_entity").on(t.entityId),
+  ],
+);
+
+export type LedgerFund = typeof ledgerFunds.$inferSelect;
+export type NewLedgerFund = typeof ledgerFunds.$inferInsert;
+
+// Categories — income/expense line items, scoped per entity and fund kind
+export const ledgerCategories = pgTable(
+  "ledger_categories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    fundKind: text("fund_kind").notNull(), // 'administrative' | 'activity' | 'charitable' | 'scholarship'
+    flow: text("flow").notNull(),           // 'income' | 'expense'
+    name: text("name").notNull(),           // "Club dues"
+    form990Line: text("form_990_line"),     // nullable IRS 990 line reference (inc4 prep)
+    sortOrder: integer("sort_order").notNull().default(0),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_ledger_categories_entity_kind_flow").on(t.entityId, t.fundKind, t.flow),
+  ],
+);
+
+export type LedgerCategory = typeof ledgerCategories.$inferSelect;
+export type NewLedgerCategory = typeof ledgerCategories.$inferInsert;
+
+// Transactions — the core ledger table.
+// flow is 'income' | 'expense' ONLY (DECISION-017).
+// Transfers are two linked rows sharing transferGroupId (DECISION-016).
+// amountCents is always positive; direction is encoded by flow.
+// No fiscalYear column — derived at query time from txnDate (DECISION-015).
+// Hard delete in inc1; approvedAt guard added in inc2 for immutability.
+export const ledgerTransactions = pgTable(
+  "ledger_transactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    fundId: uuid("fund_id")
+      .notNull()
+      .references(() => ledgerFunds.id, { onDelete: "cascade" }),
+    bankAccountId: uuid("bank_account_id")
+      .references(() => ledgerBankAccounts.id, { onDelete: "set null" }),
+    txnDate: date("txn_date").notNull(), // wall-clock date; YYYY-MM-DD string in JS
+    flow: text("flow").notNull(),         // 'income' | 'expense' — NO 'transfer' value (DECISION-017)
+    categoryId: uuid("category_id")
+      .references(() => ledgerCategories.id, { onDelete: "set null" }),
+    amountCents: integer("amount_cents").notNull(), // always positive; validated > 0 at app layer
+    party: text("party"),          // payer (income) or payee (expense); required for income at app layer
+    memo: text("memo"),
+    beneficiaryCause: text("beneficiary_cause"), // optional cause taxonomy tag
+    paymentMethod: text("payment_method"),        // 'check' | 'cash' | 'zeffy' | 'other'
+    receiptUrl: text("receipt_url"),              // URL; upload UX deferred to inc2
+    // transferGroupId links the debit and credit rows of a transfer pair — no FK (self-join key)
+    transferGroupId: uuid("transfer_group_id"),
+    status: text("status").notNull().default("posted"), // 'posted' | 'pending' (pending = inc2)
+    // Approval / reconcile fields — unused in inc1; inc2 sets approvedAt to lock approved rows
+    approvedByUserId: uuid("approved_by_user_id")
+      .references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at"),
+    reconciled: boolean("reconciled").notNull().default(false),
+    reconciledAt: timestamp("reconciled_at"),
+    recordedByUserId: uuid("recorded_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_ledger_txns_entity_fund").on(t.entityId, t.fundId),
+    index("ix_ledger_txns_fund_date").on(t.fundId, t.txnDate),
+    index("ix_ledger_txns_status").on(t.status),
+    index("ix_ledger_txns_transfer_group").on(t.transferGroupId),
+  ],
+);
+
+export type LedgerTransaction = typeof ledgerTransactions.$inferSelect;
+export type NewLedgerTransaction = typeof ledgerTransactions.$inferInsert;
+
+// Budgets — per fund × fiscal year × category × flow
+export const ledgerBudgets = pgTable(
+  "ledger_budgets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    fundId: uuid("fund_id")
+      .notNull()
+      .references(() => ledgerFunds.id, { onDelete: "cascade" }),
+    fiscalYear: integer("fiscal_year").notNull(), // start year, e.g. 2026 = FY2026 (Jul 2026–Jun 2027)
+    categoryId: uuid("category_id")
+      .references(() => ledgerCategories.id, { onDelete: "set null" }),
+    flow: text("flow").notNull(), // 'income' | 'expense'
+    annualAmountCents: integer("annual_amount_cents").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ledger_budgets_fund_year_cat_flow_key").on(t.fundId, t.fiscalYear, t.categoryId, t.flow),
+    index("ix_ledger_budgets_fund_year").on(t.fundId, t.fiscalYear),
+  ],
+);
+
+export type LedgerBudget = typeof ledgerBudgets.$inferSelect;
+export type NewLedgerBudget = typeof ledgerBudgets.$inferInsert;
+
+// Settings — singleton row; guards inc1 guardrail checks (reserves threshold, bonded flag)
+export const ledgerSettings = pgTable("ledger_settings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  philanthropyVisibility: text("philanthropy_visibility").notNull().default("board"), // 'board' | 'members'
+  treasurerBonded: boolean("treasurer_bonded").notNull().default(false),
+  reserveWarnThresholdCents: integer("reserve_warn_threshold_cents").notNull().default(2500000), // $25,000
+  disbApprovalThresholdCents: integer("disb_approval_threshold_cents").notNull().default(25000),  // $250
+  retentionYears: integer("retention_years").notNull().default(7),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type LedgerSettings = typeof ledgerSettings.$inferSelect;
+export type NewLedgerSettings = typeof ledgerSettings.$inferInsert;
