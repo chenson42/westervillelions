@@ -538,6 +538,7 @@ Slugs are short, lowercase, hyphenated, and stable. Don't rename them after the 
 5. **Use `/pre-push` before every push to `main`.** Typecheck, build, schema check, release notes. The skill never pushes — it only reports readiness.
 6. **Run migrations after schema changes.** `export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate`. Every statement in `drizzle/migrations/` must be idempotent — migrations re-run on every deploy.
 7. **Test locally before pushing.** Run `pnpm dev` and verify changes in the browser. Run `pnpm build:only` to confirm the production build passes.
+8. **Never rewrite `main`'s history to diagnose an external-system failure.** If a deploy/CI failure appears after a push, the commit is rarely the cause — especially when the *same input* (identical commit/author) suddenly produces a *different result*, which means the external system's state changed, not your code. Get ground truth from the failing service's dashboard/logs **before** amending, re-authoring, or force-pushing. The 2026-06-24 Vercel deploy block (a duplicate Vercel account had claimed the GitHub login — see `docs/reviews/2026-06-24-retrospective.md` and the deployment-engineer agent's "external-system failures" note) cost three needless force-pushes that fixed nothing.
 
 ## Key Invariants
 

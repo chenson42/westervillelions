@@ -37,8 +37,11 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-06-24 | test-coverage | 115 unit tests PASS; 18/22 e2e PASS; 2 failing specs are date-anchored rot in cancel-occurrence.spec.ts (CANCEL_DATE/SIGNUP_BLOCKED_DATE now past); donate.spec.ts adequate; events.ts 94.73% stmts; members.ts 0% (pre-existing); fix: advance hardcoded dates to Aug 2026; see 2026-06-24-test-coverage.md
+2026-06-24 | retrospective | donate-fix clean; deploy unblocked only after 3 unnecessary force-pushes to main — over-theorized an external Vercel account misconfiguration without ground truth; 2 new must-fix edits + 5 carry-forwards; see 2026-06-24-retrospective.md
 2026-05-27 | retrospective | first ever: PII-export cluster (code + security both flagged same routes), CVE cluster (Next.js + drizzle SQLi), specialist-split is a paper fiction (full-stack-developer owns 9/10 Phase 4); 5 proposed edits (2 must, 2 should, 1 could); see 2026-05-27-retrospective.md
 2026-05-27 | dependencies | 9 patch / 14 minor / 3 major outdated; 14 high CVEs in production (Next 16.1→16.2 fixes 8; drizzle-orm SQLi fix); xlsx unfixable, replace with exceljs; see 2026-05-27-dependencies.md
+2026-06-24 | security | all 4 prior-highs closed; 0 critical, 0 high, 3 medium, 3 low; new medium = SSRF in zeffy-meta URL check, cleanupExpiredTokens eq() bug, page-level auth gap (8 admin pages, carry-forward); see 2026-06-24-security.md
 2026-05-27 | security | 0 critical, 4 high, 3 medium, 3 low; high = Next CVEs, drizzle SQLi, xlsx unfixable, member/newsletter exports lack feature gate (bulk PII to any authed user); see 2026-05-27-security.md
 2026-05-27 | code | first ever: 0 high, 2 medium, 4 low (MEDIUM-2 retracted: src/proxy.ts is the Next.js 16 middleware convention, not dead code — architect applied pre-v16 framework knowledge); remaining medium = page-level defense-in-depth gap on 9 admin pages, two export endpoints lack feature gate (PII); see 2026-05-27-code.md
 2026-05-27 | documentation | first ever: 0 high, 2 medium, 5 low; medium = 6 env vars missing from CLAUDE.md (Google Groups + fallback aliases), dashboard routing structure wrong; see 2026-05-27-documentation.md
