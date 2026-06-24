@@ -68,7 +68,7 @@ src/
 │   ├── mission/           # Mission & service areas
 │   ├── events/            # Public events calendar
 │   ├── programs/          # Service programs
-│   ├── donate/            # Donation page (Givebutter integration)
+│   ├── donate/            # Donation page (Zeffy embedded donation forms)
 │   ├── contact/           # Contact information
 │   ├── join/              # Membership application
 │   ├── meetings/          # Meeting info
@@ -128,7 +128,7 @@ docs/
 - **About:** Club history, leadership, meeting times/location
 - **Mission:** Service areas (youth, community, humanitarian, international)
 - **Events:** Public events calendar and past events, with per-occurrence and full-series "Add to Calendar" (.ics) download
-- **Donate:** Integration with Givebutter donation platform
+- **Donate:** Zeffy donation forms embedded per campaign
 - **Contact:** Contact form, meeting info, social media links
 
 ### Member Portal
@@ -145,10 +145,11 @@ docs/
 - Gmail API for email notifications (future)
 - Google Calendar sync (future)
 
-### Givebutter
-- Donation platform integration on `/donate` page
-- Embedded donation forms or redirect to Givebutter campaign
-- Consider iframe embed vs. direct link
+### Zeffy
+- Donation platform for the `/donate` page — one card per row in the `campaigns` table
+- Each card opens a Zeffy donation form in a modal via `ZeffyEmbed` (`src/components/campaigns/zeffy-embed.tsx`), which iframes `https://www.zeffy.com/embed/…`
+- The CSP `frame-src` in `next.config.ts` must whitelist `https://www.zeffy.com`, or the browser blocks the iframe with "This content is blocked"
+- Campaign cards show the campaign's stored `image`; when none is set they fall back to a local brand image (`/images/service-community.jpg`). Zeffy's Cloudflare 403s server-side fetches, so do not scrape Zeffy at request time.
 
 ### Resend
 - Outbound transactional email via `sendEmail()` in `src/lib/email.ts`
@@ -353,7 +354,7 @@ Public page subtitles use a gold eyebrow label with `uppercase tracking-widest t
 
 - **Blue/gold theme:** Primary color is `lions-blue`, accent is `lions-gold` — do not use red (`lions-red` is undefined and renders transparent)
 - **Google OAuth:** Requires Google for Nonprofits account setup
-- **Givebutter:** May need API key or specific configuration for embeds
+- **Zeffy:** Embedded donation forms are iframes — CSP `frame-src` in `next.config.ts` must allow `https://www.zeffy.com`, and Zeffy 403s server-side fetches (no request-time scraping)
 - **Mobile-first:** Ensure all pages are mobile-responsive
 - **Migrations re-run on every deploy:** Every SQL statement must be idempotent
 - **No native browser dialogs:** Use `<ConfirmDialog>` (or shadcn `Dialog`), never `window.confirm()` / `window.alert()` / `window.prompt()`
