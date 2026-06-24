@@ -4,7 +4,7 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), display-capture=()" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(self \"https://www.zeffy.com\"), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), display-capture=()" },
   {
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
@@ -18,7 +18,7 @@ const securityHeaders = [
       "img-src 'self' data: blob: https: lh3.googleusercontent.com",
       "font-src 'self'",
       "connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com",
-      "frame-src https://challenges.cloudflare.com https://maps.google.com https://www.google.com",
+      "frame-src https://challenges.cloudflare.com https://maps.google.com https://www.google.com https://www.zeffy.com",
       "worker-src 'self' blob:",
     ].join("; "),
   },

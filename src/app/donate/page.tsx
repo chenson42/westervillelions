@@ -23,34 +23,8 @@ const jsonLd = {
   ],
 };
 
-/** Fetch og:image and og:description from a Zeffy campaign page. Cached for 1 hour. */
-async function fetchZeffyMeta(
-  zeffyLink: string
-): Promise<{ image: string | null; description: string | null }> {
-  try {
-    const res = await fetch(zeffyLink, {
-      next: { revalidate: 3600 },
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; WestervilleLions/1.0)" },
-    });
-    if (!res.ok) return { image: null, description: null };
-    const html = await res.text();
-
-    const imageMatch =
-      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/) ??
-      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/);
-
-    const descMatch =
-      html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/) ??
-      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/);
-
-    return {
-      image: imageMatch?.[1] ?? null,
-      description: descMatch?.[1] ?? null,
-    };
-  } catch {
-    return { image: null, description: null };
-  }
-}
+/** Shown on a campaign card when no image is stored on the campaign. */
+const FALLBACK_IMAGE = "/images/service-community.jpg";
 
 export default async function DonatePage() {
   const session = await auth().catch(() => null);
@@ -66,17 +40,11 @@ export default async function DonatePage() {
     )
     .orderBy(campaigns.displayOrder);
 
-  const campaignsWithMeta = await Promise.all(
-    activeCampaigns.map(async (campaign) => {
-      const needsMeta = !campaign.image || !campaign.description;
-      const meta = needsMeta ? await fetchZeffyMeta(campaign.zeffyLink) : { image: null, description: null };
-      return {
-        ...campaign,
-        displayImage: campaign.image ?? meta.image,
-        displayDescription: campaign.description ?? meta.description,
-      };
-    })
-  );
+  const campaignsWithMeta = activeCampaigns.map((campaign) => ({
+    ...campaign,
+    displayImage: campaign.image ?? FALLBACK_IMAGE,
+    displayDescription: campaign.description,
+  }));
 
   return (
     <div className="min-h-screen bg-white">
@@ -109,17 +77,17 @@ export default async function DonatePage() {
               {campaignsWithMeta.map((campaign) => (
                 <div
                   key={campaign.id}
+                  data-testid="campaign-card"
                   className="rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 bg-white overflow-hidden"
                 >
                   <div className="relative">
-                    {campaign.displayImage && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={campaign.displayImage}
-                        alt={campaign.title}
-                        className="w-full"
-                      />
-                    )}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={campaign.displayImage}
+                      alt={campaign.title}
+                      className="w-full"
+                      data-testid="campaign-card-image"
+                    />
                     {!campaign.isPublic && (
                       <span className="absolute top-2 left-2 text-xs font-semibold bg-lions-blue text-white px-2 py-1 rounded-full shadow">
                         Members Only
