@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { passwordResetTokens, users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, lte } from "drizzle-orm";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 
@@ -37,6 +37,9 @@ export async function createPasswordResetToken(
   // Token expires in 24 hours
   const expiresAt = new Date();
   expiresAt.setHours(expiresAt.getHours() + 24);
+
+  // Opportunistically sweep expired tokens (no scheduled job runs this otherwise)
+  await cleanupExpiredTokens();
 
   // Delete any existing tokens for this user
   await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, user.id));
@@ -119,5 +122,5 @@ export async function resetPassword(
  */
 export async function cleanupExpiredTokens(): Promise<void> {
   const now = new Date();
-  await db.delete(passwordResetTokens).where(eq(passwordResetTokens.expiresAt, now));
+  await db.delete(passwordResetTokens).where(lte(passwordResetTokens.expiresAt, now));
 }

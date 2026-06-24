@@ -2,6 +2,10 @@ import { db } from "@/lib/db";
 import { members, groups, groupMemberships } from "@/lib/db/schema";
 import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import MemberSearch from "@/components/admin/member-search";
 import ExportMembersButton from "@/components/admin/export-members-button";
 import SyncClubButton from "@/components/admin/sync-club-button";
@@ -11,6 +15,11 @@ export default async function MembersPage({
 }: {
   searchParams: Promise<{ search?: string; branch?: string; status?: string; group?: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.MEMBERS_EDIT);
+  if (!canAccess) redirect("/admin");
+
   const { search = "", branch = "", status = "active", group: groupFilter = "" } = await searchParams;
 
   // Build conditions

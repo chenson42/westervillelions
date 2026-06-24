@@ -2,8 +2,17 @@ import { db } from "@/lib/db";
 import { groups, groupTypes } from "@/lib/db/schema";
 import { asc, eq } from "drizzle-orm";
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 export default async function AdminGroupsPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.GROUPS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   const groupList = await db
     .select({
       id: groups.id,

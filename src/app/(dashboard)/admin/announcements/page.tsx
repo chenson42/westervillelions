@@ -1,5 +1,9 @@
 import { db } from "@/lib/db";
 import { homepageAnnouncements } from "@/lib/db/schema";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { asc } from "drizzle-orm";
 import Link from "next/link";
 import DeleteAnnouncementButton from "./delete-button";
@@ -22,6 +26,11 @@ function formatDateRange(
 }
 
 export default async function AdminAnnouncementsPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ANNOUNCEMENTS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   const announcementList = await db
     .select()
     .from(homepageAnnouncements)

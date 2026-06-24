@@ -1,6 +1,10 @@
 import { db } from "@/lib/db";
 import { events, eventRsvps, eventOccurrenceOverrides } from "@/lib/db/schema";
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { and, eq, gte, isNotNull, isNull, lt, or, sql, inArray } from "drizzle-orm";
 import { EventTableRow, type RsvpSummary } from "@/components/admin/event-table-row";
 import { getNextOccurrence, parseWallClock } from "@/lib/events";
@@ -14,6 +18,11 @@ export default async function AdminEventsPage({
 }: {
   searchParams: Promise<{ page?: string; view?: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.EVENTS_EDIT);
+  if (!canAccess) redirect("/admin");
+
   const { page: pageParam = "1", view = "upcoming" } = await searchParams;
   const page = Math.max(1, parseInt(pageParam) || 1);
   const isPast = view === "past";

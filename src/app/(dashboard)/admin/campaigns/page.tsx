@@ -1,8 +1,17 @@
 import { db } from "@/lib/db";
 import { campaigns } from "@/lib/db/schema";
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 export default async function AdminCampaignsPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.CAMPAIGNS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   const campaignList = await db
     .select()
     .from(campaigns)

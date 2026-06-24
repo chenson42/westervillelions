@@ -21,12 +21,14 @@ const EVENT_ID = "291c76f3-ab75-4c64-8173-ac285345cfe9";
 
 // Different occurrence dates per test group to prevent parallel-test interference.
 // Saturday 2026-05-30 — cancel/restore tests (series recurrenceDays:[6], starts May 16)
-// Saturday 2026-06-06 — signup-blocked tests
-const CANCEL_DATE = "2026-05-30";
-const SIGNUP_BLOCKED_DATE = "2026-06-06";
+// Saturdays in the Farmer's Market series (runs to 2026-09-26). Must stay in the
+// future relative to "today" — the public detail page only renders future occurrences
+// and the signup route's past-occurrence guard fires before the cancelled guard.
+const CANCEL_DATE = "2026-08-01";
+const SIGNUP_BLOCKED_DATE = "2026-08-08";
 // ISO timestamp matching SIGNUP_BLOCKED_DATE at the event's wall-clock start time (12:30 PM)
-// Used when POST-ing to /api/events/[id]/signup; the route converts via dateKey() → "2026-06-06"
-const SIGNUP_BLOCKED_ISO = "2026-06-06T12:30:00";
+// Used when POST-ing to /api/events/[id]/signup; the route converts via dateKey() → "2026-08-08"
+const SIGNUP_BLOCKED_ISO = "2026-08-08T12:30:00";
 
 const cancelUrl = (date: string) =>
   `/api/admin/events/${EVENT_ID}/occurrences/${date}/cancel`;

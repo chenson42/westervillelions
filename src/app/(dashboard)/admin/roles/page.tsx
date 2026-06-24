@@ -2,6 +2,10 @@ import { db } from "@/lib/db";
 import { roles, roleFeatures, features, userRoles } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 /**
  * Roles List Page
@@ -9,6 +13,11 @@ import Link from "next/link";
  * Overview of all roles in the system with their feature counts.
  */
 export default async function RolesPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ADMIN_ROLES);
+  if (!canAccess) redirect("/admin");
+
   // Fetch all roles
   const allRoles = await db.select().from(roles).orderBy(roles.sortOrder);
 

@@ -3,8 +3,17 @@ import { testimonials } from "@/lib/db/schema";
 import { asc } from "drizzle-orm";
 import Link from "next/link";
 import DeleteTestimonialButton from "./delete-button";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 export default async function AdminTestimonialsPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ANNOUNCEMENTS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   const testimonialList = await db
     .select()
     .from(testimonials)

@@ -2,6 +2,10 @@ import { db } from "@/lib/db";
 import { users, userRoles, roles, members, accounts } from "@/lib/db/schema";
 import { eq, ilike, or, asc } from "drizzle-orm";
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { format } from "date-fns";
 import { SuspendUserButton } from "@/components/admin/suspend-user-button";
 import { CreateUserDialog } from "@/components/admin/create-user-dialog";
@@ -16,6 +20,11 @@ export default async function UsersPage({
 }: {
   searchParams: Promise<{ search?: string; role?: string; login?: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
+  if (!canAccess) redirect("/admin");
+
   const { search, role: roleFilter, login: loginFilter } = await searchParams;
 
   // Fetch all users
