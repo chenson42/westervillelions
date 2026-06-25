@@ -28,6 +28,108 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-020: Receipt storage is pluggable via a `ReceiptStorage` interface; proxy routes stream content; store an opaque key, not a provider URL
+
+**Status:** Resolved
+**Date:** 2026-06-25
+
+**Decision:**
+Receipt file storage is exposed through a **`ReceiptStorage` interface** (three methods: `save`, `read`, `delete`) with two concrete adapters selected at runtime by environment:
+
+- **`VercelBlobStorage`** (default in production): wraps `@vercel/blob`. Blobs are written under `receipts/<uuid>/<sanitized-name>` with `access: 'public'` but UUID-namespaced. The adapter is lazy-imported (`import()`) inside its module file so that local dev never loads the `@vercel/blob` package.
+- **`LocalReceiptStorage`** (default when `BLOB_READ_WRITE_TOKEN` is absent): writes files under a `.receipt-store/` directory in the repo root (added to `.gitignore`). Reads and streams from disk. Requires zero configuration — no env var, no Vercel account.
+
+Selection rule: `getReceiptStorage()` checks `process.env.BLOB_READ_WRITE_TOKEN`; if set, returns a `VercelBlobStorage` instance; otherwise returns a `LocalReceiptStorage` instance.
+
+**Column rename:** `ledger_reimbursements.receipt_url` is renamed to `receipt_storage_key` (`text NOT NULL`). The column stores an opaque, provider-neutral key (e.g., `receipts/<uuid>/<filename>`) — not a full Vercel Blob URL. This is provider-agnostic and works identically for both adapters.
+
+**Proxy routes stream bytes, not redirect.** `GET /api/members/reimbursements/[id]/receipt` and `GET /api/admin/ledger/reimbursements/[id]/receipt` call `getReceiptStorage().read(key)`, then return the raw bytes with `Content-Type: <contentType>` and `Content-Disposition: inline`. They do NOT redirect to any storage URL. The storage URL/path is never sent to the browser. This works identically for Vercel Blob and local-filesystem, and is strictly more private than a redirect.
+
+**Upload route** returns `{ key: string }` (not `{ url: string }`). The key is stored in `receipt_storage_key`. The browser never learns the underlying blob URL or local path.
+
+**`isBlobUrl()` is removed.** Because the upload route returns an opaque key (not a URL) and the column stores that key, there is no external-URL injection surface to validate. The Blob URL allow-list check on PATCH is replaced by a format check: the key must match the pattern `receipts/<uuid>/<filename>` and must exist in the storage (the read call returns null if not).
+
+**`BLOB_READ_WRITE_TOKEN`** is required only in production. It is absent locally, and local dev needs no storage config at all.
+
+**Rationale:**
+DECISION-018 mandated Vercel Blob as the production storage provider — this decision does not change that. It adds a pluggability layer that fixes two problems DECISION-018 left open: (1) the original design required `BLOB_READ_WRITE_TOKEN` in local dev even though Vercel Blob cannot be used locally without network access and a real Blob store; (2) the redirect-based proxy model exposed the Vercel Blob CDN URL to the browser for the duration of the browser fetch, creating a window where the URL could be intercepted and reused without auth. Streaming the bytes from the server through the proxy closes that window and makes the two adapters behaviorally identical. The local adapter costs zero production-runtime overhead (never loaded) and zero configuration.
+
+The `ReceiptStorage` interface also future-proofs the design: swapping to Cloudflare R2 or S3 in a future increment is a new adapter module, not a rewrite of upload/proxy routes.
+
+**Impact:**
+- New module: `src/lib/receipt-storage/index.ts` (interface + `getReceiptStorage()` factory + re-exports).
+- New module: `src/lib/receipt-storage/vercel-blob.ts` (VercelBlobStorage adapter).
+- New module: `src/lib/receipt-storage/local.ts` (LocalReceiptStorage adapter).
+- `.receipt-store/` added to `.gitignore`.
+- `src/lib/blob.ts` is **not created** (superseded by the receipt-storage module).
+- `ledger_reimbursements.receipt_url` is **renamed** to `receipt_storage_key text NOT NULL` in migration `0046_ledger_controls.sql` and in `schema.ts`.
+- Upload route returns `{ key }` instead of `{ url }`.
+- Proxy routes (`GET .../receipt`) stream bytes via `getReceiptStorage().read(key)` instead of redirecting.
+- `isBlobUrl()` helper is not needed and is not created.
+- Refines DECISION-018.
+
+---
+
+## DECISION-019: Receipt file-type validation — hand-rolled magic-byte check, no `file-type` npm package
+
+**Status:** Resolved
+**Date:** 2026-06-25
+
+**Decision:**
+The receipt upload handler in `src/app/api/members/reimbursements/upload/route.ts` validates file type via a **hand-rolled magic-byte inspection** of the first 8 bytes of the uploaded buffer. No additional npm package (`file-type` or otherwise) is added. Supported formats and their byte signatures:
+
+| Format | Bytes checked |
+|--------|--------------|
+| PDF | `25 50 44 46` (first 4: `%PDF`) |
+| JPEG | `FF D8 FF` (first 3) |
+| PNG | `89 50 4E 47 0D 0A 1A 0A` (all 8) |
+
+If the buffer does not match any of these signatures, the handler returns 400. Content-Type from the request header is used as a hint for the error message only — the magic bytes are the authoritative check.
+
+**Rationale:**
+The `file-type` npm package (~50 KB, MIT, ESM-only) would work correctly for this use case. However, this project must validate exactly three MIME types (PDF, JPEG, PNG). The magic bytes for all three fit in a trivial 10-line helper function. Adding a dependency for three byte comparisons introduces: (1) a package to audit at every `pnpm audit` run; (2) ESM-only compatibility surface to manage in a Next.js App Router project; (3) ongoing maintenance cost if the package releases breaking changes. The hand-rolled check is simpler, has zero maintenance surface, is fully transparent to the reader, and is correct for the use case. The dependency evaluation criteria prefer the option already available — in this case, Node.js `Buffer` comparison — when it solves the problem adequately.
+
+**Impact:**
+- No new npm package.
+- The magic-byte logic lives in `src/lib/blob.ts` (the `uploadReceipt` helper). It is unit-testable with a three-case Vitest test (valid PDF, valid JPEG, invalid content).
+- If a future increment requires a broader set of supported file types (e.g., Word docs, spreadsheets), this decision should be revisited and `file-type` evaluated at that time.
+
+---
+
+## DECISION-018: Receipt file storage for ledger reimbursements — Vercel Blob with server-minted signed URLs
+
+**Status:** Resolved
+**Date:** 2026-06-24
+
+**Decision:**
+Receipt files for `ledger_reimbursements` are stored in **Vercel Blob** (`@vercel/blob` npm package, new dependency). Blobs are uploaded server-side from the receipt-upload route handler (never from the browser directly to Blob), minted with `put(path, stream, { access: 'public' })` but placed under a UUID path that is not guessable. All receipt reads from the member portal or admin UI go through a **server-side proxy route** (`GET /api/members/reimbursements/[id]/receipt` for the member, `GET /api/admin/ledger/reimbursements/[id]/receipt` for officers) that verifies session + ownership/permission before redirecting to the blob URL. The blob URL itself is never embedded in HTML or returned in JSON to the client; every access is mediated by a server check.
+
+Required new env var: `BLOB_READ_WRITE_TOKEN` (Vercel Blob store token).
+
+The `receiptUrl` column on `ledger_reimbursements` stores the full Vercel Blob URL (e.g., `https://<store>.public.blob.vercel-storage.com/<uuid>/<filename>`). File-type validation (PDF, JPEG, PNG; max 10 MB) is enforced server-side in the upload handler before writing to Blob.
+
+The existing `receiptUrl` text field on `ledger_transactions` (ordinary transactions, FU-3) remains a paste-URL text field for now — no file-upload UX for ordinary transactions in inc2. The file-storage decision applies only to `ledger_reimbursements` in this increment.
+
+The `public/uploads`-based upload handler at `src/app/api/admin/upload/route.ts` (used for campaign images) is left untouched; that surface is not financial and ephemeral loss there is acceptable. Receipt files are financial documents with a 7-year retention requirement — they require durable object storage.
+
+**Rationale:**
+- `public/uploads` + `writeFile` is already used for campaign images and is the only file-upload precedent in the codebase. That handler was confirmed unacceptable for receipts: Vercel's serverless runtime provides no persistent local disk, so any file written to the local filesystem is lost between invocations and certainly lost on redeployment. Financial documents with a 7-year retention requirement cannot use ephemeral storage.
+- **Vercel Blob** is the correct fit: the project is deployed on Vercel, Blob is native to the platform (no cross-provider credentials, no separate CDN), it is actively maintained, and the `@vercel/blob` package adds negligible bundle weight to a server-only upload route. License: Apache-2.0.
+- **Cloudflare R2 / S3** would work but introduce additional cross-provider credentials (`AWS_ACCESS_KEY_ID`, etc.) and a heavier SDK for a single use-case in a small club app. The dependency evaluation criteria prefer the option that is already available in the deploy environment.
+- **Storing blobs in Postgres** (bytea) is rejected: blob columns at multi-MB scale degrade query performance across all tables sharing the DB connection pool and violate the principle of keeping the DB for structured data only.
+- The access-control model (server proxy, never raw blob URL to the client) provides defense-in-depth: even if a blob URL were somehow leaked, the server route is the only entry point that links the UUID path back to a member identity or a permission check.
+
+**Impact:**
+- New npm dependency: `@vercel/blob`. Add to `package.json` (production dependency).
+- New env var: `BLOB_READ_WRITE_TOKEN` — deployment-engineer must document in Vercel environment variables.
+- New upload route: `src/app/api/members/reimbursements/upload/route.ts` — accepts a multipart file, validates type + size, calls `put()`, returns the blob URL to the server action (not to the browser). This is a server action or route handler intermediary, not a direct browser-to-Blob upload.
+- New receipt-proxy routes: `GET /api/members/reimbursements/[id]/receipt` (auth + memberId ownership check → redirect) and `GET /api/admin/ledger/reimbursements/[id]/receipt` (auth + `LEDGER_VIEW` → redirect).
+- `ledger_reimbursements.receiptUrl` column: `text NOT NULL` (required — every reimbursement must have a receipt).
+- `ledger_transactions.receiptUrl` remains text (paste-URL) for ordinary transactions — no file upload in inc2 for that surface.
+- Security review must audit: upload file-type sniffing (MIME type from Content-Type header is spoofable — server must also inspect the first bytes), size limit enforcement, that the blob path is UUID-namespaced (not predictable), and that the proxy routes return 404 (not 403) for IDs that exist but belong to another member.
+
+---
+
 ## DECISION-017: Ledger `flow` column stores `'income' | 'expense'` only; `transferGroupId` is the transfer discriminator
 
 **Status:** Resolved
