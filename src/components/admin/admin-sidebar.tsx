@@ -115,6 +115,18 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.LEDGER_VIEW,
   },
   {
+    name: "Compliance",
+    href: "/admin/ledger/compliance",
+    icon: "📋",
+    requiredFeature: FEATURES.LEDGER_VIEW,
+  },
+  {
+    name: "Ledger Settings",
+    href: "/admin/ledger/settings",
+    icon: "⚙️",
+    requiredFeature: FEATURES.LEDGER_MANAGE,
+  },
+  {
     name: "Newsletter",
     href: "/admin/subscriptions",
     icon: "📧",

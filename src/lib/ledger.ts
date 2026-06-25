@@ -15,6 +15,8 @@
  *
  * Guardrails activated in inc2: two-fund firewall (HIGH), unapproved disbursements
  * over threshold (WARN), unreconciled transactions from prior months (WARN).
+ *
+ * Guardrails activated in inc3: IRS revocation risk (HIGH), overdue filings (WARN).
  */
 
 // ---------------------------------------------------------------------------
@@ -57,6 +59,46 @@ export type Determine990Result = {
   form: string;
   why: string;
 };
+
+// ---------------------------------------------------------------------------
+// computeDueDate (inc3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Computes the absolute due date for a filing row, given the fiscal year and
+ * the stored `due_month` / `due_day` integers.
+ *
+ * Lions FY runs Jul 1 – Jun 30, labeled by its starting year:
+ *   - Months 7–12 (Jul–Dec) fall in the first calendar year of the FY.
+ *   - Months 1–6  (Jan–Jun) fall in the second calendar year of the FY.
+ *
+ * @param fiscalYear  FY start year (e.g. 2026 = Jul 2026 – Jun 2027)
+ * @param dueMonth    1-indexed month from the `due_month` column (1–12)
+ * @param dueDay      Day of month from the `due_day` column (1–31)
+ */
+export function computeDueDate(fiscalYear: number, dueMonth: number, dueDay: number): Date {
+  if (dueMonth >= 7) {
+    // Jul–Dec: same calendar year as FY start
+    return new Date(fiscalYear, dueMonth - 1, dueDay);
+  }
+  // Jan–Jun: second calendar year of the FY
+  return new Date(fiscalYear + 1, dueMonth - 1, dueDay);
+}
+
+/**
+ * Returns true if a filing is overdue: its due date is past (< today) and
+ * its status is not one of the terminal states that means "nothing more needed".
+ *
+ * @param filing   Minimal filing shape (dueMonth, dueDay, fiscalYear, status)
+ * @param today    The reference date (default: now; injectable for tests)
+ */
+export function isFilingOverdue(
+  filing: { fiscalYear: number; dueMonth: number; dueDay: number; status: string },
+  today: Date = new Date(),
+): boolean {
+  const dueDate = computeDueDate(filing.fiscalYear, filing.dueMonth, filing.dueDay);
+  return dueDate < today && !["filed", "na", "future"].includes(filing.status);
+}
 
 // ---------------------------------------------------------------------------
 // fundBalanceCents
@@ -253,6 +295,24 @@ export type GuardrailsInput = {
    * and the paired row's fund has kind='administrative' — Activity→Admin firewall.
    */
   firewallViolations: number;
+  // ---------------------------------------------------------------------------
+  // inc3 fields — all required in inc3+; callers on inc1/inc2 paths that cannot
+  // supply these should pass irsFilingHistory: [], overdueFilingCount: 0.
+  // ---------------------------------------------------------------------------
+  /**
+   * IRS 990-family filings for the entity's past fiscal years, ordered ascending.
+   * Each entry: { fiscalYear: number, status: string }.
+   * Only rows where agency = 'IRS'. Used for the revocation check.
+   * Pass [] if compliance filing data is not available at the call site.
+   */
+  irsFilingHistory: Array<{ fiscalYear: number; status: string }>;
+  /**
+   * Number of filing rows where computeDueDate(...) < today
+   * AND status NOT IN ('filed', 'na', 'future').
+   * Computed at the call site in getComplianceOverview.
+   * Pass 0 if compliance filing data is not available at the call site.
+   */
+  overdueFilingCount: number;
 };
 
 /**
@@ -264,8 +324,8 @@ export type GuardrailsInput = {
  *           cash disbursements (WARN), expenses without receipt URL (INFO)
  *   inc2 — unapproved disbursements (WARN), unreconciled prior-month (WARN),
  *           two-fund firewall violation (HIGH)
- *
- * Inactive checks: compliance filing status (inc3 — ledger_filings table).
+ *   inc3 — IRS 990 revocation risk / 3 consecutive unfiled years (HIGH),
+ *           overdue compliance filings (WARN)
  *
  * Returns an empty array when all checks are clear.
  *
@@ -379,7 +439,42 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
     });
   }
 
-  // TODO inc3: compliance filing status check (ledger_filings table)
+  // Check: IRS 990 revocation risk — 3 consecutive unfiled returns (HIGH) — inc3
+  //
+  // Rule (Phase 3 design): look at the 3 most-recent past FYs of IRS filings
+  // (agency='IRS') in descending order. If ALL three have status NOT IN
+  // ('filed', 'na'), fire a HIGH flag. Suppress entirely when fewer than 3 FYs
+  // of IRS filing data exist (avoids spurious warnings for a new install).
+  //
+  // irsFilingHistory is pre-filtered to agency='IRS' and ordered ascending by
+  // fiscalYear — take the last 3 entries (most recent first for the check).
+  if (state.irsFilingHistory.length >= 3) {
+    const recentThree = state.irsFilingHistory.slice(-3);
+    const allUnfiled = recentThree.every(
+      (entry) => !["filed", "na"].includes(entry.status),
+    );
+    if (allUnfiled) {
+      flags.push({
+        severity: "high",
+        title: "IRS 990 revocation risk — 3 consecutive unfiled returns",
+        detail:
+          "The IRS automatically revokes tax-exempt status after 3 consecutive years of " +
+          "failure to file a required annual return. File the overdue returns immediately.",
+        policyCite: "IRC §6033(j)",
+      });
+    }
+  }
+
+  // Check: overdue compliance filings (WARN) — inc3
+  if (state.overdueFilingCount > 0) {
+    const n = state.overdueFilingCount;
+    flags.push({
+      severity: "warn",
+      title: "Overdue compliance filings",
+      detail: `${n} filing${n === 1 ? " is" : "s are"} past due. Review the Compliance screen and file or mark as N/A.`,
+      policyCite: "Lions Financial Transparency Policy §10",
+    });
+  }
 
   return flags;
 }

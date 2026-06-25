@@ -15,6 +15,8 @@ import {
   grossReceiptsCents,
   budgetVariance,
   guardrails,
+  computeDueDate,
+  isFilingOverdue,
   type GuardrailsInput,
 } from "./ledger";
 
@@ -237,7 +239,7 @@ describe("budgetVariance", () => {
 // guardrails
 // ---------------------------------------------------------------------------
 
-/** A clean baseline state — all checks should be silent (inc1 + inc2). */
+/** A clean baseline state — all checks should be silent (inc1 + inc2 + inc3). */
 const cleanState: GuardrailsInput = {
   funds: [
     { id: "fund-1", kind: "administrative", balanceCents: 50_000 },
@@ -256,6 +258,9 @@ const cleanState: GuardrailsInput = {
   pendingDisbursements: 0,
   unreconciledPriorMonth: 0,
   firewallViolations: 0,
+  // inc3 fields — safe defaults (empty history = no revocation check; 0 overdue)
+  irsFilingHistory: [],
+  overdueFilingCount: 0,
 };
 
 describe("guardrails", () => {
@@ -517,6 +522,310 @@ describe("guardrails", () => {
     const flags = guardrails(state);
     const cashFlag = flags.find((f) => f.title.toLowerCase().includes("cash"));
     expect(cashFlag?.detail).toContain("4 expense transactions");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeDueDate (inc3)
+// ---------------------------------------------------------------------------
+
+describe("computeDueDate", () => {
+  // Month >= 7: falls in the first calendar year of the FY (same as FY start year)
+  it("month=11 (November) FY2026 → Nov 15 2026", () => {
+    const d = computeDueDate(2026, 11, 15);
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(10); // 0-indexed
+    expect(d.getDate()).toBe(15);
+  });
+
+  it("month=7 (July — boundary) FY2026 → Jul 1 2026", () => {
+    const d = computeDueDate(2026, 7, 1);
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(6); // July is index 6
+    expect(d.getDate()).toBe(1);
+  });
+
+  it("month=12 (December) FY2026 → Dec 31 2026", () => {
+    const d = computeDueDate(2026, 12, 31);
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(11);
+    expect(d.getDate()).toBe(31);
+  });
+
+  // Month < 7: falls in the second calendar year of the FY (FY start year + 1)
+  it("month=6 (June — boundary) FY2026 → Jun 30 2027", () => {
+    const d = computeDueDate(2026, 6, 30);
+    expect(d.getFullYear()).toBe(2027);
+    expect(d.getMonth()).toBe(5); // June is index 5
+    expect(d.getDate()).toBe(30);
+  });
+
+  it("month=1 (January) FY2026 → Jan 15 2027", () => {
+    const d = computeDueDate(2026, 1, 15);
+    expect(d.getFullYear()).toBe(2027);
+    expect(d.getMonth()).toBe(0);
+    expect(d.getDate()).toBe(15);
+  });
+
+  // Boundary: July (month=7) is NOT < 7, so it maps to the same calendar year
+  it("month=7 is not < 7, so it maps to FY start year (not +1)", () => {
+    const d7 = computeDueDate(2026, 7, 1);
+    const d6 = computeDueDate(2026, 6, 1);
+    // July 2026 < June 2027 — they are in different calendar years
+    expect(d7.getFullYear()).toBe(2026);
+    expect(d6.getFullYear()).toBe(2027);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isFilingOverdue (inc3)
+// ---------------------------------------------------------------------------
+
+describe("isFilingOverdue", () => {
+  it("returns true when dueDate is past and status is not_started", () => {
+    // Nov 15 2026 is past from the perspective of 2027
+    const result = isFilingOverdue(
+      { fiscalYear: 2026, dueMonth: 11, dueDay: 15, status: "not_started" },
+      new Date("2027-01-01"),
+    );
+    expect(result).toBe(true);
+  });
+
+  it("returns false when dueDate is in the future", () => {
+    const result = isFilingOverdue(
+      { fiscalYear: 2026, dueMonth: 11, dueDay: 15, status: "not_started" },
+      new Date("2026-01-01"),
+    );
+    expect(result).toBe(false);
+  });
+
+  it("returns false when status is filed (even if past due)", () => {
+    const result = isFilingOverdue(
+      { fiscalYear: 2026, dueMonth: 11, dueDay: 15, status: "filed" },
+      new Date("2027-01-01"),
+    );
+    expect(result).toBe(false);
+  });
+
+  it("returns false when status is na (not applicable)", () => {
+    const result = isFilingOverdue(
+      { fiscalYear: 2026, dueMonth: 11, dueDay: 15, status: "na" },
+      new Date("2027-01-01"),
+    );
+    expect(result).toBe(false);
+  });
+
+  it("returns false when status is future", () => {
+    const result = isFilingOverdue(
+      { fiscalYear: 2026, dueMonth: 11, dueDay: 15, status: "future" },
+      new Date("2027-01-01"),
+    );
+    expect(result).toBe(false);
+  });
+
+  it("returns true when status is in_progress and past due", () => {
+    const result = isFilingOverdue(
+      { fiscalYear: 2026, dueMonth: 11, dueDay: 15, status: "in_progress" },
+      new Date("2027-01-01"),
+    );
+    expect(result).toBe(true);
+  });
+
+  it("returns false on the exact due date (dueDate is not < today)", () => {
+    // Due Nov 15 2026; today = Nov 15 2026 → not overdue yet
+    const result = isFilingOverdue(
+      { fiscalYear: 2026, dueMonth: 11, dueDay: 15, status: "not_started" },
+      new Date(2026, 10, 15), // Nov 15 2026 at midnight local
+    );
+    expect(result).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// guardrails — inc3 additions
+// ---------------------------------------------------------------------------
+
+/** Extend cleanState for inc3 (add new required fields with safe defaults). */
+const cleanStateInc3: GuardrailsInput = {
+  funds: [
+    { id: "fund-1", kind: "administrative", balanceCents: 50_000 },
+    { id: "fund-2", kind: "activity", balanceCents: 75_000 },
+  ],
+  entityBalanceCents: 125_000,
+  settings: {
+    reserveWarnThresholdCents: 100_000,
+    treasurerBonded: true,
+    retentionYears: 7,
+  },
+  incomeWithoutParty: 0,
+  cashDisbursements: 0,
+  txnsWithoutReceipt: 0,
+  pendingDisbursements: 0,
+  unreconciledPriorMonth: 0,
+  firewallViolations: 0,
+  irsFilingHistory: [],
+  overdueFilingCount: 0,
+};
+
+describe("guardrails — inc3 revocation check", () => {
+  it("fires HIGH when 3 most-recent IRS filings are all not filed/na", () => {
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      irsFilingHistory: [
+        { fiscalYear: 2023, status: "not_started" },
+        { fiscalYear: 2024, status: "not_started" },
+        { fiscalYear: 2025, status: "in_progress" },
+      ],
+    };
+    const flags = guardrails(state);
+    const revFlag = flags.find((f) => f.title.toLowerCase().includes("revocation"));
+    expect(revFlag).toBeDefined();
+    expect(revFlag?.severity).toBe("high");
+    expect(revFlag?.policyCite).toBe("IRC §6033(j)");
+  });
+
+  it("does NOT fire when at least one of the 3 most-recent IRS filings has status filed", () => {
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      irsFilingHistory: [
+        { fiscalYear: 2023, status: "filed" },
+        { fiscalYear: 2024, status: "not_started" },
+        { fiscalYear: 2025, status: "not_started" },
+      ],
+    };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("revocation"))).toBeUndefined();
+  });
+
+  it("does NOT fire when at least one of the 3 most-recent has status na", () => {
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      irsFilingHistory: [
+        { fiscalYear: 2023, status: "not_started" },
+        { fiscalYear: 2024, status: "na" },
+        { fiscalYear: 2025, status: "not_started" },
+      ],
+    };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("revocation"))).toBeUndefined();
+  });
+
+  it("suppresses the check when fewer than 3 FYs of IRS filing data exist", () => {
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      irsFilingHistory: [
+        { fiscalYear: 2024, status: "not_started" },
+        { fiscalYear: 2025, status: "not_started" },
+      ],
+    };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("revocation"))).toBeUndefined();
+  });
+
+  it("suppresses the check when irsFilingHistory is empty", () => {
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      irsFilingHistory: [],
+    };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("revocation"))).toBeUndefined();
+  });
+
+  it("does NOT fire when 3 FYs all have status filed", () => {
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      irsFilingHistory: [
+        { fiscalYear: 2023, status: "filed" },
+        { fiscalYear: 2024, status: "filed" },
+        { fiscalYear: 2025, status: "filed" },
+      ],
+    };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("revocation"))).toBeUndefined();
+  });
+
+  it("fires using only the last 3 when more than 3 FYs are provided (most recent 3 unfiled)", () => {
+    // 4 entries: earliest is filed, 3 most recent are not_started → fires
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      irsFilingHistory: [
+        { fiscalYear: 2022, status: "filed" }, // oldest — not in the 3-most-recent check
+        { fiscalYear: 2023, status: "not_started" },
+        { fiscalYear: 2024, status: "not_started" },
+        { fiscalYear: 2025, status: "not_started" },
+      ],
+    };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("revocation"))).toBeDefined();
+  });
+
+  it("does NOT fire when 4 entries are provided and the 3 most recent include a filed entry", () => {
+    // 4 entries: most recent is filed → does not fire
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      irsFilingHistory: [
+        { fiscalYear: 2022, status: "not_started" },
+        { fiscalYear: 2023, status: "not_started" },
+        { fiscalYear: 2024, status: "not_started" },
+        { fiscalYear: 2025, status: "filed" },
+      ],
+    };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("revocation"))).toBeUndefined();
+  });
+});
+
+describe("guardrails — inc3 overdue filings check", () => {
+  it("fires WARN when overdueFilingCount > 0", () => {
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      overdueFilingCount: 2,
+    };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("overdue"));
+    expect(flag).toBeDefined();
+    expect(flag?.severity).toBe("warn");
+    expect(flag?.policyCite).toMatch(/§10/);
+  });
+
+  it("uses singular wording for 1 overdue filing", () => {
+    const state: GuardrailsInput = { ...cleanStateInc3, overdueFilingCount: 1 };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("overdue"))!;
+    expect(flag.detail).toContain("1 filing is");
+  });
+
+  it("uses plural wording for multiple overdue filings", () => {
+    const state: GuardrailsInput = { ...cleanStateInc3, overdueFilingCount: 3 };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("overdue"))!;
+    expect(flag.detail).toContain("3 filings are");
+  });
+
+  it("does NOT fire when overdueFilingCount is 0", () => {
+    const state: GuardrailsInput = { ...cleanStateInc3, overdueFilingCount: 0 };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("overdue"))).toBeUndefined();
+  });
+});
+
+describe("guardrails — backward compatibility (inc1/inc2 callers with new fields as zero/empty)", () => {
+  it("returns empty array when all inc1/inc2 checks pass and inc3 fields are safe defaults", () => {
+    // This simulates an existing getOverview() call that now passes [] / 0
+    expect(guardrails(cleanStateInc3)).toHaveLength(0);
+  });
+
+  it("existing inc2 checks still fire when triggered alongside inc3 safe defaults", () => {
+    const state: GuardrailsInput = {
+      ...cleanStateInc3,
+      firewallViolations: 1,
+      irsFilingHistory: [],
+      overdueFilingCount: 0,
+    };
+    const flags = guardrails(state);
+    expect(flags.some((f) => f.title.toLowerCase().includes("firewall"))).toBe(true);
+    expect(flags.find((f) => f.title.toLowerCase().includes("revocation"))).toBeUndefined();
+    expect(flags.find((f) => f.title.toLowerCase().includes("overdue"))).toBeUndefined();
   });
 });
 

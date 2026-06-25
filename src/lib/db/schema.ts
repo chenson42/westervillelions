@@ -730,3 +730,67 @@ export const ledgerReimbursements = pgTable(
 
 export type LedgerReimbursement = typeof ledgerReimbursements.$inferSelect;
 export type NewLedgerReimbursement = typeof ledgerReimbursements.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The Ledger — Increment 3: Compliance
+// Per-entity per-fiscal-year compliance filings calendar.
+// Due dates are stored as month/day pairs and computed at query time via
+// computeDueDate(fiscalYear, dueMonth, dueDay) — DECISION-021.
+// 5-year recurrence cadence controlled by nextDueYear — DECISION-022.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const ledgerFilings = pgTable(
+  "ledger_filings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    fiscalYear: integer("fiscal_year").notNull(),
+    // FY start year (e.g. 2026 = Jul 2026 – Jun 2027)
+    agency: text("agency").notNull(),
+    // 'IRS' | 'Ohio Attorney General' | 'Ohio Secretary of State' |
+    // 'Ohio Dept. of Commerce' | 'Internal — Audit Committee'
+    title: text("title").notNull(),
+    // Human display name, e.g. '990-N', 'Ohio AG Annual Report'
+    dueMonth: integer("due_month").notNull(),
+    // 1–12; combined with dueDay + fiscalYear to derive the absolute due date:
+    // month >= 7 → new Date(fiscalYear, dueMonth-1, dueDay)
+    // month < 7  → new Date(fiscalYear+1, dueMonth-1, dueDay)
+    dueDay: integer("due_day").notNull(),
+    // 1–31
+    recurrence: text("recurrence").notNull().default("annual"),
+    // 'annual' | '5_year'
+    nextDueYear: integer("next_due_year"),
+    // Non-null only for recurrence='5_year'. Stores the calendar year in which
+    // this specific row's due date falls (DECISION-022). listFilings includes
+    // a 5-year row only when nextDueYear === (dueMonth >= 7 ? fiscalYear : fiscalYear+1).
+    status: text("status").notNull().default("not_started"),
+    // 'not_started' | 'in_progress' | 'filed' | 'future' | 'na'
+    // No DB CHECK constraint — consistent with ledger_transactions.status (inc1 precedent).
+    confirmation: text("confirmation"),
+    // Agency confirmation/acknowledgment code; max 100 chars at app layer
+    filedOn: date("filed_on"),
+    // Wall-clock date filed; required when status → 'filed' (enforced at app layer)
+    note: text("note"),
+    // Max 1000 chars at app layer
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("ledger_filings_entity_fy_agency_title_key").on(
+      t.entityId,
+      t.fiscalYear,
+      t.agency,
+      t.title,
+    ),
+    index("ix_ledger_filings_entity_fy").on(t.entityId, t.fiscalYear),
+  ],
+);
+
+export type LedgerFiling = typeof ledgerFilings.$inferSelect;
+export type NewLedgerFiling = typeof ledgerFilings.$inferInsert;

@@ -6,6 +6,8 @@ import type { LedgerEntity } from "@/lib/db/schema";
 interface EntitySwitcherProps {
   entities: LedgerEntity[];
   activeSlug: string;
+  /** Destination path for the switcher. Defaults to /admin/ledger. */
+  basePath?: string;
 }
 
 /**
@@ -13,14 +15,14 @@ interface EntitySwitcherProps {
  * Updates the ?entity= URL param; preserves ?fy= if present.
  * Uses rounded-lg (not rounded-full) per brand invariant.
  */
-export default function EntitySwitcher({ entities, activeSlug }: EntitySwitcherProps) {
+export default function EntitySwitcher({ entities, activeSlug, basePath = "/admin/ledger" }: EntitySwitcherProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   function handleSelect(slug: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("entity", slug);
-    router.push(`/admin/ledger?${params}`);
+    router.push(`${basePath}?${params}`);
   }
 
   return (

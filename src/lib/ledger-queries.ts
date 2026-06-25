@@ -23,6 +23,7 @@ import {
   ledgerBudgets,
   ledgerSettings,
   ledgerReimbursements,
+  ledgerFilings,
   members,
   users,
   type LedgerEntity,
@@ -32,8 +33,9 @@ import {
   type LedgerTransaction,
   type LedgerSettings,
   type LedgerReimbursement,
+  type LedgerFiling,
 } from "@/lib/db/schema";
-import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull } from "drizzle-orm";
+import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, sql } from "drizzle-orm";
 import { getFiscalYear, currentFiscalYear } from "@/lib/fiscal-year";
 import {
   fundBalanceCents,
@@ -41,6 +43,8 @@ import {
   budgetVariance,
   guardrails,
   determine990,
+  computeDueDate,
+  isFilingOverdue,
   type GuardrailFlag,
   type BudgetVarianceResult,
 } from "@/lib/ledger";
@@ -628,6 +632,10 @@ export async function getOverview(
     pendingDisbursements,
     unreconciledPriorMonth,
     firewallViolations,
+    // inc3 fields — not available on this path; compliance page uses
+    // getComplianceOverview() which passes real values.
+    irsFilingHistory: [],
+    overdueFilingCount: 0,
   });
 
   const determine990Result = determine990({
@@ -658,8 +666,6 @@ export async function listLedgerFiscalYears(entityId: string): Promise<number[]>
   // Derive FY from txnDate using JS — fetch distinct txnDate months and compute
   // via SQL DATE_PART is simpler, but we want to stay with Drizzle's type system.
   // Use a raw sql tag for the DISTINCT on derived year.
-  const { sql } = await import("drizzle-orm");
-
   const rows = await db.execute<{ fy: number }>(sql`
     SELECT DISTINCT
       CASE
@@ -794,13 +800,11 @@ export async function listReimbursementsForAdmin(opts: {
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const { sql: sqlTag } = await import("drizzle-orm");
-
   // Count for pagination
   const countRows = await db.execute<{ count: string }>(
     whereClause
-      ? sqlTag`SELECT COUNT(*)::text AS count FROM ledger_reimbursements WHERE ${whereClause}`
-      : sqlTag`SELECT COUNT(*)::text AS count FROM ledger_reimbursements`,
+      ? sql`SELECT COUNT(*)::text AS count FROM ledger_reimbursements WHERE ${whereClause}`
+      : sql`SELECT COUNT(*)::text AS count FROM ledger_reimbursements`,
   );
   const total = parseInt(countRows[0]?.count ?? "0", 10);
 
@@ -908,8 +912,7 @@ export async function getUserEmail(userId: string): Promise<string | null> {
  * disbursement is submitted.
  */
 export async function getEmailsForFeature(featureName: string): Promise<string[]> {
-  const { sql: sqlTag } = await import("drizzle-orm");
-  const rows = await db.execute<{ email: string }>(sqlTag`
+  const rows = await db.execute<{ email: string }>(sql`
     SELECT DISTINCT u.email
     FROM users u
     JOIN user_roles ur ON ur.user_id = u.id
@@ -920,4 +923,254 @@ export async function getEmailsForFeature(featureName: string): Promise<string[]
       AND u.is_active = TRUE
   `);
   return rows.map((r) => r.email).filter(Boolean) as string[];
+}
+
+// ---------------------------------------------------------------------------
+// Filing row type (inc3)
+// ---------------------------------------------------------------------------
+
+export type FilingRow = LedgerFiling & {
+  /** Absolute due date computed via computeDueDate(fiscalYear, dueMonth, dueDay). */
+  dueDate: Date;
+  /** True when dueDate < today AND status NOT IN ('filed','na','future'). */
+  overdue: boolean;
+};
+
+// ---------------------------------------------------------------------------
+// ensureFilingsForFY (inc3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Idempotent: ensures `ledger_filings` rows exist for (entityId, fiscalYear).
+ *
+ * If rows already exist for the given entity + FY → no-op (safe under
+ * concurrent requests; ON CONFLICT guard protects against race conditions).
+ *
+ * If no rows exist for this FY:
+ *   - Copies rows from the prior FY (fiscalYear - 1) for the same entity.
+ *   - Resets status to 'not_started'; does NOT copy confirmation, filed_on,
+ *     or note (DECISION-022 / Phase 3 design: filed state must NOT roll over).
+ *   - For recurrence='5_year' rows: sets next_due_year = prior.next_due_year + 5.
+ *   - If there are no prior-FY rows, inserts nothing — the page renders empty
+ *     bands (this handles a fresh install before seed has been applied).
+ *
+ * Called explicitly from the compliance page Server Component before listFilings.
+ * Must NOT be called from inside listFilings (write-on-read violates the read
+ * contract of all query helpers — DECISION-021).
+ */
+export async function ensureFilingsForFY(
+  entityId: string,
+  fiscalYear: number,
+): Promise<void> {
+  // Check whether any rows already exist for this entity + FY
+  const existing = await db
+    .select({ id: ledgerFilings.id })
+    .from(ledgerFilings)
+    .where(and(eq(ledgerFilings.entityId, entityId), eq(ledgerFilings.fiscalYear, fiscalYear)))
+    .limit(1);
+
+  if (existing.length > 0) {
+    // Rows already exist — idempotent no-op
+    return;
+  }
+
+  // No rows for this FY. Copy from prior FY.
+  // Uses a parameterized INSERT … SELECT … ON CONFLICT DO NOTHING.
+  // status is hardcoded to 'not_started'; confirmation/filed_on/note are NOT selected.
+  // next_due_year: for 5_year rows, add 5; for annual rows, set NULL.
+  const priorFY = fiscalYear - 1;
+  await db.execute(sql`
+    INSERT INTO ledger_filings
+      (entity_id, fiscal_year, agency, title, due_month, due_day, recurrence, next_due_year, status)
+    SELECT
+      entity_id,
+      ${fiscalYear},
+      agency,
+      title,
+      due_month,
+      due_day,
+      recurrence,
+      CASE WHEN recurrence = '5_year' THEN next_due_year + 5 ELSE NULL END,
+      'not_started'
+    FROM ledger_filings
+    WHERE entity_id = ${entityId}
+      AND fiscal_year = ${priorFY}
+    ON CONFLICT (entity_id, fiscal_year, agency, title) DO NOTHING
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// listFilings (inc3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure read. Returns all filings for (entityId, fiscalYear), enriched with
+ * computed dueDate and derived overdue flag.
+ *
+ * For recurrence='5_year' rows: a row is included only when its nextDueYear
+ * matches the calendar year in which due_month falls inside fiscalYear
+ * (DECISION-022 predicate: dueMonth >= 7 → nextDueYear === fiscalYear;
+ * dueMonth < 7 → nextDueYear === fiscalYear + 1).
+ *
+ * Results are ordered by dueDate ASC.
+ *
+ * Does NOT insert or modify rows. Call ensureFilingsForFY before this if you
+ * want rollover behavior.
+ */
+export async function listFilings(entityId: string, fiscalYear: number): Promise<FilingRow[]> {
+  const rows = await db
+    .select()
+    .from(ledgerFilings)
+    .where(and(eq(ledgerFilings.entityId, entityId), eq(ledgerFilings.fiscalYear, fiscalYear)));
+
+  const today = new Date();
+
+  const enriched: FilingRow[] = [];
+  for (const row of rows) {
+    // Filter 5-year rows: include only when nextDueYear matches the calendar
+    // year of due_month inside fiscalYear (DECISION-022).
+    if (row.recurrence === "5_year") {
+      const expectedCalendarYear = row.dueMonth >= 7 ? fiscalYear : fiscalYear + 1;
+      if (row.nextDueYear !== expectedCalendarYear) {
+        continue; // This row's 5-year cycle is not due in this FY
+      }
+    }
+
+    const dueDate = computeDueDate(fiscalYear, row.dueMonth, row.dueDay);
+    const overdue = isFilingOverdue(
+      { fiscalYear, dueMonth: row.dueMonth, dueDay: row.dueDay, status: row.status },
+      today,
+    );
+
+    enriched.push({ ...row, dueDate, overdue });
+  }
+
+  // Sort ascending by dueDate
+  enriched.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+
+  return enriched;
+}
+
+// ---------------------------------------------------------------------------
+// getComplianceOverview (inc3)
+// ---------------------------------------------------------------------------
+
+export type ComplianceOverview = {
+  entity: LedgerEntity;
+  fiscalYear: number;
+  filings: FilingRow[];
+  grossReceiptsCents: number;
+  /** Entity cash balance; proxy for assets estimate — label as such in the UI. */
+  entityBalanceCents: number;
+  determine990Result: { form: string; why: string };
+  /** All guardrail flags including inc3 compliance flags. */
+  guardrailFlags: GuardrailFlag[];
+  settings: LedgerSettings;
+};
+
+/**
+ * Assembles everything the compliance page needs in a single call.
+ *
+ * Steps:
+ *   1. getOverview(entityId, fiscalYear) — entity state, 990 result, inc1/inc2 guardrails.
+ *   2. listFilings(entityId, fiscalYear) — filing calendar with computed dueDate/overdue.
+ *   3. IRS filing history: ledger_filings WHERE agency='IRS' AND fiscal_year < fiscalYear
+ *      ORDER BY fiscal_year ASC (for revocation check — 3 consecutive unfiled).
+ *   4. Derive overdueFilingCount from the filings result.
+ *   5. Append inc3 guardrail flags (revocation risk + overdue count) by calling
+ *      guardrails() with the real inc3 inputs, then prepending/appending to the
+ *      existing flags from getOverview.
+ *
+ * getOverview passes irsFilingHistory=[], overdueFilingCount=0. To avoid calling
+ * guardrails() twice against the full state, we call guardrails() once here with
+ * all inputs (inc1 + inc2 + inc3) using the aggregated state from getOverview.
+ */
+export async function getComplianceOverview(
+  entityId: string,
+  fiscalYear: number,
+): Promise<ComplianceOverview | null> {
+  // Step 1: get the entity overview (gives us inc1/inc2 guardrail inputs, entity state)
+  const overview = await getOverview(entityId, fiscalYear);
+  if (!overview) return null;
+
+  // Step 2: get the filing calendar
+  const filings = await listFilings(entityId, fiscalYear);
+
+  // Step 3: IRS filing history for the revocation check
+  // Query up to the most recent 3 past FYs of IRS filings, ordered ascending.
+  // We query all past IRS filings and let guardrails() slice the last 3.
+  const irsHistoryRows = await db
+    .select({
+      fiscalYear: ledgerFilings.fiscalYear,
+      status: ledgerFilings.status,
+    })
+    .from(ledgerFilings)
+    .where(
+      and(
+        eq(ledgerFilings.entityId, entityId),
+        eq(ledgerFilings.agency, "IRS"),
+        sql`${ledgerFilings.fiscalYear} < ${fiscalYear}`,
+      ),
+    )
+    .orderBy(asc(ledgerFilings.fiscalYear));
+
+  // Step 4: overdue count
+  const overdueFilingCount = filings.filter((f) => f.overdue).length;
+
+  // Step 5: get settings (needed for guardrails and to return in the overview)
+  const settings = await getSettings();
+
+  // Re-derive the inc1/inc2 guardrail inputs from the overview so we can call
+  // guardrails() once with all inputs. getOverview already ran guardrails() with
+  // irsFilingHistory=[], overdueFilingCount=0. We rebuild the flags here with the
+  // complete input so the compliance page sees all flags in one place.
+  //
+  // Rather than re-deriving all guardrail inputs from scratch (which would require
+  // duplicating the getOverview aggregation logic), we take a simpler approach:
+  // take the existing guardrailFlags from getOverview and append the inc3 flags
+  // computed from the additional data we now have.
+  const inc3Flags: GuardrailFlag[] = [];
+
+  // Revocation check (mirrors guardrails() logic for the inc3 section)
+  if (irsHistoryRows.length >= 3) {
+    const recentThree = irsHistoryRows.slice(-3);
+    const allUnfiled = recentThree.every(
+      (entry) => !["filed", "na"].includes(entry.status),
+    );
+    if (allUnfiled) {
+      inc3Flags.push({
+        severity: "high",
+        title: "IRS 990 revocation risk — 3 consecutive unfiled returns",
+        detail:
+          "The IRS automatically revokes tax-exempt status after 3 consecutive years of " +
+          "failure to file a required annual return. File the overdue returns immediately.",
+        policyCite: "IRC §6033(j)",
+      });
+    }
+  }
+
+  // Overdue filings check
+  if (overdueFilingCount > 0) {
+    const n = overdueFilingCount;
+    inc3Flags.push({
+      severity: "warn",
+      title: "Overdue compliance filings",
+      detail: `${n} filing${n === 1 ? " is" : "s are"} past due. Review the Compliance screen and file or mark as N/A.`,
+      policyCite: "Lions Financial Transparency Policy §10",
+    });
+  }
+
+  // Compute entity balance from fund summaries (same logic as getOverview)
+  const entityBalance = overview.funds.reduce((s, f) => s + f.endingCents, 0);
+
+  return {
+    entity: overview.entity,
+    fiscalYear,
+    filings,
+    grossReceiptsCents: overview.grossReceiptsCents,
+    entityBalanceCents: entityBalance,
+    determine990Result: overview.determine990Result,
+    guardrailFlags: [...overview.guardrailFlags, ...inc3Flags],
+    settings,
+  };
 }
