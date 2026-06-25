@@ -28,6 +28,68 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-022: `ledger_filings` 5-year cadence stored as `next_due_year integer`; `listFilings` includes a 5-year row only when `nextDueYear === fiscalYear + 1`
+
+**Status:** Resolved
+**Date:** 2026-06-25
+
+**Decision:**
+The `Statement of Continued Existence` (Ohio SOS, every 5 years) and any future `recurrence='5_year'` filing row is controlled by a `next_due_year integer` column on `ledger_filings`. The value is the **calendar year** in which `due_month/due_day` falls for the next required filing (e.g., `next_due_year=2030` means the filing is due `due_month/due_day` in calendar year 2030, which is inside FY2030 for a Lions Jul–Jun FY).
+
+`listFilings(entityId, fiscalYear)` includes a `recurrence='5_year'` row only when `nextDueYear === fiscalYear + 1`. (The `+1` maps a FY start-year to the second calendar year that falls inside it, where months 1–6 land — Nov 15 of FY2029 = Nov 15 2029. Wait — Nov is month 11 ≥ 7, so it lands in the *first* calendar year of the FY. Nov of FY2029 = Nov 2029 = `fiscalYear + 0`. So the correct test for "does this row's due date fall inside `fiscalYear`?" is `nextDueYear === fiscalYear` for months ≥ 7 and `nextDueYear === fiscalYear + 1` for months < 7. Because the Statement of Continued Existence is due Nov 15 (month 11 ≥ 7), the correct test is `nextDueYear === fiscalYear`. `listFilings(2029)` includes the row when `next_due_year = 2029`.)
+
+**Correction on filter predicate:** After applying `computeDueDate` logic (month ≥ 7 → same calendar year as FY start; month < 7 → FY start + 1), the test is:
+- Month ≥ 7 (like Nov): `next_due_year === fiscalYear`
+- Month < 7: `next_due_year === fiscalYear + 1`
+
+Simplest implementation: `listFilings` computes the expected calendar year for the row's due month (`dueMonth >= 7 ? fiscalYear : fiscalYear + 1`) and compares to `nextDueYear`. Rows that do not match are excluded from the returned set.
+
+On rollover, `ensureFilingsForFY` sets `next_due_year = prior.nextDueYear + 5`. The new row is a copy in the DB for every FY, but surfaces only in the FY where the computed calendar year matches.
+
+**Rationale:**
+Two simpler alternatives were considered:
+- (a) Store a boolean `isDueThisFY` — requires updating the column every year, which adds write complexity to the rollover and is fragile if a year is skipped.
+- (b) Compute the due year entirely from the seed year: `(fiscalYear - seedFY) % 5 === 0` — requires storing the `seedFY` on the row or hardcoding it in the query helper. It also makes the query helper dependent on knowing the original seed year, which would break if the entity's filings are ever re-seeded.
+
+Storing `next_due_year` as an explicit column is the smallest, most self-contained approach: the value is always correct for the row at hand, rollover is a `+5` arithmetic operation, and the filter in `listFilings` is a single equality check. No external seed-year constant needed.
+
+**Impact:**
+- `ledger_filings` has a `next_due_year integer` column (nullable for `recurrence='annual'` rows; non-null for `recurrence='5_year'`).
+- `listFilings` filters 5-year rows: `row.nextDueYear === (row.dueMonth >= 7 ? fiscalYear : fiscalYear + 1)`.
+- `ensureFilingsForFY` sets `next_due_year = CASE WHEN recurrence = '5_year' THEN next_due_year + 5 ELSE NULL END` in the rollover INSERT.
+- Migration seed for the Statement of Continued Existence seeds `next_due_year = 2030` (placeholder — the actual next Ohio SOS renewal year should be confirmed with the treasurer before the migration goes to production).
+
+---
+
+## DECISION-021: `ledger_filings` due-date storage — `dueMonth` + `dueDay` integers; rollover is an explicit idempotent `ensureFilingsForFY()` step, not write-on-read
+
+**Status:** Resolved
+**Date:** 2026-06-25
+
+**Decision:**
+Two data-shape rulings for the `ledger_filings` table in Ledger inc3 (Compliance):
+
+1. **Due-date column shape:** Store `due_month integer NOT NULL` (1–12) and `due_day integer NOT NULL` (1–31) on `ledger_filings` in place of an absolute `due_date date` column. The absolute due date for display and overdue-check purposes is computed at query time as `make_date(fiscal_year_start_year + 1 if due_month < fy_start_month else fiscal_year_start_year, due_month, due_day)` — for the Lions Jul–Jun FY, months 1–6 land in the fiscal-year's second calendar year and months 7–12 land in the first. `listFilings(entityId, fiscalYear)` materializes each row's `dueDate` from these two columns. The seed data records real month/day pairs (e.g., IRS 990-N: `due_month=11, due_day=15`; Ohio Unclaimed Funds: `due_month=11, due_day=1`). The 5-year `Statement of Continued Existence` carries `recurrence='5_year'`; `listFilings` computes its next due-year at query time by finding the nearest multiple-of-5 boundary from the entity's first filing year.
+
+2. **Auto-rollover mechanism:** The FY materialization is NOT a write-on-read side-effect inside `listFilings`. Instead, a dedicated `ensureFilingsForFY(entityId, fiscalYear)` server-action/helper inserts the next FY's rows (by copying the prior year's `agency`, `title`, `due_month`, `due_day`, `recurrence` and assigning `status = 'not_started'`) if none exist for that FY. This function is idempotent (`INSERT … ON CONFLICT DO NOTHING` keyed on `(entity_id, fiscal_year, agency, title)`). It is called: (a) once as an idempotent seed step in the migration for the current FY; (b) explicitly on first navigation to the compliance page when no rows exist for the requested FY (a server component calls it before rendering). `listFilings` is a pure read; it never inserts.
+
+**Rationale:**
+
+_Due-date shape:_ Storing an absolute `date` per row (e.g., `2026-11-15`) is correct for the seed FY but drifts on rollover — a copy that bumps the year field by 1 works for most rows but silently produces wrong dates for any filing that crosses the calendar-year boundary inside a Jul–Jun FY (e.g., a March filing in FY2026 is March 2027, not March 2026). The month/day column pair + FY-aware computation is deterministic, rollover-safe, and makes the seed data readable without requiring date arithmetic in the migration.
+
+_Rollover mechanism:_ A write-on-read `listFilings` is architecturally problematic: (a) it violates the convention that `GET` requests on this codebase are side-effect-free — a `SELECT` that may do an `INSERT` is invisible to callers, difficult to test, and can produce duplicate-insert races under concurrent requests; (b) the existing codebase has no precedent for write-on-read query helpers, and introducing one would require special-casing in the API route middleware (no read-lock, no idempotency guard). An explicit `ensureFilingsForFY()` call in the server component is consistent with the `getSettings()` + singleton-upsert pattern already in `ledger-queries.ts`, is trivially testable, and its idempotency is provable from the `ON CONFLICT DO NOTHING` clause.
+
+**Impact:**
+- `ledger_filings` schema: `due_date date` column replaced by `due_month integer NOT NULL` + `due_day integer NOT NULL`. No `due_date` column in `schema.ts` or the migration.
+- New computed-field helper in `src/lib/ledger-queries.ts`: `computeDueDate(fiscalYear, dueMonth, dueDay): Date` (exported; pure).
+- `listFilings(entityId, fiscalYear)` returns rows enriched with a computed `dueDate: Date` property — it never inserts.
+- New `ensureFilingsForFY(entityId, fiscalYear)` in `src/lib/ledger-queries.ts` (or a co-located `actions.ts`): idempotent INSERT … ON CONFLICT DO NOTHING.
+- The compliance page server component calls `ensureFilingsForFY` before `listFilings`.
+- Migration seed rows use `due_month` / `due_day` integer pairs.
+- Tech-lead must specify the `computeDueDate` boundary rule (month < 7 → FY start year + 1, month ≥ 7 → FY start year) in the Phase 3 design doc. The 5-year cadence for `Statement of Continued Existence` is handled by a separate `nextDueYear` computation, also in tech-lead's design.
+
+---
+
 ## DECISION-020: Receipt storage is pluggable via a `ReceiptStorage` interface; proxy routes stream content; store an opaque key, not a provider URL
 
 **Status:** Resolved
