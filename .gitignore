@@ -46,3 +46,6 @@ next-env.d.ts
 drizzle/*
 !drizzle/migrations/
 !drizzle/run-migrations.mjs
+
+# local receipt storage (DECISION-020 — LocalReceiptStorage adapter for dev)
+.receipt-store/

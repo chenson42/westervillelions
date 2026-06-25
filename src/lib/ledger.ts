@@ -11,8 +11,10 @@
  *
  * Guardrails active in inc1: negative fund (HIGH), reserves threshold (WARN),
  * treasurer not bonded (WARN), income without party (WARN), cash disbursements (WARN),
- * expenses without receipt URL (INFO). Checks requiring inc2 data (unapproved
- * disbursements, unreconciled, two-fund firewall) are NOT included here.
+ * expenses without receipt URL (INFO).
+ *
+ * Guardrails activated in inc2: two-fund firewall (HIGH), unapproved disbursements
+ * over threshold (WARN), unreconciled transactions from prior months (WARN).
  */
 
 // ---------------------------------------------------------------------------
@@ -235,14 +237,35 @@ export type GuardrailsInput = {
   cashDisbursements: number;
   /** Count of expense transactions where receiptUrl is null */
   txnsWithoutReceipt: number;
+  // ---------------------------------------------------------------------------
+  // inc2 fields — all required in inc2+; callers on inc1 paths that cannot
+  // supply these should pass 0 / 0 / 0 until they are updated.
+  // ---------------------------------------------------------------------------
+  /** Count of expense transactions with status='pending' (over-threshold disbursements awaiting approval) */
+  pendingDisbursements: number;
+  /**
+   * Count of posted transactions where reconciled=false and txnDate is before
+   * the first day of the current calendar month.
+   */
+  unreconciledPriorMonth: number;
+  /**
+   * Count of distinct transferGroupId values where one row's fund has kind='activity'
+   * and the paired row's fund has kind='administrative' — Activity→Admin firewall.
+   */
+  firewallViolations: number;
 };
 
 /**
- * Evaluates the six active inc1 guardrail checks and returns a list of flags.
+ * Evaluates all active guardrail checks and returns a list of flags.
  *
- * Inactive checks (inc2/inc3 dependencies): two-fund firewall, unapproved
- * disbursements, unreconciled transactions, compliance filing status.
- * These will be added in inc2 when the approval workflow ships.
+ * Active checks:
+ *   inc1 — negative fund balance (HIGH), reserves threshold (WARN),
+ *           treasurer not bonded (WARN), income without party (WARN),
+ *           cash disbursements (WARN), expenses without receipt URL (INFO)
+ *   inc2 — unapproved disbursements (WARN), unreconciled prior-month (WARN),
+ *           two-fund firewall violation (HIGH)
+ *
+ * Inactive checks: compliance filing status (inc3 — ledger_filings table).
  *
  * Returns an empty array when all checks are clear.
  *
@@ -321,9 +344,41 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
     });
   }
 
-  // TODO inc2: firewall check (detect Activity→Admin transfers via transferGroupId join)
-  // TODO inc2: unapproved disbursements check (status='pending' rows)
-  // TODO inc2: unreconciled transactions check (reconciled=false rows)
+  // Check: unapproved disbursements over threshold (WARN) — inc2
+  if (state.pendingDisbursements > 0) {
+    const n = state.pendingDisbursements;
+    flags.push({
+      severity: "warn",
+      title: "Disbursements pending board approval",
+      detail: `${n} disbursement${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} awaiting board approval and excluded from posted balances. Review the Approvals screen.`,
+      policyCite: "Lions Financial Transparency Policy §5",
+    });
+  }
+
+  // Check: unreconciled transactions from prior months (WARN) — inc2
+  if (state.unreconciledPriorMonth > 0) {
+    const n = state.unreconciledPriorMonth;
+    const now = new Date();
+    const monthName = now.toLocaleString("en-US", { month: "long", year: "numeric" });
+    flags.push({
+      severity: "warn",
+      title: "Unreconciled transactions from prior months",
+      detail: `${n} posted transaction${n === 1 ? "" : "s"} dated before ${monthName} ${n === 1 ? "has" : "have"} not been reconciled. Mark them reconciled after reviewing your bank statement.`,
+      policyCite: "Lions Financial Transparency Policy §8",
+    });
+  }
+
+  // Check: two-fund firewall violations (HIGH) — inc2
+  if (state.firewallViolations > 0) {
+    const n = state.firewallViolations;
+    flags.push({
+      severity: "high",
+      title: "Two-fund firewall violation",
+      detail: `${n} transfer${n === 1 ? "" : "s"} move${n === 1 ? "s" : ""} money from an Activity fund to the Administrative fund. Activity fund money must remain in activity accounts. Reverse or reclassify these transfers immediately.`,
+      policyCite: "Lions Financial Transparency Policy §6 — Two-Fund Firewall",
+    });
+  }
+
   // TODO inc3: compliance filing status check (ledger_filings table)
 
   return flags;

@@ -612,11 +612,13 @@ export const ledgerTransactions = pgTable(
     receiptUrl: text("receipt_url"),              // URL; upload UX deferred to inc2
     // transferGroupId links the debit and credit rows of a transfer pair — no FK (self-join key)
     transferGroupId: uuid("transfer_group_id"),
-    status: text("status").notNull().default("posted"), // 'posted' | 'pending' (pending = inc2)
-    // Approval / reconcile fields — unused in inc1; inc2 sets approvedAt to lock approved rows
+    status: text("status").notNull().default("posted"), // 'posted' | 'pending' | 'rejected' (inc2)
+    // Approval / reconcile fields — inc2 sets approvedAt to lock approved rows
     approvedByUserId: uuid("approved_by_user_id")
       .references(() => users.id, { onDelete: "set null" }),
     approvedAt: timestamp("approved_at"),
+    boardMinute: text("board_minute"),        // board-minute reference set on approval (inc2)
+    rejectionReason: text("rejection_reason"), // reason set on rejection (inc2)
     reconciled: boolean("reconciled").notNull().default(false),
     reconciledAt: timestamp("reconciled_at"),
     recordedByUserId: uuid("recorded_by_user_id")
@@ -678,3 +680,53 @@ export const ledgerSettings = pgTable("ledger_settings", {
 
 export type LedgerSettings = typeof ledgerSettings.$inferSelect;
 export type NewLedgerSettings = typeof ledgerSettings.$inferInsert;
+
+// Reimbursement requests — member self-service submission; requires board approval before payment.
+// Lifecycle: submitted → approved | rejected → paid.
+// Marking paid creates a linked ledger_transactions row (flow='expense', status='posted').
+// No CHECK constraint on status — consistent with ledger_transactions.status pattern (inc1 precedent).
+// DECISION-020: receipt_storage_key stores an opaque provider-neutral key, never a URL.
+export const ledgerReimbursements = pgTable(
+  "ledger_reimbursements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    // Member who submitted the request — cascade-delete if the member is deleted
+    submittedByMemberId: uuid("submitted_by_member_id")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    // User account of the submitter
+    submittedByUserId: uuid("submitted_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "set null" }),
+    amountCents: integer("amount_cents").notNull(),          // always positive; validated > 0 at app layer
+    description: text("description").notNull(),              // max 1000 chars at app layer
+    beneficiaryCause: text("beneficiary_cause"),             // optional cause tag (member-supplied)
+    // Opaque storage key (DECISION-020); not a URL. Pattern: receipts/<uuid>/<filename>
+    receiptStorageKey: text("receipt_storage_key").notNull(),
+    // Treasurer assigns the fund at pay time (R-3); null until then
+    fundId: uuid("fund_id")
+      .references(() => ledgerFunds.id, { onDelete: "set null" }),
+    // App-layer valid values: 'submitted' | 'approved' | 'rejected' | 'paid'
+    // No DB CHECK constraint — consistent with ledger_transactions.status (inc1 precedent)
+    status: text("status").notNull().default("submitted"),
+    reviewedByUserId: uuid("reviewed_by_user_id")
+      .references(() => users.id, { onDelete: "set null" }),
+    reviewedAt: timestamp("reviewed_at"),
+    boardMinute: text("board_minute"),                       // required when approving
+    rejectionReason: text("rejection_reason"),               // required when rejecting
+    paidAt: timestamp("paid_at"),
+    // FK to the expense transaction created when treasurer marks paid; null until paid
+    ledgerTransactionId: uuid("ledger_transaction_id")
+      .references(() => ledgerTransactions.id, { onDelete: "set null" }),
+    submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_ledger_reimb_member").on(t.submittedByMemberId),
+    index("ix_ledger_reimb_status").on(t.status),
+  ],
+);
+
+export type LedgerReimbursement = typeof ledgerReimbursements.$inferSelect;
+export type NewLedgerReimbursement = typeof ledgerReimbursements.$inferInsert;

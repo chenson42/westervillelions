@@ -44,6 +44,8 @@ import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
+import { getSettings, getEmailsForFeature } from "@/lib/ledger-queries";
+import { sendEmail } from "@/lib/email";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
@@ -197,6 +199,15 @@ export async function POST(request: NextRequest) {
     // Derive fiscal year from txnDate for client feedback
     const derivedFiscalYear = getFiscalYear(new Date(txnDate + "T00:00:00"));
 
+    // Derive status SERVER-SIDE — ignore any client-supplied `status` field.
+    // inc2: expense over disbApprovalThresholdCents → 'pending'; transfers always 'posted'.
+    // NEVER trust client input for status (adversarial pass from Phase 3 design).
+    const settings = await getSettings();
+    const derivedStatus: "pending" | "posted" =
+      flow === "expense" && amountCents > settings.disbApprovalThresholdCents
+        ? "pending"
+        : "posted";
+
     // Insert
     const [txn] = await db
       .insert(ledgerTransactions)
@@ -213,12 +224,38 @@ export async function POST(request: NextRequest) {
         bankAccountId: bankAccountId ?? null,
         beneficiaryCause: beneficiaryCause?.trim() ?? null,
         receiptUrl: receiptUrl?.trim() ?? null,
-        status: "posted",
+        status: derivedStatus,
         recordedByUserId: session.user.id,
       })
       .returning({ id: ledgerTransactions.id });
 
-    return NextResponse.json({ id: txn.id, derivedFiscalYear }, { status: 201 });
+    // E-1: Notify LEDGER_APPROVE holders when a disbursement is pending approval
+    if (derivedStatus === "pending") {
+      try {
+        const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
+        const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+        const amountDollars = (amountCents / 100).toFixed(2);
+        for (const email of approverEmails) {
+          await sendEmail({
+            to: email,
+            from: fromEmail,
+            subject: `Disbursement pending your approval — $${amountDollars}`,
+            html: `<p>A disbursement requires board approval before it can be posted.</p>
+<ul>
+  <li><strong>Amount:</strong> $${amountDollars}</li>
+  <li><strong>Date:</strong> ${txnDate}</li>
+  ${party ? `<li><strong>Payee:</strong> ${party}</li>` : ""}
+  ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
+</ul>
+<p>Please review and approve or reject this disbursement from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`,
+          });
+        }
+      } catch {
+        // Best-effort — email failure does not block the transaction insert
+      }
+    }
+
+    return NextResponse.json({ id: txn.id, derivedFiscalYear, status: derivedStatus }, { status: 201 });
   } catch (error) {
     console.error("Error creating ledger transaction:", error);
     return NextResponse.json({ error: "Failed to create transaction" }, { status: 500 });

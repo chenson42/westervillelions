@@ -102,6 +102,14 @@ export async function PATCH(
       );
     }
 
+    // inc2 guard: rejected transactions are immutable (preserves audit trail)
+    if (existing.status === "rejected") {
+      return NextResponse.json(
+        { error: "Rejected transactions cannot be edited" },
+        { status: 403 },
+      );
+    }
+
     const body = await request.json();
 
     // Build validated update payload
@@ -327,7 +335,7 @@ export async function DELETE(
     // Fetch the target row
     const existing = await db.query.ledgerTransactions.findFirst({
       where: eq(ledgerTransactions.id, id),
-      columns: { id: true, approvedAt: true, transferGroupId: true },
+      columns: { id: true, approvedAt: true, transferGroupId: true, status: true },
     });
     if (!existing) {
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
@@ -337,6 +345,14 @@ export async function DELETE(
     if (existing.approvedAt) {
       return NextResponse.json(
         { error: "Approved transactions cannot be deleted" },
+        { status: 403 },
+      );
+    }
+
+    // inc2 guard: rejected transactions are immutable (preserves audit trail)
+    if (existing.status === "rejected") {
+      return NextResponse.json(
+        { error: "Rejected transactions cannot be deleted" },
         { status: 403 },
       );
     }

@@ -49,10 +49,11 @@ export const FEATURES = {
   DUES_VIEW: "dues.view",
   DUES_MANAGE: "dues.manage",
 
-  // Ledger features (The Ledger — inc1: Books)
+  // Ledger features (The Ledger — inc1: Books, inc2: Controls)
   LEDGER_VIEW: "ledger.view",
   LEDGER_RECORD: "ledger.record",
   LEDGER_MANAGE: "ledger.manage",
+  LEDGER_APPROVE: "ledger.approve",  // inc2: approve/reject pending disbursements + reimbursements
 } as const;
 
 // Type for feature names
@@ -114,6 +115,7 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.LEDGER_VIEW]: "View ledger overview, fund reports, and transaction history",
   [FEATURES.LEDGER_RECORD]: "Record, edit, and delete ledger transactions",
   [FEATURES.LEDGER_MANAGE]: "Manage funds, budgets, entities, and opening balances",
+  [FEATURES.LEDGER_APPROVE]: "Approve and reject pending disbursements and reimbursements",
 };
 
 // Default role names (should match database seed data)

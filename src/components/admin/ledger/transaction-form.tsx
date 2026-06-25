@@ -118,6 +118,7 @@ export default function TransactionForm({
   const [memo, setMemo] = useState(initialValues?.memo ?? "");
   const [paymentMethod, setPaymentMethod] = useState(initialValues?.paymentMethod ?? "check");
   const [bankAccountId, setBankAccountId] = useState(initialValues?.bankAccountId ?? "");
+  const [beneficiaryCause, setBeneficiaryCause] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const isTransfer = flowMode === "transfer";
@@ -235,6 +236,7 @@ export default function TransactionForm({
           memo: memo || null,
           paymentMethod: paymentMethod || null,
           bankAccountId: bankAccountId || null,
+          beneficiaryCause: beneficiaryCause.trim() || null,
         };
       }
 
@@ -251,7 +253,11 @@ export default function TransactionForm({
 
       const data = await res.json();
       const fyNote = data.derivedFiscalYear ? ` (FY${data.derivedFiscalYear})` : "";
-      toast.success(isEdit ? "Transaction updated." : `Transaction recorded${fyNote}.`);
+      if (!isEdit && data.status === "pending") {
+        toast.success(`Disbursement submitted${fyNote} — awaiting board approval.`);
+      } else {
+        toast.success(isEdit ? "Transaction updated." : `Transaction recorded${fyNote}.`);
+      }
       router.refresh();
       onSuccess();
     } catch (err) {
@@ -462,6 +468,24 @@ export default function TransactionForm({
           placeholder="Check #, transaction reference, etc."
         />
       </div>
+
+      {/* Beneficiary cause — optional, only for new non-transfer expenses */}
+      {!isTransfer && !isEdit && apiFlow === "expense" && (
+        <div>
+          <label htmlFor="txn-cause" className="block text-sm font-medium text-gray-700 mb-1">
+            Beneficiary cause <span className="text-gray-400 font-normal text-xs">(optional)</span>
+          </label>
+          <input
+            id="txn-cause"
+            type="text"
+            value={beneficiaryCause}
+            onChange={(e) => setBeneficiaryCause(e.target.value)}
+            maxLength={200}
+            className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            placeholder="e.g., Rudolph Run, Vision Care Fund"
+          />
+        </div>
+      )}
 
       {/* Payment method (not for transfers) */}
       {!isTransfer && !isEditingTransfer && (

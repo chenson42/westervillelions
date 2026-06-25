@@ -49,14 +49,15 @@ export default function BudgetEditor({ fundId, fiscalYear, lines }: BudgetEditor
     dirtyRef.current[key] = false;
 
     const raw = inputs[key]?.trim() ?? "";
-    // Empty or "0" → delete line
+    // FU-1: empty string → remove the budget line (annualAmountCents = null).
+    // Explicit "0" or "0.00" → $0 budget (annualAmountCents = 0), which is valid.
     let annualAmountCents: number | null;
-    if (raw === "" || raw === "0" || raw === "0.00") {
+    if (raw === "") {
       annualAmountCents = null;
     } else {
       const n = parseFloat(raw);
       if (isNaN(n) || n < 0) {
-        toast.error("Enter a valid positive amount or leave blank to remove the budget.");
+        toast.error("Enter a valid amount (0 or greater) or leave blank to remove the budget.");
         return;
       }
       annualAmountCents = Math.round(n * 100);
@@ -134,7 +135,7 @@ export default function BudgetEditor({ fundId, fiscalYear, lines }: BudgetEditor
         );
       })}
       <p className="text-xs text-gray-400 mt-2">
-        Enter amounts in dollars. Press Enter or click away to save. Leave blank to remove.
+        Enter amounts in dollars. Press Enter or click away to save. Enter 0 for a $0 budget. Leave blank to remove.
       </p>
     </div>
   );

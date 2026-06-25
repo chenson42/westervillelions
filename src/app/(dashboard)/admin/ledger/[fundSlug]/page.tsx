@@ -17,6 +17,7 @@ import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
 import TransactionFormDialog from "@/components/admin/ledger/transaction-form-dialog";
 import TransactionActions from "@/components/admin/ledger/transaction-actions";
 import FundManageDialog from "@/components/admin/ledger/fund-manage-dialog";
+import ReconcileToggle, { ReconcileAllButton } from "@/components/admin/ledger/reconcile-toggle";
 import type { LedgerTransaction } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,25 @@ function flowBadgeClass(flow: string, isTransfer: boolean): string {
 function flowLabel(flow: string, isTransfer: boolean): string {
   if (isTransfer) return "Transfer";
   return flow === "income" ? "Income" : "Expense";
+}
+
+function statusBadge(status: string) {
+  if (status === "posted") return null; // no badge for normal posted rows
+  if (status === "pending") {
+    return (
+      <span className="ml-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-yellow-50 text-yellow-700 border border-yellow-200">
+        Pending
+      </span>
+    );
+  }
+  if (status === "rejected") {
+    return (
+      <span className="ml-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500 border border-gray-200">
+        Rejected
+      </span>
+    );
+  }
+  return null;
 }
 
 export default async function AdminLedgerFundPage({
@@ -142,6 +162,13 @@ export default async function AdminLedgerFundPage({
 
         <div className="flex items-center gap-3 flex-wrap">
           <Link
+            href={`/admin/ledger/approvals`}
+            className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] inline-flex items-center"
+          >
+            Approvals
+          </Link>
+
+          <Link
             href={`/admin/ledger/${fundSlug}/report?entity=${resolvedEntitySlug}&fy=${fiscalYear}`}
             className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] inline-flex items-center"
           >
@@ -171,6 +198,18 @@ export default async function AdminLedgerFundPage({
         basePath={basePath}
       />
 
+      {/* Reconcile all button — shown above table when there are unreconciled posted transactions */}
+      {canRecord && (() => {
+        const unreconciledIds = transactions
+          .filter((t) => t.status === "posted" && !t.reconciled)
+          .map((t) => t.id);
+        return unreconciledIds.length > 1 ? (
+          <div className="flex justify-end">
+            <ReconcileAllButton unreconciledIds={unreconciledIds} />
+          </div>
+        ) : null;
+      })()}
+
       {/* Transaction table */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
@@ -196,6 +235,14 @@ export default async function AdminLedgerFundPage({
                   Method
                 </th>
                 {canRecord && (
+                  <th
+                    className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap"
+                    title="Reconciled against bank statement"
+                  >
+                    Rec.
+                  </th>
+                )}
+                {canRecord && (
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                     Actions
                   </th>
@@ -205,7 +252,7 @@ export default async function AdminLedgerFundPage({
             <tbody className="divide-y divide-gray-200 bg-white">
               {transactions.length === 0 ? (
                 <tr>
-                  <td colSpan={canRecord ? 7 : 6}>
+                  <td colSpan={canRecord ? 8 : 6}>
                     <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500 m-4">
                       <p className="font-medium">No transactions recorded for this fund in {fiscalYearLabel(fiscalYear)}.</p>
                       {canRecord && (
@@ -228,8 +275,17 @@ export default async function AdminLedgerFundPage({
                       : "Transfer"
                     : txn.party ?? "";
 
+                  const isPending = txn.status === "pending";
+                  const isRejected = txn.status === "rejected";
+                  const isPosted = txn.status === "posted";
+                  const rowClass = isPending
+                    ? "hover:bg-yellow-50/40 bg-yellow-50/20"
+                    : isRejected
+                    ? "hover:bg-gray-50 opacity-60"
+                    : "hover:bg-gray-50";
+
                   return (
-                    <tr key={txn.id} className="hover:bg-gray-50">
+                    <tr key={txn.id} className={rowClass}>
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                         {txn.txnDate}
                       </td>
@@ -239,6 +295,7 @@ export default async function AdminLedgerFundPage({
                         >
                           {flowLabel(txn.flow, isTransfer)}
                         </span>
+                        {statusBadge(txn.status)}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600 max-w-[140px]">
                         {txn.categoryId ? (
@@ -252,14 +309,22 @@ export default async function AdminLedgerFundPage({
                         {txn.memo && (
                           <div className="text-xs text-gray-400 truncate mt-0.5">{txn.memo}</div>
                         )}
+                        {isRejected && txn.rejectionReason && (
+                          <div className="text-xs text-gray-400 truncate mt-0.5" title={txn.rejectionReason}>
+                            Rejected: {txn.rejectionReason}
+                          </div>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums">
                         <span
                           className={
-                            txn.flow === "income"
+                            isPending
+                              ? "text-gray-400"
+                              : txn.flow === "income"
                               ? "text-green-700"
                               : "text-gray-900"
                           }
+                          title={isPending ? "Not yet included in fund balance — pending approval" : undefined}
                         >
                           {txn.flow === "income" ? "+" : "-"}{formatDollars(txn.amountCents)}
                         </span>
@@ -267,6 +332,18 @@ export default async function AdminLedgerFundPage({
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500 capitalize">
                         {txn.paymentMethod ?? <span className="text-gray-300">—</span>}
                       </td>
+                      {canRecord && (
+                        <td className="whitespace-nowrap px-4 py-3 text-center">
+                          {isPosted ? (
+                            <ReconcileToggle
+                              transactionId={txn.id}
+                              reconciled={txn.reconciled}
+                            />
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )}
+                        </td>
+                      )}
                       {canRecord && (
                         <td className="whitespace-nowrap px-4 py-3">
                           <TransactionActions

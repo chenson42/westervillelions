@@ -11,6 +11,7 @@ import {
   getCategories,
   getOverview,
   listLedgerFiscalYears,
+  getPendingApprovals,
 } from "@/lib/ledger-queries";
 import { currentFiscalYear } from "@/lib/fiscal-year";
 import EntitySwitcher from "@/components/admin/ledger/entity-switcher";
@@ -65,6 +66,7 @@ export default async function AdminLedgerPage({
   if (!canView) redirect("/access-pending");
 
   const canRecord = await hasFeature(session.user.id, FEATURES.LEDGER_RECORD);
+  const canApprove = await hasFeature(session.user.id, FEATURES.LEDGER_APPROVE);
 
   const { entity: entityParam, fy: fyParam } = await searchParams;
 
@@ -91,13 +93,15 @@ export default async function AdminLedgerPage({
   const fiscalYear = !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
 
   // Load data in parallel
-  const [funds, bankAccounts, categories, overview, fiscalYears] = await Promise.all([
+  const [funds, bankAccounts, categories, overview, fiscalYears, pendingTxns] = await Promise.all([
     getFunds(entity.id),
     getBankAccounts(entity.id),
     getCategories(entity.id),
     getOverview(entity.id, fiscalYear),
     listLedgerFiscalYears(entity.id),
+    canApprove ? getPendingApprovals() : Promise.resolve([]),
   ]);
+  const pendingCount = pendingTxns.length;
 
   return (
     <div className="space-y-6">
@@ -117,19 +121,35 @@ export default async function AdminLedgerPage({
           </p>
         </div>
 
-        {canRecord && (
-          <TransactionFormDialog
-            entityId={entity.id}
-            funds={funds}
-            categories={categories}
-            bankAccounts={bankAccounts}
-            trigger={
-              <button className="bg-lions-blue text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] whitespace-nowrap text-sm">
-                Record Transaction
-              </button>
-            }
-          />
-        )}
+        <div className="flex items-center gap-3 flex-wrap">
+          {canApprove && (
+            <Link
+              href="/admin/ledger/approvals"
+              className="relative inline-flex items-center border-2 border-lions-blue text-lions-blue px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+            >
+              Approvals
+              {pendingCount > 0 && (
+                <span className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] h-5 rounded-full bg-yellow-400 text-yellow-900 text-xs font-bold px-1">
+                  {pendingCount}
+                </span>
+              )}
+            </Link>
+          )}
+
+          {canRecord && (
+            <TransactionFormDialog
+              entityId={entity.id}
+              funds={funds}
+              categories={categories}
+              bankAccounts={bankAccounts}
+              trigger={
+                <button className="bg-lions-blue text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] whitespace-nowrap text-sm">
+                  Record Transaction
+                </button>
+              }
+            />
+          )}
+        </div>
       </div>
 
       {/* Entity switcher + FY selector */}
@@ -256,6 +276,16 @@ export default async function AdminLedgerPage({
                         </p>
                       </div>
                     </div>
+                    {fs.pendingExpenseCents > 0 && (
+                      <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
+                        <p className="text-yellow-700">
+                          Encumbered (pending approval)
+                        </p>
+                        <p className="font-semibold text-yellow-700 tabular-nums">
+                          -{formatDollars(fs.pendingExpenseCents)}
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="px-5 py-2 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
@@ -292,6 +322,37 @@ export default async function AdminLedgerPage({
                 </Link>
               ))}
           </div>
+        )}
+      </div>
+
+      {/* Quick links: Reimbursements + Approvals */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Link
+          href="/admin/ledger/reimbursements"
+          className="flex items-center justify-between rounded-2xl bg-white shadow-sm px-5 py-3 hover:shadow-md transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
+        >
+          <span className="text-sm font-medium text-gray-900">Reimbursement Requests</span>
+          <svg className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+        </Link>
+        {canApprove && (
+          <Link
+            href="/admin/ledger/approvals"
+            className="flex items-center justify-between rounded-2xl bg-white shadow-sm px-5 py-3 hover:shadow-md transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
+          >
+            <span className="text-sm font-medium text-gray-900 flex items-center gap-2">
+              Pending Approvals
+              {pendingCount > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 rounded-full bg-yellow-400 text-yellow-900 text-xs font-bold px-1">
+                  {pendingCount}
+                </span>
+              )}
+            </span>
+            <svg className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          </Link>
         )}
       </div>
 

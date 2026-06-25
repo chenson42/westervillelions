@@ -237,7 +237,7 @@ describe("budgetVariance", () => {
 // guardrails
 // ---------------------------------------------------------------------------
 
-/** A clean baseline state — all checks should be silent. */
+/** A clean baseline state — all checks should be silent (inc1 + inc2). */
 const cleanState: GuardrailsInput = {
   funds: [
     { id: "fund-1", kind: "administrative", balanceCents: 50_000 },
@@ -252,6 +252,10 @@ const cleanState: GuardrailsInput = {
   incomeWithoutParty: 0,
   cashDisbursements: 0,
   txnsWithoutReceipt: 0,
+  // inc2 fields — all zero = no issues
+  pendingDisbursements: 0,
+  unreconciledPriorMonth: 0,
+  firewallViolations: 0,
 };
 
 describe("guardrails", () => {
@@ -413,6 +417,90 @@ describe("guardrails", () => {
     };
     const flags = guardrails(state);
     expect(flags.length).toBeGreaterThanOrEqual(5);
+  });
+
+  // ---------------------------------------------------------------------------
+  // inc2 guardrail checks
+  // ---------------------------------------------------------------------------
+
+  // Unapproved disbursements (WARN)
+  it("fires WARN when there are pending (unapproved) disbursements", () => {
+    const state: GuardrailsInput = { ...cleanState, pendingDisbursements: 3 };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("pending"));
+    expect(flag).toBeDefined();
+    expect(flag?.severity).toBe("warn");
+  });
+
+  it("does NOT fire pending disbursement warn when count is zero", () => {
+    const state: GuardrailsInput = { ...cleanState, pendingDisbursements: 0 };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("pending"))).toBeUndefined();
+  });
+
+  it("uses singular wording for a single pending disbursement", () => {
+    const state: GuardrailsInput = { ...cleanState, pendingDisbursements: 1 };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("pending"))!;
+    expect(flag.detail).toContain("1 disbursement ");
+    expect(flag.detail).not.toContain("disbursements ");
+  });
+
+  it("uses plural wording for multiple pending disbursements", () => {
+    const state: GuardrailsInput = { ...cleanState, pendingDisbursements: 4 };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("pending"))!;
+    expect(flag.detail).toContain("4 disbursements");
+  });
+
+  // Unreconciled prior-month transactions (WARN)
+  it("fires WARN when there are unreconciled transactions from prior months", () => {
+    const state: GuardrailsInput = { ...cleanState, unreconciledPriorMonth: 5 };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("unreconciled"));
+    expect(flag).toBeDefined();
+    expect(flag?.severity).toBe("warn");
+  });
+
+  it("does NOT fire unreconciled warn when count is zero", () => {
+    const state: GuardrailsInput = { ...cleanState, unreconciledPriorMonth: 0 };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("unreconciled"))).toBeUndefined();
+  });
+
+  // Two-fund firewall violations (HIGH)
+  it("fires HIGH for a two-fund firewall violation", () => {
+    const state: GuardrailsInput = { ...cleanState, firewallViolations: 1 };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("firewall"));
+    expect(flag).toBeDefined();
+    expect(flag?.severity).toBe("high");
+  });
+
+  it("does NOT fire firewall HIGH when violations count is zero", () => {
+    const state: GuardrailsInput = { ...cleanState, firewallViolations: 0 };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("firewall"))).toBeUndefined();
+  });
+
+  it("includes policy cite for firewall violation", () => {
+    const state: GuardrailsInput = { ...cleanState, firewallViolations: 2 };
+    const flags = guardrails(state);
+    const flag = flags.find((f) => f.title.toLowerCase().includes("firewall"))!;
+    expect(flag.policyCite).toMatch(/§6/);
+  });
+
+  it("fires all three inc2 flags simultaneously when all counts are non-zero", () => {
+    const state: GuardrailsInput = {
+      ...cleanState,
+      pendingDisbursements: 1,
+      unreconciledPriorMonth: 2,
+      firewallViolations: 1,
+    };
+    const flags = guardrails(state);
+    expect(flags.some((f) => f.title.toLowerCase().includes("pending"))).toBe(true);
+    expect(flags.some((f) => f.title.toLowerCase().includes("unreconciled"))).toBe(true);
+    expect(flags.some((f) => f.title.toLowerCase().includes("firewall"))).toBe(true);
   });
 
   // Singular vs plural wording (detail message sanity)

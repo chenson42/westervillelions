@@ -22,14 +22,18 @@ import {
   ledgerTransactions,
   ledgerBudgets,
   ledgerSettings,
+  ledgerReimbursements,
+  members,
+  users,
   type LedgerEntity,
   type LedgerBankAccount,
   type LedgerFund,
   type LedgerCategory,
   type LedgerTransaction,
   type LedgerSettings,
+  type LedgerReimbursement,
 } from "@/lib/db/schema";
-import { eq, and, gte, lt, ilike, or, inArray, desc } from "drizzle-orm";
+import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull } from "drizzle-orm";
 import { getFiscalYear, currentFiscalYear } from "@/lib/fiscal-year";
 import {
   fundBalanceCents,
@@ -74,19 +78,27 @@ export type FundReport = {
   openingCents: number;
   income: FundReportCategoryLine[];
   expense: FundReportCategoryLine[];
-  /** Sum of all income actuals */
+  /** Sum of all posted income actuals */
   totalIncomeCents: number;
-  /** Sum of all expense actuals */
+  /** Sum of all posted expense actuals */
   totalExpenseCents: number;
+  /** Posted ending balance (openingCents + posted income - posted expense) */
   endingCents: number;
+  /** Sum of pending (unposted) expense amounts — "encumbered" figure */
+  pendingExpenseCents: number;
 };
 
 export type FundSummary = {
   fund: LedgerFund;
   openingCents: number;
+  /** Posted income only */
   incomeCents: number;
+  /** Posted expense only */
   expenseCents: number;
+  /** Posted ending balance */
   endingCents: number;
+  /** Pending (unposted) expense amounts — encumbered figure */
+  pendingExpenseCents: number;
 };
 
 export type EntityOverview = {
@@ -224,6 +236,10 @@ export async function getSettings(): Promise<LedgerSettings> {
  *   txnDate >= '{fy}-07-01' AND txnDate < '{fy+1}-07-01'
  * This is the exclusive-upper-bound range from DECISION-015 + Phase 3 Note D.
  *
+ * When `status` is omitted, ALL statuses are returned (posted + pending + rejected).
+ * The ledger list should show all transactions; only balance computations filter to
+ * posted-only.
+ *
  * No N+1: single query with optional WHERE clauses.
  */
 export async function listTransactions(
@@ -233,9 +249,11 @@ export async function listTransactions(
     fiscalYear?: number;
     flow?: "income" | "expense";
     search?: string;
+    /** Filter to a specific status. Omit to return all statuses. */
+    status?: "posted" | "pending" | "rejected";
   } = {},
 ): Promise<LedgerTransaction[]> {
-  const { fundId, fiscalYear, flow, search } = opts;
+  const { fundId, fiscalYear, flow, search, status } = opts;
 
   const conditions = [eq(ledgerTransactions.entityId, entityId)];
 
@@ -251,6 +269,10 @@ export async function listTransactions(
 
   if (flow) {
     conditions.push(eq(ledgerTransactions.flow, flow));
+  }
+
+  if (status) {
+    conditions.push(eq(ledgerTransactions.status, status));
   }
 
   if (search && search.trim()) {
@@ -337,7 +359,7 @@ export async function getFundReport(
       ),
     );
 
-  // 5. Build lookup maps
+  // 5. Build lookup maps — actuals use posted transactions only (inc2: status filter)
   const budgetMap = new Map<string, number>(); // key = `${categoryId}_${flow}`
   for (const b of budgetRows) {
     if (b.categoryId) {
@@ -345,19 +367,25 @@ export async function getFundReport(
     }
   }
 
+  // Separate posted vs. pending transactions for accurate balance and encumbered figures
+  const postedTxns = txns.filter((t) => t.status === "posted");
+  const pendingExpenseCents = txns
+    .filter((t) => t.status === "pending" && t.flow === "expense")
+    .reduce((s, t) => s + t.amountCents, 0);
+
   const actualMap = new Map<string, number>(); // key = `${categoryId}_${flow}`
-  for (const txn of txns) {
+  for (const txn of postedTxns) {
     if (txn.categoryId) {
       const key = `${txn.categoryId}_${txn.flow}`;
       actualMap.set(key, (actualMap.get(key) ?? 0) + txn.amountCents);
     }
   }
 
-  // 6. Collect category IDs that appear in actuals but not the active category list
+  // 6. Collect category IDs that appear in posted actuals but not the active category list
   //    (e.g. category was deactivated after transactions were recorded — still show it)
   const categoryIds = new Set(categories.map((c) => c.id));
   const extraCategoryIds = new Set<string>();
-  for (const txn of txns) {
+  for (const txn of postedTxns) {
     if (txn.categoryId && !categoryIds.has(txn.categoryId)) {
       extraCategoryIds.add(txn.categoryId);
     }
@@ -413,6 +441,7 @@ export async function getFundReport(
   const income = buildLines("income");
   const expense = buildLines("expense");
 
+  // Actuals here are derived from postedTxns only (inc2: status filter)
   const totalIncomeCents = income.reduce((s, l) => s + l.actualCents, 0);
   const totalExpenseCents = expense.reduce((s, l) => s + l.actualCents, 0);
   const endingCents = fund.openingBalanceCents + totalIncomeCents - totalExpenseCents;
@@ -425,6 +454,7 @@ export async function getFundReport(
     totalIncomeCents,
     totalExpenseCents,
     endingCents,
+    pendingExpenseCents,
   };
 }
 
@@ -487,7 +517,7 @@ export async function getOverview(
       ),
     );
 
-  // Group by fundId
+  // Group by fundId — keep all statuses for display; split in TypeScript for balances
   const txnsByFund = new Map<string, typeof allTxns>();
   for (const fund of funds) txnsByFund.set(fund.id, []);
   for (const txn of allTxns) {
@@ -495,32 +525,46 @@ export async function getOverview(
     if (arr) arr.push(txn);
   }
 
-  // Build fund summaries
+  // Build a fund lookup map (id → kind) for firewall computation
+  const fundKindById = new Map<string, string>(funds.map((f) => [f.id, f.kind]));
+
+  // Build fund summaries — balances computed from POSTED transactions only (inc2)
   const fundSummaries: FundSummary[] = funds.map((fund) => {
     const txns = txnsByFund.get(fund.id) ?? [];
-    const incomeCents = txns
+    const postedTxns = txns.filter((t) => t.status === "posted");
+    const pendingTxns = txns.filter((t) => t.status === "pending" && t.flow === "expense");
+
+    const incomeCents = postedTxns
       .filter((t) => t.flow === "income")
       .reduce((s, t) => s + t.amountCents, 0);
-    const expenseCents = txns
+    const expenseCents = postedTxns
       .filter((t) => t.flow === "expense")
       .reduce((s, t) => s + t.amountCents, 0);
+    const pendingExpenseCents = pendingTxns.reduce((s, t) => s + t.amountCents, 0);
     const endingCents = fund.openingBalanceCents + incomeCents - expenseCents;
+
     return {
       fund,
       openingCents: fund.openingBalanceCents,
       incomeCents,
       expenseCents,
       endingCents,
+      pendingExpenseCents,
     };
   });
 
-  // Entity-level aggregates
+  // Entity-level aggregates — gross receipts from posted income only
   const entityBalance = fundSummaries.reduce((s, f) => s + f.endingCents, 0);
-  const incomeTxns = allTxns.filter((t) => t.flow === "income");
-  const grossReceipts = grossReceiptsCents(incomeTxns);
+  const postedIncomeTxns = allTxns.filter((t) => t.status === "posted" && t.flow === "income");
+  const grossReceipts = grossReceiptsCents(postedIncomeTxns);
 
-  // Guardrail inputs
+  // --------------------------------------------------------------------------
+  // Guardrail inputs — inc1 fields
+  // --------------------------------------------------------------------------
   const settings = await getSettings();
+
+  // Use all transactions (any status) for these checks so the treasurer sees
+  // issues even on pending/rejected rows
   const incomeWithoutParty = allTxns.filter(
     (t) => t.flow === "income" && (!t.party || t.party.trim() === ""),
   ).length;
@@ -530,6 +574,41 @@ export async function getOverview(
   const txnsWithoutReceipt = allTxns.filter(
     (t) => t.flow === "expense" && !t.receiptUrl,
   ).length;
+
+  // --------------------------------------------------------------------------
+  // Guardrail inputs — inc2 fields
+  // --------------------------------------------------------------------------
+
+  // Pending disbursements: pending expense rows (waiting for approval)
+  const pendingDisbursements = allTxns.filter(
+    (t) => t.status === "pending" && t.flow === "expense",
+  ).length;
+
+  // Unreconciled prior-month: posted, not reconciled, dated before the 1st of current month
+  const now = new Date();
+  const firstOfCurrentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const unreconciledPriorMonth = allTxns.filter(
+    (t) => t.status === "posted" && !t.reconciled && t.txnDate < firstOfCurrentMonth,
+  ).length;
+
+  // Two-fund firewall: count distinct transferGroupId values where one row's fund
+  // is kind='activity' and the paired row's fund is kind='administrative'.
+  // Only considers rows with a non-null transferGroupId.
+  const transferGroups = new Map<string, Set<string>>();
+  for (const txn of allTxns) {
+    if (txn.transferGroupId) {
+      const kinds = transferGroups.get(txn.transferGroupId) ?? new Set<string>();
+      const kind = fundKindById.get(txn.fundId);
+      if (kind) kinds.add(kind);
+      transferGroups.set(txn.transferGroupId, kinds);
+    }
+  }
+  let firewallViolations = 0;
+  for (const kinds of transferGroups.values()) {
+    if (kinds.has("activity") && kinds.has("administrative")) {
+      firewallViolations++;
+    }
+  }
 
   const guardrailFlags = guardrails({
     funds: fundSummaries.map((fs) => ({
@@ -546,6 +625,9 @@ export async function getOverview(
     incomeWithoutParty,
     cashDisbursements,
     txnsWithoutReceipt,
+    pendingDisbursements,
+    unreconciledPriorMonth,
+    firewallViolations,
   });
 
   const determine990Result = determine990({
@@ -595,4 +677,247 @@ export async function listLedgerFiscalYears(entityId: string): Promise<number[]>
 
   const years = new Set<number>([currentFY, ...fromTxns]);
   return Array.from(years).sort((a, b) => b - a);
+}
+
+// ---------------------------------------------------------------------------
+// getPendingApprovals — inc2
+// ---------------------------------------------------------------------------
+
+export type PendingApprovalRow = LedgerTransaction & {
+  /** Display name of the fund (e.g. "Administrative Fund"). Falls back to "Unknown Fund" if the fund was deleted. */
+  fundName: string;
+  /** Display name of the user who recorded the transaction (users.name). null if the user record was deleted or has no name set. */
+  recorderName: string | null;
+};
+
+/**
+ * Returns all pending-status transactions enriched with fund name and recorder
+ * full name — ready for display on the Approvals screen without extra lookups.
+ *
+ * Ordered by txnDate ascending (oldest pending first — most urgently needs
+ * board action).
+ *
+ * Gate: LEDGER_APPROVE (enforced in the route handler, not here).
+ *
+ * FU-5 fix: original implementation returned LedgerTransaction[] with raw UUIDs;
+ * this join eliminates UUID fragments on the Approvals page.
+ */
+export async function getPendingApprovals(entityId?: string): Promise<PendingApprovalRow[]> {
+  const conditions = [eq(ledgerTransactions.status, "pending")];
+  if (entityId) {
+    conditions.push(eq(ledgerTransactions.entityId, entityId));
+  }
+
+  const rows = await db
+    .select({
+      // All transaction columns
+      id: ledgerTransactions.id,
+      entityId: ledgerTransactions.entityId,
+      fundId: ledgerTransactions.fundId,
+      txnDate: ledgerTransactions.txnDate,
+      flow: ledgerTransactions.flow,
+      amountCents: ledgerTransactions.amountCents,
+      categoryId: ledgerTransactions.categoryId,
+      party: ledgerTransactions.party,
+      memo: ledgerTransactions.memo,
+      paymentMethod: ledgerTransactions.paymentMethod,
+      bankAccountId: ledgerTransactions.bankAccountId,
+      beneficiaryCause: ledgerTransactions.beneficiaryCause,
+      receiptUrl: ledgerTransactions.receiptUrl,
+      transferGroupId: ledgerTransactions.transferGroupId,
+      status: ledgerTransactions.status,
+      approvedByUserId: ledgerTransactions.approvedByUserId,
+      approvedAt: ledgerTransactions.approvedAt,
+      boardMinute: ledgerTransactions.boardMinute,
+      rejectionReason: ledgerTransactions.rejectionReason,
+      reconciled: ledgerTransactions.reconciled,
+      reconciledAt: ledgerTransactions.reconciledAt,
+      recordedByUserId: ledgerTransactions.recordedByUserId,
+      createdAt: ledgerTransactions.createdAt,
+      updatedAt: ledgerTransactions.updatedAt,
+      // Joined display fields — users.name is the display name (single field, may be null)
+      fundName: ledgerFunds.name,
+      recorderDisplayName: users.name,
+    })
+    .from(ledgerTransactions)
+    .leftJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .leftJoin(users, eq(ledgerTransactions.recordedByUserId, users.id))
+    .where(and(...conditions))
+    .orderBy(asc(ledgerTransactions.txnDate), asc(ledgerTransactions.createdAt));
+
+  return rows.map((r) => ({
+    ...r,
+    fundName: r.fundName ?? "Unknown Fund",
+    recorderName: r.recorderDisplayName ?? null,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Reimbursement queries — inc2
+// ---------------------------------------------------------------------------
+
+export type ReimbursementWithMember = LedgerReimbursement & {
+  memberFirstName: string;
+  memberLastName: string;
+  memberEmail: string;
+};
+
+/**
+ * Returns all reimbursements for a specific member, ordered newest first.
+ * Ownership enforcement: caller must verify session.user.memberId === memberId.
+ */
+export async function listReimbursementsForMember(
+  memberId: string,
+): Promise<LedgerReimbursement[]> {
+  return db
+    .select()
+    .from(ledgerReimbursements)
+    .where(eq(ledgerReimbursements.submittedByMemberId, memberId))
+    .orderBy(desc(ledgerReimbursements.submittedAt));
+}
+
+/**
+ * Returns reimbursements for admin view, joined with member name/email.
+ * Optionally filtered by status.
+ */
+export async function listReimbursementsForAdmin(opts: {
+  status?: string;
+  memberId?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<{ reimbursements: ReimbursementWithMember[]; total: number }> {
+  const { status, memberId, limit = 50, offset = 0 } = opts;
+
+  const conditions = [];
+  if (status) conditions.push(eq(ledgerReimbursements.status, status));
+  if (memberId) conditions.push(eq(ledgerReimbursements.submittedByMemberId, memberId));
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const { sql: sqlTag } = await import("drizzle-orm");
+
+  // Count for pagination
+  const countRows = await db.execute<{ count: string }>(
+    whereClause
+      ? sqlTag`SELECT COUNT(*)::text AS count FROM ledger_reimbursements WHERE ${whereClause}`
+      : sqlTag`SELECT COUNT(*)::text AS count FROM ledger_reimbursements`,
+  );
+  const total = parseInt(countRows[0]?.count ?? "0", 10);
+
+  // Fetch with member join
+  const rows = await db
+    .select({
+      id: ledgerReimbursements.id,
+      submittedByMemberId: ledgerReimbursements.submittedByMemberId,
+      submittedByUserId: ledgerReimbursements.submittedByUserId,
+      amountCents: ledgerReimbursements.amountCents,
+      description: ledgerReimbursements.description,
+      beneficiaryCause: ledgerReimbursements.beneficiaryCause,
+      receiptStorageKey: ledgerReimbursements.receiptStorageKey,
+      fundId: ledgerReimbursements.fundId,
+      status: ledgerReimbursements.status,
+      reviewedByUserId: ledgerReimbursements.reviewedByUserId,
+      reviewedAt: ledgerReimbursements.reviewedAt,
+      boardMinute: ledgerReimbursements.boardMinute,
+      rejectionReason: ledgerReimbursements.rejectionReason,
+      paidAt: ledgerReimbursements.paidAt,
+      ledgerTransactionId: ledgerReimbursements.ledgerTransactionId,
+      submittedAt: ledgerReimbursements.submittedAt,
+      createdAt: ledgerReimbursements.createdAt,
+      updatedAt: ledgerReimbursements.updatedAt,
+      memberFirstName: members.firstName,
+      memberLastName: members.lastName,
+      memberEmail: members.email,
+    })
+    .from(ledgerReimbursements)
+    .innerJoin(members, eq(ledgerReimbursements.submittedByMemberId, members.id))
+    .where(whereClause)
+    .orderBy(desc(ledgerReimbursements.submittedAt))
+    .limit(limit)
+    .offset(offset);
+
+  return { reimbursements: rows as ReimbursementWithMember[], total };
+}
+
+/**
+ * Returns a single reimbursement by id.
+ * Does NOT enforce ownership — caller must verify.
+ */
+export async function getReimbursement(id: string): Promise<LedgerReimbursement | null> {
+  const rows = await db
+    .select()
+    .from(ledgerReimbursements)
+    .where(eq(ledgerReimbursements.id, id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Returns a single reimbursement with member info by id.
+ */
+export async function getReimbursementWithMember(
+  id: string,
+): Promise<ReimbursementWithMember | null> {
+  const rows = await db
+    .select({
+      id: ledgerReimbursements.id,
+      submittedByMemberId: ledgerReimbursements.submittedByMemberId,
+      submittedByUserId: ledgerReimbursements.submittedByUserId,
+      amountCents: ledgerReimbursements.amountCents,
+      description: ledgerReimbursements.description,
+      beneficiaryCause: ledgerReimbursements.beneficiaryCause,
+      receiptStorageKey: ledgerReimbursements.receiptStorageKey,
+      fundId: ledgerReimbursements.fundId,
+      status: ledgerReimbursements.status,
+      reviewedByUserId: ledgerReimbursements.reviewedByUserId,
+      reviewedAt: ledgerReimbursements.reviewedAt,
+      boardMinute: ledgerReimbursements.boardMinute,
+      rejectionReason: ledgerReimbursements.rejectionReason,
+      paidAt: ledgerReimbursements.paidAt,
+      ledgerTransactionId: ledgerReimbursements.ledgerTransactionId,
+      submittedAt: ledgerReimbursements.submittedAt,
+      createdAt: ledgerReimbursements.createdAt,
+      updatedAt: ledgerReimbursements.updatedAt,
+      memberFirstName: members.firstName,
+      memberLastName: members.lastName,
+      memberEmail: members.email,
+    })
+    .from(ledgerReimbursements)
+    .innerJoin(members, eq(ledgerReimbursements.submittedByMemberId, members.id))
+    .where(eq(ledgerReimbursements.id, id))
+    .limit(1);
+  return (rows[0] as ReimbursementWithMember) ?? null;
+}
+
+/**
+ * Returns the user email for a given user id. Used for sending notifications
+ * to the submitting member.
+ */
+export async function getUserEmail(userId: string): Promise<string | null> {
+  const rows = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.isActive, true)))
+    .limit(1);
+  return rows[0]?.email ?? null;
+}
+
+/**
+ * Returns all active user emails that hold a specific feature (via any role).
+ * Used to notify LEDGER_APPROVE holders when a reimbursement or pending
+ * disbursement is submitted.
+ */
+export async function getEmailsForFeature(featureName: string): Promise<string[]> {
+  const { sql: sqlTag } = await import("drizzle-orm");
+  const rows = await db.execute<{ email: string }>(sqlTag`
+    SELECT DISTINCT u.email
+    FROM users u
+    JOIN user_roles ur ON ur.user_id = u.id
+    JOIN roles r ON r.id = ur.role_id
+    JOIN role_features rf ON rf.role_id = r.id
+    JOIN features f ON f.id = rf.feature_id
+    WHERE f.name = ${featureName}
+      AND u.is_active = TRUE
+  `);
+  return rows.map((r) => r.email).filter(Boolean) as string[];
 }
