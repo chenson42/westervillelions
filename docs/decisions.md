@@ -28,6 +28,32 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-024: `isGiving()` definition — fund-kind+flow+transfer-check only; null-party rows excluded from recent gifts
+
+**Status:** Resolved
+**Date:** 2026-06-26
+
+**Decision:**
+Two implementation-level rulings for the Ledger inc5 Impact Dashboard:
+
+1. **`isGiving()` uses fund-kind + flow + transfer-check only — no category keyword matching.** The pure helper in `src/lib/ledger.ts` defines "giving" as: `flow === 'expense'` AND `transferGroupId === null` AND `fund.kind IN ('activity', 'charitable', 'scholarship')`. Category keywords (donation/grant/scholarship/vision/relief/screening) mentioned in the feature doc are NOT part of the definition. The SQL giving predicate in `getPhilanthropy()` in `src/lib/ledger-queries.ts` uses the same three-condition rule. Both definitions carry a cross-reference comment requiring sync.
+
+2. **Null-`party` rows are excluded from the "Recent named gifts" section.** The `getPhilanthropy()` recent-gifts query adds `AND party IS NOT NULL` so that giving rows without a named recipient do not produce "Unnamed recipient: $X" entries. These rows are fully captured in all-time, current-FY, by-cause, and by-FY totals — only the named-recipients display excludes them.
+
+**Rationale:**
+
+_Category keywords:_ The feature doc lists category keywords as a secondary gate on `isGiving()`. However, categories are free text entered by the treasurer — any keyword list will silently miss transactions with unexpected category names (e.g., "youth program" vs. "Youth Programs"). The fund-kind gate (`kind IN ('activity','charitable','scholarship')`) is deterministic: it enforces the Administrative fund exclusion at the domain boundary and is identical in the pure helper and the SQL predicate. Adding keyword matching on top would diverge: the pure helper would need to check `categoryName`, which is not on the transaction row itself (it requires a join), making the helper no longer "pure." Keeping the rule to fund-kind+flow+transfer-check makes the helper fully testable without DB access and the SQL predicate fully consistent.
+
+_Null party in recent gifts:_ A "Recent named gifts" section has user value when it names specific recipients ("$2,000 to Westerville Food Pantry"). A null-party entry adds no value and would require a placeholder ("Unnamed recipient") that confuses members. The aggregate sections (by-cause, by-FY, all-time total) capture every giving dollar including those without a named payee. Excluding null-party rows from only the recent-gifts display is the minimal change that keeps the section meaningful.
+
+**Impact:**
+- `src/lib/ledger.ts` — `isGiving(row, fundKind)` checks `row.flow`, `row.transferGroupId`, and `fundKind` only. No `categoryName` or keyword matching.
+- `src/lib/ledger-queries.ts` — `getPhilanthropy()` SQL predicate: `status='posted' AND transfer_group_id IS NULL AND flow='expense' AND fund.kind IN ('activity','charitable','scholarship')`.
+- `getPhilanthropy()` recent-gifts query adds `AND party IS NOT NULL`.
+- Vitest tests include a case confirming that `isGiving()` returns true for an `administrative` fund → false (the exclusion is a fund-kind check, not a status or category check).
+
+---
+
 ## DECISION-023: `csvCellSafe()` for ledger CSV export — injection guard lives in the export route, not in a shared util; dues `csvCell()` left unchanged
 
 **Status:** Resolved
