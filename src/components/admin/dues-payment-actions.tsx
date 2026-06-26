@@ -33,7 +33,12 @@ export default function DuesPaymentActions({ memberId, payment }: DuesPaymentAct
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to delete payment.");
       }
-      toast.success("Payment deleted.");
+      const syncStale = res.headers.get("Ledger-Sync-Stale") === "true";
+      if (syncStale) {
+        toast.info("Saved. The linked ledger entry was reconciled, so it's flagged out-of-sync for the treasurer to reconcile.");
+      } else {
+        toast.success("Payment deleted.");
+      }
       setDeleteOpen(false);
       router.refresh();
     } catch (err) {

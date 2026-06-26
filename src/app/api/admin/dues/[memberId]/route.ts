@@ -7,6 +7,7 @@ import { hasFeature, hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { currentFiscalYear } from "@/lib/dues";
 import { getMemberPaymentLog } from "@/lib/dues-queries";
+import { syncDuesCreate } from "@/lib/dues-ledger-sync";
 
 const VALID_METHODS = ["check", "cash", "zeffy", "other"] as const;
 type PaymentMethod = (typeof VALID_METHODS)[number];
@@ -184,21 +185,38 @@ export async function POST(
       }
     }
 
-    // --- Insert ---
-    const [payment] = await db
-      .insert(duesPayments)
-      .values({
-        memberId,
-        fiscalYear,
-        paymentDate,
-        amountCents,
-        method,
-        notes: notes ?? null,
-        recordedByUserId: session.user.id,
-      })
-      .returning();
+    // --- Insert (wrapped in a transaction so the ledger auto-post is atomic) ---
+    const { payment, syncFailed } = await db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(duesPayments)
+        .values({
+          memberId,
+          fiscalYear,
+          paymentDate,
+          amountCents,
+          method,
+          notes: notes ?? null,
+          recordedByUserId: session.user.id,
+        })
+        .returning();
 
-    return NextResponse.json(payment, { status: 201 });
+      const syncResult = await syncDuesCreate(
+        tx,
+        {
+          id: inserted.id,
+          memberId: inserted.memberId,
+          amountCents: inserted.amountCents,
+          paymentDate: inserted.paymentDate,
+          method: inserted.method,
+          fiscalYear: inserted.fiscalYear,
+        },
+        session.user.id,
+      );
+
+      return { payment: inserted, syncFailed: syncResult.syncFailed ?? false };
+    });
+
+    return NextResponse.json({ ...payment, syncFailed }, { status: 201 });
   } catch (error) {
     console.error("Error creating dues payment:", error);
     return NextResponse.json(

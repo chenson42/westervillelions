@@ -127,6 +127,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.LEDGER_VIEW,
   },
   {
+    name: "Donors",
+    href: "/admin/ledger/donors",
+    icon: "🤝",
+    requiredFeature: FEATURES.LEDGER_RECORD,
+  },
+  {
     name: "Ledger Settings",
     href: "/admin/ledger/settings",
     icon: "⚙️",

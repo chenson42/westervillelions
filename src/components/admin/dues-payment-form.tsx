@@ -84,7 +84,16 @@ export default function DuesPaymentForm({
         throw new Error(data.error || `Failed to ${isEdit ? "update" : "record"} payment.`);
       }
 
-      toast.success(isEdit ? "Payment updated." : "Payment recorded.");
+      const data = await res.json().catch(() => ({}));
+
+      if (!isEdit && data.syncFailed) {
+        toast.warning("Payment saved, but the ledger auto-post failed — record the income manually in the Ledger.");
+      } else if (isEdit && data.syncStale) {
+        toast.info("Saved. The linked ledger entry was reconciled, so it's flagged out-of-sync for the treasurer to reconcile.");
+      } else {
+        toast.success(isEdit ? "Payment updated." : "Payment recorded.");
+      }
+
       router.refresh();
       onClose();
     } catch (err) {

@@ -42,7 +42,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { ledgerTransactions, ledgerFunds, ledgerCategories } from "@/lib/db/schema";
+import { ledgerTransactions, ledgerFunds, ledgerCategories, ledgerDonors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
@@ -124,6 +124,7 @@ export async function PATCH(
       bankAccountId: string | null;
       beneficiaryCause: string | null;
       receiptUrl: string | null;
+      donorId: string | null;
       updatedAt: Date;
     }>;
 
@@ -254,6 +255,25 @@ export async function PATCH(
     }
     if (body.receiptUrl !== undefined) {
       update.receiptUrl = body.receiptUrl ?? null;
+    }
+    // Link/unlink a donor (inc6a). Validate the donor exists before linking so
+    // the LinkDonorDialog can't silently no-op against a bad id.
+    if (body.donorId !== undefined) {
+      if (body.donorId === null) {
+        update.donorId = null;
+      } else if (typeof body.donorId === "string") {
+        const donorRows = await db
+          .select({ id: ledgerDonors.id })
+          .from(ledgerDonors)
+          .where(eq(ledgerDonors.id, body.donorId))
+          .limit(1);
+        if (donorRows.length === 0) {
+          return NextResponse.json({ error: "Donor not found" }, { status: 400 });
+        }
+        update.donorId = body.donorId;
+      } else {
+        return NextResponse.json({ error: "donorId must be a string or null" }, { status: 400 });
+      }
     }
 
     // For transfer pairs with ?both=true, update both rows symmetrically

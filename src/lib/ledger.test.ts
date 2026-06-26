@@ -17,6 +17,7 @@ import {
   guardrails,
   computeDueDate,
   isFilingOverdue,
+  deriveAckType,
   type GuardrailsInput,
 } from "./ledger";
 
@@ -239,7 +240,7 @@ describe("budgetVariance", () => {
 // guardrails
 // ---------------------------------------------------------------------------
 
-/** A clean baseline state — all checks should be silent (inc1 + inc2 + inc3). */
+/** A clean baseline state — all checks should be silent (inc1 + inc2 + inc3 + inc6a). */
 const cleanState: GuardrailsInput = {
   funds: [
     { id: "fund-1", kind: "administrative", balanceCents: 50_000 },
@@ -261,6 +262,8 @@ const cleanState: GuardrailsInput = {
   // inc3 fields — safe defaults (empty history = no revocation check; 0 overdue)
   irsFilingHistory: [],
   overdueFilingCount: 0,
+  // inc6a fields — zero = no dues sync mismatch
+  syncStaleTxns: 0,
 };
 
 describe("guardrails", () => {
@@ -665,6 +668,8 @@ const cleanStateInc3: GuardrailsInput = {
   firewallViolations: 0,
   irsFilingHistory: [],
   overdueFilingCount: 0,
+  // inc6a fields
+  syncStaleTxns: 0,
 };
 
 describe("guardrails — inc3 revocation check", () => {
@@ -950,5 +955,84 @@ describe("determine990", () => {
       assetsCents: 50_000_000 * 100,
     });
     expect(result.form).toBe("990-PF");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deriveAckType — inc6a
+// ---------------------------------------------------------------------------
+
+describe("deriveAckType", () => {
+  // Phase 3 design specifies exactly these 6 test cases.
+
+  it("returns null for a $249.99 gift with no quid-pro-quo", () => {
+    // 24999 cents < 25000 threshold; no quid-pro-quo
+    expect(deriveAckType(24999, null)).toBeNull();
+  });
+
+  it("returns 'written_ack_250' for a $250.00 gift with no quid-pro-quo", () => {
+    // 25000 cents = exactly $250 threshold
+    expect(deriveAckType(25000, null)).toBe("written_ack_250");
+  });
+
+  it("returns null for a $100 gift with $74.99 quid-pro-quo", () => {
+    // 7499 cents < 7500 threshold; gift below $250 too
+    expect(deriveAckType(10000, 7499)).toBeNull();
+  });
+
+  it("returns 'quid_pro_quo_75' for a $100 gift with $75.00 quid-pro-quo", () => {
+    // 7500 cents = exactly $75 threshold
+    expect(deriveAckType(10000, 7500)).toBe("quid_pro_quo_75");
+  });
+
+  it("returns 'quid_pro_quo_75' for a $300 gift with $75 quid-pro-quo (stricter type wins)", () => {
+    // Both thresholds met — quid_pro_quo_75 takes precedence (Phase 3 design)
+    expect(deriveAckType(30000, 7500)).toBe("quid_pro_quo_75");
+  });
+
+  it("returns 'written_ack_250' for a $300 gift with $0 quid-pro-quo (zero treated as null)", () => {
+    // FMV=0 is treated as no goods/services; gift >= $250 → written_ack_250
+    expect(deriveAckType(30000, 0)).toBe("written_ack_250");
+  });
+
+  // Additional edge cases
+  it("returns null when both amounts are below thresholds", () => {
+    expect(deriveAckType(5000, 1000)).toBeNull();
+  });
+
+  it("returns 'written_ack_250' for a large gift with null quid-pro-quo", () => {
+    expect(deriveAckType(100_000_00, null)).toBe("written_ack_250");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// guardrails — inc6a syncStaleTxns check
+// ---------------------------------------------------------------------------
+
+describe("guardrails — syncStaleTxns (inc6a)", () => {
+  it("does not fire when syncStaleTxns is 0", () => {
+    const flags = guardrails({ ...cleanState, syncStaleTxns: 0 });
+    const staleFlags = flags.filter((f) => f.title.includes("sync mismatch"));
+    expect(staleFlags).toHaveLength(0);
+  });
+
+  it("fires WARN when syncStaleTxns is 1 (singular grammar)", () => {
+    const flags = guardrails({ ...cleanState, syncStaleTxns: 1 });
+    const staleFlags = flags.filter((f) => f.title === "Dues payment sync mismatch");
+    expect(staleFlags).toHaveLength(1);
+    expect(staleFlags[0].severity).toBe("warn");
+    expect(staleFlags[0].detail).toContain("1 ledger transaction is");
+  });
+
+  it("fires WARN when syncStaleTxns is 2 (plural grammar)", () => {
+    const flags = guardrails({ ...cleanState, syncStaleTxns: 2 });
+    const staleFlags = flags.filter((f) => f.title === "Dues payment sync mismatch");
+    expect(staleFlags).toHaveLength(1);
+    expect(staleFlags[0].severity).toBe("warn");
+    expect(staleFlags[0].detail).toContain("2 ledger transactions are");
+  });
+
+  it("clean baseline still returns no flags with syncStaleTxns: 0", () => {
+    expect(guardrails(cleanState)).toHaveLength(0);
   });
 });

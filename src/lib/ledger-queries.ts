@@ -24,6 +24,8 @@ import {
   ledgerSettings,
   ledgerReimbursements,
   ledgerFilings,
+  ledgerDonors,
+  ledgerAcknowledgments,
   members,
   users,
   type LedgerEntity,
@@ -34,8 +36,10 @@ import {
   type LedgerSettings,
   type LedgerReimbursement,
   type LedgerFiling,
+  type LedgerDonor,
+  type LedgerAcknowledgment,
 } from "@/lib/db/schema";
-import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, sql } from "drizzle-orm";
+import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, sql, count } from "drizzle-orm";
 import { getFiscalYear, currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import {
   fundBalanceCents,
@@ -618,6 +622,10 @@ export async function getOverview(
     }
   }
 
+  // inc6a: count posted transactions with syncStale=true (dues sync mismatch).
+  // Computed from the already-fetched allTxns array — zero extra DB queries.
+  const syncStaleTxns = allTxns.filter((t) => t.syncStale).length;
+
   const guardrailFlags = guardrails({
     funds: fundSummaries.map((fs) => ({
       id: fs.fund.id,
@@ -640,6 +648,8 @@ export async function getOverview(
     // the plain overview path (so the revocation/overdue flags don't fire there).
     irsFilingHistory: inc3Inputs?.irsFilingHistory ?? [],
     overdueFilingCount: inc3Inputs?.overdueFilingCount ?? 0,
+    // inc6a: dues sync stale count
+    syncStaleTxns,
   });
 
   const determine990Result = determine990({
@@ -743,6 +753,10 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
       reconciled: ledgerTransactions.reconciled,
       reconciledAt: ledgerTransactions.reconciledAt,
       recordedByUserId: ledgerTransactions.recordedByUserId,
+      // Inc 6a columns
+      duesPaymentId: ledgerTransactions.duesPaymentId,
+      syncStale: ledgerTransactions.syncStale,
+      donorId: ledgerTransactions.donorId,
       createdAt: ledgerTransactions.createdAt,
       updatedAt: ledgerTransactions.updatedAt,
       // Joined display fields — users.name is the display name (single field, may be null)
@@ -1807,5 +1821,277 @@ export async function getPhilanthropy(
     byCause,
     byFiscalYear,
     recentGifts,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Donor queries — inc6a
+// ---------------------------------------------------------------------------
+
+export type DonorWithGivingHistory = LedgerDonor & {
+  givingHistory: Array<{
+    txn: LedgerTransaction & { fundName: string; entityName: string };
+    ackStatus: "pending" | "sent" | null;
+  }>;
+};
+
+/**
+ * List donors, optionally filtered by a name/email search string.
+ * Returns donors sorted by name ASC. No donor PII beyond what is stored —
+ * caller must gate this on LEDGER_RECORD.
+ */
+export async function listDonors(opts?: {
+  search?: string;
+}): Promise<LedgerDonor[]> {
+  const conditions = [];
+  if (opts?.search && opts.search.trim() !== "") {
+    const term = `%${opts.search.trim()}%`;
+    conditions.push(
+      or(ilike(ledgerDonors.name, term), ilike(ledgerDonors.email, term)),
+    );
+  }
+  const q = db.select().from(ledgerDonors);
+  if (conditions.length > 0) {
+    return q.where(or(...conditions)).orderBy(asc(ledgerDonors.name));
+  }
+  return q.orderBy(asc(ledgerDonors.name));
+}
+
+/**
+ * Get a single donor by ID including their Foundation-income giving history
+ * (all ledger_transactions rows where donor_id = id, flow='income').
+ *
+ * Returns null if the donor does not exist.
+ * Caller must gate on LEDGER_RECORD — also returns 403 (not 404) when lacking it.
+ */
+export async function getDonor(donorId: string): Promise<DonorWithGivingHistory | null> {
+  const donors = await db
+    .select()
+    .from(ledgerDonors)
+    .where(eq(ledgerDonors.id, donorId))
+    .limit(1);
+  const donor = donors[0];
+  if (!donor) return null;
+
+  // Fetch all income transactions linked to this donor, joined with fund/entity
+  const txnRows = await db
+    .select({
+      txn: ledgerTransactions,
+      fundName: ledgerFunds.name,
+      entityName: ledgerEntities.name,
+      ackId: ledgerAcknowledgments.id,
+      ackSentAt: ledgerAcknowledgments.sentAt,
+    })
+    .from(ledgerTransactions)
+    .leftJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .leftJoin(ledgerEntities, eq(ledgerTransactions.entityId, ledgerEntities.id))
+    .leftJoin(
+      ledgerAcknowledgments,
+      eq(ledgerAcknowledgments.donationTxnId, ledgerTransactions.id),
+    )
+    .where(
+      and(
+        eq(ledgerTransactions.donorId, donorId),
+        eq(ledgerTransactions.flow, "income"),
+      ),
+    )
+    .orderBy(desc(ledgerTransactions.txnDate));
+
+  const givingHistory = txnRows.map((r) => ({
+    txn: {
+      ...r.txn,
+      fundName: r.fundName ?? "Unknown Fund",
+      entityName: r.entityName ?? "Unknown Entity",
+    },
+    ackStatus: r.ackId === null
+      ? null
+      : r.ackSentAt !== null
+        ? ("sent" as const)
+        : ("pending" as const),
+  }));
+
+  return { ...donor, givingHistory };
+}
+
+// ---------------------------------------------------------------------------
+// Acknowledgment queries — inc6a
+// ---------------------------------------------------------------------------
+
+export type PendingAcknowledgmentRow = {
+  txn: LedgerTransaction & { fundName: string; entityName: string };
+  donor: LedgerDonor | null;
+};
+
+export type AcknowledgmentSummaryRow = {
+  id: string;
+  donationTxnId: string;
+  amountCents: number;
+  txnDate: string;
+  type: string;
+  sentAt: Date | null;
+  quidProQuoValueCents: number | null;
+  entityName: string;
+  fundName: string;
+  // PII fields — only included when caller has LEDGER_RECORD
+  donorId?: string | null;
+  donorName?: string | null;
+};
+
+/**
+ * List Foundation income transactions >= $250 that do NOT yet have a sent
+ * acknowledgment (sentAt IS NULL). These are the pending ack tasks.
+ *
+ * Includes donor row (nullable) for display. Caller must gate on LEDGER_RECORD
+ * to expose donor PII.
+ */
+export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmentRow[]> {
+  // Transactions that need an acknowledgment: Foundation income, amount >= $25000c,
+  // with no acknowledgment row at all OR with an existing ack that is not yet sent.
+  const rows = await db
+    .select({
+      txn: ledgerTransactions,
+      fundName: ledgerFunds.name,
+      entityName: ledgerEntities.name,
+      ackId: ledgerAcknowledgments.id,
+      ackSentAt: ledgerAcknowledgments.sentAt,
+      donor: ledgerDonors,
+    })
+    .from(ledgerTransactions)
+    .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .innerJoin(ledgerEntities, eq(ledgerTransactions.entityId, ledgerEntities.id))
+    .leftJoin(
+      ledgerAcknowledgments,
+      eq(ledgerAcknowledgments.donationTxnId, ledgerTransactions.id),
+    )
+    .leftJoin(ledgerDonors, eq(ledgerTransactions.donorId, ledgerDonors.id))
+    .where(
+      and(
+        eq(ledgerEntities.donationsDeductible, true),
+        eq(ledgerTransactions.flow, "income"),
+        eq(ledgerTransactions.status, "posted"),
+        // ack row missing OR ack not yet sent
+        or(
+          isNull(ledgerAcknowledgments.id),
+          isNull(ledgerAcknowledgments.sentAt),
+        ),
+        // Only include transactions that meet the minimum threshold ($250)
+        sql`${ledgerTransactions.amountCents} >= 25000`,
+      ),
+    )
+    .orderBy(desc(ledgerTransactions.txnDate));
+
+  return rows.map((r) => ({
+    txn: {
+      ...r.txn,
+      fundName: r.fundName ?? "Unknown Fund",
+      entityName: r.entityName ?? "Unknown Entity",
+    },
+    donor: r.donor ?? null,
+  }));
+}
+
+/**
+ * Returns the acknowledgment queue summary.
+ * The `includePii` flag controls whether `donorId` and `donorName` are included.
+ * Set `includePii = true` only when the caller has LEDGER_RECORD.
+ *
+ * Pass `pendingOnly = true` to filter to unsent acks only.
+ */
+export async function listAcknowledgmentsSummary(opts: {
+  pendingOnly?: boolean;
+  includePii?: boolean;
+}): Promise<AcknowledgmentSummaryRow[]> {
+  const conditions = [];
+  if (opts.pendingOnly) {
+    conditions.push(isNull(ledgerAcknowledgments.sentAt));
+  }
+
+  const rows = await db
+    .select({
+      id: ledgerAcknowledgments.id,
+      donationTxnId: ledgerAcknowledgments.donationTxnId,
+      amountCents: ledgerAcknowledgments.amountCents,
+      txnDate: ledgerAcknowledgments.txnDate,
+      type: ledgerAcknowledgments.type,
+      sentAt: ledgerAcknowledgments.sentAt,
+      quidProQuoValueCents: ledgerAcknowledgments.quidProQuoValueCents,
+      donorId: ledgerAcknowledgments.donorId,
+      entityName: ledgerEntities.name,
+      fundName: ledgerFunds.name,
+      donorName: ledgerDonors.name,
+    })
+    .from(ledgerAcknowledgments)
+    .innerJoin(
+      ledgerTransactions,
+      eq(ledgerAcknowledgments.donationTxnId, ledgerTransactions.id),
+    )
+    .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .innerJoin(ledgerEntities, eq(ledgerTransactions.entityId, ledgerEntities.id))
+    .leftJoin(ledgerDonors, eq(ledgerAcknowledgments.donorId, ledgerDonors.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(ledgerAcknowledgments.txnDate));
+
+  return rows.map((r) => {
+    const base: AcknowledgmentSummaryRow = {
+      id: r.id,
+      donationTxnId: r.donationTxnId,
+      amountCents: r.amountCents,
+      txnDate: r.txnDate,
+      type: r.type,
+      sentAt: r.sentAt,
+      quidProQuoValueCents: r.quidProQuoValueCents,
+      entityName: r.entityName ?? "Unknown Entity",
+      fundName: r.fundName ?? "Unknown Fund",
+    };
+    if (opts.includePii) {
+      base.donorId = r.donorId;
+      base.donorName = r.donorName ?? null;
+    }
+    return base;
+  });
+}
+
+/**
+ * Get a single acknowledgment by ID, including its linked transaction and donor.
+ * Returns null if not found.
+ */
+export async function getAcknowledgment(ackId: string): Promise<
+  (LedgerAcknowledgment & {
+    txn: LedgerTransaction & { entityName: string; fundName: string };
+    donor: LedgerDonor | null;
+    entity: LedgerEntity | null;
+  }) | null
+> {
+  const rows = await db
+    .select({
+      ack: ledgerAcknowledgments,
+      txn: ledgerTransactions,
+      fundName: ledgerFunds.name,
+      entity: ledgerEntities,
+      donor: ledgerDonors,
+    })
+    .from(ledgerAcknowledgments)
+    .innerJoin(
+      ledgerTransactions,
+      eq(ledgerAcknowledgments.donationTxnId, ledgerTransactions.id),
+    )
+    .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .innerJoin(ledgerEntities, eq(ledgerTransactions.entityId, ledgerEntities.id))
+    .leftJoin(ledgerDonors, eq(ledgerAcknowledgments.donorId, ledgerDonors.id))
+    .where(eq(ledgerAcknowledgments.id, ackId))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return null;
+
+  return {
+    ...row.ack,
+    txn: {
+      ...row.txn,
+      fundName: row.fundName ?? "Unknown Fund",
+      entityName: row.entity?.name ?? "Unknown Entity",
+    },
+    donor: row.donor ?? null,
+    entity: row.entity ?? null,
   };
 }

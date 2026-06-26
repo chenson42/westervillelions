@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -582,12 +582,37 @@ export const ledgerCategories = pgTable(
 export type LedgerCategory = typeof ledgerCategories.$inferSelect;
 export type NewLedgerCategory = typeof ledgerCategories.$inferInsert;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The Ledger — Increment 6a: Donors & Acknowledgments
+// ledgerDonors must be defined BEFORE ledgerTransactions because
+// ledgerTransactions.donorId has a FK reference to it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Donors — individuals or orgs that make Foundation gifts subject to IRS Pub 1771.
+// Optional link to a club member row; donor PII gated at ledger.record (DECISION-025).
+export const ledgerDonors = pgTable("ledger_donors", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),      // max 200 chars enforced at app layer
+  email: text("email"),              // nullable; standard email format
+  address: text("address"),          // nullable; max 500 chars at app layer
+  memberId: uuid("member_id")
+    .references(() => members.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type LedgerDonor = typeof ledgerDonors.$inferSelect;
+export type NewLedgerDonor = typeof ledgerDonors.$inferInsert;
+
 // Transactions — the core ledger table.
 // flow is 'income' | 'expense' ONLY (DECISION-017).
 // Transfers are two linked rows sharing transferGroupId (DECISION-016).
 // amountCents is always positive; direction is encoded by flow.
 // No fiscalYear column — derived at query time from txnDate (DECISION-015).
 // Hard delete in inc1; approvedAt guard added in inc2 for immutability.
+// Inc 6a adds: duesPaymentId (dues auto-post idempotency key, DECISION-025),
+//              syncStale (out-of-sync marker, DECISION-025),
+//              donorId (Foundation income → donor link, DECISION-025).
 export const ledgerTransactions = pgTable(
   "ledger_transactions",
   {
@@ -624,6 +649,15 @@ export const ledgerTransactions = pgTable(
     recordedByUserId: uuid("recorded_by_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "set null" }),
+    // Inc 6a: dues auto-post idempotency key — unique, nullable, ON DELETE SET NULL (DECISION-025)
+    duesPaymentId: uuid("dues_payment_id")
+      .references(() => duesPayments.id, { onDelete: "set null" })
+      .unique(),
+    // Inc 6a: out-of-sync marker — set true when dues payment edited/deleted after reconcile (DECISION-025)
+    syncStale: boolean("sync_stale").notNull().default(false),
+    // Inc 6a: donor link — Foundation income → donor record (DECISION-025)
+    donorId: uuid("donor_id")
+      .references(() => ledgerDonors.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -637,6 +671,53 @@ export const ledgerTransactions = pgTable(
 
 export type LedgerTransaction = typeof ledgerTransactions.$inferSelect;
 export type NewLedgerTransaction = typeof ledgerTransactions.$inferInsert;
+
+// Acknowledgments — IRS Pub 1771 substantiation records for Foundation donations.
+// One acknowledgment per donation transaction (unique on donationTxnId — DECISION-026).
+// amountCents is immutable after creation — copied from the transaction at ack time (DECISION-026).
+// type: 'written_ack_250' = gift >= $250, no goods/services (or quid-pro-quo FMV < $75)
+//        'quid_pro_quo_75' = goods/services with FMV >= $75 provided to donor (stricter — DECISION-026)
+export const ledgerAcknowledgments = pgTable(
+  "ledger_acknowledgments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Foundation income transaction being acknowledged — cascade-delete with the transaction
+    donationTxnId: uuid("donation_txn_id")
+      .notNull()
+      .references(() => ledgerTransactions.id, { onDelete: "cascade" }),
+    // Donor who made the gift — nullable in case the donor record is deleted
+    donorId: uuid("donor_id")
+      .references(() => ledgerDonors.id, { onDelete: "set null" }),
+    // Immutable copy of the transaction's amountCents at ack creation time (DECISION-026)
+    amountCents: integer("amount_cents").notNull(),
+    // Immutable copy of the transaction's txnDate at ack creation time
+    txnDate: date("txn_date").notNull(),
+    // 'written_ack_250' | 'quid_pro_quo_75' — auto-derived by deriveAckType(), manual override allowed
+    type: text("type").notNull(),
+    // Fair-market value of goods/services given to donor; required when type='quid_pro_quo_75'
+    quidProQuoValueCents: integer("quid_pro_quo_value_cents"),
+    // null = pending acknowledgment; set to now() when treasurer marks sent
+    sentAt: timestamp("sent_at"),
+    // Opaque Blob storage key for the uploaded letter file; pattern: acknowledgments/<uuid>/<filename>
+    letterStorageKey: text("letter_storage_key"),
+    // Free-text alternative to an uploaded letter file
+    letterText: text("letter_text"),
+    // User who created this acknowledgment record
+    recordedByUserId: uuid("recorded_by_user_id")
+      .references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // Defense-in-depth: one acknowledgment per donation transaction (DECISION-026)
+    uniqueIndex("ux_ledger_acks_txn").on(t.donationTxnId),
+    index("ix_ledger_acks_donor").on(t.donorId),
+    index("ix_ledger_acks_sent_at").on(t.sentAt),
+  ],
+);
+
+export type LedgerAcknowledgment = typeof ledgerAcknowledgments.$inferSelect;
+export type NewLedgerAcknowledgment = typeof ledgerAcknowledgments.$inferInsert;
 
 // Budgets — per fund × fiscal year × category × flow
 export const ledgerBudgets = pgTable(

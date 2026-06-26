@@ -297,6 +297,38 @@ export function isGiving(row: IsGivingRow, fundKind: string): boolean {
 // guardrails
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// deriveAckType — inc6a
+// ---------------------------------------------------------------------------
+
+/**
+ * Derives the IRS Pub 1771 acknowledgment type for a donation.
+ *
+ * Precedence rules (quid-pro-quo is stricter — always wins when both apply):
+ *   1. quidProQuoValueCents >= 7500 ($75+) → 'quid_pro_quo_75'
+ *   2. amountCents >= 25000 ($250+) AND no quid-pro-quo → 'written_ack_250'
+ *   3. Otherwise → null (no acknowledgment required)
+ *
+ * A quidProQuoValueCents of 0 is treated the same as null (no goods/services).
+ *
+ * @param amountCents            Total gift amount in integer cents
+ * @param quidProQuoValueCents   FMV of goods/services given to donor (integer cents, or null)
+ */
+export function deriveAckType(
+  amountCents: number,
+  quidProQuoValueCents: number | null,
+): "written_ack_250" | "quid_pro_quo_75" | null {
+  // Quid-pro-quo takes precedence: FMV of goods/services >= $75
+  if (quidProQuoValueCents !== null && quidProQuoValueCents >= 7500) {
+    return "quid_pro_quo_75";
+  }
+  // Written acknowledgment required: gift >= $250 with no qualifying quid-pro-quo
+  if (amountCents >= 25000) {
+    return "written_ack_250";
+  }
+  return null;
+}
+
 export type GuardrailsInput = {
   funds: Array<FundState>;
   entityBalanceCents: number;
@@ -345,6 +377,16 @@ export type GuardrailsInput = {
    * Pass 0 if compliance filing data is not available at the call site.
    */
   overdueFilingCount: number;
+  // ---------------------------------------------------------------------------
+  // inc6a fields — callers on earlier paths pass 0 until updated.
+  // ---------------------------------------------------------------------------
+  /**
+   * Count of posted transactions with syncStale=true — dues payments that were
+   * edited or deleted after the linked ledger row was reconciled.
+   * Computed from allTxns in getOverview() — zero extra DB queries.
+   * Pass 0 if the value is not available at the call site.
+   */
+  syncStaleTxns: number;
 };
 
 /**
@@ -505,6 +547,17 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
       title: "Overdue compliance filings",
       detail: `${n} filing${n === 1 ? " is" : "s are"} past due. Review the Compliance screen and file or mark as N/A.`,
       policyCite: "Lions Financial Transparency Policy §10",
+    });
+  }
+
+  // Check: dues payment sync mismatch (WARN) — inc6a
+  if (state.syncStaleTxns > 0) {
+    const n = state.syncStaleTxns;
+    flags.push({
+      severity: "warn",
+      title: "Dues payment sync mismatch",
+      detail: `${n} ledger transaction${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} out of sync with ${n === 1 ? "its" : "their"} source dues payment. A dues payment was edited or deleted after the ledger row was reconciled. Review and correct these transactions manually.`,
+      policyCite: "Lions Financial Transparency Policy §8",
     });
   }
 

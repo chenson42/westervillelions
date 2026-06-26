@@ -11,6 +11,7 @@ import {
   getCategories,
   listTransactions,
   listLedgerFiscalYears,
+  listAcknowledgmentsSummary,
 } from "@/lib/ledger-queries";
 import { currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
@@ -18,6 +19,7 @@ import TransactionFormDialog from "@/components/admin/ledger/transaction-form-di
 import TransactionActions from "@/components/admin/ledger/transaction-actions";
 import FundManageDialog from "@/components/admin/ledger/fund-manage-dialog";
 import ReconcileToggle, { ReconcileAllButton } from "@/components/admin/ledger/reconcile-toggle";
+import TxnDonorActions from "@/components/admin/ledger/txn-donor-actions";
 import type { LedgerTransaction } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -98,12 +100,27 @@ export default async function AdminLedgerFundPage({
   const parsedFY = fyParam ? parseInt(fyParam, 10) : NaN;
   const fiscalYear = !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
 
-  const [bankAccounts, categories, transactions, fiscalYears] = await Promise.all([
+  const isFoundationEntity = entity.donationsDeductible === true;
+
+  const [bankAccounts, categories, transactions, fiscalYears, ackSummary] = await Promise.all([
     getBankAccounts(entity.id),
     getCategories(entity.id),
     listTransactions(entity.id, { fundId: fund.id, fiscalYear }),
     listLedgerFiscalYears(entity.id),
+    // Only fetch ack statuses for Foundation entities (donationsDeductible=true)
+    isFoundationEntity && canRecord
+      ? listAcknowledgmentsSummary({ pendingOnly: false, includePii: false })
+      : Promise.resolve([]),
   ]);
+
+  // Build txnId → ack status map for Foundation income rows
+  const ackStatusByTxnId = new Map<string, "pending" | "sent">();
+  for (const ack of ackSummary) {
+    ackStatusByTxnId.set(
+      ack.donationTxnId,
+      ack.sentAt !== null ? "sent" : "pending",
+    );
+  }
 
   // Build transfer-partner lookup for display
   const transferGroupIds = transactions
@@ -320,6 +337,16 @@ export default async function AdminLedgerFundPage({
                           <div className="text-xs text-gray-400 truncate mt-0.5" title={txn.rejectionReason}>
                             Rejected: {txn.rejectionReason}
                           </div>
+                        )}
+                        {/* Donor / ack controls — Foundation income rows only (LEDGER_RECORD) */}
+                        {isFoundationEntity && canRecord && !isTransfer && txn.flow === "income" && isPosted && (
+                          <TxnDonorActions
+                            txnId={txn.id}
+                            amountCents={txn.amountCents}
+                            txnDate={txn.txnDate}
+                            donorId={txn.donorId ?? null}
+                            ackStatus={ackStatusByTxnId.get(txn.id) ?? null}
+                          />
                         )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums">

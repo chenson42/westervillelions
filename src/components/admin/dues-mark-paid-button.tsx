@@ -69,7 +69,12 @@ export default function DuesMarkPaidButton({
         throw new Error(data.error || "Could not record payment.");
       }
 
-      toast.success("Marked paid");
+      const data = await res.json().catch(() => ({}));
+      if (data.syncFailed) {
+        toast.warning("Payment saved, but the ledger auto-post failed — record the income manually in the Ledger.");
+      } else {
+        toast.success("Marked paid");
+      }
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not record payment. Try again.");

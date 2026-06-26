@@ -5,6 +5,7 @@ import { duesPayments } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { syncDuesUpdate, syncDuesDelete } from "@/lib/dues-ledger-sync";
 
 const VALID_METHODS = ["check", "cash", "zeffy", "other"] as const;
 type PaymentMethod = (typeof VALID_METHODS)[number];
@@ -143,18 +144,29 @@ export async function PATCH(
       patch.notes = notes ?? null;
     }
 
-    const [updated] = await db
-      .update(duesPayments)
-      .set(patch)
-      .where(
-        and(
-          eq(duesPayments.id, paymentId),
-          eq(duesPayments.memberId, memberId),
-        ),
-      )
-      .returning();
+    // Wrap update + ledger sync in a transaction so both succeed or both roll back
+    const { updated, syncStale } = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(duesPayments)
+        .set(patch)
+        .where(
+          and(
+            eq(duesPayments.id, paymentId),
+            eq(duesPayments.memberId, memberId),
+          ),
+        )
+        .returning();
 
-    return NextResponse.json(updated);
+      const syncResult = await syncDuesUpdate(tx, paymentId, {
+        amountCents: patch.amountCents,
+        paymentDate: patch.paymentDate,
+        method: patch.method,
+      });
+
+      return { updated: row, syncStale: syncResult.syncStale ?? false };
+    });
+
+    return NextResponse.json({ ...updated, syncStale });
   } catch (error) {
     console.error("Error updating dues payment:", error);
     return NextResponse.json(
@@ -197,16 +209,28 @@ export async function DELETE(
       return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
 
-    await db
-      .delete(duesPayments)
-      .where(
-        and(
-          eq(duesPayments.id, paymentId),
-          eq(duesPayments.memberId, memberId),
-        ),
-      );
+    // Sync must happen BEFORE the dues delete (dues_payment_id FK is still queryable)
+    const { syncStale } = await db.transaction(async (tx) => {
+      const syncResult = await syncDuesDelete(tx, paymentId);
 
-    return new NextResponse(null, { status: 204 });
+      await tx
+        .delete(duesPayments)
+        .where(
+          and(
+            eq(duesPayments.id, paymentId),
+            eq(duesPayments.memberId, memberId),
+          ),
+        );
+
+      return { syncStale: syncResult.syncStale ?? false };
+    });
+
+    const headers: Record<string, string> = {};
+    if (syncStale) {
+      headers["Ledger-Sync-Stale"] = "true";
+    }
+
+    return new NextResponse(null, { status: 204, headers });
   } catch (error) {
     console.error("Error deleting dues payment:", error);
     return NextResponse.json(
