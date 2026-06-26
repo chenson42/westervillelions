@@ -28,6 +28,27 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-023: `csvCellSafe()` for ledger CSV export — injection guard lives in the export route, not in a shared util; dues `csvCell()` left unchanged
+
+**Status:** Resolved
+**Date:** 2026-06-25
+
+**Decision:**
+The ledger CSV export route (`src/app/api/admin/ledger/export/route.ts`) defines its own `csvCellSafe()` helper that extends the dues `csvCell()` logic with a leading-character injection guard: if a cell value's first character is `=`, `+`, `-`, or `@`, a tab character (`\t`) is prepended before any quoting step. This guards against spreadsheet formula injection (CVE-class: CSV injection). The existing `csvCell()` in `src/app/api/admin/dues/export/route.ts` is NOT modified. A Vitest unit test for `csvCellSafe()` is required before the export route ships.
+
+The `csvCellSafe()` helper is applied to every free-text column (Category, Party/Payee, Memo in the transaction CSV; Line/Group and any category-derived label in the 990-prep CSV). Controlled-value columns (Date, Fund, Flow, Amount, Status, Reconciled, Payment Method) use a plain `csvCell()` inline (no injection guard needed — values are server-generated enums or formatted numbers).
+
+**Rationale:**
+Placing `csvCellSafe()` in the export route rather than extracting it to a shared util avoids pulling ledger-specific security logic into a file shared by unrelated exports. The dues export fields are all admin-controlled (no free-text from untrusted input); the ledger `party` and `memo` fields are free-text entered by treasurers and could contain `=` or `+`. The two helpers have different correctness requirements. Retroactively patching `csvCell()` in the dues export is out of scope for inc4; that surface will be caught in the next security review. The tab-prepend approach is the standard published defense (OWASP CSV Injection); it is invisible in most spreadsheet apps under normal rendering.
+
+**Impact:**
+- New local function `csvCellSafe()` in `src/app/api/admin/ledger/export/route.ts`.
+- New Vitest unit test file (location: co-located or in `src/lib/__tests__/csv-ledger-export.test.ts`); minimum 8 cases (see Phase 3 design doc).
+- `src/app/api/admin/dues/export/route.ts` — no change.
+- Security review must audit whether `csvCell()` in the dues export should also be upgraded; flagged for the next 30-day security review.
+
+---
+
 ## DECISION-022: `ledger_filings` 5-year cadence stored as `next_due_year integer`; `listFilings` includes a 5-year row only when `nextDueYear === fiscalYear + 1`
 
 **Status:** Resolved

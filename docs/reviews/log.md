@@ -37,6 +37,7 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-06-25 | test-coverage | Ledger inc4 Phase 5: 258 unit tests PASS; csv-safe.ts 100% (12 csvCellSafe cases); CSV injection escaping + transfer-exclusion + posted-only filter verified via dev-server curl; both new surfaces gate-audited; PASS
 2026-06-25 | test-coverage | Ledger inc2 Phase 5: 219 unit tests PASS (2 new regression tests); ledger.ts 100% stmts; events.ts 94.73%; receipt-magic-bytes+LocalReceiptStorage fully covered; all 10 new API routes gate-audited; PASS
 2026-06-24 | test-coverage | Ledger inc1 Phase 5: 191 unit tests PASS (11 new determine990 tests added); ledger.ts 100% stmts/funcs; events.ts 94.73%; FY boundary + transfer atomicity verified via DB; all 5 API routes gate-audited; no invariant violations
 2026-06-24 | test-coverage | 115 unit tests PASS; 18/22 e2e PASS; 2 failing specs are date-anchored rot in cancel-occurrence.spec.ts (CANCEL_DATE/SIGNUP_BLOCKED_DATE now past); donate.spec.ts adequate; events.ts 94.73% stmts; members.ts 0% (pre-existing); fix: advance hardcoded dates to Aug 2026; see 2026-06-24-test-coverage.md
