@@ -54,6 +54,9 @@ export const FEATURES = {
   LEDGER_RECORD: "ledger.record",
   LEDGER_MANAGE: "ledger.manage",
   LEDGER_APPROVE: "ledger.approve",  // inc2: approve/reject pending disbursements + reimbursements
+
+  // Impact / Philanthropy dashboard (The Ledger — inc5: Impact Dashboard)
+  IMPACT_VIEW: "impact.view",  // inc5: view member philanthropy/impact dashboard
 } as const;
 
 // Type for feature names
@@ -116,6 +119,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.LEDGER_RECORD]: "Record, edit, and delete ledger transactions",
   [FEATURES.LEDGER_MANAGE]: "Manage funds, budgets, entities, and opening balances",
   [FEATURES.LEDGER_APPROVE]: "Approve and reject pending disbursements and reimbursements",
+
+  [FEATURES.IMPACT_VIEW]: "View the member philanthropy and community impact dashboard",
 };
 
 // Default role names (should match database seed data)

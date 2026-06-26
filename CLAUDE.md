@@ -84,7 +84,8 @@ src/
 │   │   ├── events/        # Internal events & per-occurrence RSVP
 │   │   ├── events/past/   # Past events list
 │   │   ├── groups/        # Member group list and detail
-│   │   └── profile/       # Member profile and picture upload
+│   │   ├── profile/       # Member profile and picture upload
+│   │   └── impact/        # Philanthropy / community impact dashboard (impact.view gated)
 │   ├── api/               # API routes
 │   ├── robots.ts          # robots.txt
 │   └── sitemap.ts         # sitemap.xml
@@ -135,6 +136,7 @@ docs/
 - **Login:** Google OAuth (via Google for Nonprofits) + password authentication
 - **Member Directory:** Contact information for club members
 - **Events:** Internal event calendar, per-occurrence RSVP system, "Add to Calendar" (.ics) download
+- **Philanthropy Dashboard:** `/members/impact` — all-time and current-FY giving totals, giving by cause (CSS bar list), giving by fiscal year, recent named gifts. Two-tier gate: `impact.view` required when `philanthropyVisibility='board'`; any linked member when `='members'`.
 - **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, in-app release notes, and contact submissions
 
 ## Integrations

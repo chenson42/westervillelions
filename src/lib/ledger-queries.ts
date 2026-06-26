@@ -36,7 +36,7 @@ import {
   type LedgerFiling,
 } from "@/lib/db/schema";
 import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, sql } from "drizzle-orm";
-import { getFiscalYear, currentFiscalYear } from "@/lib/fiscal-year";
+import { getFiscalYear, currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import {
   fundBalanceCents,
   grossReceiptsCents,
@@ -1615,4 +1615,218 @@ export async function listTransactionsForExport(
       memo: r.memo,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Inc5: Philanthropy / Impact Dashboard — types and query
+// ---------------------------------------------------------------------------
+
+export type PhilanthropyByCause = {
+  /** LOWER(TRIM(beneficiary_cause)) or '' for null/empty rows. */
+  causeKey: string;
+  /**
+   * Display label: first-seen original casing from the raw rows, or
+   * "Other community support" when causeKey is ''.
+   */
+  causeLabel: string;
+  totalCents: number;
+  /** 0–100, rounded to 1 decimal. 0 when allTimeCents is 0. */
+  pct: number;
+};
+
+export type PhilanthropyByFY = {
+  /** Fiscal year start-year integer (DECISION-015). */
+  fiscalYear: number;
+  /** e.g. "FY2026 (Jul 2026 – Jun 2027)" */
+  label: string;
+  totalCents: number;
+};
+
+export type PhilanthropyRecentGift = {
+  /** YYYY-MM-DD from txn_date. */
+  txnDate: string;
+  /** Payee/recipient name. null excluded by query but type allows null for safety. */
+  party: string | null;
+  amountCents: number;
+  /** Raw beneficiary_cause. null → "Other community support" in the UI. */
+  cause: string | null;
+};
+
+export type PhilanthropySummary = {
+  allTimeCents: number;
+  currentFyCents: number;
+  /** Sorted desc by totalCents; "Other community support" (causeKey='') always last. */
+  byCause: PhilanthropyByCause[];
+  /** Sorted desc by fiscalYear (most recent first). */
+  byFiscalYear: PhilanthropyByFY[];
+  /** Up to recentGiftsLimit rows, party IS NOT NULL, sorted desc by txnDate. */
+  recentGifts: PhilanthropyRecentGift[];
+};
+
+/**
+ * Builds the philanthropy / impact dashboard summary.
+ *
+ * Two DB round-trips, no N+1:
+ *   1. All giving rows (txnDate, amountCents, beneficiaryCause) — folded in
+ *      TypeScript to produce allTimeCents, currentFyCents, byCause, byFiscalYear.
+ *   2. Recent named gifts — giving rows WHERE party IS NOT NULL ORDER BY
+ *      txnDate DESC LIMIT N (default 8).
+ *
+ * NOTE: The giving predicate here mirrors isGiving() in src/lib/ledger.ts.
+ * Both definitions must stay in sync.
+ *
+ * Giving predicate (canonical SQL form):
+ *   status = 'posted'
+ *   AND transfer_group_id IS NULL
+ *   AND flow = 'expense'
+ *   AND fund.kind IN ('activity', 'charitable', 'scholarship')
+ *
+ * Administrative fund rows (kind='administrative') are excluded by omission
+ * from the IN list — never appear in philanthropy totals (DECISION: see Phase 3
+ * design doc, docs/work-log/2026-06-25-ledger-impact.md).
+ *
+ * DECISION-024: null-party rows are excluded from the "Recent gifts" list.
+ * Those dollars are still captured in allTimeCents, currentFyCents, byCause,
+ * and byFiscalYear totals.
+ */
+export async function getPhilanthropy(
+  opts: { recentGiftsLimit?: number } = {},
+): Promise<PhilanthropySummary> {
+  const recentGiftsLimit = opts.recentGiftsLimit ?? 8;
+
+  // -------------------------------------------------------------------------
+  // Query 1: all giving rows for aggregate computation
+  // -------------------------------------------------------------------------
+  const givingRows = await db
+    .select({
+      txnDate: ledgerTransactions.txnDate,
+      amountCents: ledgerTransactions.amountCents,
+      beneficiaryCause: ledgerTransactions.beneficiaryCause,
+    })
+    .from(ledgerTransactions)
+    .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .where(
+      and(
+        eq(ledgerTransactions.status, "posted"),
+        isNull(ledgerTransactions.transferGroupId),
+        eq(ledgerTransactions.flow, "expense"),
+        inArray(ledgerFunds.kind, ["activity", "charitable", "scholarship"]),
+      ),
+    )
+    .orderBy(asc(ledgerTransactions.txnDate));
+
+  // -------------------------------------------------------------------------
+  // Fold giving rows in TypeScript — single pass for all aggregates
+  // -------------------------------------------------------------------------
+
+  /**
+   * Parse a YYYY-MM-DD string as a local date (avoids UTC shift from new Date(string)).
+   */
+  function parseYMD(s: string): Date {
+    const [y, m, d] = s.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  const currentFY = currentFiscalYear(new Date());
+
+  let allTimeCents = 0;
+  let currentFyCents = 0;
+
+  // causeKey → { totalCents, firstSeenOriginal }
+  const causeMap = new Map<string, { totalCents: number; firstSeenOriginal: string }>();
+  // fiscalYear (number) → totalCents
+  const fyMap = new Map<number, number>();
+
+  for (const row of givingRows) {
+    allTimeCents += row.amountCents;
+
+    // Current-FY filter
+    const rowFY = getFiscalYear(parseYMD(row.txnDate));
+    if (rowFY === currentFY) {
+      currentFyCents += row.amountCents;
+    }
+
+    // By-cause grouping: normalize to lower-trimmed key; null/empty → ''
+    const rawCause = row.beneficiaryCause;
+    const causeKey =
+      rawCause === null || rawCause.trim() === ""
+        ? ""
+        : rawCause.trim().toLowerCase();
+    const existing = causeMap.get(causeKey);
+    if (existing) {
+      existing.totalCents += row.amountCents;
+    } else {
+      // First-seen original casing: '' key uses fixed label; others use original value.
+      causeMap.set(causeKey, {
+        totalCents: row.amountCents,
+        firstSeenOriginal: causeKey === "" ? "" : rawCause!.trim(),
+      });
+    }
+
+    // By-FY grouping
+    fyMap.set(rowFY, (fyMap.get(rowFY) ?? 0) + row.amountCents);
+  }
+
+  // Build byCause: sort desc by totalCents; '' key always last
+  const byCause: PhilanthropyByCause[] = Array.from(causeMap.entries())
+    .map(([causeKey, { totalCents, firstSeenOriginal }]) => ({
+      causeKey,
+      causeLabel: causeKey === "" ? "Other community support" : firstSeenOriginal,
+      totalCents,
+      pct: allTimeCents > 0 ? Math.round((totalCents / allTimeCents) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => {
+      // '' key (Other community support) always sorts to the end
+      if (a.causeKey === "" && b.causeKey !== "") return 1;
+      if (b.causeKey === "" && a.causeKey !== "") return -1;
+      return b.totalCents - a.totalCents;
+    });
+
+  // Build byFiscalYear: sort desc by fiscalYear
+  const byFiscalYear: PhilanthropyByFY[] = Array.from(fyMap.entries())
+    .map(([fiscalYear, totalCents]) => ({
+      fiscalYear,
+      label: fiscalYearLabel(fiscalYear),
+      totalCents,
+    }))
+    .sort((a, b) => b.fiscalYear - a.fiscalYear);
+
+  // -------------------------------------------------------------------------
+  // Query 2: recent named gifts (party IS NOT NULL)
+  // -------------------------------------------------------------------------
+  const recentRows = await db
+    .select({
+      txnDate: ledgerTransactions.txnDate,
+      party: ledgerTransactions.party,
+      amountCents: ledgerTransactions.amountCents,
+      beneficiaryCause: ledgerTransactions.beneficiaryCause,
+    })
+    .from(ledgerTransactions)
+    .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .where(
+      and(
+        eq(ledgerTransactions.status, "posted"),
+        isNull(ledgerTransactions.transferGroupId),
+        eq(ledgerTransactions.flow, "expense"),
+        inArray(ledgerFunds.kind, ["activity", "charitable", "scholarship"]),
+        isNotNull(ledgerTransactions.party),
+      ),
+    )
+    .orderBy(desc(ledgerTransactions.txnDate))
+    .limit(recentGiftsLimit);
+
+  const recentGifts: PhilanthropyRecentGift[] = recentRows.map((r) => ({
+    txnDate: r.txnDate,
+    party: r.party,
+    amountCents: r.amountCents,
+    cause: r.beneficiaryCause,
+  }));
+
+  return {
+    allTimeCents,
+    currentFyCents,
+    byCause,
+    byFiscalYear,
+    recentGifts,
+  };
 }

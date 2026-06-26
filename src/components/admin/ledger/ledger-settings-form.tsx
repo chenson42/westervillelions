@@ -163,10 +163,10 @@ export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps
       {/* Philanthropy visibility */}
       <div>
         <label htmlFor="philanthropy-visibility" className="block text-sm font-medium text-gray-700 mb-1">
-          Member philanthropy visibility (inc5)
+          Member philanthropy visibility
         </label>
         <p className="text-xs text-gray-500 mb-2">
-          Controls which members can view the philanthropy impact dashboard (future increment).
+          Controls which members can view the philanthropy impact dashboard.
         </p>
         <select
           id="philanthropy-visibility"

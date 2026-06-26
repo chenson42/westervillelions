@@ -262,6 +262,38 @@ export function determine990(params: Determine990Params): Determine990Result {
 }
 
 // ---------------------------------------------------------------------------
+// isGiving — inc5: Philanthropy / Impact Dashboard
+// ---------------------------------------------------------------------------
+
+export type IsGivingRow = {
+  flow: string;
+  transferGroupId: string | null;
+};
+
+/**
+ * Returns true if a transaction row is philanthropic giving.
+ *
+ * Rule: flow='expense' AND transferGroupId IS NULL AND
+ *       fund.kind IN ('activity', 'charitable', 'scholarship').
+ *
+ * NOTE: This rule is duplicated as a SQL WHERE predicate in
+ * getPhilanthropy() in src/lib/ledger-queries.ts. Both definitions
+ * must stay in sync. The SQL predicate is the source of truth for
+ * aggregate totals; this helper is for per-row UI labeling and unit tests.
+ *
+ * Administrative fund rows are excluded by the fund.kind set — member dues
+ * money (kind='administrative') is NEVER philanthropy. (DECISION: see Phase 3
+ * design doc, docs/work-log/2026-06-25-ledger-impact.md.)
+ */
+export function isGiving(row: IsGivingRow, fundKind: string): boolean {
+  return (
+    row.flow === "expense" &&
+    row.transferGroupId === null &&
+    (fundKind === "activity" || fundKind === "charitable" || fundKind === "scholarship")
+  );
+}
+
+// ---------------------------------------------------------------------------
 // guardrails
 // ---------------------------------------------------------------------------
 
