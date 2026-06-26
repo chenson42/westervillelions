@@ -31,16 +31,14 @@ export default async function MemberImpactPage() {
   // 2. Member link check — inline state, NOT a redirect
   const memberId = session.user.memberId ?? null;
 
-  // 3. Visibility + permission check (only if memberId present)
-  let canView = false;
+  // 3. Visibility + permission check (only if memberId present). When visibility
+  //    is 'members', any linked member passes — so the impact.view lookup only
+  //    happens in the 'board' case (MEDIUM-3: no wasted permission query).
   if (memberId) {
-    const [settings, featureEnabled] = await Promise.all([
-      getSettings(),
-      hasFeature(session.user.id, FEATURES.IMPACT_VIEW),
-    ]);
-    canView = featureEnabled;
-    if (settings.philanthropyVisibility === "board" && !canView) {
-      redirect("/access-pending");
+    const settings = await getSettings();
+    if (settings.philanthropyVisibility === "board") {
+      const canView = await hasFeature(session.user.id, FEATURES.IMPACT_VIEW);
+      if (!canView) redirect("/access-pending");
     }
   }
 

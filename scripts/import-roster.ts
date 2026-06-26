@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { db } from "../src/lib/db";
 import { users, members } from "../src/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -42,10 +42,27 @@ async function importRoster(filePath: string) {
   console.log(`📖 Reading roster from: ${filePath}`);
 
   // Read Excel file
-  const workbook = XLSX.readFile(filePath);
-  const sheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
-  const data: RosterRow[] = XLSX.utils.sheet_to_json(worksheet);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+  const worksheet = workbook.worksheets[0];
+
+  // Build header map from first row
+  const headerRow = worksheet.getRow(1);
+  const headers: Record<number, string> = {};
+  headerRow.eachCell((cell, colNumber) => {
+    headers[colNumber] = String(cell.value ?? "");
+  });
+
+  const data: RosterRow[] = [];
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return; // skip header
+    const record: Record<string, unknown> = {};
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const header = headers[colNumber];
+      if (header) record[header] = cell.value;
+    });
+    data.push(record as unknown as RosterRow);
+  });
 
   console.log(`📊 Found ${data.length} members in roster`);
 

@@ -480,6 +480,10 @@ export async function getFundReport(
 export async function getOverview(
   entityId: string,
   fiscalYear: number,
+  inc3Inputs?: {
+    irsFilingHistory: Array<{ fiscalYear: number; status: string }>;
+    overdueFilingCount: number;
+  },
 ): Promise<EntityOverview | null> {
   const entityRows = await db
     .select()
@@ -632,10 +636,10 @@ export async function getOverview(
     pendingDisbursements,
     unreconciledPriorMonth,
     firewallViolations,
-    // inc3 fields — not available on this path; compliance page uses
-    // getComplianceOverview() which passes real values.
-    irsFilingHistory: [],
-    overdueFilingCount: 0,
+    // inc3 fields — passed through by getComplianceOverview(); default empty on
+    // the plain overview path (so the revocation/overdue flags don't fire there).
+    irsFilingHistory: inc3Inputs?.irsFilingHistory ?? [],
+    overdueFilingCount: inc3Inputs?.overdueFilingCount ?? 0,
   });
 
   const determine990Result = determine990({
@@ -786,6 +790,19 @@ export async function listReimbursementsForMember(
  * Returns reimbursements for admin view, joined with member name/email.
  * Optionally filtered by status.
  */
+/**
+ * Count of reimbursements per status in one GROUP BY query — for the admin inbox
+ * tab badges (replaces four separate count round-trips).
+ */
+export async function getReimbursementStatusCounts(): Promise<Record<string, number>> {
+  const rows = await db.execute<{ status: string; count: string }>(
+    sql`SELECT status, COUNT(*)::text AS count FROM ledger_reimbursements GROUP BY status`,
+  );
+  const counts: Record<string, number> = {};
+  for (const r of rows) counts[r.status] = parseInt(r.count, 10);
+  return counts;
+}
+
 export async function listReimbursementsForAdmin(opts: {
   status?: string;
   memberId?: string;
@@ -1089,16 +1106,12 @@ export async function getComplianceOverview(
   entityId: string,
   fiscalYear: number,
 ): Promise<ComplianceOverview | null> {
-  // Step 1: get the entity overview (gives us inc1/inc2 guardrail inputs, entity state)
-  const overview = await getOverview(entityId, fiscalYear);
-  if (!overview) return null;
-
-  // Step 2: get the filing calendar
+  // Step 1: the filing calendar + the inc3 guardrail inputs, computed BEFORE the
+  // overview so they can be threaded into the single canonical guardrails() call.
   const filings = await listFilings(entityId, fiscalYear);
+  const overdueFilingCount = filings.filter((f) => f.overdue).length;
 
-  // Step 3: IRS filing history for the revocation check
-  // Query up to the most recent 3 past FYs of IRS filings, ordered ascending.
-  // We query all past IRS filings and let guardrails() slice the last 3.
+  // IRS filing history for the revocation check (all past FYs, ascending; guardrails() slices the last 3).
   const irsHistoryRows = await db
     .select({
       fiscalYear: ledgerFilings.fiscalYear,
@@ -1114,53 +1127,16 @@ export async function getComplianceOverview(
     )
     .orderBy(asc(ledgerFilings.fiscalYear));
 
-  // Step 4: overdue count
-  const overdueFilingCount = filings.filter((f) => f.overdue).length;
+  // Step 2: the entity overview, with the inc3 inputs passed through so the
+  // revocation/overdue flags come from the canonical guardrails() in ledger.ts —
+  // no duplicated flag logic here (MEDIUM-2 fix).
+  const overview = await getOverview(entityId, fiscalYear, {
+    irsFilingHistory: irsHistoryRows,
+    overdueFilingCount,
+  });
+  if (!overview) return null;
 
-  // Step 5: get settings (needed for guardrails and to return in the overview)
   const settings = await getSettings();
-
-  // Re-derive the inc1/inc2 guardrail inputs from the overview so we can call
-  // guardrails() once with all inputs. getOverview already ran guardrails() with
-  // irsFilingHistory=[], overdueFilingCount=0. We rebuild the flags here with the
-  // complete input so the compliance page sees all flags in one place.
-  //
-  // Rather than re-deriving all guardrail inputs from scratch (which would require
-  // duplicating the getOverview aggregation logic), we take a simpler approach:
-  // take the existing guardrailFlags from getOverview and append the inc3 flags
-  // computed from the additional data we now have.
-  const inc3Flags: GuardrailFlag[] = [];
-
-  // Revocation check (mirrors guardrails() logic for the inc3 section)
-  if (irsHistoryRows.length >= 3) {
-    const recentThree = irsHistoryRows.slice(-3);
-    const allUnfiled = recentThree.every(
-      (entry) => !["filed", "na"].includes(entry.status),
-    );
-    if (allUnfiled) {
-      inc3Flags.push({
-        severity: "high",
-        title: "IRS 990 revocation risk — 3 consecutive unfiled returns",
-        detail:
-          "The IRS automatically revokes tax-exempt status after 3 consecutive years of " +
-          "failure to file a required annual return. File the overdue returns immediately.",
-        policyCite: "IRC §6033(j)",
-      });
-    }
-  }
-
-  // Overdue filings check
-  if (overdueFilingCount > 0) {
-    const n = overdueFilingCount;
-    inc3Flags.push({
-      severity: "warn",
-      title: "Overdue compliance filings",
-      detail: `${n} filing${n === 1 ? " is" : "s are"} past due. Review the Compliance screen and file or mark as N/A.`,
-      policyCite: "Lions Financial Transparency Policy §10",
-    });
-  }
-
-  // Compute entity balance from fund summaries (same logic as getOverview)
   const entityBalance = overview.funds.reduce((s, f) => s + f.endingCents, 0);
 
   return {
@@ -1170,7 +1146,7 @@ export async function getComplianceOverview(
     grossReceiptsCents: overview.grossReceiptsCents,
     entityBalanceCents: entityBalance,
     determine990Result: overview.determine990Result,
-    guardrailFlags: [...overview.guardrailFlags, ...inc3Flags],
+    guardrailFlags: overview.guardrailFlags,
     settings,
   };
 }
@@ -1514,11 +1490,14 @@ export async function get990Prep(
     .limit(1);
   const entity = entityRows[0];
 
-  // Compute entity balance for assets estimate (fund ending balances)
-  const funds = await getFunds(entityId);
-  const entityBalance = funds.reduce((s, f) => s + f.openingBalanceCents, 0);
-  // Note: for the 990 determination we use gross receipts from this FY;
-  // entity balance is a rough proxy for assets.
+  // Entity assets estimate for the 990 determination: use the same fund ENDING
+  // balances the overview/compliance pages use (MEDIUM-1 fix — previously summed
+  // opening balances, which could flip the determined form vs. those pages for
+  // the same entity/FY). Still a cash-basis proxy for total assets.
+  const overview = await getOverview(entityId, fiscalYear);
+  const entityBalance = overview
+    ? overview.funds.reduce((s, f) => s + f.endingCents, 0)
+    : 0;
 
   const determine990Result = entity
     ? determine990({

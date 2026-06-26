@@ -18,7 +18,7 @@ import {
  * Escape a CSV cell value (same logic as the dues export csvCell, but without
  * formula-injection protection — use csvCellSafe for user-supplied free-text).
  */
-function csvCell(value: string | number | boolean | null | undefined): string {
+function csvCellRaw(value: string | number | boolean | null | undefined): string {
   const str = value == null ? "" : String(value);
   if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
     return `"${str.replace(/"/g, '""')}"`;
@@ -165,15 +165,15 @@ async function buildTransactionsCsv(
     for (const row of rows) {
       dataRows.push(
         [
-          csvCell(row.txnDate),
-          csvCell(row.fundName),
-          csvCell(row.flow),
+          csvCellRaw(row.txnDate),
+          csvCellRaw(row.fundName),
+          csvCellRaw(row.flow),
           csvCellSafe(row.categoryDisplay),
           csvCellSafe(row.party),
-          csvCell(centsToDisplay(row.amountCents)),
-          csvCell(row.status),
-          csvCell(row.reconciled ? "Yes" : "No"),
-          csvCell(row.paymentMethod),
+          csvCellRaw(centsToDisplay(row.amountCents)),
+          csvCellRaw(row.status),
+          csvCellRaw(row.reconciled ? "Yes" : "No"),
+          csvCellRaw(row.paymentMethod),
           csvCellSafe(row.memo),
         ].join(","),
       );
@@ -241,8 +241,8 @@ async function build990PrepCsv(
       dataRows.push(
         [
           csvCellSafe(line.lineGroup),
-          csvCell(line.flow),
-          csvCell(centsToDisplay(line.totalCents)),
+          csvCellRaw(line.flow),
+          csvCellRaw(centsToDisplay(line.totalCents)),
         ].join(","),
       );
     }

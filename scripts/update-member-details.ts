@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { db } from "../src/lib/db";
 import { members } from "../src/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -42,9 +42,27 @@ function preferredPhone(mobile: string, home: string): string | null {
 
 async function updateMemberDetails(filePath: string) {
   console.log(`📖 Reading from: ${filePath}`);
-  const wb = XLSX.readFile(filePath);
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows: Record<string, string>[] = XLSX.utils.sheet_to_json(ws);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(filePath);
+  const ws = wb.worksheets[0];
+
+  // Build header map from first row
+  const headerRow = ws.getRow(1);
+  const headers: Record<number, string> = {};
+  headerRow.eachCell((cell, colNumber) => {
+    headers[colNumber] = String(cell.value ?? "");
+  });
+
+  const rows: Record<string, string>[] = [];
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return; // skip header
+    const record: Record<string, string> = {};
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const header = headers[colNumber];
+      if (header) record[header] = cell.value != null ? String(cell.value) : "";
+    });
+    rows.push(record);
+  });
 
   console.log(`📊 Found ${rows.length} rows\n`);
 

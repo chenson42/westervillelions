@@ -3,7 +3,7 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { hasAnyFeature, hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-import { listReimbursementsForAdmin, getEntities, getFunds } from "@/lib/ledger-queries";
+import { listReimbursementsForAdmin, getReimbursementStatusCounts, getEntities, getFunds } from "@/lib/ledger-queries";
 import ApproveReimbursementDialog from "@/components/admin/ledger/approve-reimbursement-dialog";
 import { RejectReimbursementDialog } from "@/components/admin/ledger/reject-dialog";
 import PayReimbursementDialog from "@/components/admin/ledger/pay-reimbursement-dialog";
@@ -89,18 +89,13 @@ export default async function AdminLedgerReimbursementsPage({
 
   const { reimbursements, total } = await listReimbursementsForAdmin({ status: activeTab });
 
-  // Tab counts (light — just query counts for the 4 statuses shown in tabs)
-  const [submittedResult, approvedResult, rejectedResult, paidResult] = await Promise.all([
-    listReimbursementsForAdmin({ status: "submitted", limit: 1 }),
-    listReimbursementsForAdmin({ status: "approved", limit: 1 }),
-    listReimbursementsForAdmin({ status: "rejected", limit: 1 }),
-    listReimbursementsForAdmin({ status: "paid", limit: 1 }),
-  ]);
+  // Tab counts — one GROUP BY query instead of four separate count round-trips.
+  const statusCounts = await getReimbursementStatusCounts();
   const tabCounts: Record<StatusTab, number> = {
-    submitted: submittedResult.total,
-    approved: approvedResult.total,
-    rejected: rejectedResult.total,
-    paid: paidResult.total,
+    submitted: statusCounts.submitted ?? 0,
+    approved: statusCounts.approved ?? 0,
+    rejected: statusCounts.rejected ?? 0,
+    paid: statusCounts.paid ?? 0,
   };
 
   return (
