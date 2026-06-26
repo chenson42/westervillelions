@@ -37,6 +37,8 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-06-26 | dependencies | prod audit clean (0 high/critical; 3 moderate, 1 low, all transitive); @vercel/blob vetted OK; next-themes dead dep; xlsx still in devDeps (scripts only); 3 overrides recommended; see 2026-06-26-dependencies.md
+2026-06-26 | code | 0 high, 3 medium, 5 low; MEDIUM-1 = get990Prep uses opening-balance-only for assets estimate (990 form may differ from overview); MEDIUM-2 = inc3 guardrail flags duplicated in getComplianceOverview vs guardrails(); MEDIUM-3 = canView vestigial in impact page "all" path; see 2026-06-26-code.md
 2026-06-25 | test-coverage | Ledger inc4 Phase 5: 258 unit tests PASS; csv-safe.ts 100% (12 csvCellSafe cases); CSV injection escaping + transfer-exclusion + posted-only filter verified via dev-server curl; both new surfaces gate-audited; PASS
 2026-06-25 | test-coverage | Ledger inc2 Phase 5: 219 unit tests PASS (2 new regression tests); ledger.ts 100% stmts; events.ts 94.73%; receipt-magic-bytes+LocalReceiptStorage fully covered; all 10 new API routes gate-audited; PASS
 2026-06-24 | test-coverage | Ledger inc1 Phase 5: 191 unit tests PASS (11 new determine990 tests added); ledger.ts 100% stmts/funcs; events.ts 94.73%; FY boundary + transfer atomicity verified via DB; all 5 API routes gate-audited; no invariant violations

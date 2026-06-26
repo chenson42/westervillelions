@@ -1,0 +1,157 @@
+# Dependencies Review — 2026-06-26
+
+**Reviewer:** deployment-engineer
+**Period covered:** 2026-05-27 → 2026-06-26 (30 days)
+**Baseline:** Prior review at 2026-05-27; all 14 high production CVEs were closed by v1.18.x bumps; xlsx replaced with exceljs.
+
+---
+
+## Summary
+
+`pnpm outdated` found **30 packages behind** (all patch or minor except four major-version items carried forward from the prior review).
+`pnpm audit --prod` reported **4 vulnerabilities: 0 high, 0 critical, 3 moderate, 1 low** — all transitive, none exploitable in typical admin/member portal usage.
+`pnpm audit` (full tree including dev) adds **high findings only in dev-only paths**: xlsx (still in `devDependencies`), eslint→flatted, and eslint→picomatch.
+
+**Production audit gate: CLEAN** (no high or critical in production deps).
+
+Since the last review the team shipped five Ledger increments and added `@vercel/blob` as the first new production dependency. That addition is vetted below.
+
+---
+
+## pnpm outdated — Full Table
+
+### Patch bumps (Z-only) — Safe to batch
+
+| Package | Current | Latest | Scope |
+|---------|---------|--------|-------|
+| `@radix-ui/react-alert-dialog` | 1.1.15 | 1.1.17 | prod |
+| `@radix-ui/react-dialog` | 1.1.15 | 1.1.17 | prod |
+| `@radix-ui/react-dropdown-menu` | 2.1.16 | 2.1.18 | prod |
+| `@radix-ui/react-label` | 2.1.8 | 2.1.10 | prod |
+| `@radix-ui/react-separator` | 1.1.8 | 1.1.10 | prod |
+| `@radix-ui/react-tabs` | 1.1.13 | 1.1.15 | prod |
+| `@types/react` | 19.2.14 | 19.2.17 | dev |
+| `@vitest/coverage-v8` | 4.1.7 | 4.1.9 | dev |
+| `autoprefixer` | 10.5.0 | 10.5.2 | dev |
+| `eslint-config-next` | 16.2.6 | 16.2.9 | dev |
+| `next` | 16.2.6 | 16.2.9 | prod |
+| `react` | 19.2.6 | 19.2.7 | prod |
+| `react-dom` | 19.2.6 | 19.2.7 | prod |
+| `tsx` | 4.22.3 | 4.22.4 | dev |
+| `vitest` | 4.1.7 | 4.1.9 | dev |
+
+### Minor bumps (Y changed) — Review changelog before bumping
+
+| Package | Current | Latest | Scope | Notes |
+|---------|---------|--------|-------|-------|
+| `@marsidev/react-turnstile` | 1.4.2 | 1.5.3 | prod | Turnstile widget; 1.5.x changelog shows React 19 improvements, no breaking API changes. Safe. |
+| `@radix-ui/react-avatar` | 1.1.11 | 1.2.0 | prod | Radix minor; typically additive. Review for any prop changes before bumping. |
+| `@radix-ui/react-slot` | 1.2.4 | 1.3.0 | prod | Radix minor; slot API is stable. Low risk. |
+| `@vercel/blob` | 2.4.1 | 2.5.0 | prod | Vercel Blob; patch-level additions. See vetting below. |
+| `date-fns` | 4.3.0 | 4.4.0 | prod | Utility library; additive. Safe. |
+| `react-hook-form` | 7.76.1 | 7.80.0 | prod | Multiple minor releases; bug fixes and minor API additions. Safe. |
+| `react-image-crop` | 11.0.10 | 11.1.2 | prod | Image crop widget; changelog shows bug fixes. Safe. |
+| `resend` | 6.12.4 | 6.16.0 | prod | Email SDK; new features added. Safe. Fixes transitive `uuid` moderate CVE (see below). |
+| `@playwright/test` | 1.60.0 | 1.61.1 | dev | Playwright minor; test runner only. Safe. |
+| `googleapis` | 172.0.0 | 173.0.0 | prod | Google API client; minor release. Changelog shows API additions only. Safe. Bump resolves transitive `qs` moderate CVE dependency chain (see below). |
+
+### Major bumps (X changed) — Carry-forward from 2026-05-27, unchanged assessment
+
+| Package | Current | Latest | Assessment |
+|---------|---------|--------|------------|
+| `lucide-react` | 0.562.0 | 1.21.0 | Plan before bumping; 0.x → 1.x, scan for renamed icons. Not urgent. |
+| `tailwindcss` | 3.4.19 | 4.3.1 | **Do not bump** — v3 → v4 is a full CSS-first rewrite; dedicated migration effort required. |
+| `typescript` | 5.9.3 | 6.0.3 | Defer to low-churn sprint; run full `tsc --noEmit` after bumping. |
+| `eslint` | 9.39.2 | 10.5.0 | Defer until `eslint-config-next` confirms ESLint 10 support. |
+| `@types/node` | 20.19.33 | 26.0.1 | **Do not bump** — keep pinned to `^20` to match the Node 20 Vercel runtime. |
+
+---
+
+## CVEs in Production (`pnpm audit --prod`) — 4 findings
+
+### MODERATE
+
+| Package | Advisory | Path | Exploitability | Action |
+|---------|----------|------|---------------|--------|
+| `postcss` 8.4.31 | GHSA-qx2v-qp2m-jg93 — XSS via unescaped `</style>` in CSS stringify output | `.>next>postcss` | Low: postcss is used at build/compile time; CSS stringify is not called on user-supplied input at runtime. Impact requires attacker-controlled CSS flowing through Next.js's PostCSS pipeline. | Bump `next` from 16.2.6 → 16.2.9 (see patch table above). **Note:** Next 16.2.9 still bundles `postcss 8.4.31` internally — this CVE is locked by Next.js's own bundled dep. Bumping Next alone does not fix it. It requires an override in `pnpm.overrides` (`postcss: >=8.5.10`) or waiting for Next to update its bundled postcss. |
+| `uuid` 8.x (transitive) | GHSA-w5hq-g745-h8pq — missing buffer bounds check in v3/v5/v6 when `buf` is provided | `.>exceljs>uuid` | Low: the project never calls `uuid.v3()` / `v5()` / `v6()` with a user-supplied buffer; exceljs uses uuid internally for cell tracking with autogenerated buffers. | Bump `exceljs` 4.4.0 → latest when available. The project is already on the latest exceljs release; upstream must fix this transitive dep. |
+| `qs` (transitive) | GHSA-q8mj-m7cp-5q26 — `qs.stringify` DoS via null/undefined entries in comma-format arrays | `.>googleapis>googleapis-common>qs` | Low: this code path is not triggered by user input in the project's Google Group sync flow; the sync calls Admin SDK list/patch operations, not user-supplied query strings. | Bump `googleapis` 172 → 173 (see minor table). Even at 173, `googleapis-common` pins `qs: ^6.7.0`, so the transitive issue persists. A `pnpm.overrides` entry for `qs: >=6.15.2` is the definitive fix. |
+
+### LOW
+
+| Package | Advisory | Path | Action |
+|---------|----------|------|--------|
+| `@babel/core` ≤7.29.0 | GHSA-4x5r-pxfx-6jf8 — arbitrary file read via `sourceMappingURL` comment | `.>next>styled-jsx>@babel/core` | Build-time only; not exploitable at runtime. Awaiting Next.js to update styled-jsx. No action needed this cycle. |
+
+---
+
+## CVEs in Dev Tree Only (not in `--prod`)
+
+| Package | Severity | Path | Notes |
+|---------|---------|------|-------|
+| `xlsx` 0.18.5 | HIGH (×2) | `.>xlsx` (devDependencies) | `xlsx` is still listed in `devDependencies` and used only in `scripts/import-roster.ts` and `scripts/update-member-details.ts` (one-off data import scripts). Not deployed to production. The production export routes now use `exceljs`. The dev CVE is a carry-forward — can be resolved by migrating these two scripts to use exceljs or csv, then removing `xlsx` from devDeps. |
+| `flatted` | HIGH (×2) | `.>eslint>file-entry-cache>flat-cache>flatted` | Dev-only (ESLint transitive). Awaiting eslint to update flat-cache. Not actionable directly. |
+| `picomatch` | HIGH (×2), MOD (×2) | via eslint and tailwindcss | Dev-only. Awaiting upstream updates. Not actionable directly. |
+| `ajv` | MODERATE | `.>eslint>ajv` | Dev-only. Awaiting eslint to update. |
+
+---
+
+## @vercel/blob Vetting
+
+**Current version in project:** 2.4.1 (patch behind 2.5.0, released 2026-06-25)
+**Latest stable:** 2.5.0
+**License:** Apache-2.0 — confirmed. Matches expectation from DECISION-018.
+**Maintainers:** Vercel release bot + two named Vercel engineers. Actively maintained.
+**Release cadence:** Highly active — 2.4.1 shipped 2026-06-18, snapshot 2026-06-25, 2.5.0 shipped 2026-06-25. Canonical Vercel first-party package.
+**Advisories:** None found against any `@vercel/blob` version.
+**Dependencies:** `@vercel/oidc`, `async-retry`, `is-buffer`, `is-node-process`, `throttleit`, `undici 6.x` — all well-maintained first-party or widely used packages.
+**Required env var:** `BLOB_READ_WRITE_TOKEN` — not currently documented in CLAUDE.md's environment variable table; should be added.
+**Verdict: No red flags.** Correct minimal choice for receipt blob storage (DECISION-018). Bump to 2.5.0 is safe; include in next minor bump batch.
+
+---
+
+## Dead Packages
+
+| Package | Installed | Usage | Recommendation |
+|---------|-----------|-------|----------------|
+| `next-themes` | prod dep | Zero imports found in `src/` (grepped `next-themes`, `ThemeProvider`, `useTheme` — all empty) | Remove from `dependencies`. No functionality depends on it. |
+| `xlsx` | devDep | Used only in two one-off data import scripts (`scripts/import-roster.ts`, `scripts/update-member-details.ts`) | Migrate scripts to exceljs, then remove from devDeps. Eliminates two HIGH dev CVEs. Not urgent — scripts are run locally, not on Vercel. |
+
+---
+
+## Recommended Action Plan (Priority Order)
+
+1. **Near-term — security + housekeeping:** Bump `next` 16.2.6 → 16.2.9 and `eslint-config-next` in lockstep (they always move together). Patch bump, safe; eliminates any future Next patch CVEs in that range.
+
+2. **Near-term — security:** Add `"postcss": ">=8.5.10"` to `pnpm.overrides` to resolve the moderate postcss XSS CVE locked inside Next's bundled dep. The dev `postcss` is already on 8.5.15; this override closes the transitive route.
+
+3. **Near-term — security:** Add `"qs": ">=6.15.2"` to `pnpm.overrides` to resolve the moderate `qs` DoS CVE in the googleapis transitive dep. Bumping googleapis alone does not fix it (googleapis-common still pins `^6.7.0`).
+
+4. **Near-term — routine:** Batch the safe **patch bumps** from the table above (Radix components, react/react-dom, vitest, tsx, etc.). Run `pnpm build:only` and smoke-test after.
+
+5. **Near-term — housekeeping:** Remove `next-themes` from `dependencies` — it is dead code. Zero imports.
+
+6. **Near-term — minor bumps:** Bundle `@vercel/blob` 2.4.1 → 2.5.0, `resend` 6.12.4 → 6.16.0, `date-fns` 4.3.0 → 4.4.0, `react-hook-form` 7.76.1 → 7.80.0, `googleapis` 172 → 173, and `@marsidev/react-turnstile` 1.4.2 → 1.5.3 in a single minor-bump commit. Verify build passes.
+
+7. **Near-term — docs:** Add `BLOB_READ_WRITE_TOKEN` to the environment variable table in CLAUDE.md.
+
+8. **Short-term — housekeeping:** Migrate `scripts/import-roster.ts` and `scripts/update-member-details.ts` from `xlsx` to `exceljs`, then remove `xlsx` from devDependencies. Eliminates two HIGH dev CVEs.
+
+9. **Planned tech-debt — lucide-react 0.x → 1.x:** Scan for renamed icons since 0.562, then bump. Non-urgent.
+
+10. **Planned tech-debt — tailwindcss v3 → v4:** Dedicated migration effort. Do not bundle with routine bumps.
+
+11. **Planned tech-debt — typescript 5 → 6:** Defer to a low-churn sprint; run full typecheck after bumping.
+
+12. **Deferred — eslint 9 → 10:** Await `eslint-config-next` ESLint 10 compatibility signal.
+
+13. **Do not bump — @types/node:** Keep pinned to `^20` to match the Node 20 Vercel runtime.
+
+---
+
+## Notes on Auth Stack
+
+- **`next-auth` 5.0.0-beta.30** — still the latest beta available. `@auth/core` override pinned to `0.41.1` in `pnpm.overrides`. No action needed.
+- **`@auth/drizzle-adapter` 1.11.2** — already at latest.
+- **`drizzle-orm` 0.45.2** — already at latest; the SQL injection CVE from the prior review was patched in this version.
+- **`drizzle-kit` 0.31.10** — already at latest.
