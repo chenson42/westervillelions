@@ -28,6 +28,77 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-026: `deriveAckType()` — quid-pro-quo type takes precedence over written-ack when both thresholds are met; `amountCents` on `ledgerAcknowledgments` is immutable after creation; DB-level unique index on `donation_txn_id` is defense-in-depth
+
+**Status:** Resolved
+**Date:** 2026-06-26
+
+**Decision:**
+Three implementation-level rulings for the Ledger inc6a acknowledgment feature:
+
+1. **`deriveAckType` precedence when both thresholds are met.** When a gift is both ≥ $250 (written-ack threshold) AND carries a quid-pro-quo FMV ≥ $75 (disclosure threshold), the derived type is `'quid_pro_quo_75'`, not `'written_ack_250'`. Rationale: the quid-pro-quo disclosure obligation is stricter — it requires itemizing the FMV of goods/services received. A `written_ack_250` letter that omits the quid-pro-quo FMV would be legally insufficient. Using `'quid_pro_quo_75'` when both apply ensures the treasurer records the FMV. Manual override (`typeOverride`) allows the treasurer to change the type when the auto-derived result is wrong.
+
+2. **`amountCents` on `ledgerAcknowledgments` is immutable after creation.** The `PATCH /api/admin/ledger/transactions/[id]/acknowledge` (mark-sent) route does not accept `amountCents` in the request body. The column is copied from the linked transaction at ack-creation time and never updated. If the underlying transaction's amount is corrected after the ack is created, the ack retains the amount that was acknowledged — which is the legally correct amount to state in the letter. A note is surfaced in the UI if the ack amount diverges from the current transaction amount (a simple display-layer comparison; no structural enforcement needed).
+
+3. **Unique index on `ledgerAcknowledgments(donationTxnId)` as defense-in-depth.** The API already enforces one-ack-per-transaction at the application layer, but a DB-level unique index (`CREATE UNIQUE INDEX IF NOT EXISTS ix_ledger_acks_unique_txn ON ledger_acknowledgments(donation_txn_id)`) provides a second line of defense against race conditions (two simultaneous POST requests for the same transaction). The index is included in `0051_ledger_donors.sql`. The application-layer check returns a user-readable 409 before the DB constraint would trigger, so the raw `DatabaseError` from the constraint is a backstop, not the primary error path.
+
+**Rationale:**
+Ruling 1 flows from IRS Pub 1771: a quid-pro-quo contribution over $75 requires disclosure of the FMV of goods/services. A written acknowledgment alone is insufficient if goods/services were provided. Erring on the side of the stricter type is the only correct default.
+
+Ruling 2 is the standard approach for legal acknowledgment records: the letter states what was received by the organization at the time the relationship was recorded, not a later-revised figure. Allowing the ack amount to drift with transaction edits would make the record misleading.
+
+Ruling 3 is consistent with the existing unique-constraint pattern on `ledger_transactions(dues_payment_id)` (DECISION-025). Small implementation cost, prevents a hard-to-debug data integrity issue.
+
+**Impact:**
+- `src/lib/ledger.ts` — `deriveAckType(amountCents, quidProQuoValueCents)` returns `'quid_pro_quo_75'` when `quidProQuoValueCents >= 7500`, regardless of whether `amountCents >= 25000`.
+- `src/app/api/admin/ledger/transactions/[id]/acknowledge/route.ts` (PATCH) — no `amountCents` field accepted.
+- `drizzle/migrations/0051_ledger_donors.sql` — includes `CREATE UNIQUE INDEX IF NOT EXISTS ix_ledger_acks_unique_txn ON ledger_acknowledgments(donation_txn_id)`.
+- Vitest tests for `deriveAckType` must include the case: $300 gift + $75 quid-pro-quo → `'quid_pro_quo_75'`.
+
+---
+
+## DECISION-025: Dues↔Ledger coupling — same-transaction-atomic via `src/lib/dues-ledger-sync.ts`; `sync_stale` marker for reconciled-conflict
+
+**Status:** Resolved
+**Date:** 2026-06-26
+
+**Decision:**
+Six structural rulings for the Ledger inc 6a dues↔ledger auto-post feature:
+
+1. **Helper module:** `src/lib/dues-ledger-sync.ts` (new file). Exports `syncDuesCreate(tx, payment)`, `syncDuesUpdate(tx, paymentId, patch)`, `syncDuesDelete(tx, paymentId)`. Accepts a Drizzle transaction client `tx`, never `db` directly — callers must wrap in `db.transaction()`.
+
+2. **Atomicity:** The three dues API routes (`POST`, `PATCH`, `DELETE` on `/api/admin/dues/[memberId]`) wrap their existing DB write + the sync helper call in a single `db.transaction()`. The dues write and the ledger write either both commit or both roll back. Exception: if `getAdministrativeFundId()` returns null (configuration error — Administrative fund not seeded), the sync call throws; the catch block inside the transaction logs the error and sets a `syncFailed: true` flag on the response body without re-throwing, so the dues write still commits. This is the one best-effort carve-out: a dues payment without a ledger row is recoverable; a rolled-back dues payment is data loss.
+
+3. **Idempotency:** `ledger_transactions` gains a `dues_payment_id uuid UNIQUE REFERENCES dues_payments(id) ON DELETE SET NULL` column. The unique constraint enforces one ledger row per dues payment. `ON DELETE SET NULL` (not CASCADE) is required: a hard-deleted dues payment must not cascade-delete a possibly-reconciled ledger row.
+
+4. **Reconciled-conflict marker:** `ledger_transactions` gains a `sync_stale boolean NOT NULL DEFAULT false` column. When a dues payment is edited (PATCH) or deleted (DELETE) and its linked ledger row has `reconciled = true`, the sync helper sets `sync_stale = true` on the ledger row without modifying any other financial fields. The dues change proceeds. The dues API returns `{ syncStale: true }` in the response body. The `sync_stale` flag is surfaced in `guardrails()` (`src/lib/ledger.ts`) as a WARN-severity flag fed by a `syncStaleTxns` count added to `getOverview()` in `ledger-queries.ts`.
+
+5. **Dependency direction:** Dues feature → ledger schema. `src/lib/dues-ledger-sync.ts` imports from `src/lib/db/schema.ts` (ledger tables) and `src/lib/ledger-queries.ts` (fund lookup). The ledger feature does not import from the dues feature. This direction is correct: the ledger is core infrastructure (shipped v1.20.0); dues is a feature that posts income to it.
+
+6. **`donor_id` column on `ledger_transactions`:** A nullable `donor_id uuid REFERENCES ledger_donors(id) ON DELETE SET NULL` column is added to `ledger_transactions` to link Foundation income transactions to a donor record (independent of the acknowledgment). The acknowledgment table (`ledger_acknowledgments`) also carries `donor_id` for direct ack-to-donor linkage.
+
+**Rationale:**
+Same-transaction-atomic is the correct default for financial writes. The two alternatives considered were: (a) best-effort fire-and-forget (dues write commits first; ledger insert attempted after) — rejected because a crash between the two writes leaves dues recorded without a ledger entry, a silent discrepancy; (b) ledger-first (insert ledger row first, dues payment second) — rejected because failure-mode semantics are harder to reason about and the dues payment is the authoritative record. Atomic-with-catch satisfies both the data-integrity requirement and the practical requirement that a configuration error not block dues recording.
+
+Placing the helper in `dues-ledger-sync.ts` rather than inside `ledger-queries.ts` isolates the cross-feature concern: the ledger query layer should not know about dues payments, and the dues routes should not know about ledger internals. The sync module is the explicit seam.
+
+`ON DELETE SET NULL` on the `dues_payment_id` FK (rather than CASCADE) is required because a reconciled ledger transaction is part of the club's audited financial record; it must not be silently removed because someone deleted its source dues payment. `sync_stale` provides the signal for the treasurer to resolve the discrepancy manually.
+
+**Impact:**
+- New file: `src/lib/dues-ledger-sync.ts`.
+- `src/lib/db/schema.ts` — `ledgerTransactions` gains `duesPaymentId` (uuid, unique, nullable, FK → dues_payments ON DELETE SET NULL) and `syncStale` (boolean, NOT NULL DEFAULT false) and `donorId` (uuid, nullable, FK → ledger_donors ON DELETE SET NULL).
+- New tables in `schema.ts`: `ledgerDonors`, `ledgerAcknowledgments`.
+- New idempotent migration: `drizzle/migrations/0051_ledger_donors_acks_dues_sync.sql` (or next sequential number — database-admin assigns).
+- `src/app/api/admin/dues/[memberId]/route.ts` (POST) — wrapped in `db.transaction()`, calls `syncDuesCreate`.
+- `src/app/api/admin/dues/[memberId]/[paymentId]/route.ts` (PATCH, DELETE) — wrapped in `db.transaction()`, calls `syncDuesUpdate` / `syncDuesDelete`.
+- `src/lib/ledger.ts` — new `syncStaleTxns` input to `guardrails()`; new WARN flag.
+- `src/lib/ledger-queries.ts` — `getOverview()` adds `syncStaleTxns` count.
+- New API routes: `src/app/api/admin/ledger/donors/route.ts`, `src/app/api/admin/ledger/donors/[id]/route.ts`, `src/app/api/admin/ledger/transactions/[id]/acknowledge/route.ts`.
+- New proxy route: `src/app/api/admin/ledger/acknowledgments/[id]/letter/route.ts`.
+- New admin pages: `src/app/(dashboard)/admin/ledger/donors/` (list + detail with ack tab or sub-route — tech-lead decides per Suggestion 1).
+
+---
+
 ## DECISION-024: `isGiving()` definition — fund-kind+flow+transfer-check only; null-party rows excluded from recent gifts
 
 **Status:** Resolved
