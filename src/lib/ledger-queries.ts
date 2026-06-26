@@ -35,7 +35,7 @@ import {
   type LedgerReimbursement,
   type LedgerFiling,
 } from "@/lib/db/schema";
-import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, sql } from "drizzle-orm";
+import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, sql } from "drizzle-orm";
 import { getFiscalYear, currentFiscalYear } from "@/lib/fiscal-year";
 import {
   fundBalanceCents,
@@ -1173,4 +1173,446 @@ export async function getComplianceOverview(
     guardrailFlags: [...overview.guardrailFlags, ...inc3Flags],
     settings,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Inc4: Reports & 990-Prep — return types
+// ---------------------------------------------------------------------------
+
+export type EntityReport = {
+  entity: LedgerEntity;
+  /** One FundReport per active fund, ordered by fund name. */
+  funds: FundReport[];
+  /** Sum of posted income across all funds, excluding transfer rows. */
+  grossReceiptsCents: number;
+  /** grossReceiptsCents minus total posted expenses across all funds (excl. transfers). */
+  netCents: number;
+  determine990Result: { form: string; why: string };
+  guardrailFlags: GuardrailFlag[];
+};
+
+export type Prep990Line = {
+  /** form_990_line label, "Uncategorized", or "Unmapped / <category name>". */
+  lineGroup: string;
+  flow: "income" | "expense";
+  totalCents: number;
+};
+
+export type Prep990Result = {
+  lines: Prep990Line[];
+  /** Sum of income-flow lines (posted, non-transfer). */
+  grossReceiptsCents: number;
+  /** Sum of expense-flow lines (posted, non-transfer). */
+  totalExpenseCents: number;
+  netCents: number;
+  determine990Result: { form: string; why: string };
+  /**
+   * True when any line's lineGroup starts with "Unmapped /" or equals
+   * "Uncategorized" — signals the export route to emit the extra note comment.
+   */
+  hasUnmapped: boolean;
+};
+
+export type ExportTxnRow = {
+  txnDate: string;          // YYYY-MM-DD
+  fundName: string;
+  flow: "income" | "expense";
+  /** "Transfer" | "Uncategorized" | category.name */
+  categoryDisplay: string;
+  party: string | null;
+  amountCents: number;
+  status: string;
+  reconciled: boolean;
+  paymentMethod: string | null;
+  memo: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// getEntityReport (inc4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the entity-level financial statement for all active funds × fiscal year.
+ *
+ * Strategy (N+1-free at current fund counts of 2–4 per entity):
+ *   1. Fetch the entity row — return null if missing.
+ *   2. Fetch all active funds for the entity (one query via getFunds).
+ *   3. Fetch ALL transactions for the entity × FY in ONE query (bounded by fyBounds).
+ *   4. In TypeScript, distribute transactions to their fund and aggregate
+ *      per-fund posted income/expense by category (same pass as getOverview).
+ *   5. For each fund, fetch its active categories in one query (keyed by fundKind).
+ *      At most 2 distinct fund kinds per entity → at most 2 extra queries.
+ *   6. Build FundReport-shaped objects using the merged categories + actuals.
+ *
+ * NOTE: getEntityReport shares aggregation logic with getOverview but returns
+ * per-fund category detail rather than per-fund totals. Do NOT refactor
+ * getOverview to delegate here in inc4 — document the overlap and defer to inc5+.
+ *
+ * N+1 threshold note: if fund count ever exceeds ~10, replace the per-fundKind
+ * category fetches with a single entity-scoped query and partition in TypeScript.
+ */
+export async function getEntityReport(
+  entityId: string,
+  fiscalYear: number,
+): Promise<EntityReport | null> {
+  // 1. Fetch entity
+  const entityRows = await db
+    .select()
+    .from(ledgerEntities)
+    .where(eq(ledgerEntities.id, entityId))
+    .limit(1);
+  const entity = entityRows[0];
+  if (!entity) return null;
+
+  // 2. Fetch all active funds
+  const funds = await getFunds(entityId);
+  if (funds.length === 0) {
+    const determine990Result = determine990({
+      taxClassification: entity.taxClassification,
+      charityStatus: entity.charityStatus,
+      grossReceiptsCents: 0,
+      assetsCents: 0,
+    });
+    return {
+      entity,
+      funds: [],
+      grossReceiptsCents: 0,
+      netCents: 0,
+      determine990Result,
+      guardrailFlags: [],
+    };
+  }
+
+  const { start, end } = fyBounds(fiscalYear);
+  const fundIds = funds.map((f) => f.id);
+
+  // 3. Single transactions query for all funds in this entity × FY
+  const allTxns = await db
+    .select()
+    .from(ledgerTransactions)
+    .where(
+      and(
+        eq(ledgerTransactions.entityId, entityId),
+        inArray(ledgerTransactions.fundId, fundIds),
+        gte(ledgerTransactions.txnDate, start),
+        lt(ledgerTransactions.txnDate, end),
+      ),
+    );
+
+  // 4. Group transactions by fundId
+  const txnsByFund = new Map<string, typeof allTxns>();
+  for (const fund of funds) txnsByFund.set(fund.id, []);
+  for (const txn of allTxns) {
+    txnsByFund.get(txn.fundId)?.push(txn);
+  }
+
+  // 5. Fetch categories per distinct fundKind (at most 2 queries for club/foundation)
+  const distinctKinds = [...new Set(funds.map((f) => f.kind))];
+  const categoriesByKind = new Map<string, LedgerCategory[]>();
+  for (const kind of distinctKinds) {
+    const cats = await db
+      .select()
+      .from(ledgerCategories)
+      .where(
+        and(
+          eq(ledgerCategories.entityId, entityId),
+          eq(ledgerCategories.fundKind, kind),
+          eq(ledgerCategories.isActive, true),
+        ),
+      )
+      .orderBy(ledgerCategories.sortOrder, ledgerCategories.name);
+    categoriesByKind.set(kind, cats);
+  }
+
+  // 6. Build per-fund FundReport objects
+  const fundReports: FundReport[] = [];
+
+  for (const fund of funds) {
+    const txns = txnsByFund.get(fund.id) ?? [];
+    const postedTxns = txns.filter((t) => t.status === "posted");
+    const pendingExpenseCents = txns
+      .filter((t) => t.status === "pending" && t.flow === "expense")
+      .reduce((s, t) => s + t.amountCents, 0);
+
+    // Build actual map: categoryId_flow → total posted cents
+    const actualMap = new Map<string, number>();
+    for (const txn of postedTxns) {
+      if (txn.categoryId) {
+        const key = `${txn.categoryId}_${txn.flow}`;
+        actualMap.set(key, (actualMap.get(key) ?? 0) + txn.amountCents);
+      }
+    }
+
+    const categories = categoriesByKind.get(fund.kind) ?? [];
+
+    function buildLines(flowFilter: "income" | "expense"): FundReportCategoryLine[] {
+      const flowCats = categories.filter((c) => c.flow === flowFilter);
+      const result: FundReportCategoryLine[] = [];
+      const seen = new Set<string>();
+
+      for (const cat of flowCats) {
+        seen.add(cat.id);
+        const actualCents = actualMap.get(`${cat.id}_${flowFilter}`) ?? 0;
+        result.push({
+          categoryId: cat.id,
+          categoryName: cat.name,
+          actualCents,
+          budgetCents: null, // entity report does not surface budgets
+          variance: budgetVariance(actualCents, null),
+        });
+      }
+
+      // Catch deactivated categories that still have posted actuals
+      for (const txn of postedTxns) {
+        if (txn.categoryId && txn.flow === flowFilter && !seen.has(txn.categoryId)) {
+          seen.add(txn.categoryId);
+          const actualCents = actualMap.get(`${txn.categoryId}_${flowFilter}`) ?? 0;
+          result.push({
+            categoryId: txn.categoryId,
+            categoryName: "(Deactivated category)",
+            actualCents,
+            budgetCents: null,
+            variance: budgetVariance(actualCents, null),
+          });
+        }
+      }
+
+      return result;
+    }
+
+    const income = buildLines("income");
+    const expense = buildLines("expense");
+    const totalIncomeCents = income.reduce((s, l) => s + l.actualCents, 0);
+    const totalExpenseCents = expense.reduce((s, l) => s + l.actualCents, 0);
+    const endingCents = fund.openingBalanceCents + totalIncomeCents - totalExpenseCents;
+
+    fundReports.push({
+      fund,
+      openingCents: fund.openingBalanceCents,
+      income,
+      expense,
+      totalIncomeCents,
+      totalExpenseCents,
+      endingCents,
+      pendingExpenseCents,
+    });
+  }
+
+  // Entity-level aggregates — from posted income/expense, excluding transfer rows
+  const postedNonTransfer = allTxns.filter(
+    (t) => t.status === "posted" && t.transferGroupId === null,
+  );
+  const grossReceipts = grossReceiptsCents(
+    postedNonTransfer.filter((t) => t.flow === "income"),
+  );
+  const totalExpense = postedNonTransfer
+    .filter((t) => t.flow === "expense")
+    .reduce((s, t) => s + t.amountCents, 0);
+  const entityBalance = fundReports.reduce((s, f) => s + f.endingCents, 0);
+
+  const determine990Result = determine990({
+    taxClassification: entity.taxClassification,
+    charityStatus: entity.charityStatus,
+    grossReceiptsCents: grossReceipts,
+    assetsCents: entityBalance,
+  });
+
+  // Guardrail flags — reuse getOverview for the full guardrail computation
+  // rather than re-deriving all inputs here; the reports page calls both
+  // getEntityReport and getOverview in parallel (Phase 3 design).
+  // getEntityReport returns an empty flags array; the page merges from getOverview.
+  return {
+    entity,
+    funds: fundReports,
+    grossReceiptsCents: grossReceipts,
+    netCents: grossReceipts - totalExpense,
+    determine990Result,
+    guardrailFlags: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// get990Prep (inc4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregates posted non-transfer transactions by form_990_line for a given
+ * entity × fiscal year.
+ *
+ * Constraints (all binding per Phase 1 decision §4 and Phase 3 design):
+ *   - status = 'posted' only.
+ *   - transfer_group_id IS NULL — internal fund movements excluded.
+ *   - LEFT JOIN ledger_categories — uncategorized rows included (never dropped).
+ *
+ * Group-key logic:
+ *   - category.form_990_line is non-null  → use form_990_line as the key.
+ *   - category exists but form_990_line IS NULL → "Unmapped / <category name>".
+ *   - category IS NULL (no category_id)   → "Uncategorized".
+ *
+ * Uses db.execute(sql`…`) for the COALESCE+CASE grouping — cleaner than the
+ * Drizzle query builder for this aggregation shape.
+ *
+ * Returns a Prep990Result with hasUnmapped=true when any row is "Uncategorized"
+ * or starts with "Unmapped /".
+ */
+export async function get990Prep(
+  entityId: string,
+  fiscalYear: number,
+): Promise<Prep990Result> {
+  const { start, end } = fyBounds(fiscalYear);
+
+  type RawRow = {
+    line_group: string;
+    flow: string;
+    total_cents: string; // Postgres returns numeric as string
+  };
+
+  const rawRows = await db.execute<RawRow>(sql`
+    SELECT
+      COALESCE(
+        cat.form_990_line,
+        CASE
+          WHEN cat.id IS NULL THEN 'Uncategorized'
+          ELSE 'Unmapped / ' || cat.name
+        END
+      ) AS line_group,
+      t.flow,
+      SUM(t.amount_cents)::text AS total_cents
+    FROM ledger_transactions t
+    LEFT JOIN ledger_categories cat ON cat.id = t.category_id
+    WHERE t.entity_id = ${entityId}
+      AND t.txn_date >= ${start}
+      AND t.txn_date < ${end}
+      AND t.status = 'posted'
+      AND t.transfer_group_id IS NULL
+    GROUP BY line_group, t.flow
+    ORDER BY line_group, t.flow
+  `);
+
+  const lines: Prep990Line[] = rawRows.map((r) => ({
+    lineGroup: r.line_group,
+    flow: r.flow as "income" | "expense",
+    totalCents: parseInt(r.total_cents, 10),
+  }));
+
+  const grossReceipts = lines
+    .filter((l) => l.flow === "income")
+    .reduce((s, l) => s + l.totalCents, 0);
+  const totalExpense = lines
+    .filter((l) => l.flow === "expense")
+    .reduce((s, l) => s + l.totalCents, 0);
+
+  const hasUnmapped = lines.some(
+    (l) => l.lineGroup === "Uncategorized" || l.lineGroup.startsWith("Unmapped /"),
+  );
+
+  // Fetch entity for determine990
+  const entityRows = await db
+    .select()
+    .from(ledgerEntities)
+    .where(eq(ledgerEntities.id, entityId))
+    .limit(1);
+  const entity = entityRows[0];
+
+  // Compute entity balance for assets estimate (fund ending balances)
+  const funds = await getFunds(entityId);
+  const entityBalance = funds.reduce((s, f) => s + f.openingBalanceCents, 0);
+  // Note: for the 990 determination we use gross receipts from this FY;
+  // entity balance is a rough proxy for assets.
+
+  const determine990Result = entity
+    ? determine990({
+        taxClassification: entity.taxClassification,
+        charityStatus: entity.charityStatus,
+        grossReceiptsCents: grossReceipts,
+        assetsCents: entityBalance,
+      })
+    : { form: "Unknown", why: "Entity not found" };
+
+  return {
+    lines,
+    grossReceiptsCents: grossReceipts,
+    totalExpenseCents: totalExpense,
+    netCents: grossReceipts - totalExpense,
+    determine990Result,
+    hasUnmapped,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// listTransactionsForExport (inc4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns all transactions for a given entity × fiscal year (all statuses),
+ * enriched with fund name and a synthesized categoryDisplay field.
+ *
+ * categoryDisplay derivation:
+ *   - transferGroupId IS NOT NULL → "Transfer"
+ *   - categoryId IS NULL (and not a transfer) → "Uncategorized"
+ *   - Otherwise → category.name from the LEFT JOIN result.
+ *
+ * Ordered by txnDate ASC, createdAt ASC (chronological for auditors).
+ *
+ * This query intentionally includes posted, pending, and rejected rows so the
+ * auditor can see the full picture. The 990-prep export uses get990Prep (posted
+ * only). Status column is included in the return so the CSV can surface it.
+ */
+export async function listTransactionsForExport(
+  entityId: string,
+  fiscalYear: number,
+): Promise<ExportTxnRow[]> {
+  const { start, end } = fyBounds(fiscalYear);
+
+  const rows = await db
+    .select({
+      id: ledgerTransactions.id,
+      txnDate: ledgerTransactions.txnDate,
+      flow: ledgerTransactions.flow,
+      amountCents: ledgerTransactions.amountCents,
+      party: ledgerTransactions.party,
+      memo: ledgerTransactions.memo,
+      paymentMethod: ledgerTransactions.paymentMethod,
+      status: ledgerTransactions.status,
+      reconciled: ledgerTransactions.reconciled,
+      transferGroupId: ledgerTransactions.transferGroupId,
+      categoryId: ledgerTransactions.categoryId,
+      fundName: ledgerFunds.name,
+      categoryName: ledgerCategories.name,
+    })
+    .from(ledgerTransactions)
+    .leftJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .leftJoin(ledgerCategories, eq(ledgerTransactions.categoryId, ledgerCategories.id))
+    .where(
+      and(
+        eq(ledgerTransactions.entityId, entityId),
+        gte(ledgerTransactions.txnDate, start),
+        lt(ledgerTransactions.txnDate, end),
+      ),
+    )
+    .orderBy(asc(ledgerTransactions.txnDate), asc(ledgerTransactions.createdAt));
+
+  return rows.map((r) => {
+    let categoryDisplay: string;
+    if (r.transferGroupId !== null) {
+      categoryDisplay = "Transfer";
+    } else if (r.categoryId === null || r.categoryName === null) {
+      categoryDisplay = "Uncategorized";
+    } else {
+      categoryDisplay = r.categoryName;
+    }
+
+    return {
+      txnDate: r.txnDate,
+      fundName: r.fundName ?? "Unknown Fund",
+      flow: r.flow as "income" | "expense",
+      categoryDisplay,
+      party: r.party,
+      amountCents: r.amountCents,
+      status: r.status,
+      reconciled: r.reconciled,
+      paymentMethod: r.paymentMethod,
+      memo: r.memo,
+    };
+  });
 }

@@ -175,6 +175,13 @@ export default async function AdminLedgerFundPage({
             Budget / Actual Report
           </Link>
 
+          <Link
+            href={`/admin/ledger/reports?entity=${resolvedEntitySlug}&fy=${fiscalYear}`}
+            className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] inline-flex items-center"
+          >
+            Reports
+          </Link>
+
           {canRecord && (
             <TransactionFormDialog
               entityId={entity.id}

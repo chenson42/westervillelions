@@ -121,6 +121,12 @@ const navigation: NavItem[] = [
     requiredFeature: FEATURES.LEDGER_VIEW,
   },
   {
+    name: "Reports",
+    href: "/admin/ledger/reports",
+    icon: "📊",
+    requiredFeature: FEATURES.LEDGER_VIEW,
+  },
+  {
     name: "Ledger Settings",
     href: "/admin/ledger/settings",
     icon: "⚙️",

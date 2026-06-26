@@ -325,7 +325,7 @@ export default async function AdminLedgerPage({
         )}
       </div>
 
-      {/* Quick links: Reimbursements + Approvals */}
+      {/* Quick links: Reimbursements + Approvals + Reports */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Link
           href="/admin/ledger/reimbursements"
@@ -354,6 +354,15 @@ export default async function AdminLedgerPage({
             </svg>
           </Link>
         )}
+        <Link
+          href={`/admin/ledger/reports?entity=${resolvedSlug}&fy=${fiscalYear}`}
+          className="flex items-center justify-between rounded-2xl bg-white shadow-sm px-5 py-3 hover:shadow-md transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
+        >
+          <span className="text-sm font-medium text-gray-900">Financial Report &amp; Export</span>
+          <svg className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+        </Link>
       </div>
 
       {/* Quick links to fund reports */}
