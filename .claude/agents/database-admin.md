@@ -49,6 +49,8 @@ export const sponsorships = pgTable(
 
 The build runs `node drizzle/run-migrations.mjs` then `drizzle-kit push --force`. Migrations re-execute on every deploy — **every statement must be idempotent**. Drizzle Kit's `db:push` keeps `schema.ts` and the live database in sync.
 
+**Pick the migration number at the start of Phase 4, not earlier.** Run `ls drizzle/migrations/*.sql | sort | tail -3` and take the next number — don't trust a number proposed back in Phase 2 or 3, which a parallel increment may have claimed since (this collided once: two increments both proposed `0048`).
+
 `schema.ts` is the source of truth. Anything in the live DB that isn't in `schema.ts` will be dropped on the next `db:push`.
 
 ### 3. Safe Migration Patterns

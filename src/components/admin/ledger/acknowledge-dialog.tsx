@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
+import type { LedgerDonor } from "@/lib/db/schema";
 
 interface AcknowledgeDialogProps {
   txnId: string;
@@ -32,6 +33,57 @@ export default function AcknowledgeDialog({
   const [qppCents, setQppCents] = useState(""); // quid-pro-quo value in dollars
   const [typeOverride, setTypeOverride] = useState<"" | "written_ack_250" | "quid_pro_quo_75">("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Donor typeahead state
+  const [donorSearch, setDonorSearch] = useState("");
+  const [donorResults, setDonorResults] = useState<LedgerDonor[]>([]);
+  const [selectedDonor, setSelectedDonor] = useState<LedgerDonor | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Resolve a pre-selected donor (passed by id) to a record so we can show its name
+  useEffect(() => {
+    if (!open || !initialDonorId || selectedDonor) return;
+    const controller = new AbortController();
+    fetch(`/api/admin/ledger/donors/${initialDonorId}`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((donor) => {
+        if (donor?.id) setSelectedDonor(donor as LedgerDonor);
+      })
+      .catch(() => { /* aborted */ });
+    return () => controller.abort();
+  }, [open, initialDonorId, selectedDonor]);
+
+  // Fetch matching donors as the user types (debounced), only while searching
+  useEffect(() => {
+    if (!open || selectedDonor) return;
+    const controller = new AbortController();
+    const handle = setTimeout(() => {
+      const params = donorSearch.trim() ? `?search=${encodeURIComponent(donorSearch.trim())}` : "";
+      fetch(`/api/admin/ledger/donors${params}`, { signal: controller.signal })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data) setDonorResults(data.donors ?? []);
+        })
+        .catch(() => { /* aborted */ });
+    }, 200);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
+  }, [open, donorSearch, selectedDonor]);
+
+  function selectDonor(donor: LedgerDonor) {
+    setSelectedDonor(donor);
+    setDonorId(donor.id);
+    setSearchOpen(false);
+    setDonorSearch("");
+  }
+
+  function clearDonor() {
+    setSelectedDonor(null);
+    setDonorId("");
+    setSearchOpen(false);
+  }
 
   function parseDollars(v: string): number | null {
     const n = parseFloat(v.replace(/[$,]/g, "").trim());
@@ -100,21 +152,68 @@ export default function AcknowledgeDialog({
           </Dialog.Description>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Donor ID — optional freeform (would be better as a typeahead, but kept simple) */}
+            {/* Donor typeahead — search by name or email, or leave blank */}
             <div>
-              <label htmlFor="ack-donor-id" className="block text-sm font-medium text-gray-700 mb-1">
-                Donor ID <span className="text-gray-400 font-normal">(optional — paste from the Donors list)</span>
+              <label htmlFor="ack-donor-search" className="block text-sm font-medium text-gray-700 mb-1">
+                Donor <span className="text-gray-400 font-normal">(optional — link to a donor record)</span>
               </label>
-              <input
-                id="ack-donor-id"
-                type="text"
-                value={donorId}
-                onChange={(e) => setDonorId(e.target.value)}
-                className="block w-full rounded-lg border border-gray-300 py-2 px-3 text-sm font-mono focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
-                placeholder="uuid"
-              />
+
+              {selectedDonor ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-gray-900">{selectedDonor.name}</p>
+                    {selectedDonor.email && (
+                      <p className="truncate text-xs text-gray-400">{selectedDonor.email}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearDonor}
+                    className="whitespace-nowrap text-xs font-medium text-gray-500 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-lions-blue rounded transition"
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    id="ack-donor-search"
+                    type="search"
+                    autoComplete="off"
+                    value={donorSearch}
+                    onChange={(e) => {
+                      setDonorSearch(e.target.value);
+                      setSearchOpen(true);
+                    }}
+                    onFocus={() => setSearchOpen(true)}
+                    className="block w-full rounded-lg border border-gray-300 py-2 px-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+                    placeholder="Search by name or email…"
+                  />
+                  {searchOpen && donorResults.length > 0 && (
+                    <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                      {donorResults.map((donor) => (
+                        <li key={donor.id}>
+                          <button
+                            type="button"
+                            onClick={() => selectDonor(donor)}
+                            className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none transition"
+                          >
+                            <span className="text-sm font-medium text-gray-900">{donor.name}</span>
+                            {donor.email && <span className="text-xs text-gray-400">{donor.email}</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {searchOpen && donorSearch.trim() && donorResults.length === 0 && (
+                    <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-400 shadow-lg">
+                      No donors match &ldquo;{donorSearch.trim()}&rdquo;.
+                    </div>
+                  )}
+                </div>
+              )}
               <p className="mt-1 text-xs text-gray-400">
-                Navigate to the donor&rsquo;s page and use &ldquo;Link donation&rdquo; for a better experience.
+                Leave blank to record the acknowledgment without linking a donor record.
               </p>
             </div>
 

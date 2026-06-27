@@ -4,6 +4,7 @@
 > **Date:** 2026-06-24
 > **Sources:** the `Westerville_Lions_Ledger.html` prototype (data model + compliance engine) and `Lions_Financial_Transparency.pdf` (authoritative club rules; the "rules engine" spec). See also `/donate` (Zeffy) and the shipped dues feature, which this builds on.
 > **Caveat:** This encodes tax/compliance rules from the transparency doc and public IRS guidance. It is not legal/accounting advice; the Foundation's IRS determination letter and whoever files the 990 govern edge cases.
+> **Historical:** This is the pre-implementation spec — several details evolved during the build (e.g. `flow='transfer'` dropped, `dueDate` replaced by `dueMonth`/`dueDay`, the `isGiving` keyword check dropped, `receipt_url` → opaque storage key). For what actually shipped, see DECISIONs 016–026 and the per-increment work-logs.
 
 ---
 

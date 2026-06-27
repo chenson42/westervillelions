@@ -102,7 +102,6 @@ const canExport = hasFeature(session?.user?.features, FEATURES.EVENTS_EXPORT);
 
 ## Step 6: Document and Release-Note
 
-- If `CLAUDE.md` maintains a feature/permission inventory, add the new row.
 - Run `/release-notes` to record the new permission in the current release notes file.
 
 ## Summary

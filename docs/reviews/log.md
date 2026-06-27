@@ -37,6 +37,8 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-06-27 | agent-instruction | 4 medium + 2 low findings; 2 new MUSTs (api/full-stack missing test-deliverable checklist, architect lists xlsx not exceljs); 3 SHOULD carry-forwards now at 2 cycles; pipeline healthy, specialist split confirmed real; see 2026-06-27-agent-instruction.md
+2026-06-27 | documentation | 0 high, 2 medium (Project Structure + Key Features missing ledger/dues), 4 low; decisions 001–026 contiguous; release-notes chain v1.18–v1.25 intact; package.json 1.25.0 matches; see 2026-06-27-documentation.md
 2026-06-26 | dependencies | prod audit clean (0 high/critical; 3 moderate, 1 low, all transitive); @vercel/blob vetted OK; next-themes dead dep; xlsx still in devDeps (scripts only); 3 overrides recommended; see 2026-06-26-dependencies.md
 2026-06-26 | code | 0 high, 3 medium, 5 low; MEDIUM-1 = get990Prep uses opening-balance-only for assets estimate (990 form may differ from overview); MEDIUM-2 = inc3 guardrail flags duplicated in getComplianceOverview vs guardrails(); MEDIUM-3 = canView vestigial in impact page "all" path; see 2026-06-26-code.md
 2026-06-25 | test-coverage | Ledger inc4 Phase 5: 258 unit tests PASS; csv-safe.ts 100% (12 csvCellSafe cases); CSV injection escaping + transfer-exclusion + posted-only filter verified via dev-server curl; both new surfaces gate-audited; PASS

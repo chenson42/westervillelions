@@ -84,7 +84,7 @@ Before introducing a new dependency:
 4. Is the bundle-size impact acceptable for a public-facing site that needs a fast first paint?
 5. Is the license compatible (MIT/Apache-2.0/BSD preferred)?
 
-**Already available:** `drizzle-orm`, `@auth/drizzle-adapter`, `next-auth@5`, `postgres`, `googleapis`, Radix UI primitives, `lucide-react`, `class-variance-authority`, `clsx`, `tailwind-merge`, `react-markdown` + `remark-gfm` + `rehype-raw`, `bcryptjs`, `sonner`, `resend`, `react-image-crop`, `xlsx`, `date-fns`, `@marsidev/react-turnstile`.
+**Already available:** `drizzle-orm`, `@auth/drizzle-adapter`, `next-auth@5`, `postgres`, `googleapis`, Radix UI primitives, `lucide-react`, `class-variance-authority`, `clsx`, `tailwind-merge`, `react-markdown` + `remark-gfm` + `rehype-raw`, `bcryptjs`, `sonner`, `resend`, `react-image-crop`, `exceljs`, `@vercel/blob`, `date-fns`, `@marsidev/react-turnstile`.
 
 ## Ownership
 

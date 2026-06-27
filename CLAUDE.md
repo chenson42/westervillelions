@@ -79,13 +79,15 @@ src/
 │   ├── forgot-password/, reset-password/  # Password reset flow
 │   ├── access-pending/    # Landing for authenticated users with no usable role
 │   ├── (dashboard)/       # Admin portal (authenticated)
-│   │   └── admin/         # Admin functions (users, roles, members, events, groups, campaigns, announcements, programs, membership, subscriptions, suggestions, testimonials, email-queue, sync-log, release-notes, contact)
+│   │   └── admin/         # Admin functions (users, roles, permissions, members, events, groups, campaigns, announcements, programs, membership, dues, ledger, subscriptions, suggestions, testimonials, email-queue, sync-log, release-notes, contact)
 │   ├── members/           # Member portal (authenticated — auth() per page)
 │   │   ├── events/        # Internal events & per-occurrence RSVP
 │   │   ├── events/past/   # Past events list
 │   │   ├── groups/        # Member group list and detail
 │   │   ├── profile/       # Member profile and picture upload
-│   │   └── impact/        # Philanthropy / community impact dashboard (impact.view gated)
+│   │   ├── dues/          # Member's own dues payment history
+│   │   ├── reimbursements/ # Member expense-reimbursement requests (The Ledger)
+│   │   └── impact/        # Philanthropy / community impact dashboard (impact.view gated when philanthropyVisibility='board'; open to any linked member when ='members')
 │   ├── api/               # API routes
 │   ├── robots.ts          # robots.txt
 │   └── sitemap.ts         # sitemap.xml
@@ -137,7 +139,7 @@ docs/
 - **Member Directory:** Contact information for club members
 - **Events:** Internal event calendar, per-occurrence RSVP system, "Add to Calendar" (.ics) download
 - **Philanthropy Dashboard:** `/members/impact` — all-time and current-FY giving totals, giving by cause (CSS bar list), giving by fiscal year, recent named gifts. Two-tier gate: `impact.view` required when `philanthropyVisibility='board'`; any linked member when `='members'`.
-- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, in-app release notes, and contact submissions
+- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, The Ledger (online accounting: books, reimbursements, compliance/990, reports, donors & acknowledgments), subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, in-app release notes, and contact submissions
 
 ## Integrations
 
@@ -182,7 +184,7 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 - `GOOGLE_GROUPS_CLIENT_SECRET` - OAuth client secret for Group sync
 - `GOOGLE_GROUPS_REFRESH_TOKEN` - Refresh token used by Group sync (domain-wide delegation)
 - `GOOGLE_ADMIN_EMAIL` - Workspace admin address used as the impersonation subject for Group sync
-- `BLOB_READ_WRITE_TOKEN` - Vercel Blob token for reimbursement receipt storage (The Ledger). **Required in production** or receipts fall back to the ephemeral local filesystem and are lost on redeploy. Absent locally → zero-config `LocalReceiptStorage` adapter (`.receipt-store/`). See DECISION-018/020.
+- `BLOB_READ_WRITE_TOKEN` - Vercel Blob token for reimbursement receipt storage (The Ledger). **Required in production** or receipts fall back to the ephemeral local filesystem and are lost on redeploy. Absent locally → zero-config `LocalReceiptStorage` adapter (`.receipt-store/`). See DECISION-020 (supersedes DECISION-018).
 
 ## Database Migrations
 
@@ -375,7 +377,7 @@ Agents live in `.claude/agents/`. Spawn the right one for the phase.
 | **api-developer** | Phase 4 (server) | Route handlers, server actions, business logic. |
 | **ux-developer** | Phase 4 (client) | React components, member portal and admin pages, forms. |
 | **full-stack-developer** | Phase 4 (small/coupled) | Features small enough that splitting adds overhead. |
-| **deployment-engineer** | Pre-deploy | Production build verification, env vars, build failures. |
+| **deployment-engineer** | Reactive | Invoked on demand; `/pre-push` covers the routine pre-deploy checklist. Production build verification, env vars, build failures. |
 | **qa** | Phase 5 | Typecheck, production build, dev-server smoke, manual click-through, PASS/FAIL verdict. |
 
 **The full six-phase pipeline is defined below. Every feature flows through it. Work is not complete until analyst issues SHIP IT in Phase 6.**
@@ -446,7 +448,9 @@ A loop-back from any later phase returns to the **earliest** phase where the fai
 | React components, pages, forms | **ux-developer** |
 | Spans server + client and is small | **full-stack-developer** |
 
-**Gate:** Typecheck passes. The production build (`pnpm build:only`) passes. No native browser dialogs. No `console.log` left in production paths. All invariants honored. Migrations are idempotent. Auth + `hasFeature()` gates present on every protected route/action.
+**Specialist split vs. full-stack:** For a large feature with new schema + API + UI, run the specialist split (database-admin → api-developer → ux-developer) — every increment of The Ledger ran this way cleanly. Reserve **full-stack-developer** for work that is small and tightly coupled (~< 150 lines across API + UI) where a handoff would add more overhead than it removes.
+
+**Gate:** Typecheck passes. The production build (`pnpm build:only`) passes. No native browser dialogs. No `console.log` left in production paths. All invariants honored. Migrations are idempotent. Auth + `hasFeature()` gates present on every protected route/action. **Every unit test named in the Phase 3 design doc is written and passing** — the implementer delivers these, not qa.
 **Loop-back:** Design unbuildable returns to Phase 3. Architectural problem discovered returns to Phase 2.
 
 ### Phase 5 — Verification (qa)
@@ -474,7 +478,7 @@ A loop-back from any later phase returns to the **earliest** phase where the fai
 | 5 (qa) | Reproduces the original bug on the pre-fix code, then confirms the fix removes the failure. |
 | 6 (analyst) | Confirms the bug no longer manifests for the user. |
 
-**Skipping a phase requires explicit notation in the work-log. No silent skips.**
+**Skipping a phase requires explicit notation in the work-log. No silent skips.** Even a trivial bug fix gets a minimal work-log stub (slug, one-line root cause, reproduction steps, which phases were skipped and why) — the work-log is the pipeline's source of truth and an untracked fix is invisible to the next session.
 
 ### Per-Feature Tracking
 

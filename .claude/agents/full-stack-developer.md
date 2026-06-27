@@ -94,6 +94,8 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 ## When You're Done
 
+**Before you mark Phase 4 complete, re-read the Phase 3 design doc and confirm every unit test it names is written and passing.** Delivering those tests is the implementer's job, not qa's — qa verifies and adds coverage, but should never be the one writing the design-mandated tests for the first time.
+
 Append your section to the feature's `docs/work-log/YYYY-MM-DD-<slug>.md` entry using the standard handoff template:
 
 ```markdown
