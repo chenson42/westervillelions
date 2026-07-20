@@ -200,6 +200,15 @@ export default function AdminSidebar({
         return userFeatures.includes(item.requiredFeature);
       });
 
+  // Only the longest matching href is active, so nested pages (e.g.
+  // /admin/ledger/compliance) highlight their own item, not every prefix.
+  const activeHref = visibleNavItems.reduce((best, candidate) => {
+    const matches = candidate.href === "/admin"
+      ? pathname === "/admin"
+      : pathname === candidate.href || pathname.startsWith(candidate.href + "/");
+    return matches && candidate.href.length > best.length ? candidate.href : best;
+  }, "");
+
   return (
     <>
       {/* Mobile menu button */}
@@ -272,9 +281,7 @@ export default function AdminSidebar({
         {/* Navigation */}
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
           {visibleNavItems.map((item) => {
-            const isActive = item.href === "/admin"
-              ? pathname === "/admin"
-              : pathname === item.href || pathname.startsWith(item.href + "/");
+            const isActive = item.href === activeHref;
             return (
               <Link
                 key={item.name}

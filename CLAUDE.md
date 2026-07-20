@@ -115,6 +115,7 @@ drizzle/
 scripts/                   # One-off tsx scripts (roster import, sync-roster, etc.)
 docs/
 ├── decisions.md           # ADR-style decision log
+├── treasurer-todo.md      # Treasurer's living checklist (books/compliance follow-ups)
 ├── work-log/              # Per-feature pipeline tracking
 ├── reviews/               # Review log + detail files
 ├── release-notes/         # vX.Y.md files per minor version
@@ -483,6 +484,14 @@ A loop-back from any later phase returns to the **earliest** phase where the fai
 ### Per-Feature Tracking
 
 Every piece of work gets a work-log file at `docs/work-log/YYYY-MM-DD-<slug>.md` (use the date the work started) from `docs/work-log/_template.md`. The work-log is the source of truth for pipeline state — Claude reads it at session start to determine where the work stands and which agent to invoke next.
+
+## Treasurer's Todo
+
+`docs/treasurer-todo.md` is the treasurer's living checklist — book-keeping, compliance, and
+data-cleanup follow-ups flagged from the club's real books. When working on The Ledger or helping
+manage the books, read it first, check off items as they're resolved (append date + outcome rather
+than deleting), and add newly discovered flags to it. Items carry stable `T-nn` IDs for
+cross-referencing from work-logs and board minutes.
 
 ## Periodic Reviews
 

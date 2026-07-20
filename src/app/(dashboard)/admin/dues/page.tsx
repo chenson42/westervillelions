@@ -8,13 +8,15 @@ import {
   listKnownFiscalYears,
   getDuesSettings,
   getActiveFiscalYear,
+  getDuesMethodTotals,
 } from "@/lib/dues-queries";
-import { fiscalYearLabel } from "@/lib/dues";
+import { fiscalYearLabel, computeDuesMethodComposition } from "@/lib/dues";
 import DuesYearSelector from "@/components/admin/dues-year-selector";
 import DuesStatusFilter from "@/components/admin/dues-status-filter";
 import DuesStatusBadge from "@/components/admin/dues-status-badge";
 import DuesConfigureModal from "@/components/admin/dues-configure-modal";
 import DuesMarkPaidButton from "@/components/admin/dues-mark-paid-button";
+import DuesMethodDonut from "@/components/admin/dues-method-donut";
 import type { DuesStatus } from "@/lib/dues";
 
 export const dynamic = "force-dynamic";
@@ -47,10 +49,11 @@ export default async function AdminDuesPage({
   const activeFY = await getActiveFiscalYear();
   const fy = fyParam ? parseInt(fyParam) : activeFY;
 
-  const [members, knownYears, settings] = await Promise.all([
+  const [members, knownYears, settings, methodTotals] = await Promise.all([
     listMemberDuesStatus(fy, { search: search || undefined }),
     listKnownFiscalYears(),
     getDuesSettings(fy),
+    getDuesMethodTotals(fy, { search: search || undefined }),
   ]);
 
   // Apply status filter in TypeScript (data is already fetched)
@@ -64,6 +67,12 @@ export default async function AdminDuesPage({
   const partialCount = members.filter((m) => m.status === "partial").length;
   const unpaidCount = members.filter((m) => m.status === "unpaid").length;
   const totalCollectedCents = members.reduce((sum, m) => sum + m.totalPaidCents, 0);
+  const totalExpectedCents = members.reduce((sum, m) => sum + m.expectedAmountCents, 0);
+  const methodComposition = computeDuesMethodComposition(
+    methodTotals,
+    totalExpectedCents,
+    totalCollectedCents,
+  );
 
   return (
     <div className="space-y-6">
@@ -115,7 +124,10 @@ export default async function AdminDuesPage({
         knownFiscalYears={knownYears}
         currentFY={fy}
         basePath="/admin/dues"
-        extraParams={statusFilter !== "all" ? { status: statusFilter } : undefined}
+        extraParams={{
+          ...(statusFilter !== "all" ? { status: statusFilter } : {}),
+          ...(search ? { search } : {}),
+        }}
       />
 
       {/* Dues not configured warning */}
@@ -128,27 +140,13 @@ export default async function AdminDuesPage({
         </div>
       )}
 
-      {/* Summary stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[
-          { label: "Paid", value: paidCount, color: "text-green-700 bg-green-50" },
-          { label: "Partial", value: partialCount, color: "text-yellow-700 bg-yellow-50" },
-          { label: "Unpaid", value: unpaidCount, color: "text-red-700 bg-red-50" },
-          {
-            label: "Total Collected",
-            value: formatDollars(totalCollectedCents),
-            color: "text-lions-blue bg-blue-50",
-          },
-        ].map((stat) => (
-          <div
-            key={stat.label}
-            className={`rounded-2xl p-4 ${stat.color}`}
-          >
-            <p className="text-sm font-medium opacity-80">{stat.label}</p>
-            <p className="text-2xl font-bold">{stat.value}</p>
-          </div>
-        ))}
-      </div>
+      {/* Payment composition */}
+      <DuesMethodDonut
+        composition={methodComposition}
+        paidCount={paidCount}
+        partialCount={partialCount}
+        unpaidCount={unpaidCount}
+      />
 
       {/* Status filter */}
       <DuesStatusFilter
@@ -255,7 +253,7 @@ export default async function AdminDuesPage({
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-right">
                       <Link
-                        href={`/admin/dues/${member.memberId}?fy=${fy}`}
+                        href={`/admin/dues/${member.memberId}?fy=${fy}${statusFilter !== "all" ? `&status=${statusFilter}` : ""}${search ? `&search=${encodeURIComponent(search)}` : ""}`}
                         className="text-lions-blue hover:text-lions-blue-dark text-sm font-medium focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
                       >
                         View

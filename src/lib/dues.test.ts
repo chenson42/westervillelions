@@ -4,6 +4,7 @@ import {
   currentFiscalYear,
   fiscalYearLabel,
   deriveStatus,
+  computeDuesMethodComposition,
 } from "./dues";
 
 // ── getFiscalYear ─────────────────────────────────────────────────────────────
@@ -118,5 +119,104 @@ describe("deriveStatus", () => {
 
   it("returns 'unpaid' when total is 1 cent and expected is 1 cent (edge)", () => {
     expect(deriveStatus(1, 1)).toBe("paid");
+  });
+});
+
+// ── computeDuesMethodComposition ──────────────────────────────────────────────
+
+describe("computeDuesMethodComposition", () => {
+  it("normal case: composes method slices + an Unpaid slice in fixed order", () => {
+    const result = computeDuesMethodComposition(
+      { check: 5000, zeffy: 3000, cash: 1000, other: 500 },
+      10000,
+      9500,
+    );
+
+    expect(result.totalCollectedCents).toBe(9500);
+    expect(result.totalExpectedCents).toBe(10000);
+    expect(result.slices.map((s) => s.key)).toEqual([
+      "check",
+      "zeffy",
+      "cash",
+      "other",
+      "unpaid",
+    ]);
+    expect(result.slices.map((s) => s.cents)).toEqual([5000, 3000, 1000, 500, 500]);
+    // Denominator is totalCollectedCents + unpaidCents = 9500 + 500 = 10000.
+    expect(result.slices.map((s) => Number(s.pct.toFixed(1)))).toEqual([
+      50, 30, 10, 5, 5,
+    ]);
+  });
+
+  it("no payments: only an Unpaid slice covering the full expected total", () => {
+    const result = computeDuesMethodComposition({}, 10000, 0);
+
+    expect(result.slices).toEqual([
+      { key: "unpaid", label: "Unpaid", cents: 10000, pct: 100 },
+    ]);
+  });
+
+  it("no payments and no expected total configured: empty slices (empty state)", () => {
+    const result = computeDuesMethodComposition({}, 0, 0);
+    expect(result.slices).toEqual([]);
+  });
+
+  it("overpayment clamps Unpaid at 0 and the collected slices read as 100%, not >100%", () => {
+    const result = computeDuesMethodComposition({ check: 15000 }, 10000, 15000);
+
+    expect(result.slices).toEqual([
+      { key: "check", label: "Check", cents: 15000, pct: 100 },
+    ]);
+  });
+
+  it("buckets an unexpected/unknown method value into Other", () => {
+    const result = computeDuesMethodComposition(
+      { check: 4000, venmo: 1000, other: 500 },
+      10000,
+      5500,
+    );
+
+    const other = result.slices.find((s) => s.key === "other");
+    expect(other?.cents).toBe(1500); // venmo (1000) + other (500) folded together
+  });
+
+  it("buckets a null/undefined method total as zero contribution", () => {
+    const result = computeDuesMethodComposition(
+      { check: 4000, cash: null, other: undefined },
+      10000,
+      4000,
+    );
+
+    expect(result.slices.map((s) => s.key)).toEqual(["check", "unpaid"]);
+  });
+
+  it("clamps a net-negative method total (refund) to zero contribution rather than a negative slice", () => {
+    const result = computeDuesMethodComposition(
+      { check: 5000, other: -200 },
+      10000,
+      4800,
+    );
+
+    expect(result.slices.map((s) => s.key)).toEqual(["check", "unpaid"]);
+    expect(result.slices.find((s) => s.key === "check")?.cents).toBe(5000);
+  });
+
+  it("omits zero-value slices from the output entirely", () => {
+    const result = computeDuesMethodComposition(
+      { check: 10000, zeffy: 0, cash: 0, other: 0 },
+      10000,
+      10000,
+    );
+
+    expect(result.slices).toEqual([
+      { key: "check", label: "Check", cents: 10000, pct: 100 },
+    ]);
+  });
+
+  it("no expected total configured but payments exist: composes as 100% of collected, no Unpaid slice", () => {
+    const result = computeDuesMethodComposition({ check: 3000, cash: 1000 }, 0, 4000);
+
+    expect(result.slices.map((s) => s.key)).toEqual(["check", "cash"]);
+    expect(result.slices.map((s) => s.pct)).toEqual([75, 25]);
   });
 });

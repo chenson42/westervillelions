@@ -41,7 +41,7 @@ export default async function AdminDuesMemberPage({
   searchParams,
 }: {
   params: Promise<{ memberId: string }>;
-  searchParams: Promise<{ fy?: string }>;
+  searchParams: Promise<{ fy?: string; status?: string; search?: string }>;
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
@@ -55,8 +55,13 @@ export default async function AdminDuesMemberPage({
   const canManage = await hasFeature(session.user.id, FEATURES.DUES_MANAGE);
 
   const { memberId } = await params;
-  const { fy: fyParam } = await searchParams;
+  const { fy: fyParam, status: statusFilter, search } = await searchParams;
   const fy = fyParam ? parseInt(fyParam) : currentFiscalYear(new Date());
+
+  // Carry the list's filter state through the back link so returning restores it
+  const backParams = new URLSearchParams({ fy: String(fy) });
+  if (statusFilter) backParams.set("status", statusFilter);
+  if (search) backParams.set("search", search);
 
   const [log, knownYears] = await Promise.all([
     getMemberPaymentLog(memberId, fy),
@@ -71,7 +76,7 @@ export default async function AdminDuesMemberPage({
     <div className="space-y-6 max-w-3xl">
       {/* Back link */}
       <Link
-        href={`/admin/dues?fy=${fy}`}
+        href={`/admin/dues?${backParams}`}
         className="inline-flex items-center text-sm text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
       >
         &larr; Back to Dues List
@@ -140,6 +145,10 @@ export default async function AdminDuesMemberPage({
             knownFiscalYears={knownYears}
             currentFY={fy}
             basePath={`/admin/dues/${memberId}`}
+            extraParams={{
+              ...(statusFilter ? { status: statusFilter } : {}),
+              ...(search ? { search } : {}),
+            }}
           />
           {canManage && (
             <DuesAddPaymentButton memberId={memberId} fiscalYear={fy} />

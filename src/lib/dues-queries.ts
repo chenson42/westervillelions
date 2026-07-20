@@ -166,6 +166,52 @@ export async function listMemberDuesStatus(
 }
 
 // ---------------------------------------------------------------------------
+// getDuesMethodTotals
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns raw dues_payments totals grouped by method for a fiscal year,
+ * scoped to active members — the same population listMemberDuesStatus sums
+ * for totalPaidCents, so the two stay consistent with each other.
+ *
+ * `opts.search` mirrors listMemberDuesStatus's name/email filter so the donut
+ * chart stays in sync with the admin dues page's search box (the stat cards
+ * it replaces were also search-scoped).
+ *
+ * Feeds computeDuesMethodComposition() in @/lib/dues, which does the
+ * clamping/bucketing/percent math as a pure function.
+ */
+export async function getDuesMethodTotals(
+  fiscalYear: number,
+  opts: { search?: string } = {},
+): Promise<Record<string, number>> {
+  const { search } = opts;
+  const searchFilter =
+    search && search.trim()
+      ? sql`AND (
+          m.first_name ILIKE ${"%" + search.trim() + "%"}
+          OR m.last_name ILIKE ${"%" + search.trim() + "%"}
+          OR m.email ILIKE ${"%" + search.trim() + "%"}
+        )`
+      : sql``;
+
+  const rows = await db.execute<{ method: string; total_cents: string }>(sql`
+    SELECT dp.method, SUM(dp.amount_cents) AS total_cents
+    FROM dues_payments dp
+    JOIN members m ON m.id = dp.member_id
+    WHERE dp.fiscal_year = ${fiscalYear} AND m.is_active = true
+    ${searchFilter}
+    GROUP BY dp.method
+  `);
+
+  const totals: Record<string, number> = {};
+  for (const r of rows) {
+    totals[r.method] = Number(r.total_cents);
+  }
+  return totals;
+}
+
+// ---------------------------------------------------------------------------
 // getMemberPaymentLog
 // ---------------------------------------------------------------------------
 
