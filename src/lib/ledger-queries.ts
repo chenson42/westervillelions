@@ -46,11 +46,13 @@ import {
   grossReceiptsCents,
   budgetVariance,
   guardrails,
+  countAgedPublicFunds,
   determine990,
   computeDueDate,
   isFilingOverdue,
   type GuardrailFlag,
   type BudgetVarianceResult,
+  type AgedPublicFundFact,
 } from "@/lib/ledger";
 
 // ---------------------------------------------------------------------------
@@ -228,6 +230,7 @@ export async function getSettings(): Promise<LedgerSettings> {
     reserveWarnThresholdCents: 2_500_000,
     disbApprovalThresholdCents: 25_000,
     retentionYears: 7,
+    holdingPeriodWarnDays: 365,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -626,6 +629,136 @@ export async function getOverview(
   // Computed from the already-fetched allTxns array — zero extra DB queries.
   const syncStaleTxns = allTxns.filter((t) => t.syncStale).length;
 
+  // --------------------------------------------------------------------------
+  // inc7 guardrail inputs — Lions Fund-Compliance Guardrails
+  // (DECISION-027 for the original query approach; DECISION-028 corrects the
+  // balance-positive gate below to use a true cross-FY balance instead of the
+  // FY-scoped fundSummaries[].endingCents — see Query A2 and countAgedPublicFunds().)
+  // --------------------------------------------------------------------------
+
+  // Query A: Cross-FY oldest posted income date per public fund (no FY bound).
+  // Paired with Query A2 below (cross-FY balance) and passed into
+  // countAgedPublicFunds() to determine which funds are "aged".
+  const publicFundIds = funds
+    .filter((f) => ["activity", "charitable", "scholarship"].includes(f.kind))
+    .map((f) => f.id);
+
+  const oldestIncomeRows = publicFundIds.length > 0
+    ? await db
+        .select({
+          fundId: ledgerTransactions.fundId,
+          oldestDate: sql<string>`MIN(${ledgerTransactions.txnDate})`,
+        })
+        .from(ledgerTransactions)
+        .where(
+          and(
+            inArray(ledgerTransactions.fundId, publicFundIds),
+            eq(ledgerTransactions.flow, "income"),
+            eq(ledgerTransactions.status, "posted"),
+          ),
+        )
+        .groupBy(ledgerTransactions.fundId)
+    : [];
+
+  const oldestDateByFundId = new Map<string, string>(
+    oldestIncomeRows.map((r) => [r.fundId, r.oldestDate]),
+  );
+
+  // inc7 (revised 2026-07-20, Bug 2 fix) — Query A2: cross-FY posted income/expense
+  // totals per public fund, no FY bound. Companion to Query A. Together they let us
+  // compute each public fund's TRUE life-to-date balance — NOT fs.endingCents, which
+  // is scoped to the currently-selected FY and was the root cause of QA's Bug 2
+  // (2026-07-20): a fund whose only transactions fall outside the selected FY window
+  // read as endingCents = 0 and was silently excluded from the aged-funds count even
+  // though it held a real, positive, aged balance. See DECISION-028.
+  const crossFyTotalsRows = publicFundIds.length > 0
+    ? await db
+        .select({
+          fundId: ledgerTransactions.fundId,
+          flow: ledgerTransactions.flow,
+          totalCents: sql<string>`COALESCE(SUM(${ledgerTransactions.amountCents}), 0)`,
+        })
+        .from(ledgerTransactions)
+        .where(
+          and(
+            inArray(ledgerTransactions.fundId, publicFundIds),
+            eq(ledgerTransactions.status, "posted"),
+            inArray(ledgerTransactions.flow, ["income", "expense"]),
+          ),
+        )
+        .groupBy(ledgerTransactions.fundId, ledgerTransactions.flow)
+    : [];
+
+  const incomeTotalByFundId = new Map<string, number>();
+  const expenseTotalByFundId = new Map<string, number>();
+  for (const row of crossFyTotalsRows) {
+    const cents = Number(row.totalCents);
+    if (row.flow === "income") incomeTotalByFundId.set(row.fundId, cents);
+    else if (row.flow === "expense") expenseTotalByFundId.set(row.fundId, cents);
+  }
+
+  // inc7 (revised) — build cross-FY facts per public fund, using fundBalanceCents()
+  // (the same canonical balance function used elsewhere in the ledger) so this
+  // figure can never disagree with how a "balance" is defined anywhere else.
+  const agedPublicFundFacts: Array<AgedPublicFundFact> = funds
+    .filter((f) => publicFundIds.includes(f.id))
+    .map((f) => ({
+      fundKind: f.kind,
+      crossFyBalanceCents: fundBalanceCents(f.openingBalanceCents, [
+        { flow: "income", amountCents: incomeTotalByFundId.get(f.id) ?? 0 },
+        { flow: "expense", amountCents: expenseTotalByFundId.get(f.id) ?? 0 },
+      ]),
+      oldestPostedIncomeDate: oldestDateByFundId.get(f.id) ?? null,
+    }));
+
+  const agedPublicFundsRaw = countAgedPublicFunds(
+    agedPublicFundFacts,
+    settings.holdingPeriodWarnDays,
+  );
+
+  // Query B: Batch-fetch categories for admin-fund income rows (DECISION-027).
+  // Collect distinct categoryIds on posted income rows in admin funds (exclude null per G-4).
+  const adminFundIds = funds
+    .filter((f) => f.kind === "administrative")
+    .map((f) => f.id);
+
+  const adminIncomeCategoryIds = new Set<string>();
+  for (const txn of allTxns) {
+    if (
+      txn.flow === "income" &&
+      txn.status === "posted" &&
+      adminFundIds.includes(txn.fundId) &&
+      txn.categoryId !== null
+    ) {
+      adminIncomeCategoryIds.add(txn.categoryId);
+    }
+  }
+
+  const categoryFundKindMap = new Map<string, string>();
+  if (adminIncomeCategoryIds.size > 0) {
+    const categoryRows = await db
+      .select({ id: ledgerCategories.id, fundKind: ledgerCategories.fundKind })
+      .from(ledgerCategories)
+      .where(inArray(ledgerCategories.id, Array.from(adminIncomeCategoryIds)));
+    for (const row of categoryRows) {
+      categoryFundKindMap.set(row.id, row.fundKind);
+    }
+  }
+
+  const adminPublicIncomeCountRaw = allTxns.filter((txn) => {
+    if (txn.flow !== "income" || txn.status !== "posted") return false;
+    if (!adminFundIds.includes(txn.fundId)) return false;
+    if (txn.categoryId === null) return false; // G-4: exclude uncategorized rows
+    const catFundKind = categoryFundKindMap.get(txn.categoryId);
+    // If category not found (e.g., deleted), skip — don't false-positive
+    if (catFundKind === undefined) return false;
+    return catFundKind !== "administrative";
+  }).length;
+
+  // Defensive non-negative guards
+  const agedPublicFunds = Math.max(0, agedPublicFundsRaw);
+  const adminPublicIncomeCount = Math.max(0, adminPublicIncomeCountRaw);
+
   const guardrailFlags = guardrails({
     funds: fundSummaries.map((fs) => ({
       id: fs.fund.id,
@@ -637,6 +770,7 @@ export async function getOverview(
       reserveWarnThresholdCents: settings.reserveWarnThresholdCents,
       treasurerBonded: settings.treasurerBonded,
       retentionYears: settings.retentionYears,
+      holdingPeriodWarnDays: settings.holdingPeriodWarnDays, // inc7: new
     },
     incomeWithoutParty,
     cashDisbursements,
@@ -650,6 +784,9 @@ export async function getOverview(
     overdueFilingCount: inc3Inputs?.overdueFilingCount ?? 0,
     // inc6a: dues sync stale count
     syncStaleTxns,
+    // inc7: compliance guardrail inputs
+    agedPublicFunds,
+    adminPublicIncomeCount,
   });
 
   const determine990Result = determine990({

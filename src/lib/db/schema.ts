@@ -755,6 +755,7 @@ export const ledgerSettings = pgTable("ledger_settings", {
   reserveWarnThresholdCents: integer("reserve_warn_threshold_cents").notNull().default(2500000), // $25,000
   disbApprovalThresholdCents: integer("disb_approval_threshold_cents").notNull().default(25000),  // $250
   retentionYears: integer("retention_years").notNull().default(7),
+  holdingPeriodWarnDays: integer("holding_period_warn_days").notNull().default(365),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

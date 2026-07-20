@@ -11,8 +11,8 @@
  *     "Lions Club Meeting" — private non-recurring event.
  *
  * Occurrence date used:
- *   WRITE_IN_DATE = 2026-07-11 (Saturday, in the Farmer's Market series)
- *   Wall-clock ISO: 2026-07-11T12:30:00
+ *   WRITE_IN_DATE = 2026-08-15 (Saturday, in the Farmer's Market series)
+ *   Wall-clock ISO: 2026-08-15T12:30:00
  *   These dates do not overlap with cancel-occurrence or rollup tests.
  *
  * Isolation:
@@ -32,7 +32,9 @@ import { signInAsAdmin } from "./helpers/auth";
 const RECURRING_EVENT_ID = "291c76f3-ab75-4c64-8173-ac285345cfe9";
 const NON_RECURRING_EVENT_ID = "2a68b4c6-2068-4d5d-84d6-223167260c7b";
 
-const WRITE_IN_DATE = "2026-07-11";
+const WRITE_IN_DATE = "2026-08-15";
+// Month-day form as rendered in the occurrence accordion header (keep in sync with WRITE_IN_DATE)
+const WRITE_IN_DISPLAY = "Aug 15";
 const WRITE_IN_ISO = `${WRITE_IN_DATE}T12:30:00`;
 
 const recurringSignupUrl = `/api/admin/events/${RECURRING_EVENT_ID}/signup`;
@@ -84,10 +86,9 @@ async function cleanupRsvps(page: Page) {
  * Returns the accordion row locator.
  */
 async function expandWriteInDateAccordion(page: Page) {
-  // The display date will contain "Jul 11" in the accordion header
+  // The display date will contain WRITE_IN_DISPLAY in the accordion header
   const accordionRows = page.locator(".rounded-md.border");
-  // Find the accordion that contains "Jul 11"
-  const targetAccordion = accordionRows.filter({ hasText: "Jul 11" }).first();
+  const targetAccordion = accordionRows.filter({ hasText: WRITE_IN_DISPLAY }).first();
   await expect(targetAccordion).toBeVisible({ timeout: 10000 });
 
   // If not already expanded, click the toggle button

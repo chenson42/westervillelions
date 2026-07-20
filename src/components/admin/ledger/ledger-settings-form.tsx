@@ -10,7 +10,8 @@ interface LedgerSettingsFormProps {
 
 /**
  * Form for editing ledger settings.
- * Thresholds are stored as cents; inputs are in dollars.
+ * Dollar thresholds are stored as cents; inputs are in dollars.
+ * holdingPeriodWarnDays is stored and edited directly as an integer number of days.
  * LEDGER_MANAGE gate is enforced at the page level.
  */
 export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps) {
@@ -21,6 +22,7 @@ export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps
   const [reserveDollars, setReserveDollars] = useState(
     (settings.reserveWarnThresholdCents / 100).toFixed(2)
   );
+  const [holdingDays, setHoldingDays] = useState(settings.holdingPeriodWarnDays);
   const [bonded, setBonded] = useState(settings.treasurerBonded);
   const [visibility, setVisibility] = useState<"board" | "members">(
     settings.philanthropyVisibility as "board" | "members"
@@ -50,6 +52,10 @@ export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps
     if (res === null) e.reserve = "Enter a valid non-negative dollar amount (e.g. 1000.00).";
     else if (!/^\d+(\.\d{1,2})?$/.test(reserveDollars.trim())) e.reserve = "At most two decimal places.";
 
+    if (!Number.isInteger(holdingDays) || holdingDays <= 0) {
+      e.holdingDays = "Enter a whole number of days greater than 0.";
+    }
+
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -69,6 +75,7 @@ export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps
         body: JSON.stringify({
           disbApprovalThresholdCents: disbCents,
           reserveWarnThresholdCents: reserveCents,
+          holdingPeriodWarnDays: holdingDays,
           treasurerBonded: bonded,
           philanthropyVisibility: visibility,
         }),
@@ -138,6 +145,37 @@ export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps
           />
         </div>
         {errors.reserve && <p className="mt-1 text-xs text-red-600">{errors.reserve}</p>}
+      </div>
+
+      {/* Public fund holding period */}
+      <div>
+        <label htmlFor="holding-period-days" className="block text-sm font-medium text-gray-700 mb-1">
+          Public fund holding period (days)
+        </label>
+        <p className="text-xs text-gray-500 mb-2">
+          Controls the aged public-fund guardrail. A warning fires when an Activity, Charitable, or
+          Scholarship fund still has a positive balance and its oldest posted income is older than
+          this many days. LCI guidance calls for public funds to return to public use within a
+          reasonable time — usually one year (365 days).
+        </p>
+        <input
+          id="holding-period-days"
+          type="number"
+          inputMode="numeric"
+          step={1}
+          min={1}
+          value={Number.isNaN(holdingDays) ? "" : holdingDays}
+          onChange={(e) => {
+            // Use Number(), not parseInt(), so a decimal like "1.5" is preserved
+            // as 1.5 rather than silently truncated to 1 — validate()'s
+            // Number.isInteger check below is what actually rejects it.
+            const parsed = e.target.value === "" ? NaN : Number(e.target.value);
+            setHoldingDays(parsed);
+            setErrors((p) => ({ ...p, holdingDays: "" }));
+          }}
+          className="w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-lions-blue"
+        />
+        {errors.holdingDays && <p className="mt-1 text-xs text-red-600">{errors.holdingDays}</p>}
       </div>
 
       {/* Treasurer bonded */}

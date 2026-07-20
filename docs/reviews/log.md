@@ -37,6 +37,8 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-06-27 | security | 0 critical, 0 high, 3 medium, 4 low; medium = allowDangerousEmailAccountLinking risk (Ledger raises stakes), dues CSV no formula-injection guard, party names in impact dashboard; low = letterStorageKey leak in ack PATCH response, orphan blobs, page-level gap (downgraded), xlsx devDep; see 2026-06-27-security.md
+2026-06-27 | retrospective | 35-day window (8 features, full specialist-split confirmed real); 3 SHOULD carry-forwards escalated to MUST; new MUST for mid-flight scope routing; qa unit-test gap recurred twice (endorsed agent-instruction fix); 7 proposed edits; see 2026-06-27-retrospective.md
 2026-06-27 | agent-instruction | 4 medium + 2 low findings; 2 new MUSTs (api/full-stack missing test-deliverable checklist, architect lists xlsx not exceljs); 3 SHOULD carry-forwards now at 2 cycles; pipeline healthy, specialist split confirmed real; see 2026-06-27-agent-instruction.md
 2026-06-27 | documentation | 0 high, 2 medium (Project Structure + Key Features missing ledger/dues), 4 low; decisions 001–026 contiguous; release-notes chain v1.18–v1.25 intact; package.json 1.25.0 matches; see 2026-06-27-documentation.md
 2026-06-26 | dependencies | prod audit clean (0 high/critical; 3 moderate, 1 low, all transitive); @vercel/blob vetted OK; next-themes dead dep; xlsx still in devDeps (scripts only); 3 overrides recommended; see 2026-06-26-dependencies.md

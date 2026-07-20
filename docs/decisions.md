@@ -28,6 +28,76 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-028: Lions Fund-Compliance Guardrails — aged-public-fund gate corrected to a true cross-FY balance; gating logic extracted into a testable pure function
+
+**Status:** Resolved (corrects part of DECISION-027)
+**Date:** 2026-07-20
+
+**Decision:**
+
+QA's Phase 5 verification (2026-06-27 work-log, Bug 2) found that the aged-public-fund WARN silently fails to fire whenever a public fund's aged, undisbursed income falls entirely in a fiscal year other than the one currently selected in `getOverview()`. Root cause: the balance-positive gate reused `fundSummaries[].endingCents`, which DECISION-027's Ruling B explicitly (and incorrectly) specified as the balance source: *"The balance-positive condition is applied in the TypeScript aggregation, not SQL, using the already-computed `fundSummaries[].endingCents`."* That field is bound to the FY window passed into `getOverview()` — it is not the fund's true balance. This decision corrects that one sentence of DECISION-027. Ruling A (category batch-fetch) and the rest of Ruling B (dedicated query over a denormalized column) are unaffected and stand.
+
+**Corrected design:**
+
+1. **New companion aggregate query in `getOverview()`** (`src/lib/ledger-queries.ts`), alongside the existing (unchanged, already-correct) Query A: a `SELECT fund_id, flow, SUM(amount_cents) FROM ledger_transactions WHERE fund_id IN (<publicFundIds>) AND status='posted' AND flow IN ('income','expense') GROUP BY fund_id, flow` — no FY bound, bounded to public fund IDs only (same bounded-batch discipline as DECISION-027).
+2. **Reuse the existing canonical balance function**, `fundBalanceCents(openingCents, postedTxns)` (already defined in `src/lib/ledger.ts`, already unit-tested, already imported into `ledger-queries.ts` but previously unused there) — called once per public fund with two synthetic `FlowRow` entries built from the new query's per-flow sums. This guarantees the cross-FY figure uses **exactly** the same arithmetic as every other balance in the system; no second, hand-rolled definition of "balance" is introduced.
+3. **New exported pure function `countAgedPublicFunds()`** in `src/lib/ledger.ts`, alongside `guardrails()`. Takes an array of per-fund cross-FY facts (`fundKind`, `crossFyBalanceCents`, `oldestPostedIncomeDate`), a threshold, and an injectable `now`, and returns the count. `getOverview()` builds this fact array from the fund rows + the new query + the existing (unchanged) Query A, and calls this function instead of inline-filtering `fundSummaries`.
+4. **`GuardrailsInput` / `guardrails()` signature is unchanged.** The bug and its fix are entirely upstream of `guardrails()`, which still receives a flat `agedPublicFunds: number` count. No change to the pure gating function or its existing 5 unit tests.
+
+**Rationale:**
+
+The extraction into `countAgedPublicFunds()` is the direct fix for the coverage gap QA flagged: the original aggregation lived inline inside `getOverview()`, a DB-bound function with no unit-test seam in this codebase (confirmed: no test file exercises `getOverview()` today), so the FY-scoping defect had no layer capable of catching it before a live click-through. A pure function taking plain data and returning a count can be — and now is — unit tested directly with fixture data that reproduces QA's exact scenario (a fund whose cross-FY balance is positive but whose FY-scoped view would read $0), closing the gap at the layer where it actually belongs rather than asking QA to invent DB-mocking infrastructure under loop-back pressure.
+
+**Impact:**
+
+- `src/lib/ledger-queries.ts` — new companion query in `getOverview()`; `agedPublicFundsRaw` computation rewritten to call `countAgedPublicFunds()`.
+- `src/lib/ledger.ts` — new exported `countAgedPublicFunds()` function and its input type, placed near `guardrails()`.
+- `src/lib/ledger.test.ts` — new `describe("countAgedPublicFunds", ...)` block, including a named regression test for the exact FY-scoping failure QA reproduced. No change to the existing `guardrails()` Enhancement-1 tests.
+- No schema change. No change to `GuardrailsInput`'s shape or `guardrails()`'s existing tests.
+- Full design: `docs/work-log/2026-06-27-lions-fund-compliance.md`, "Phase 3 — Revised Design (loop-back from Phase 5) — 2026-07-20."
+
+---
+
+## DECISION-027: Lions Fund-Compliance Guardrails — cross-FY aging query approach and Enhancement 2 category-fundKind resolution strategy
+
+**Status:** Resolved
+**Date:** 2026-06-27
+
+**Decision:**
+Two architectural rulings for the Lions Fund-Compliance Guardrails feature (work-log: `docs/work-log/2026-06-27-lions-fund-compliance.md`):
+
+**Ruling A — Enhancement 2 (direct-to-admin public income): resolve category `fundKind` via a single batch fetch before the aggregation pass, not a JOIN on `allTxns`.**
+
+`getOverview()` currently fetches all FY transactions in one query and then aggregates in TypeScript. To compute `adminPublicIncomeCount` (income rows in an administrative fund where the category's `fundKind != 'administrative'`), the aggregation loop needs `fundKind` for each transaction's `categoryId`. The cleanest approach consistent with the file's existing N+1-avoidance pattern:
+
+1. After fetching `allTxns`, collect the distinct `categoryId` values that appear on income rows in administrative funds.
+2. Fetch those category rows in a single `inArray` query (at most one extra round-trip; category sets are small — typically < 20 rows per entity).
+3. Build a `Map<categoryId, fundKind>` and use it in the existing TypeScript aggregation pass.
+
+This is preferred over joining categories into the `allTxns` query because: (a) `allTxns` is already used for multiple aggregation purposes and adding a LEFT JOIN would widen every row for a check that only applies to a small subset; (b) the precedent in `getFundReport()` and `getEntityReport()` is exactly this pattern — fetch categories separately, merge in TypeScript; (c) the category set for an entity is bounded and small enough that a batch fetch is cheap and idiomatic. The `get990Prep()` SQL approach (inline LEFT JOIN) is a counter-precedent but is appropriate there because the entire function is a single SQL GROUP BY — not a TypeScript aggregation pass.
+
+**Ruling B — Enhancement 1 (aging guardrail): use a dedicated cross-FY aggregate query, not a denormalized column.**
+
+The aging check needs the oldest posted income date for each public fund (kind ∈ activity/charitable/scholarship) across all fiscal years, where the fund's current balance is positive. The two options were:
+
+- Option 1: A small dedicated SQL query added to `getOverview()` — one extra DB round-trip, computes `MIN(txn_date)` per fund over all posted income rows with no FY bound, filtered to public funds.
+- Option 2: A denormalized `ledger_funds.oldest_posted_income_date` column maintained on every insert/update/delete of an income transaction.
+
+**Ruling: use Option 1 (dedicated query).** Rationale: a denormalized column (Option 2) introduces a write-time maintenance obligation that spans every income transaction mutation path (record, approve, reject, hard-delete) — four distinct touch points, each requiring the column to be recalculated. A bug in any one of those paths silently corrupts the guardrail. Option 1 is a single read-time query that is always correct by definition. The performance cost is one additional DB query per `getOverview()` call, which is acceptable — `getOverview()` already runs multiple round-trips (entity, funds, settings, transactions) and this query returns O(N-funds) aggregate rows, not O(N-transactions) data.
+
+**Correctness of the "unspent" proxy:** The metric is "oldest posted income date on a fund where the current balance is positive." This is a conservative proxy — a fund with $0 net balance but old income and old offsetting expenses will NOT fire (correct: the money was spent). A fund with any positive balance AND old income will fire. This matches the analyst's G-3 specification. The query is: `SELECT fund_id, MIN(txn_date) as oldest_income_date FROM ledger_transactions WHERE flow='income' AND status='posted' AND fund_id IN (<public-fund-ids>) GROUP BY fund_id`. The balance-positive condition is applied in the TypeScript aggregation, not SQL, using the already-computed `fundSummaries[].endingCents`.
+
+**Rationale:**
+The N+1-free discipline in `ledger-queries.ts` is worth preserving — but N+1 means unbounded per-row round-trips, not "more than two queries." A bounded batch fetch (Ruling A) and a single aggregate query (Ruling B) both stay within the spirit of the file's documented strategy. Denormalized columns that mirror computed values across multiple write paths are a consistent source of drift bugs and are the wrong tool when a read-time query is fast and correct.
+
+**Impact:**
+- `getOverview()` in `src/lib/ledger-queries.ts` gains one new batch-fetch for category `fundKind` (Ruling A) and one new cross-FY aggregate query for oldest income date (Ruling B).
+- `GuardrailsInput` in `src/lib/ledger.ts` gains two new fields: `agedPublicFunds: number` and `adminPublicIncomeCount: number`.
+- `ledger_settings` in `src/lib/db/schema.ts` gains `holdingPeriodWarnDays: integer` (default 365). A matching idempotent migration is required.
+- No new npm dependencies, routes, or directories. All changes are confined to `src/lib/ledger.ts`, `src/lib/ledger-queries.ts`, `src/lib/db/schema.ts`, and `drizzle/migrations/`.
+
+---
+
 ## DECISION-026: `deriveAckType()` — quid-pro-quo type takes precedence over written-ack when both thresholds are met; `amountCents` on `ledgerAcknowledgments` is immutable after creation; DB-level unique index on `donation_txn_id` is defense-in-depth
 
 **Status:** Resolved

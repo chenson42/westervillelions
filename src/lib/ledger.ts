@@ -17,6 +17,9 @@
  * over threshold (WARN), unreconciled transactions from prior months (WARN).
  *
  * Guardrails activated in inc3: IRS revocation risk (HIGH), overdue filings (WARN).
+ *
+ * Guardrails activated in inc7: aged public-fund balances (WARN),
+ * direct-to-admin public income (WARN); firewall policyCite upgraded to §3(g).
  */
 
 // ---------------------------------------------------------------------------
@@ -329,6 +332,50 @@ export function deriveAckType(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// countAgedPublicFunds — inc7 (revised 2026-07-20, Bug 2 fix / DECISION-028)
+// ---------------------------------------------------------------------------
+
+export type AgedPublicFundFact = {
+  fundKind: string;
+  /** True life-to-date balance: openingBalanceCents + all-time posted income
+   *  − all-time posted expense, with NO fiscal-year bound. Callers must NOT
+   *  pass an FY-scoped balance here (see DECISION-028 / 2026-07-20 Bug 2). */
+  crossFyBalanceCents: number;
+  /** ISO date string ('YYYY-MM-DD') of the oldest posted income transaction
+   *  for this fund across ALL fiscal years, or null if none exists. */
+  oldestPostedIncomeDate: string | null;
+};
+
+/**
+ * Counts public funds (kind ∈ 'activity' | 'charitable' | 'scholarship') that
+ * have BOTH a positive cross-FY balance AND an oldest posted income
+ * transaction older than `thresholdDays` relative to `now`.
+ *
+ * Pure function — no DB access — so the FY-scoping class of bug (DECISION-028)
+ * has a real unit-test seam independent of getOverview()'s FY-windowed fetch.
+ * Callers filter or don't filter to public-fund-kind facts before calling this;
+ * the kind check here is defensive, not load-bearing, for whichever they choose.
+ *
+ * @param funds         Cross-FY per-fund facts (see AgedPublicFundFact).
+ * @param thresholdDays settings.holdingPeriodWarnDays.
+ * @param now           Injectable "now" for deterministic tests; defaults to `new Date()`.
+ */
+export function countAgedPublicFunds(
+  funds: Array<AgedPublicFundFact>,
+  thresholdDays: number,
+  now: Date = new Date(),
+): number {
+  return funds.filter((f) => {
+    if (!["activity", "charitable", "scholarship"].includes(f.fundKind)) return false;
+    if (f.crossFyBalanceCents <= 0) return false;
+    if (!f.oldestPostedIncomeDate) return false;
+    const ageDays =
+      (now.getTime() - new Date(f.oldestPostedIncomeDate).getTime()) / (1000 * 60 * 60 * 24);
+    return ageDays > thresholdDays;
+  }).length;
+}
+
 export type GuardrailsInput = {
   funds: Array<FundState>;
   entityBalanceCents: number;
@@ -336,6 +383,7 @@ export type GuardrailsInput = {
     reserveWarnThresholdCents: number;
     treasurerBonded: boolean;
     retentionYears: number;
+    holdingPeriodWarnDays: number;  // inc7
   };
   /** Count of income transactions where party is null or blank */
   incomeWithoutParty: number;
@@ -387,6 +435,31 @@ export type GuardrailsInput = {
    * Pass 0 if the value is not available at the call site.
    */
   syncStaleTxns: number;
+  // ---------------------------------------------------------------------------
+  // inc7 fields — Lions Fund-Compliance Guardrails.
+  // Callers on earlier paths pass 0 until updated.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Count of public funds (kind ∈ 'activity' | 'charitable' | 'scholarship')
+   * where (a) the fund's endingCents > 0 AND (b) the oldest posted income
+   * transaction across ALL fiscal years for that fund is more than
+   * settings.holdingPeriodWarnDays days old relative to today.
+   *
+   * Must be a non-negative integer. Computed in getOverview() via a dedicated
+   * cross-FY MIN(txn_date) aggregate query (DECISION-027).
+   */
+  agedPublicFunds: number;
+
+  /**
+   * Count of posted income transactions belonging to a fund of kind='administrative'
+   * where the transaction's category has fundKind != 'administrative'.
+   * Rows with categoryId IS NULL are excluded (they are caught by incomeWithoutParty).
+   *
+   * Must be a non-negative integer. Computed in getOverview() via a bounded
+   * batch fetch of category rows for the relevant categoryIds (DECISION-027).
+   */
+  adminPublicIncomeCount: number;
 };
 
 /**
@@ -400,6 +473,7 @@ export type GuardrailsInput = {
  *           two-fund firewall violation (HIGH)
  *   inc3 — IRS 990 revocation risk / 3 consecutive unfiled years (HIGH),
  *           overdue compliance filings (WARN)
+ *   inc7 — aged public-fund balances (WARN), direct-to-admin public income (WARN)
  *
  * Returns an empty array when all checks are clear.
  *
@@ -509,7 +583,7 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
       severity: "high",
       title: "Two-fund firewall violation",
       detail: `${n} transfer${n === 1 ? "" : "s"} move${n === 1 ? "s" : ""} money from an Activity fund to the Administrative fund. Activity fund money must remain in activity accounts. Reverse or reclassify these transfers immediately.`,
-      policyCite: "Lions Financial Transparency Policy §6 — Two-Fund Firewall",
+      policyCite: "Standard Club Constitution Art. VII §3(g); Lions Financial Transparency Policy §6 — Two-Fund Firewall",
     });
   }
 
@@ -558,6 +632,45 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
       title: "Dues payment sync mismatch",
       detail: `${n} ledger transaction${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} out of sync with ${n === 1 ? "its" : "their"} source dues payment. A dues payment was edited or deleted after the ledger row was reconciled. Review and correct these transactions manually.`,
       policyCite: "Lions Financial Transparency Policy §8",
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // inc7 checks — Lions Fund-Compliance Guardrails
+  // Two detection pathways extend the two-fund firewall:
+  //   A. Aged public-fund balances (holding-period rule from LCI Board Policy Ch. VII)
+  //   B. Public-category income posted directly to the Administrative fund
+  //      (Art. VII §3(g) firewall bypass via direct income, not transfer)
+  // ---------------------------------------------------------------------------
+
+  // Check: aged public-fund balances — undisbursed public money held past the threshold (WARN) — inc7
+  if (state.agedPublicFunds > 0) {
+    const n = state.agedPublicFunds;
+    flags.push({
+      severity: "warn",
+      title: `Public fund${n === 1 ? "" : "s"} holding undisbursed balance past ${state.settings.holdingPeriodWarnDays}-day threshold`,
+      detail:
+        `${n} public fund${n === 1 ? "" : "s"} ${n === 1 ? "has" : "have"} a positive balance and ` +
+        `the oldest posted income is more than ${state.settings.holdingPeriodWarnDays} days old. ` +
+        `LCI guidance requires public funds to be returned to public use within a reasonable time — ` +
+        `usually one year. If any of these funds are earmarked for a specific multi-year project, ` +
+        `document the project name and expected disbursement date in the board meeting minutes.`,
+      policyCite: "LCI Board Policy Manual Ch. VII — Public Fund Disbursement",
+    });
+  }
+
+  // Check: public-sourced income posted directly to an Administrative fund (WARN) — inc7
+  if (state.adminPublicIncomeCount > 0) {
+    const n = state.adminPublicIncomeCount;
+    flags.push({
+      severity: "warn",
+      title: "Public-category income posted directly to Administrative fund",
+      detail:
+        `${n} posted income transaction${n === 1 ? "" : "s"} in the Administrative fund ` +
+        `${n === 1 ? "uses a category" : "use categories"} associated with public/activity funds. ` +
+        `Public donations and fundraising proceeds must be deposited into an Activity or Charitable fund, ` +
+        `not the Administrative fund. Review and reclassify these transactions.`,
+      policyCite: "Standard Club Constitution Art. VII §3(g); Lions Financial Transparency Policy §6 — Two-Fund Firewall",
     });
   }
 

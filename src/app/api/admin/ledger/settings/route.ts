@@ -12,6 +12,7 @@
  *   reserveWarnThresholdCents?: number;    // integer ≥ 0
  *   treasurerBonded?: boolean;
  *   philanthropyVisibility?: 'board' | 'members';
+ *   holdingPeriodWarnDays?: number;        // positive integer (days); default 365 — inc7
  * }
  *
  * Response 200: { settings: LedgerSettings }
@@ -50,6 +51,7 @@ export async function PATCH(request: NextRequest) {
       reserveWarnThresholdCents: number;
       treasurerBonded: boolean;
       philanthropyVisibility: string;
+      holdingPeriodWarnDays: number;
       updatedAt: Date;
     }>;
 
@@ -98,6 +100,17 @@ export async function PATCH(request: NextRequest) {
         );
       }
       update.philanthropyVisibility = body.philanthropyVisibility;
+    }
+
+    if (body.holdingPeriodWarnDays !== undefined) {
+      const v = body.holdingPeriodWarnDays;
+      if (typeof v !== "number" || !Number.isInteger(v) || v <= 0) {
+        return NextResponse.json(
+          { error: "holdingPeriodWarnDays must be a positive integer" },
+          { status: 400 },
+        );
+      }
+      update.holdingPeriodWarnDays = v;
     }
 
     // Require at least one field
