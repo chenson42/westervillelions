@@ -63,7 +63,7 @@ export default async function AdminDashboardPage() {
           <div className="flex flex-wrap gap-3">
             {pendingApplications > 0 && (
               <Link
-                href="/admin/applications"
+                href="/admin/membership"
                 className="flex items-center gap-2 rounded-md bg-white border border-amber-300 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
               >
                 <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">
