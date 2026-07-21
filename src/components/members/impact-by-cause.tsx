@@ -186,18 +186,24 @@ export default function ImpactByCause({
                       <ul className="space-y-2">
                         {cause.rows.map((row) => (
                           <li key={row.id} className="text-sm">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-gray-500 shrink-0">{formatDate(row.txnDate)}</span>
-                              <span className="text-gray-700 truncate flex-1 text-right sm:text-left sm:flex-none">
-                                {row.party ?? "Recipient not recorded"}
-                              </span>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-gray-900 font-medium truncate">
+                                  {row.party ?? "Recipient not recorded"}
+                                </p>
+                                {row.publicNote && (
+                                  <p className="text-xs text-gray-500 mt-0.5 break-words">
+                                    {row.publicNote}
+                                  </p>
+                                )}
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {formatDate(row.txnDate)}
+                                </p>
+                              </div>
                               <span className="text-gray-900 font-medium shrink-0">
                                 {formatDollarsWhole(row.amountCents)}
                               </span>
                             </div>
-                            {row.publicNote && (
-                              <p className="text-xs text-gray-500 mt-0.5 break-words">{row.publicNote}</p>
-                            )}
                           </li>
                         ))}
                       </ul>

@@ -182,6 +182,17 @@ can be referenced from work-logs, board minutes, and future sessions.
   manual assignment), (c) re-run the backfill against production when this ships (same script,
   production DATABASE_URL) or port via the dev→prod script.*
 
+- [x] **T-23 — Public gift descriptions + Legion reclassification (both DBs).** — **2026-07-21
+  done** (treasurer approved content row-by-row): 51 treasurer-curated public notes applied to
+  local and production after the v1.31.0 deploy (scholarship schools confirmed — Arden=North,
+  Emilie=Central, Imani=South, memos correct as-is; 2025 recipients generic; The Big Bus =
+  mobile-classroom tutoring + school food-pantry drives; OSSBPTS = Ohio State School for the
+  Blind; both $200 Ohio Lions gifts = sensory garden). Both $650 American Legion Post 171 checks
+  (4/2025, 3/2026) reclassified Grant out → Fundraising event costs with matching cause (pancake
+  breakfast venue rental, per treasurer + the books' own $250/$840 hall-rental precedent) —
+  −$1,300 from giving totals. Apply script: idempotent, natural-key matched (kept in session
+  scratchpad; regenerate from this entry if ever needed).
+
 - [x] **T-22 — Mirror local book corrections to production.** — **2026-07-21 done** (treasurer
   approved): check-number backfill applied to production (100 script-matched rows + 1 direct
   update for check #8263/Arborfest, whose prod memo lacked the `[quicken-import]` marker so the
