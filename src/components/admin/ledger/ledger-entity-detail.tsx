@@ -7,13 +7,11 @@ import type {
 } from "@/lib/db/schema";
 import type { EntityOverview, PendingApprovalRow } from "@/lib/ledger-queries";
 import type { GuardrailFlag } from "@/lib/ledger";
-import EntitySwitcher from "@/components/admin/ledger/entity-switcher";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
 import TransactionFormDialog from "@/components/admin/ledger/transaction-form-dialog";
 
 interface LedgerEntityDetailProps {
   entity: LedgerEntity;
-  entities: LedgerEntity[];
   resolvedSlug: string;
   fiscalYear: number;
   funds: LedgerFund[];
@@ -63,7 +61,6 @@ function guardrailIconClass(severity: GuardrailFlag["severity"]): string {
  */
 export default function LedgerEntityDetail({
   entity,
-  entities,
   resolvedSlug,
   fiscalYear,
   funds,
@@ -79,6 +76,14 @@ export default function LedgerEntityDetail({
 
   return (
     <div className="space-y-6">
+      {/* Back to dashboard */}
+      <Link
+        href="/admin/ledger"
+        className="inline-flex items-center text-sm text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+      >
+        &larr; Back to Ledger Overview
+      </Link>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
@@ -116,19 +121,14 @@ export default function LedgerEntityDetail({
               funds={funds}
               categories={categories}
               bankAccounts={bankAccounts}
-              trigger={
-                <button className="bg-lions-blue text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] whitespace-nowrap text-sm">
-                  Record Transaction
-                </button>
-              }
+              triggerLabel="Record Transaction"
             />
           )}
         </div>
       </div>
 
-      {/* Entity switcher + FY selector */}
+      {/* FY selector (entity switching now lives on the dashboard) */}
       <div className="flex flex-wrap items-center gap-4">
-        <EntitySwitcher entities={entities} activeSlug={resolvedSlug} />
         <FiscalYearSelector
           fiscalYears={fiscalYears}
           currentFY={fiscalYear}

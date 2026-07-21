@@ -25,8 +25,15 @@ interface TransactionFormDialogProps {
   funds: LedgerFund[];
   categories: LedgerCategory[];
   bankAccounts: LedgerBankAccount[];
-  /** Trigger element — a button that opens the dialog */
+  /** Trigger element — a button that opens the dialog. Only pass this from
+   *  CLIENT components: elements created in Server Components and passed
+   *  across the RSC boundary intermittently fail Radix's asChild slotting
+   *  ("Primitive.button failed to slot onto its children"). Server callers
+   *  should use `triggerLabel` instead. */
   trigger?: React.ReactNode;
+  /** Renders the standard primary trigger button inside this client
+   *  component — the safe option for Server Component callers. */
+  triggerLabel?: string;
   /** When provided, opens in edit mode for this transaction */
   initialValues?: EditableTransaction;
   transferPartnerId?: string;
@@ -46,6 +53,7 @@ export default function TransactionFormDialog({
   categories,
   bankAccounts,
   trigger,
+  triggerLabel,
   initialValues,
   transferPartnerId,
   open: controlledOpen,
@@ -73,7 +81,13 @@ export default function TransactionFormDialog({
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
-      {trigger && <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>}
+      {triggerLabel ? (
+        <Dialog.Trigger className="bg-lions-blue text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] whitespace-nowrap text-sm">
+          {triggerLabel}
+        </Dialog.Trigger>
+      ) : (
+        trigger && <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>
+      )}
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl overflow-y-auto max-h-[90vh] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">

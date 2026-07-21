@@ -38,6 +38,12 @@ can be referenced from work-logs, board minutes, and future sessions.
   also trips the club-side aged-public-fund WARN (oldest income 1/25/2025 > 365 days). Treasurer
   decision: keep the guardrail as-is (no de minimis floor, no club exemption) — clearing this item
   (forward $84.52 to the Foundation or spend on service) clears the warning naturally.*
+  **Resolution plan (2026-07-21):** inform the board about the Activity Fund — what it is
+  (publicly-raised money held club-side, per the reference note's pass-through policy) and its
+  current balance (**$84.52**) — and obtain a **board motion to transfer the $84.52 to the
+  Foundation account**. After the motion: write the club check / transfer, record it in the Ledger
+  (club Activity Fund expense → Foundation Public donations income, both citing the minute), which
+  zeroes the fund and clears both club-side guardrail warnings.
 - [ ] **T-05 — Officer bonding: verify, transfer, and track renewals.** Both entities carry fidelity
   bonds at $187/yr: club via CNA Surety from admin (10/2024, 9/2025), Foundation via Western Surety
   from the Foundation account (3/2025, 2/2026). Western Surety is a CNA Surety company; two bonds for
@@ -61,9 +67,19 @@ can be referenced from work-logs, board minutes, and future sessions.
   on the historical Foundation treatment ("My instinct was that this was clearly an Administrative
   Club Account expense… However it was logged under the Foundation in the 24-25 fiscal year. We
   made the payment for 24 and 25 both in the 24-25 fiscal year. Thoughts?").*
-  Remaining: capture the former treasurers' rationale when they reply; if the Foundation-payer
-  history had a deliberate basis (e.g., unit deemed predominantly fundraising storage), decide
-  whether to cost-share going forward; record the final payer policy in board minutes.
+  *2026-07-21 — Jim (former treasurer) replied: the Foundation-payer history WAS deliberate — the
+  unit was originally rented to store fundraising-event supplies (a Foundation purpose), and he
+  believes most contents are still fundraising-related, with some non-fundraising items (e.g.
+  marketing materials) mixed in. His suggestion: "review the usage, and if necessary divide the
+  expense between the two accounts proportionately."*
+  Remaining:
+  - [ ] Inventory/eyeball the storage unit's contents and estimate the fundraising vs. club-use
+    split (a rough percentage is fine — this doesn't need a spreadsheet).
+  - [ ] Decide the split policy: if predominantly fundraising, the Foundation reimbursing the club
+    a proportional share of this year's fee is the precise treatment (club already paid 100%,
+    which is the compliance-safe direction — the club overpaying is always fine; the reverse isn't).
+    If roughly 50/50 or unclear, keeping it 100% club-paid is simplest and defensible.
+  - [ ] Record the chosen policy in board minutes; apply it at next year's renewal.
 - [ ] **T-06 — One PO box or two?** USPS box rental paid from the Foundation ($256, 12/2024) and
   from admin ($268, 12/2025). If it's one box, pick the account that pays it consistently.
 
@@ -128,7 +144,29 @@ can be referenced from work-logs, board minutes, and future sessions.
   direct-to-admin guardrail will flag these if recorded as admin income). After the split, verify
   each form's payout account and update the Zeffy links on the site if they change.
 
+- [ ] **T-20 — Minute the petty-cash opening adjustment.** 2026-07-21: $250 of petty cash on hand
+  (origin predates the books / unknown) was brought onto the books as an opening-balance
+  adjustment — club Administrative Fund opening raised $19,090.10 → $19,340.10 in production and
+  dev, and a "Petty Cash" account (cash type, 1 signer) was added alongside Administrative
+  Checking. Remaining: record one line in the next board minutes ("$250 petty cash on hand brought
+  onto the books, opening-balance adjustment"); count the box and confirm it actually holds $250;
+  going forward, record cash spent from the box as normal expenses against the Petty Cash account.
+  NOTE for future sessions: `scripts/import-quicken-ledger.ts --apply` hard-codes the register-only
+  opening ($19,090.10) and would clobber this adjustment if ever re-run — re-apply the +$250
+  afterward (the port script is safe; it copies dev's live values).
+
 ## Reference notes (context, not action items)
+
+- **Activity Fund policy: pass-through, target balance $0.** The club's Activity Fund exists to
+  receive public money that physically arrives in club hands (event cash, Square receipts, checks
+  written to the club, Zeffy while T-17 is unresolved). It may only be spent on public/service
+  purposes — never club operations. Because the Foundation (501c3) does everything the Activity
+  Fund does plus tax-deductibility and grant eligibility, the operating policy is: money landing
+  in the Activity Fund is promptly either spent directly on service or swept to the Foundation —
+  it is a clearing account, not a home. The Ledger's guardrails enforce the drift cases
+  (direct-to-admin WARN for public money in the wrong fund; aged-public-fund WARN for loitering
+  balances — see T-04's $84.52). Steer donors to the Foundation whenever possible so their gift
+  is deductible.
 
 - **Zeffy payouts land as Monday lump deposits.** Zeffy sweeps the prior week's payments into the
   bank account every Monday, so one bank-statement line covers several individual Ledger rows (dues

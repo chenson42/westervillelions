@@ -205,11 +205,7 @@ export default async function AdminLedgerFundPage({
               funds={allFunds}
               categories={categories}
               bankAccounts={bankAccounts}
-              trigger={
-                <button className="bg-lions-blue text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] whitespace-nowrap text-sm">
-                  Record Transaction
-                </button>
-              }
+              triggerLabel="Record Transaction"
             />
           )}
         </div>

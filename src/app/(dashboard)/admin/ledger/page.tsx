@@ -145,7 +145,6 @@ export default async function AdminLedgerPage({
   return (
     <LedgerEntityDetail
       entity={entity}
-      entities={entities}
       resolvedSlug={entity.slug}
       fiscalYear={fiscalYear}
       funds={funds}

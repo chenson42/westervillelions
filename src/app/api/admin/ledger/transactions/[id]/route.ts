@@ -50,7 +50,7 @@ import { FEATURES } from "@/lib/permissions";
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
 const VALID_FLOWS = ["income", "expense"] as const;
-const VALID_METHODS = ["check", "cash", "zeffy", "other"] as const;
+const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "other"] as const;
 
 function isValidFlow(v: unknown): boolean {
   return typeof v === "string" && (VALID_FLOWS as readonly string[]).includes(v);
@@ -235,7 +235,7 @@ export async function PATCH(
     if (body.paymentMethod !== undefined) {
       if (body.paymentMethod !== null && !isValidMethod(body.paymentMethod)) {
         return NextResponse.json(
-          { error: "paymentMethod must be one of: check, cash, zeffy, other" },
+          { error: "paymentMethod must be one of: check, cash, zeffy, debit_card, other" },
           { status: 400 },
         );
       }
