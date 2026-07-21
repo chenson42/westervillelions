@@ -250,16 +250,16 @@ export function GroupForm({
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Email Prefix
             </label>
-            <div className="flex items-center">
+            <div className="flex flex-wrap items-stretch">
               <input
                 type="text"
                 name="emailPrefix"
                 value={emailPrefix}
                 onChange={(e) => setEmailPrefix(e.target.value)}
                 placeholder="committee-name"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-l-md focus:ring-2 focus:ring-lions-blue focus:border-transparent text-sm"
+                className="min-w-[140px] flex-1 rounded-l-md rounded-r-md border border-gray-300 px-3 py-2 focus:border-transparent focus:ring-2 focus:ring-lions-blue text-sm sm:rounded-r-none"
               />
-              <span className="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-100 text-sm text-gray-500 select-none">
+              <span className="inline-flex items-center rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-sm text-gray-500 select-none sm:rounded-l-none sm:border-l-0">
                 @westervillelions.org
               </span>
             </div>

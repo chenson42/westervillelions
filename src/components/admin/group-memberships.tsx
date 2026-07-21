@@ -209,8 +209,8 @@ export function GroupMemberships({
 
       {/* Add member */}
       {available.length > 0 && (
-        <div className="flex gap-3 items-end pt-2 border-t border-gray-100">
-          <div className="flex-1">
+        <div className="flex flex-wrap gap-3 items-end pt-2 border-t border-gray-100">
+          <div className="min-w-[180px] flex-1">
             <label className="block text-xs font-medium text-gray-600 mb-1">Add Member</label>
             <select
               value={selectedMemberId}

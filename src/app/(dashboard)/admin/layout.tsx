@@ -35,7 +35,7 @@ export default async function AdminLayout({
       <AdminSidebar userFeatures={userFeatures} isAdmin={isAdmin} />
 
       {/* Main content */}
-      <div className="flex-1 lg:pl-64">
+      <div className="flex-1 min-w-0 lg:pl-64">
         <main className="p-6">{children}</main>
       </div>
     </div>

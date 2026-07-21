@@ -48,6 +48,8 @@ import {
   budgetVariance,
   guardrails,
   countAgedPublicFunds,
+  agedPublicFundNames,
+  daysSinceTxnDate,
   determine990,
   computeDueDate,
   isFilingOverdue,
@@ -126,6 +128,14 @@ export type EntityOverview = {
   grossReceiptsCents: number;
   determine990Result: { form: string; why: string };
   guardrailFlags: GuardrailFlag[];
+  /** Count of posted transactions with syncStale=true — already computed
+   *  inside getOverview(), now also returned directly (Ledger Dashboard
+   *  "other audit items" panel, DECISION-031). */
+  syncStaleTxns: number;
+  /** Count of posted, unreconciled transactions dated before the first of the
+   *  current calendar month — already computed inside getOverview(), now also
+   *  returned directly (Ledger Dashboard "other audit items" panel, DECISION-031). */
+  unreconciledPriorMonth: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -550,6 +560,8 @@ export async function getOverview(
         assetsCents: 0,
       }),
       guardrailFlags: [],
+      syncStaleTxns: 0,
+      unreconciledPriorMonth: 0,
     };
   }
 
@@ -786,6 +798,7 @@ export async function getOverview(
     .filter((f) => publicFundIds.includes(f.id))
     .map((f) => ({
       fundKind: f.kind,
+      fundName: f.name, // Ledger Dashboard usability fix (DECISION-032)
       crossFyBalanceCents: fundBalanceCents(f.openingBalanceCents, [
         { flow: "income", amountCents: incomeTotalByFundId.get(f.id) ?? 0 },
         { flow: "expense", amountCents: expenseTotalByFundId.get(f.id) ?? 0 },
@@ -794,6 +807,14 @@ export async function getOverview(
     }));
 
   const agedPublicFundsRaw = countAgedPublicFunds(
+    agedPublicFundFacts,
+    settings.holdingPeriodWarnDays,
+  );
+
+  // Ledger Dashboard usability fix (DECISION-032): fund names for the aged
+  // funds, sharing isAgedPublicFund()'s qualification rule with the count
+  // above via agedPublicFundNames() — can never disagree.
+  const agedPublicFundNamesRaw = agedPublicFundNames(
     agedPublicFundFacts,
     settings.holdingPeriodWarnDays,
   );
@@ -868,6 +889,7 @@ export async function getOverview(
     syncStaleTxns,
     // inc7: compliance guardrail inputs
     agedPublicFunds,
+    agedPublicFundNames: agedPublicFundNamesRaw,
     adminPublicIncomeCount,
   });
 
@@ -884,6 +906,159 @@ export async function getOverview(
     grossReceiptsCents: grossReceipts,
     determine990Result,
     guardrailFlags,
+    syncStaleTxns,
+    unreconciledPriorMonth,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// getDashboard — Ledger Dashboard (Two-Entity Homepage, DECISION-031/032)
+// ---------------------------------------------------------------------------
+
+export type EntityTaggedGuardrailFlag = GuardrailFlag & {
+  entitySlug: string;
+  entityName: string; // entity.shortName ?? entity.name
+};
+
+export type DashboardEntitySummary = {
+  entity: LedgerEntity;
+  /** Sum of overview.funds[].endingCents — the entity's true rolled-forward
+   *  balance as of today (DECISION-029 balances), NOT re-derived via a new query. */
+  entityBalanceCents: number;
+  grossReceiptsCents: number; // current-FY, from overview.grossReceiptsCents
+  fundCount: number;
+  /** overview.guardrailFlags.length — badge count on the entity card.
+   *  Full flag detail lives in DashboardData.guardrailFlags below, not repeated per-card. */
+  alertCount: number;
+  syncStaleTxns: number;
+  unreconciledPriorMonth: number;
+};
+
+export type UncashedCheckRow = {
+  id: string;
+  entitySlug: string;
+  entityName: string;
+  fundSlug: string;
+  fundName: string;
+  party: string | null;
+  amountCents: number;
+  txnDate: string; // 'YYYY-MM-DD'
+  memo: string | null;
+  ageDays: number; // computed via daysSinceTxnDate()
+};
+
+export type DashboardData = {
+  fiscalYear: number; // current FY, computed once and shared by every figure below
+  entities: DashboardEntitySummary[];
+  /** Merged, entity-tagged, both entities' guardrail flags — feeds the audit-items panel. */
+  guardrailFlags: EntityTaggedGuardrailFlag[];
+  uncashedChecks: UncashedCheckRow[]; // oldest-first, both entities
+  syncStaleTxnsTotal: number; // cross-entity sum, for the audit-items panel
+  unreconciledPriorMonthTotal: number; // cross-entity sum
+};
+
+/**
+ * Composes the two-entity dashboard: parallel getOverview() calls at the
+ * current fiscal year (one `now`/FY shared across both entities and the
+ * uncashed-checks age computation — DECISION-031), plus one new cross-entity
+ * query for unreconciled check-method expense transactions.
+ *
+ * Does NOT fetch pending approvals — the caller (page.tsx) already gates that
+ * behind LEDGER_APPROVE and fetches it separately, exactly as the existing
+ * detail page does. Keeping that out of getDashboard() avoids putting a
+ * permission-shaped decision inside the query layer.
+ *
+ * inc3 compliance-filing guardrail inputs (irsFilingHistory, overdueFilingCount)
+ * are NOT threaded in here — same parity as today's plain (non-compliance)
+ * getOverview() call on the existing page. The revocation/overdue-filing flags
+ * only ever appear on /admin/ledger/compliance, unchanged by this feature.
+ */
+export async function getDashboard(): Promise<DashboardData> {
+  const entities = await getEntities();
+  const fiscalYear = currentFiscalYear(new Date());
+
+  const overviews = await Promise.all(entities.map((e) => getOverview(e.id, fiscalYear)));
+
+  const entitySummaries: DashboardEntitySummary[] = [];
+  const guardrailFlags: EntityTaggedGuardrailFlag[] = [];
+  let syncStaleTxnsTotal = 0;
+  let unreconciledPriorMonthTotal = 0;
+
+  entities.forEach((entity, i) => {
+    const overview = overviews[i];
+    if (!overview) return; // defensive; getOverview() only returns null if the entity row vanished mid-request
+    const entityBalanceCents = overview.funds.reduce((s, f) => s + f.endingCents, 0);
+    entitySummaries.push({
+      entity,
+      entityBalanceCents,
+      grossReceiptsCents: overview.grossReceiptsCents,
+      fundCount: overview.funds.length,
+      alertCount: overview.guardrailFlags.length,
+      syncStaleTxns: overview.syncStaleTxns,
+      unreconciledPriorMonth: overview.unreconciledPriorMonth,
+    });
+    for (const flag of overview.guardrailFlags) {
+      guardrailFlags.push({
+        ...flag,
+        entitySlug: entity.slug,
+        entityName: entity.shortName ?? entity.name,
+      });
+    }
+    syncStaleTxnsTotal += overview.syncStaleTxns;
+    unreconciledPriorMonthTotal += overview.unreconciledPriorMonth;
+  });
+
+  // Cross-entity uncashed checks: posted, unreconciled, check-method EXPENSE
+  // rows (flow scoped to 'expense' — DECISION-032 point 4 — "uncashed checks"
+  // is a check-writer's-eye-view concept, not "any check-tagged transaction").
+  const uncashedRows = await db
+    .select({
+      id: ledgerTransactions.id,
+      entityId: ledgerTransactions.entityId,
+      party: ledgerTransactions.party,
+      amountCents: ledgerTransactions.amountCents,
+      txnDate: ledgerTransactions.txnDate,
+      memo: ledgerTransactions.memo,
+      fundSlug: ledgerFunds.slug,
+      fundName: ledgerFunds.name,
+    })
+    .from(ledgerTransactions)
+    .leftJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .where(
+      and(
+        eq(ledgerTransactions.paymentMethod, "check"),
+        eq(ledgerTransactions.flow, "expense"),
+        eq(ledgerTransactions.status, "posted"),
+        eq(ledgerTransactions.reconciled, false),
+      ),
+    )
+    .orderBy(asc(ledgerTransactions.txnDate));
+
+  const entityById = new Map(entities.map((e) => [e.id, e]));
+  const now = new Date();
+  const uncashedChecks: UncashedCheckRow[] = uncashedRows.map((r) => {
+    const entity = entityById.get(r.entityId);
+    return {
+      id: r.id,
+      entitySlug: entity?.slug ?? "",
+      entityName: entity?.shortName ?? entity?.name ?? "Unknown entity",
+      fundSlug: r.fundSlug ?? "",
+      fundName: r.fundName ?? "Unknown fund",
+      party: r.party,
+      amountCents: r.amountCents,
+      txnDate: r.txnDate,
+      memo: r.memo,
+      ageDays: daysSinceTxnDate(r.txnDate, now),
+    };
+  });
+
+  return {
+    fiscalYear,
+    entities: entitySummaries,
+    guardrailFlags,
+    uncashedChecks,
+    syncStaleTxnsTotal,
+    unreconciledPriorMonthTotal,
   };
 }
 
@@ -1904,11 +2079,14 @@ export type PhilanthropySummary = {
   byFiscalYear: PhilanthropyByFY[];
   /**
    * Per-fiscal-year cause breakdowns for the FY filter pills on
-   * /members/impact — keyed by fiscal-year start-year integer. Always
-   * contains exactly 4 keys: the current FY and the 3 prior FYs, regardless
-   * of whether any giving was recorded in a given year (a year with no
-   * giving maps to an empty array). Percentages within each year's array
-   * are relative to THAT year's total, not the all-time total.
+   * /members/impact — keyed by fiscal-year start-year integer. Contains one
+   * entry for every fiscal year that appears in the giving data, PLUS the
+   * current FY even when it has no giving yet (it's always the pill
+   * dashboard's default selection and needs its own — possibly empty —
+   * entry). NOT clamped to a fixed window: the client decides which years
+   * render as fixed pills vs. behind "More" via deriveCauseFyPills() in
+   * src/lib/fiscal-year.ts. Percentages within each year's array are
+   * relative to THAT year's total, not the all-time total.
    */
   byCauseByFy: Record<number, PhilanthropyByCause[]>;
   /** Up to recentGiftsLimit rows, party IS NOT NULL, sorted desc by txnDate. */
@@ -1992,19 +2170,18 @@ export async function getPhilanthropy(
 
   const currentFY = currentFiscalYear(new Date());
 
-  // FY filter pills on /members/impact: current FY + the 3 prior FYs.
-  const targetFYs = [currentFY, currentFY - 1, currentFY - 2, currentFY - 3];
-  const targetFYSet = new Set(targetFYs);
-
   let allTimeCents = 0;
   let currentFyCents = 0;
 
   // fiscalYear (number) → totalCents
   const fyMap = new Map<number, number>();
-  // fiscalYear (number) → giving rows for that FY, but only for the target
-  // FYs the impact page's pills care about — no need to retain every row
-  // for every historical FY in memory.
-  const rowsByTargetFy = new Map<number, GivingFoldRow[]>();
+  // fiscalYear (number) → giving rows for that FY. Retains every fiscal year
+  // present in the data — not clamped to a fixed window — so the client-side
+  // FY filter pills on /members/impact can reveal older years via "More"
+  // with no extra DB round trip (2026-07-20 pill rework; the fixed-vs-"More"
+  // split is computed client-side by deriveCauseFyPills() in
+  // src/lib/fiscal-year.ts).
+  const rowsByFy = new Map<number, GivingFoldRow[]>();
 
   for (const row of givingRows) {
     allTimeCents += row.amountCents;
@@ -2017,13 +2194,11 @@ export async function getPhilanthropy(
     // By-FY grouping
     fyMap.set(rowFY, (fyMap.get(rowFY) ?? 0) + row.amountCents);
 
-    // Per-target-FY row collection, for byCauseByFy below. Single pass over
-    // the already-fetched givingRows — no extra DB round trip.
-    if (targetFYSet.has(rowFY)) {
-      const arr = rowsByTargetFy.get(rowFY) ?? [];
-      arr.push(row);
-      rowsByTargetFy.set(rowFY, arr);
-    }
+    // Per-FY row collection, for byCauseByFy below. Single pass over the
+    // already-fetched givingRows — no extra DB round trip.
+    const arr = rowsByFy.get(rowFY) ?? [];
+    arr.push(row);
+    rowsByFy.set(rowFY, arr);
   }
 
   // Build byCause (all-time, unchanged behavior — now delegates to the
@@ -2031,11 +2206,15 @@ export async function getPhilanthropy(
   // can never drift out of sync).
   const byCause: PhilanthropyByCause[] = bucketGivingByCause(givingRows);
 
-  // Build byCauseByFy: one cause breakdown per target FY, percentages
-  // relative to that FY's own total. A target FY with no rows yields [].
+  // Build byCauseByFy: one cause breakdown per fiscal year that appears in
+  // the giving data, plus the current FY even when it has no giving yet (the
+  // impact page's default pill selection needs its own — possibly empty —
+  // entry). Percentages within each year's array are relative to that year's
+  // own total.
+  const byCauseByFyYears = new Set<number>([currentFY, ...fyMap.keys()]);
   const byCauseByFy: Record<number, PhilanthropyByCause[]> = {};
-  for (const fy of targetFYs) {
-    byCauseByFy[fy] = bucketGivingByCause(rowsByTargetFy.get(fy) ?? []);
+  for (const fy of byCauseByFyYears) {
+    byCauseByFy[fy] = bucketGivingByCause(rowsByFy.get(fy) ?? []);
   }
 
   // Build byFiscalYear: sort desc by fiscalYear

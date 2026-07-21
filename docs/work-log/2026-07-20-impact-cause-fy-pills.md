@@ -128,6 +128,52 @@ Dev server was already running on `localhost:3000` (not restarted, per instructi
 
 ---
 
+# Rework — Fiscal-Year Pill Set (full-stack-developer) — 2026-07-20
+
+**Owner:** full-stack-developer
+**Status:** complete
+**Pipeline mode:** bug-fix-scale — Phases 1–3 skipped (trivial-enough, condensed orchestrator brief), same as the original shipped feature. Documented per the no-silent-skips rule.
+
+## Treasurer spec (same day, after shipping)
+
+> "For Giving by Cause let's leave 23-24 off since we don't have that data. Let's just show All, then the next three fiscal years, and maybe a More pill to get to older data if it exists."
+
+The shipped v1.28.0 version hardcoded exactly 4 pills (current FY + 3 prior), which surfaced `FY2023–24` even though the books only start FY2024 — the treasurer's complaint.
+
+## What changed
+
+- **`src/lib/fiscal-year.ts`** — added a new pure, exported helper `deriveCauseFyPills(dataYears: number[], currentFY: number): { fixed: number[]; more: number[] }`. `fixed` = current FY + 2 prior, clamped so it never includes a year earlier than `Math.min(...dataYears)` (current FY itself is exempt from the clamp — always shows). `more` = any data-bearing year older than the fixed set, newest-first. Placed here (not `ledger.ts`) because `ledger.ts`/`ledger.test.ts` were off-limits — another agent was concurrently building the admin ledger dashboard against those files.
+- **`src/lib/ledger-queries.ts`** — `getPhilanthropy()`'s single-pass fold no longer clamps `byCauseByFy` to a fixed 4-year window (`targetFYs`/`targetFYSet`/`rowsByTargetFy` removed). It now retains giving rows for **every** fiscal year present in the data (`rowsByFy`), and builds `byCauseByFy` for every year that appears in `fyMap` plus the current FY (even if the current FY has zero rows — it's always the default pill). Still zero extra DB round-trips; same single pass over the already-fetched `givingRows`. `PhilanthropySummary.byCauseByFy`'s JSDoc updated to describe the new unclamped contract. Re-read the file immediately before editing per the concurrency instruction; diff stayed confined to `getPhilanthropy()`'s fold and the type doc comment — did not touch `ledger.ts`, `ledger.test.ts`, `src/app/(dashboard)/admin/ledger/page.tsx`, or `src/components/admin/ledger/*`.
+- **`src/app/members/impact/page.tsx`** — replaced the hardcoded `[fy, fy-1, fy-2, fy-3]` array with a data-driven derivation: `dataYears = philanthropy.byFiscalYear.map(fy => fy.fiscalYear)` (already only contains years with actual data — never synthesized) fed into `deriveCauseFyPills(dataYears, currentFY)`, producing `fixedFiscalYears`/`moreFiscalYears` passed down as new props.
+- **`src/components/members/impact-by-cause.tsx`** — prop shape changed from a single `fiscalYears: number[]` to `fixedFiscalYears: number[]` + `moreFiscalYears: number[]`. Added local `showMore` state; a dashed-outline "More" pill (secondary styling — `border-dashed border-gray-300 text-gray-500`, distinct from the selected/unselected filled-vs-outlined pill states) renders only when `moreFiscalYears.length > 0` and hasn't been expanded yet. Clicking it reveals the older years as ordinary pills in place — no re-collapse, no page reload, no server round-trip (all data was already present in `byCauseByFy` from the unclamped query). Pill order unchanged: All first, then fiscal years newest-first, then More last when present.
+- **`src/lib/ledger-impact.test.ts`** — added `describe("deriveCauseFyPills", ...)` with 7 new tests: today's real dev-data shape (3 fixed, no More), the earliest-year clamp (data starts in the current FY, both prior candidates dropped), the exact 3-data-years → no-More boundary, the 4-data-years → More boundary, a 5-data-years multi-year More case, current-FY-always-renders-even-empty, and a defensive no-data-at-all fallback.
+
+## Gates
+
+1. **Unit tests:** `pnpm test` → **359 passed** (352 baseline + 7 new `deriveCauseFyPills` tests). No regressions.
+2. **Typecheck:** `pnpm exec tsc --noEmit` → clean, no output.
+3. **Production build:** `pnpm build:only` → passed, `/members/impact` compiled as a dynamic route alongside all other routes, no errors.
+4. **Live check (dev server, not restarted):**
+   - Queried the dev DB directly for actual giving-by-FY totals: FY2025 ($27,075.36) and FY2024 ($34,949.17) have posted giving; no other fiscal years have any. `currentFiscalYear(new Date())` = 2026 (today is 2026-07-20, before the Jul 1 FY2026 cutover data has landed). Expected pill set: `All | FY2026–27 | FY2025–26 | FY2024–25`, no `FY2023–24`, no `More`.
+   - Confirmed `users.member_id` for the e2e admin (`lions-e2e-test@westervillelions.org`) was `NULL` (prior session's revert held).
+   - Temporarily linked it to Chris Henson's member row (`102f53a4-e293-4e17-8e8a-a22151999ac2`, same row used in the original Phase 5 verification) via direct SQL `UPDATE`.
+   - Wrote a temporary Playwright spec (`e2e/tmp-impact-cause-fy-pills.spec.ts`, since deleted) that signs in via `signInAsAdmin()`, loads `/members/impact`, and asserts: no "Account Not Linked" state; the pill bar contains exactly 4 buttons (`All`, `FY2026–27`, `FY2025–26`, `FY2024–25`); `FY2023–24` and `More` are both absent; the current-FY pill is selected by default (`bg-lions-blue`) and shows the empty-state message; clicking `FY2024–25` (has data) clears the empty state; clicking `All` renders the all-time list.
+   - Ran it: **PASS** (1/1). Note: `signInAsAdmin()` reads `E2E_ADMIN_EMAIL`/`E2E_ADMIN_PASSWORD` from `process.env`, which Playwright does not auto-load from `.env.local` — had to `export $(grep -E "^(E2E_ADMIN_EMAIL|E2E_ADMIN_PASSWORD)=" .env.local | xargs)` before invoking `pnpm exec playwright test`.
+   - Reverted: `UPDATE users SET member_id = NULL WHERE email = 'lions-e2e-test@westervillelions.org'` — confirmed via `RETURNING` that `member_id` is back to `NULL`.
+   - Deleted `e2e/tmp-impact-cause-fy-pills.spec.ts`. `test-results/` only contained `.last-run.json` (gitignored, not a residue concern) — no other artifacts from this run to clean up. `git status` afterward shows no e2e/test-results residue attributable to this task (unrelated untracked files present belong to the concurrent admin-ledger-dashboard agent's session and were left untouched).
+
+## Verified pill list (live, dev data as of 2026-07-20)
+
+**All | FY2026–27 | FY2025–26 | FY2024–25** — no `FY2023–24`, no `More` pill. Default selection: `FY2026–27` (current FY), showing the "No giving recorded yet this fiscal year." empty state since no giving has posted to FY2026 yet.
+
+## Open questions / handoff notes
+
+- Not manually verified: the "More" pill's expand behavior itself, since today's dev data only has 2 data years (FY2024, FY2025) plus the empty current FY — exactly the no-More case. `deriveCauseFyPills`'s unit tests cover the 4+/exactly-3 boundary and the multi-year expansion logic directly, but there's no live dataset today with 4+ years of giving to click-verify the reveal animation/interaction against. Once the books pass two more fiscal years (FY2027 or later with FY2023 still absent, or if FY2023 data is ever backfilled), a live click-through of the More pill would be worth doing.
+- No schema change, no new `FEATURES` entry, no new env var.
+- Nominating **analyst** to fold this rework into the Phase 6 shipped-vs-intent review (or re-run Phase 6 if it already closed against the pre-rework shape).
+
+---
+
 # Phase 6 — Shipped vs Intent (analyst)
 
-Not yet run — nominating **analyst** to close the pipeline (Phase 6, shipped-vs-intent review) next.
+Not yet run — nominating **analyst** to close the pipeline (Phase 6, shipped-vs-intent review) next, covering both the original shipped shape and this same-day pill-set rework.

@@ -42,7 +42,7 @@ export default async function AdminAnnouncementsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Announcements</h1>
           <p className="mt-2 text-gray-600">
@@ -51,7 +51,7 @@ export default async function AdminAnnouncementsPage() {
         </div>
         <Link
           href="/admin/announcements/new"
-          className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
+          className="rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 self-start"
         >
           New Announcement
         </Link>

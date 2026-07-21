@@ -35,7 +35,7 @@ export default function FiscalYearSelector({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <label
         htmlFor="ledger-fy-selector"
         className="text-sm font-medium text-gray-700 whitespace-nowrap"

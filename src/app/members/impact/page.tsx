@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { getSettings, getPhilanthropy, type PhilanthropySummary } from "@/lib/ledger-queries";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-import { currentFiscalYear } from "@/lib/fiscal-year";
+import { currentFiscalYear, deriveCauseFyPills } from "@/lib/fiscal-year";
 import ImpactByCause from "@/components/members/impact-by-cause";
 
 export const dynamic = "force-dynamic";
@@ -94,7 +94,14 @@ async function ImpactDashboard() {
   }
 
   const currentFY = currentFiscalYear(new Date());
-  const fiscalYears = [currentFY, currentFY - 1, currentFY - 2, currentFY - 3];
+  // byFiscalYear only ever contains years with actual giving data (built
+  // from fyMap in getPhilanthropy(), never synthesized) — the data-driven
+  // input to the pill split below.
+  const dataYears = philanthropy.byFiscalYear.map((fy) => fy.fiscalYear);
+  const { fixed: fixedFiscalYears, more: moreFiscalYears } = deriveCauseFyPills(
+    dataYears,
+    currentFY,
+  );
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -102,7 +109,8 @@ async function ImpactDashboard() {
       <ImpactByCause
         allTime={philanthropy.byCause}
         byCauseByFy={philanthropy.byCauseByFy}
-        fiscalYears={fiscalYears}
+        fixedFiscalYears={fixedFiscalYears}
+        moreFiscalYears={moreFiscalYears}
         currentFiscalYear={currentFY}
       />
       <ImpactByFiscalYear philanthropy={philanthropy} />

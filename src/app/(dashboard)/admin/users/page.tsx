@@ -145,13 +145,13 @@ export default async function UsersPage({
       )}
 
       {/* Filters */}
-      <form method="GET" className="flex gap-3">
+      <form method="GET" className="flex flex-wrap gap-3">
         <input
           type="text"
           name="search"
           defaultValue={search || ""}
           placeholder="Search by name or email..."
-          className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+          className="min-w-[200px] flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
         />
         <select
           name="role"

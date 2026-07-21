@@ -20,6 +20,11 @@ can be referenced from work-logs, board minutes, and future sessions.
 - [ ] **T-02 — Two outstanding checks to Ohio Lions Foundation.** #8249 ($1,000) and #8257 ($200),
   both written 3/7/2026, still uncleared as of the 7/9/2026 register export (~4 months stale).
   Contact the payee; void and reissue if lost. Imported as `reconciled = false` in the Ledger.
+  *2026-07-21 analysis: no replacement checks were ever issued (these are genuinely outstanding),
+  and the wrong-address theory fits the evidence — the same-day #8258 to OLF Eye Care Fund ($1,000)
+  cleared while these two to OLF general did not, and the prior year's identical trio (6/20/2025)
+  all cleared. Likely a stale general-OLF remittance address. Action: get OLF's current address,
+  stop payment on #8249/#8257, reissue, and record the void + reissue in the Ledger.*
 - [ ] **T-03 — Clarify tailtwisting policy.** July 2024: $552 of tailtwisting was swept to the
   Foundation, memo calling it "the philanthropic account." Since then (~$2,000 over two years) every
   tailtwisting deposit stayed in admin with no further sweeps. Board should clarify: is tailtwisting
@@ -29,7 +34,10 @@ can be referenced from work-logs, board minutes, and future sessions.
   ($97.50, 3/17/2025) and two donations ($40 Jeff Reschke 2/22/2025, $1 Winterfest 1/25/2025).
   Mapped to the club's activity fund in the Ledger, but the cash physically sits in admin checking.
   Going forward, deposit fundraiser/donation money to the Foundation account — the Ledger's
-  direct-to-admin guardrail (v1.26.0) now warns on this pattern.
+  direct-to-admin guardrail (v1.26.0) now warns on this pattern. *2026-07-20: this same $84.52 now
+  also trips the club-side aged-public-fund WARN (oldest income 1/25/2025 > 365 days). Treasurer
+  decision: keep the guardrail as-is (no de minimis floor, no club exemption) — clearing this item
+  (forward $84.52 to the Foundation or spend on service) clears the warning naturally.*
 - [ ] **T-05 — Officer bonding: verify, transfer, and track renewals.** Both entities carry fidelity
   bonds at $187/yr: club via CNA Surety from admin (10/2024, 9/2025), Foundation via Western Surety
   from the Foundation account (3/2025, 2/2026). Western Surety is a CNA Surety company; two bonds for
@@ -43,6 +51,19 @@ can be referenced from work-logs, board minutes, and future sessions.
     Western Surety expected ~February 2027 (pay from Foundation).
   - [ ] Once verified current and correctly named, tick the "treasurer bonded" checkbox in the
     Ledger's settings so the compliance view reflects it.
+- [ ] **T-19 — Storage unit: decide the right payer.** Westerville North Self Storage annual rent
+  was paid by the Foundation twice ($794 7/22/2024, $948 5/29/2025, memo "for fundraising
+  supplies") — both payments fell within FY2024–25, so FY2025–26 shows no storage expense at all.
+  Treasurer reports the unit stores general club property, not just fundraising supplies → mixed
+  use means the Foundation paying subsidizes the club (same direction as T-01).
+  *2026-07-20 — treasurer paid this year's fee from the **club (admin) account**, per instinct that
+  it's clearly a club expense, and sent a note to the former treasurers asking for their thoughts
+  on the historical Foundation treatment ("My instinct was that this was clearly an Administrative
+  Club Account expense… However it was logged under the Foundation in the 24-25 fiscal year. We
+  made the payment for 24 and 25 both in the 24-25 fiscal year. Thoughts?").*
+  Remaining: capture the former treasurers' rationale when they reply; if the Foundation-payer
+  history had a deliberate basis (e.g., unit deemed predominantly fundraising storage), decide
+  whether to cost-share going forward; record the final payer policy in board minutes.
 - [ ] **T-06 — One PO box or two?** USPS box rental paid from the Foundation ($256, 12/2024) and
   from admin ($268, 12/2025). If it's one box, pick the account that pays it consistently.
 
@@ -68,9 +89,17 @@ can be referenced from work-logs, board minutes, and future sessions.
 
 ## Operational / next steps
 
-- [ ] **T-12 — Seed production.** The import ran against the local DB only. When ready:
+- [x] **T-12 — Seed production.** ~~The import ran against the local DB only. When ready:
   `scripts/import-quicken-ledger.ts --apply` with the production `DATABASE_URL` (idempotent —
-  deletes and re-inserts its own `[quicken-import]`-tagged rows).
+  deletes and re-inserts its own `[quicken-import]`-tagged rows).~~ — **2026-07-20 done:** ported
+  from dev via `scripts/port-ledger-dev-to-prod.ts` (not a re-run of the CSV import — dev's
+  already-hardened ledger data was copied over, remapped by natural key). 276 marker transactions,
+  15 dev-only categories, both fund opening balances, and both bank-account renames landed in
+  production; the 7 live dues-auto-post rows were left untouched. All verification numbers matched
+  exactly (club $16,218.64, foundation $4,836.57, per-cause totals, 3 overhead categories). See
+  `docs/work-log/2026-07-20-ledger-quicken-seed.md` Phase 4c for full detail. Also backfilled 14
+  missing dues-ledger rows in the same session via `scripts/backfill-dues-ledger.ts` (see that
+  same work-log entry) — production dues ledger total is now $2,501.00.
 - [ ] **T-13 — Reconcile the 24 monthly bank-statement PDFs** (Jul 2025–Jun 2026, both accounts, in
   the transfer-documents folder) against the imported register; mark discrepancies here.
 - [ ] **T-14 — Upload the Foundation's IRS determination letter** to the Ledger's filings surface
@@ -83,6 +112,13 @@ can be referenced from work-logs, board minutes, and future sessions.
   (v1.26.0) will WARN on the Foundation's balance because its oldest income exceeds the 365-day
   holding period. LCI guidance allows aged public funds when earmarked for specific projects —
   document any such earmarks in board minutes. (In-app earmark support is a tracked feature follow-up.)
+
+- [ ] **T-18 — Structured check numbers in the Ledger.** Check numbers from the register live in
+  free-text memos (e.g. "Check #8249" context only in memo/party text). The Ledger dashboard's
+  uncashed-checks list (2026-07-20 feature, DECISION-031) reads memo text in v1. When check-writing
+  volume or reconciliation friction warrants it, add a structured `check_number` column to
+  `ledger_transactions`, backfill by parsing the imported memos, and surface it in the transaction
+  form + uncashed-checks list. (Ruled out of scope for the dashboard v1 by the architect.)
 
 - [ ] **T-17 — Split Zeffy across two accounts (transitional state as of 2026-07-20).** All Zeffy
   forms currently settle to the **club (admin) bank account** — a temporary arrangement so dues land

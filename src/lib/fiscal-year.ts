@@ -43,3 +43,37 @@ export function currentFiscalYear(now: Date): number {
 export function fiscalYearLabel(fy: number): string {
   return `FY${fy} (Jul ${fy} – Jun ${fy + 1})`;
 }
+
+/**
+ * Derives the fiscal-year pill split for the "Giving by Cause" filter on
+ * /members/impact (2026-07-20 rework).
+ *
+ * `fixed`: the current FY plus the two prior FYs (three pills, newest
+ * first) — but never a year earlier than the earliest FY with giving data
+ * (`Math.min(...dataYears)`). The current FY is exempt from that clamp: it
+ * always renders, data or not, since it's the default selection and has its
+ * own empty-state message.
+ *
+ * `more`: any data-bearing FY older than the fixed set, newest first. Empty
+ * when there's nothing older to reveal — callers should skip rendering a
+ * "More" pill in that case.
+ *
+ * Pure function — `dataYears` is the set of fiscal years that actually have
+ * giving data (e.g. `philanthropy.byFiscalYear.map(fy => fy.fiscalYear)`),
+ * in any order; `currentFY` is passed in for testability.
+ */
+export function deriveCauseFyPills(
+  dataYears: number[],
+  currentFY: number,
+): { fixed: number[]; more: number[] } {
+  const earliestDataFy = dataYears.length > 0 ? Math.min(...dataYears) : currentFY;
+
+  const fixed = [currentFY, currentFY - 1, currentFY - 2].filter(
+    (fy) => fy === currentFY || fy >= earliestDataFy,
+  );
+  const minFixed = Math.min(...fixed);
+
+  const more = dataYears.filter((fy) => fy < minFixed).sort((a, b) => b - a);
+
+  return { fixed, more };
+}

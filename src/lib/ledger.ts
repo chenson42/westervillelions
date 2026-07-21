@@ -20,6 +20,11 @@
  *
  * Guardrails activated in inc7: aged public-fund balances (WARN),
  * direct-to-admin public income (WARN); firewall policyCite upgraded to §3(g).
+ *
+ * Ledger Dashboard (Two-Entity Homepage, 2026-07-20 / DECISION-031/032): no new
+ * guardrail checks. Aged-public-fund detail text gains an optional fund-name
+ * parenthetical (agedPublicFundNames()); new daysSinceTxnDate() helper feeds
+ * the uncashed-checks list's age column.
  */
 
 // ---------------------------------------------------------------------------
@@ -474,7 +479,32 @@ export type AgedPublicFundFact = {
   /** ISO date string ('YYYY-MM-DD') of the oldest posted income transaction
    *  for this fund across ALL fiscal years, or null if none exists. */
   oldestPostedIncomeDate: string | null;
+  /** Optional — the fund's display name (e.g. "Charitable Fund"), used by
+   *  agedPublicFundNames() for the dashboard's entity-tagged guardrail-flag
+   *  usability fix (inc7 dashboard, DECISION-032). Optional so the 11
+   *  existing countAgedPublicFunds test literals (which don't set it) keep
+   *  compiling untouched. */
+  fundName?: string;
 };
+
+/**
+ * Shared qualification predicate for the aged-public-fund check: a public
+ * fund (kind ∈ 'activity' | 'charitable' | 'scholarship') with BOTH a
+ * positive cross-FY balance AND an oldest posted income transaction older
+ * than `thresholdDays` relative to `now`.
+ *
+ * Extracted so countAgedPublicFunds() and agedPublicFundNames() can never
+ * disagree about which funds qualify — same reuse discipline fundBalanceCents()
+ * established under DECISION-028/029.
+ */
+function isAgedPublicFund(f: AgedPublicFundFact, thresholdDays: number, now: Date): boolean {
+  if (!["activity", "charitable", "scholarship"].includes(f.fundKind)) return false;
+  if (f.crossFyBalanceCents <= 0) return false;
+  if (!f.oldestPostedIncomeDate) return false;
+  const ageDays =
+    (now.getTime() - new Date(f.oldestPostedIncomeDate).getTime()) / (1000 * 60 * 60 * 24);
+  return ageDays > thresholdDays;
+}
 
 /**
  * Counts public funds (kind ∈ 'activity' | 'charitable' | 'scholarship') that
@@ -495,14 +525,32 @@ export function countAgedPublicFunds(
   thresholdDays: number,
   now: Date = new Date(),
 ): number {
-  return funds.filter((f) => {
-    if (!["activity", "charitable", "scholarship"].includes(f.fundKind)) return false;
-    if (f.crossFyBalanceCents <= 0) return false;
-    if (!f.oldestPostedIncomeDate) return false;
-    const ageDays =
-      (now.getTime() - new Date(f.oldestPostedIncomeDate).getTime()) / (1000 * 60 * 60 * 24);
-    return ageDays > thresholdDays;
-  }).length;
+  return funds.filter((f) => isAgedPublicFund(f, thresholdDays, now)).length;
+}
+
+/**
+ * Returns the display names of the public funds that qualify as "aged" under
+ * the same rule as countAgedPublicFunds() (shared via isAgedPublicFund() so
+ * the count and this name list can never disagree). Names preserve the input
+ * array's order. A fund with no `fundName` set falls back to "Unnamed fund".
+ *
+ * Feeds the Ledger Dashboard's merged, entity-tagged guardrail-flag list
+ * (inc7 dashboard usability fix, DECISION-032) — without fund names, two
+ * near-identical "public fund holding undisbursed balance" WARNs from
+ * different entities are visually indistinguishable.
+ *
+ * @param funds         Cross-FY per-fund facts (see AgedPublicFundFact).
+ * @param thresholdDays settings.holdingPeriodWarnDays.
+ * @param now           Injectable "now" for deterministic tests; defaults to `new Date()`.
+ */
+export function agedPublicFundNames(
+  funds: Array<AgedPublicFundFact>,
+  thresholdDays: number,
+  now: Date = new Date(),
+): string[] {
+  return funds
+    .filter((f) => isAgedPublicFund(f, thresholdDays, now))
+    .map((f) => f.fundName ?? "Unnamed fund");
 }
 
 export type GuardrailsInput = {
@@ -579,6 +627,14 @@ export type GuardrailsInput = {
    * cross-FY MIN(txn_date) aggregate query (DECISION-027).
    */
   agedPublicFunds: number;
+
+  /**
+   * Optional — display names of the funds counted in agedPublicFunds, in the
+   * same order agedPublicFundNames() would return them (Ledger Dashboard
+   * usability fix, DECISION-032). Omitted/undefined callers get the original
+   * detail text with no fund-name parenthetical — fully backward compatible.
+   */
+  agedPublicFundNames?: string[];
 
   /**
    * Count of posted income transactions belonging to a fund of kind='administrative'
@@ -773,14 +829,19 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
   // ---------------------------------------------------------------------------
 
   // Check: aged public-fund balances — undisbursed public money held past the threshold (WARN) — inc7
+  // Detail text gains a fund-name parenthetical when agedPublicFundNames is
+  // available (Ledger Dashboard usability fix, DECISION-032) — omitted/empty
+  // stays fully backward compatible with pre-dashboard callers.
   if (state.agedPublicFunds > 0) {
     const n = state.agedPublicFunds;
+    const names = state.agedPublicFundNames;
+    const namesSuffix = names && names.length > 0 ? ` (${names.join(", ")})` : "";
     flags.push({
       severity: "warn",
       title: `Public fund${n === 1 ? "" : "s"} holding undisbursed balance past ${state.settings.holdingPeriodWarnDays}-day threshold`,
       detail:
         `${n} public fund${n === 1 ? "" : "s"} ${n === 1 ? "has" : "have"} a positive balance and ` +
-        `the oldest posted income is more than ${state.settings.holdingPeriodWarnDays} days old. ` +
+        `the oldest posted income is more than ${state.settings.holdingPeriodWarnDays} days old${namesSuffix}. ` +
         `LCI guidance requires public funds to be returned to public use within a reasonable time — ` +
         `usually one year. If any of these funds are earmarked for a specific multi-year project, ` +
         `document the project name and expected disbursement date in the board meeting minutes.`,
@@ -804,4 +865,23 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
   }
 
   return flags;
+}
+
+// ---------------------------------------------------------------------------
+// daysSinceTxnDate — Ledger Dashboard (Two-Entity Homepage)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whole days elapsed between a 'YYYY-MM-DD' txnDate and `now`. Used for the
+ * uncashed-checks list's age column/flag. Floors (not rounds) so "today" reads 0.
+ *
+ * Kept as its own tiny pure function (rather than inlined in getDashboard())
+ * purely for the Vitest seam — same rationale DECISION-028/029 give for
+ * extracting date/money arithmetic out of DB-bound functions.
+ *
+ * @param txnDate  'YYYY-MM-DD' transaction date.
+ * @param now      Injectable "now" for deterministic tests; defaults to `new Date()`.
+ */
+export function daysSinceTxnDate(txnDate: string, now: Date = new Date()): number {
+  return Math.floor((now.getTime() - new Date(txnDate).getTime()) / (1000 * 60 * 60 * 24));
 }

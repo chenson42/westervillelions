@@ -6,12 +6,16 @@ import type { PhilanthropyByCause } from "@/lib/ledger-queries";
 interface ImpactByCauseProps {
   /** All-time cause breakdown — shown when the "All" pill is selected. */
   allTime: PhilanthropyByCause[];
-  /** Per-fiscal-year cause breakdowns, keyed by fiscal-year start-year. Always
-   *  has an entry (possibly []) for every year in `fiscalYears`. */
+  /** Per-fiscal-year cause breakdowns, keyed by fiscal-year start-year. Has
+   *  an entry (possibly []) for every year in `fixedFiscalYears` and
+   *  `moreFiscalYears`. */
   byCauseByFy: Record<number, PhilanthropyByCause[]>;
-  /** The 4 fiscal years to render pills for, most recent first
-   *  (current FY, then the 3 prior FYs). */
-  fiscalYears: number[];
+  /** Always-visible fiscal-year pills, most recent first (current FY, then
+   *  up to 2 prior FYs — never earlier than the earliest FY with data). */
+  fixedFiscalYears: number[];
+  /** Older data-bearing fiscal years, most recent first, revealed behind the
+   *  "More" pill. Empty when there's nothing older to show. */
+  moreFiscalYears: number[];
   /** The current fiscal year — pre-selected on load. */
   currentFiscalYear: number;
 }
@@ -30,22 +34,28 @@ function fyPillLabel(fy: number): string {
 
 /**
  * Client-side FY filter for the "Giving by Cause" section of /members/impact.
- * All data (all-time + the 4 target years) is computed server-side in
- * getPhilanthropy() and handed down as props — switching pills is a local
- * useState swap with no server round-trip.
+ * All data (all-time + every data-bearing fiscal year) is computed
+ * server-side in getPhilanthropy() and handed down as props. Which years
+ * render as fixed pills vs. behind "More" is decided server-side by
+ * deriveCauseFyPills() (src/lib/fiscal-year.ts); switching pills and
+ * revealing "More" are both local useState swaps with no server round-trip.
  */
 export default function ImpactByCause({
   allTime,
   byCauseByFy,
-  fiscalYears,
+  fixedFiscalYears,
+  moreFiscalYears,
   currentFiscalYear,
 }: ImpactByCauseProps) {
   const [selected, setSelected] = useState<"all" | number>(currentFiscalYear);
+  const [showMore, setShowMore] = useState(false);
 
-  if (allTime.length === 0 && fiscalYears.every((fy) => (byCauseByFy[fy] ?? []).length === 0)) {
+  const allPillYears = [...fixedFiscalYears, ...moreFiscalYears];
+  if (allTime.length === 0 && allPillYears.every((fy) => (byCauseByFy[fy] ?? []).length === 0)) {
     return null;
   }
 
+  const visibleFiscalYears = showMore ? allPillYears : fixedFiscalYears;
   const activeList = selected === "all" ? allTime : byCauseByFy[selected] ?? [];
 
   return (
@@ -64,7 +74,7 @@ export default function ImpactByCause({
           >
             All
           </button>
-          {fiscalYears.map((fy) => (
+          {visibleFiscalYears.map((fy) => (
             <button
               key={fy}
               type="button"
@@ -78,6 +88,15 @@ export default function ImpactByCause({
               {fyPillLabel(fy)}
             </button>
           ))}
+          {!showMore && moreFiscalYears.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowMore(true)}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition min-h-[44px] border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+            >
+              More
+            </button>
+          )}
         </div>
       </div>
 

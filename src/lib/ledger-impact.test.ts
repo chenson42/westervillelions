@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { isGiving, type IsGivingRow, bucketGivingByCause, type GivingFoldRow } from "./ledger";
+import { deriveCauseFyPills } from "./fiscal-year";
 
 // ---------------------------------------------------------------------------
 // isGiving
@@ -216,5 +217,73 @@ describe("bucketGivingByCause", () => {
     expect(result[1].causeLabel).toBe("Hunger Relief");
     expect(result[2].causeKey).toBe("");
     expect(result[2].causeLabel).toBe("Other community support");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deriveCauseFyPills — /members/impact FY filter pills rework (2026-07-20)
+// ---------------------------------------------------------------------------
+//
+// Treasurer spec: "leave 23-24 off since we don't have that data. Just show
+// All, then the next three fiscal years, and maybe a More pill to get to
+// older data if it exists." Covers the earliest-year clamp and the
+// More-eligibility boundary (exactly 3 data years → no More; 4+ → More).
+
+describe("deriveCauseFyPills", () => {
+  // Real-world scenario as of 2026-07-20: books start FY2024, current FY2026
+  // has no giving posted yet. Fixed = current + 2 prior, all >= earliest data
+  // year (2024) — no clamp needed, no More pill.
+  it("today's real data (FY2024 earliest, FY2026 current, no gap) — 3 fixed, no More", () => {
+    const result = deriveCauseFyPills([2025, 2024], 2026);
+    expect(result.fixed).toEqual([2026, 2025, 2024]);
+    expect(result.more).toEqual([]);
+  });
+
+  // Earliest-year clamp: giving data starts in the CURRENT fiscal year, so
+  // the two prior-FY fixed candidates (2025, 2024) must be dropped — never a
+  // year earlier than the earliest data year, even though the current FY is
+  // always exempt from the clamp itself.
+  it("clamps fixed pills to the earliest data year — drops prior-FY candidates before that year", () => {
+    const result = deriveCauseFyPills([2026], 2026);
+    expect(result.fixed).toEqual([2026]);
+    expect(result.more).toEqual([]);
+  });
+
+  // Boundary: exactly 3 data years (current FY included, all three fixed
+  // slots have data) → no More pill.
+  it("exactly 3 data years → no More pill", () => {
+    const result = deriveCauseFyPills([2026, 2025, 2024], 2026);
+    expect(result.fixed).toEqual([2026, 2025, 2024]);
+    expect(result.more).toEqual([]);
+  });
+
+  // Boundary: 4 data years → the 4th (oldest) year spills into More.
+  it("4 data years → the oldest spills into More, newest-first fixed set unchanged", () => {
+    const result = deriveCauseFyPills([2026, 2025, 2024, 2023], 2026);
+    expect(result.fixed).toEqual([2026, 2025, 2024]);
+    expect(result.more).toEqual([2023]);
+  });
+
+  // More than 4 data years — More pill reveals every older data year,
+  // newest-first, not just one.
+  it("5 data years → More contains both older years, sorted newest-first", () => {
+    const result = deriveCauseFyPills([2026, 2025, 2024, 2023, 2022], 2026);
+    expect(result.fixed).toEqual([2026, 2025, 2024]);
+    expect(result.more).toEqual([2023, 2022]);
+  });
+
+  // Current FY always renders even with zero giving data recorded for it —
+  // it's the default selection with its own empty-state message.
+  it("current FY has no data yet but still renders as a fixed pill", () => {
+    const result = deriveCauseFyPills([2025, 2024], 2026);
+    expect(result.fixed).toContain(2026);
+  });
+
+  // No data at all (defensive — the impact page's caller only reaches this
+  // component when allTimeCents > 0, but the function itself must not throw).
+  it("no data years at all — falls back to just the current FY, no More", () => {
+    const result = deriveCauseFyPills([], 2026);
+    expect(result.fixed).toEqual([2026]);
+    expect(result.more).toEqual([]);
   });
 });

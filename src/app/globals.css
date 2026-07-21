@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+html,
+body {
+  /* Prevent viewport-level horizontal scroll/rubber-banding when a nested
+     scroll container (e.g. an overflow-x-auto admin table) is wider than the
+     viewport. Nested overflow:auto/hidden on a descendant clips that
+     descendant's own paint but does not, by itself, stop Chromium from
+     treating the page's root scroller as horizontally scrollable to that
+     descendant's content width — this is the standard, low-risk fix. */
+  overflow-x: hidden;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
     Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;

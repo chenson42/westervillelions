@@ -28,6 +28,61 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-032: Ledger Dashboard — implementation-level calls from Phase 3 design (error boundary, mobile table pattern, EntitySwitcher non-reuse, uncashed-checks flow scoping, fund-name guardrail widen)
+
+**Status:** Resolved
+**Date:** 2026-07-20
+
+**Decision:**
+
+Phase 3 technical design for the Ledger Dashboard (work-log: `docs/work-log/2026-07-20-ledger-dashboard.md`) resolved five implementation-level questions Phase 2 left open:
+
+1. **Error boundary: inline `try/catch` in `page.tsx`, not `error.tsx`.** This codebase has zero existing `error.tsx` files; introducing one would be a first-of-its-kind Client Component boundary for a single page's static failure card, cutting against the Server-Component-by-default invariant for no interactivity gained (retry is a plain `<Link>` re-navigation). `try/catch` wraps each of the page's three DB-fetching phases individually, rendering a shared `LoadErrorCard()`. Correctness trap documented for the implementer: `redirect()` throws internally and must never sit inside one of these `try` blocks.
+2. **Uncashed-checks list reuses the Approvals page's `overflow-x-auto` table pattern, not a stacked card list.** Confirmed by reading `src/app/(dashboard)/admin/ledger/approvals/page.tsx` (L111–113) — this is the established convention for tabular admin-ledger lists, already solving the same mobile-overflow problem Phase 1 Gap #5 raised. Matching it beats inventing a second, inconsistent pattern.
+3. **`EntitySwitcher` is not reused for the dashboard's entity-card row.** It's a Client Component implementing a single-select tab toggle (`router.push`, one active entity); the dashboard needs always-show-both stat cards with no active/selected concept. A new Server Component (`dashboard-entity-card.tsx`) is cleaner than gutting `EntitySwitcher`'s interaction model and forcing an unneeded client boundary onto the dashboard. `EntitySwitcher` is unchanged and stays in use on the per-entity detail view.
+4. **Uncashed-checks query scoped to `flow='expense'`, not just `paymentMethod='check'`.** "Uncashed checks" is a check-writer's-eye-view concept (checks the club wrote that a payee hasn't cashed); a `flow='income'` check-tagged row (an incoming check payment) is a different concept and would carry the wrong meaning if it ever appeared unreconciled in this list. The dev-DB spot-check found the one existing `check`/`income` row is already reconciled, so this doesn't change today's output — it's forward-looking correctness.
+5. **Aged-public-fund guardrail detail text gains fund names via an additive, optional field**, not a breaking change to `AgedPublicFundFact`/`GuardrailsInput`. `fundName` is optional on `AgedPublicFundFact` (the 11 existing `countAgedPublicFunds` test literals don't set it and keep compiling); `agedPublicFundNames?: string[]` is a new optional `GuardrailsInput` field; a private `isAgedPublicFund()` predicate is shared between `countAgedPublicFunds()` and the new `agedPublicFundNames()` so the count and the name list can never disagree — same reuse discipline `fundBalanceCents()` established under DECISION-028/029.
+
+**Rationale:**
+
+Each of these follows the same underlying principle: match this codebase's own established precedent (Approvals table, `fundBalanceCents()` reuse, additive/optional field conventions already used throughout `GuardrailsInput`) rather than introduce a new pattern, even where introducing one wouldn't be wrong in isolation. The error-boundary and `EntitySwitcher` calls both protect the Server-Component-by-default invariant from a plausible but unnecessary client-boundary creep.
+
+**Impact:**
+
+- `src/lib/ledger.ts` — `AgedPublicFundFact.fundName?: string`, private `isAgedPublicFund()`, new `agedPublicFundNames()`, `GuardrailsInput.agedPublicFundNames?: string[]`, `guardrails()` detail-string change, new `daysSinceTxnDate()`.
+- `src/lib/ledger-queries.ts` — `EntityOverview` widened (`syncStaleTxns`, `unreconciledPriorMonth`); new `getDashboard()` and its exported types (`DashboardData`, `DashboardEntitySummary`, `EntityTaggedGuardrailFlag`, `UncashedCheckRow`).
+- `src/app/(dashboard)/admin/ledger/page.tsx` and four new files under `src/components/admin/ledger/` — see full component plan in the work-log.
+- No schema change. No new `FEATURES` key.
+- Full design: `docs/work-log/2026-07-20-ledger-dashboard.md`, Phase 3 — Technical Design.
+
+---
+
+## DECISION-031: Ledger Dashboard — same route (searchParams-keyed), new `getDashboard()` query function rather than widening `getOverview()`
+
+**Status:** Resolved
+**Date:** 2026-07-20
+
+**Decision:**
+
+Phase 2 architectural review for the Ledger Dashboard feature (work-log: `docs/work-log/2026-07-20-ledger-dashboard.md`). Two rulings:
+
+**Ruling A — Route structure.** `/admin/ledger` stays a single `page.tsx`, keyed by `searchParams`: no `entity` param renders the new two-entity dashboard; `?entity=<slug>&fy=<year>` renders the existing per-entity detail view, unchanged. No new nested route (`/admin/ledger/[entitySlug]`). Every existing internal link in this surface (fund cards, reimbursements, reports, fund-report quick links) already passes `entity=`/`fy=` explicitly and needs zero changes. The admin sidebar's "Ledger" item already points at bare `/admin/ledger` — under this ruling it lands on the dashboard, exactly the desired top-of-nav UX, for free. `[fundSlug]` stays a genuinely nested route because a fund is a distinct sub-resource; dashboard-vs-detail is a view-mode toggle on the same resource, correctly modeled as a query param per Next.js App Router convention.
+
+**Ruling B — Query-layer shape.** A new `getDashboard()` function in `src/lib/ledger-queries.ts`, not an extension of `EntityOverview`/`getOverview()`. `getOverview()` is single-entity and FY-scoped by contract; the dashboard needs a different shape (both entities' summaries, a cross-entity uncashed-checks list, cross-entity audit-item counts) that would break `EntityOverview`'s single-entity contract for every existing consumer if bolted on. `getDashboard()` composes two `getOverview()` calls (current FY per entity, in parallel via `Promise.all`, matching the page's existing batch-fetch style) plus one new cross-entity query for unreconciled check-method transactions. Separately, `EntityOverview` gets a minimal *additive* widen — `syncStaleTxns` and `unreconciledPriorMonth`, both already computed inside `getOverview()` but not returned (Phase 1 Gap #4) — since exposing already-computed per-entity fields is compatible with the existing contract, unlike making the function itself cross-entity.
+
+**Rationale:**
+
+`getOverview()` is already ~300 lines and has been the subject of two correctness bug fixes in the preceding 24 hours (DECISION-028, DECISION-029), both rooted in logic — guardrail inputs, cross-FY rollforward — accreting inline inside one DB-bound function with no unit-test seam. Adding a third responsibility (cross-entity dashboard aggregation) would repeat the exact anti-pattern DECISION-028's rationale named as the root cause. A dedicated `getDashboard()` keeps `getOverview()`'s single-entity contract stable, gives the new cross-entity aggregation its own seam, and follows the batch-fetch discipline established in DECISION-027 Ruling A (one new query, not N+1).
+
+**Impact:**
+
+- `src/lib/ledger-queries.ts` — new `getDashboard()` function; `EntityOverview` type widened with `syncStaleTxns: number` and `unreconciledPriorMonth: number`.
+- `src/app/(dashboard)/admin/ledger/page.tsx` — branches on presence/validity of the `entity` searchParam; no new route file.
+- No schema change. Structured `checkNumber` column (Phase 1 Gap #1) stays explicitly out of scope for this feature — a `treasurer-todo.md` follow-up item, not a migration riding along with this work.
+- Full design: `docs/work-log/2026-07-20-ledger-dashboard.md`, Phase 2 — Architectural Review.
+
+---
+
 ## DECISION-030: Philanthropy/impact reporting counts TRUE GIFTS only — fundraising-overhead and operational spend excluded via a new per-category `counts_as_giving` flag, with conservative null-inclusion
 
 **Status:** Resolved

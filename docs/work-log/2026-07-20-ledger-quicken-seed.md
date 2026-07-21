@@ -18,6 +18,7 @@
 | 4 — Implementation | full-stack-developer | Complete | dry-run + apply both reconciled exactly | 2026-07-20 |
 | 5 — Verification | N/A | — | One-off data seed, not a shipped feature — verified via the script's own reconciliation asserts + direct DB query below | 2026-07-20 |
 | 6 — Shipped vs intent | N/A | — | Same rationale as Phase 5 | 2026-07-20 |
+| 4c — Production port + dues backfill | full-stack-developer | Complete | Both scripts dry-run + apply reconciled exactly against production; independently re-verified via Neon MCP | 2026-07-20 |
 
 Phases 5/6 are skipped in the formal sense (no qa/analyst agent invoked) because this is a one-time data-seeding operation, not a shipped user-facing feature — there's no flow for qa to click through or for analyst to compare against Phase-1 intent. Correctness was instead verified by (a) the script's own balance-reconciliation assertion, which blocks `--apply` on any mismatch, and (b) a direct post-apply SQL query against the live DB (both below).
 
@@ -222,3 +223,176 @@ Extended `scripts/import-quicken-ledger.ts` to stamp `beneficiaryCause` on every
 - **`counts_as_giving` column**: encountered as a pre-existing (uncommitted, in-flight) `schema.ts` change from another session while `--apply` was running; the local DB already had the column by the time of inspection (the other session's `db:push` landed concurrently). Nothing in this task added, migrated, or otherwise touched that column — noting it here only because it caused a transient `--apply` failure (cleanly rolled back) that resolved itself without action.
 - Source CSVs remain outside the repo, unchanged from Phase 4.
 - Nothing committed — same as Phase 4, awaiting explicit go-ahead.
+
+---
+
+# Phase 4c — Production port + dues auto-post backfill (full-stack-developer) — 2026-07-20
+
+**Owner:** full-stack-developer
+**Status:** complete
+
+## Summary
+
+Two production data operations, both explicitly authorized by the treasurer. Task 1 ported the
+hardened dev ledger data (276 `[quicken-import]` marker transactions, 15 dev-only categories, both
+fund opening balances, both bank-account renames) into production via a new idempotent script,
+`scripts/port-ledger-dev-to-prod.ts` — a data **port** by natural key, not a re-run of the original
+Quicken CSV import. Task 2 backfilled 14 production `dues_payments` rows (2026-06-24 → 2026-07-03)
+that predated the deployed dues-auto-post feature and had no linked `ledger_transactions` row, via
+`scripts/backfill-dues-ledger.ts`, which mirrors `syncDuesCreate`'s row shape exactly. Both scripts
+are dry-run-by-default, `--apply`-gated, and were run dry-run → reviewed → applied → independently
+re-verified. Every verification number specified in the task matched exactly on the first attempt.
+
+## What I did
+
+- Read `src/lib/dues-ledger-sync.ts` (the `syncDuesCreate` row shape to mirror for the backfill) and
+  `src/lib/db/schema.ts` (`ledgerEntities`, `ledgerFunds`, `ledgerCategories`, `ledgerBankAccounts`,
+  `ledgerTransactions`, `duesPayments`) before writing either script.
+- Queried both DEV (`psql` against the `.env.local` `DATABASE_URL`) and PRODUCTION (Neon MCP
+  `run_sql`, project `tiny-fog-13725730`, branch `production`) directly to confirm current state
+  before writing code: entities, funds, categories (all 45 dev / 30 prod, diffed by natural key),
+  bank accounts, the `chenson42@gmail.com` user row in both DBs, the 276 dev marker-row count, the
+  7 existing production dues-ledger rows ($840 total, all dated 2026-07-20 — confirmed these must
+  be left untouched), and the 21 production `dues_payments` rows (7 linked, 14 unlinked, $1,661
+  unlinked total) via a `LEFT JOIN ... IS NULL`.
+- Confirmed via direct query that none of the 276 dev marker rows have `donor_id`,
+  `transfer_group_id`, `approved_by_user_id`, `approved_at`, `board_minute`, or `rejection_reason`
+  set, and that no `ledger_acknowledgments` reference them — simplifying the port to a
+  straightforward natural-key remap with hard-fail guards if any of those had been set unexpectedly.
+- Confirmed the canonical "giving" SQL predicate from `getPhilanthropy()` in
+  `src/lib/ledger-queries.ts` (status='posted', transfer_group_id IS NULL, flow='expense', fund.kind
+  IN (activity, charitable, scholarship), category.counts_as_giving IS NOT FALSE) to use as the
+  exact verification query for per-cause totals, so the check exercises the same logic the impact
+  dashboard uses rather than an ad hoc approximation.
+- Wrote `scripts/port-ledger-dev-to-prod.ts` (dry-run default, `--apply` to write):
+  - Connects to DEV via `DATABASE_URL` from `.env.local` (source, read-only) and to PRODUCTION via
+    a required `PROD_DATABASE_URL` env var (target) — two independent `postgres`/Drizzle clients,
+    never the shared `@/lib/db` singleton, so both DBs can be addressed in one process without
+    collision. `PROD_DATABASE_URL` was passed inline on the command line for each invocation and
+    never written to any file.
+  - Maps by natural key exactly per the task spec: entity by slug, fund by (entity slug, fund
+    slug), category by (entity slug, fund_kind, flow, name), bank account by entity (asserts
+    exactly one per entity, throws otherwise), `recorded_by_user_id` → production's
+    `chenson42@gmail.com` row (throws if absent).
+  - Upserts missing categories (checked by natural key, not `ON CONFLICT` — the table has no unique
+    constraint on the natural key), then syncs `counts_as_giving` on every matching production
+    category to dev's value.
+  - Updates fund opening balances, renames both bank accounts (institution → NULL).
+  - Deletes production `ledger_transactions` rows matching the `[quicken-import]` memo suffix
+    (idempotency — the delete predicate is the *only* predicate used, structurally incapable of
+    touching a `dues_payment_id`-linked row or a non-marker row), then inserts the 276 remapped
+    rows in batches of 50 inside a single `targetDb.transaction(...)`.
+  - Hard-fails (aborts the whole transaction) if any source row unexpectedly carries a
+    `donor_id`, `transfer_group_id`, or `dues_payment_id` — defense-in-depth beyond the pre-check.
+  - Prints a full dry-run plan (categories to insert, fund balance deltas, bank renames, delete/
+    insert counts) and the task's expected verification numbers before touching the DB.
+  - Post-apply, re-queries PRODUCTION directly (fresh SQL via the raw `postgres` client, not
+    Drizzle, not the script's in-memory numbers) for all five verification checks from the task.
+- Wrote `scripts/backfill-dues-ledger.ts` (dry-run default, `--apply` to write):
+  - Connects to PRODUCTION only via `PROD_DATABASE_URL` — explicitly does **not** touch dev, per
+    the task's instruction that dev's `dues_payments` rows are test-era.
+  - Mirrors `syncDuesCreate` step-for-step: resolves the Club entity (slug `club`), the
+    Administrative fund, the "Club dues" income category (graceful null fallback, matching the
+    source function), the production treasurer user, and derives `party` as
+    `` `${firstName} ${lastName}`.trim() `` from `members` — same as the live auto-post path.
+  - Selection query: `dues_payments LEFT JOIN ledger_transactions ON dues_payment_id LEFT JOIN IS
+    NULL`, joined to `members` for names — the same shape the task specified. The unique constraint
+    `ux_ledger_txns_dues_payment` makes the whole script naturally idempotent (a second run selects
+    zero rows).
+  - Inserts with the exact same field set as `syncDuesCreate` (`entityId`, `fundId`, `txnDate`,
+    `flow: "income"`, `categoryId`, `amountCents`, `party`, `paymentMethod`, `status: "posted"`,
+    `duesPaymentId`, `syncStale: false`, `recordedByUserId`) — no extra fields, no memo, no
+    `bankAccountId`, matching the source function's omissions exactly so backfilled rows are
+    indistinguishable from auto-posted ones except their `created_at` timestamp.
+  - Prints the 14 rows (date, member name, amount, method) in the dry run, then the expected
+    post-apply numbers with the register-predates-deposits explanation the task required.
+- Ran `pnpm exec tsc --noEmit` — clean before either script touched the DB, and again after both
+  files existed — exit 0 both times.
+- Ran Task 1 dry-run → reviewed the plan (15 categories to insert including both "Insurance &
+  bonding" rows, which do **not** pre-exist in production's base 30 — production's base category
+  set never had that category at all, unlike what I initially mis-recalled from an earlier
+  same-session read of the production category dump; re-verified via `encode(name::bytea,'hex')`
+  on both DBs to rule out a hidden-whitespace/unicode false match before trusting the diff) → ran
+  `--apply` → ran the script's own post-apply verification (all seven checks OK) → ran a fully
+  independent second verification via Neon MCP `run_sql` (separate queries, not reusing the
+  script's connection or logic) confirming the same numbers.
+- Ran Task 2 dry-run (14 rows, $1,661.00, matched the task's numbers exactly) → `--apply` → the
+  script's own post-apply verification (all OK) — dues total $2,501.00, overall club balance
+  $18,719.64 ($16,218.64 historical + $2,501.00 dues), explanation printed per the task's
+  requirement that exceeding the register's historical ending balance is expected here.
+
+## Outputs
+
+- **Created:** `/Users/cshenso/git/westervillelions/scripts/port-ledger-dev-to-prod.ts` — dev→prod
+  ledger port script (dry-run default, `--apply`-gated, idempotent).
+- **Created:** `/Users/cshenso/git/westervillelions/scripts/backfill-dues-ledger.ts` — production
+  dues-ledger backfill script (dry-run default, `--apply`-gated, naturally idempotent via the
+  unique constraint on `ledger_transactions.dues_payment_id`).
+- **No schema change, no app code (`src/`) change, no new env var, no new `FEATURES` entry** — both
+  scripts are one-off `scripts/*.ts` tooling, same shape as `scripts/import-quicken-ledger.ts`.
+  `PROD_DATABASE_URL` is a runtime-only env var passed at invocation, not documented in
+  `CLAUDE.md`'s env var list (not a deploy-time app env var).
+- **Production DB writes (both via `--apply`, against Neon project `tiny-fog-13725730` / branch
+  `production` — this IS the live production database):**
+  - Task 1: upserted 15 `ledger_categories` rows; synced `counts_as_giving` to `false` on the 3
+    overhead categories (Insurance & bonding ×2, Fundraising event costs, Operations); updated
+    `ledger_funds.opening_balance_cents` for club/administrative ($0 → $19,090.10) and
+    foundation/charitable ($0 → $28,569.30); renamed both `ledger_bank_accounts` rows
+    ("Primary Checking" → "Administrative Checking" / "Foundation Checking", institution → NULL);
+    inserted 276 `ledger_transactions` rows (0 deleted — first run). The 7 pre-existing live
+    dues-auto-post rows were never touched by this script (structurally impossible — its delete/
+    insert logic only ever targets `[quicken-import]`-marked rows).
+  - Task 2: inserted 14 `ledger_transactions` rows with `dues_payment_id` set, backfilling the
+    2026-06-24 → 2026-07-03 dues payments that predated the auto-post deploy.
+
+## Verification (all against PRODUCTION, independently re-checked via Neon MCP after script apply)
+
+```
+Task 1:
+  Marker rows: 276  (expected 276)  OK
+  Dues rows (untouched): 7 / $840.00  (expected 7 / $840.00)  OK
+  Club historical balance (excl. dues rows): $16,218.64  (expected $16,218.64)  OK
+  Foundation historical balance (excl. dues rows): $4,836.57  (expected $4,836.57)  OK
+  Per-cause totals: Youth & Education $23,300.00 · Hunger & Basic Needs $13,300.00 ·
+    Vision & Eye Care $10,900.00 · Disaster Relief $5,000.00 · Health & Disability $4,750.00 ·
+    Lions International Programs $4,000.00 · Community & Civic $400.00 ·
+    Bags to Benches (Recycling) $374.53 — all OK, all matched dev exactly
+  counts_as_giving = false on exactly: Fundraising event costs, Insurance & bonding, Operations  OK
+
+Task 2:
+  Dues payments with no ledger row: 0  (expected 0)  OK
+  Ledger dues total: 21 rows / $2,501.00  (expected $2,501.00)  OK
+  Overall club balance: $18,719.64 = $16,218.64 historical + $2,501.00 dues  (expected $18,719.64)  OK
+    (Register export predates these Zeffy/check deposits — exceeding the register's historical
+    ending balance is expected, not an error.)
+
+Independent re-check (Neon MCP, separate from either script's self-reported output):
+  marker_count=276, dues_count=21, dues_sum_cents=250100, dues_missing_ledger=0,
+  overhead_distinct_names=3 ("Fundraising event costs, Insurance & bonding, Operations"),
+  bank accounts: club="Administrative Checking" (institution null),
+  foundation="Foundation Checking" (institution null)
+```
+
+Everything matched on the first `--apply` attempt for both scripts — no loop-backs, no data
+corrections needed.
+
+## Open questions / handoff notes
+
+- **`pnpm exec tsc --noEmit` passes** with both new scripts in the tree (confirmed after writing
+  both files).
+- **T-12 in `docs/treasurer-todo.md`** checked off with a 2026-07-20 outcome note per the file's
+  append-don't-delete convention.
+- **No qa/analyst phase invoked** — same rationale as Phase 4/4b: this is a one-time production
+  data operation on existing, already-shipped Ledger infrastructure, not a new user-facing feature
+  with a UI flow. The natural manual check, if the treasurer wants a visual second look: load
+  `/admin/ledger` (both entities) and `/members/impact` in production and confirm the fund balances,
+  category breakdowns, and "Giving by Cause" figures match the numbers printed above.
+- **Nothing committed.** Both scripts are new untracked files; per instructions, awaiting the user's
+  explicit go-ahead before any `git add`/`git commit`. The production DB writes are already live —
+  distinct from the code, which remains uncommitted.
+- **Scripts left in place** at `scripts/port-ledger-dev-to-prod.ts` and
+  `scripts/backfill-dues-ledger.ts` — both are safe to re-run (fully idempotent) if needed, e.g. if
+  dev's ledger data is corrected again later, or if more dues payments land before any future
+  auto-post gap.
+- **Follow-up not in scope for this task:** T-11 in `docs/treasurer-todo.md` (the two deleted A J
+  Westlund test-data dues rows) is unrelated to this port and remains open.
