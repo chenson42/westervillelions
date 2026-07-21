@@ -16,9 +16,10 @@
  *   party?: string;            // required when flow='income'
  *   memo?: string;
  *   paymentMethod?: string;    // 'check' | 'cash' | 'zeffy' | 'other'
+ *   checkNumber?: string;      // structured check # (T-18); trimmed, capped at 20 chars
  *   bankAccountId?: string;
  *   beneficiaryCause?: string;
- *   receiptUrl?: string;
+ *   receiptStorageKey?: string;
  * }
  * Response 201: { id: string; derivedFiscalYear: number }
  *
@@ -51,6 +52,7 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
 const VALID_FLOWS = ["income", "expense"] as const;
 const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "other"] as const;
+const CHECK_NUMBER_MAX_LEN = 20;
 
 type Flow = (typeof VALID_FLOWS)[number];
 type PaymentMethod = (typeof VALID_METHODS)[number];
@@ -77,6 +79,23 @@ function validateAmount(v: unknown): string | null {
   if (v <= 0) return "amountCents must be greater than 0";
   if (v > INT4_MAX) return `amountCents must not exceed ${INT4_MAX} (~$21.4M)`;
   return null;
+}
+
+/**
+ * Trim and length-cap checkNumber (T-18). Free-text identifier, not
+ * strict-numeric — a hypothetical future suffixed/lettered check reference
+ * (e.g. "1234-R") shouldn't be rejected. Returns `{ error }` on invalid
+ * input, or `{ value }` with empty string normalized to null.
+ */
+function normalizeCheckNumber(v: unknown): { value: string | null } | { error: string } {
+  if (v === undefined || v === null) return { value: null };
+  if (typeof v !== "string") return { error: "checkNumber must be a string" };
+  const trimmed = v.trim();
+  if (!trimmed) return { value: null };
+  if (trimmed.length > CHECK_NUMBER_MAX_LEN) {
+    return { error: `checkNumber must not exceed ${CHECK_NUMBER_MAX_LEN} characters` };
+  }
+  return { value: trimmed };
 }
 
 export async function POST(request: NextRequest) {
@@ -107,9 +126,10 @@ export async function POST(request: NextRequest) {
       party,
       memo,
       paymentMethod,
+      checkNumber,
       bankAccountId,
       beneficiaryCause,
-      receiptUrl,
+      receiptStorageKey,
     } = body;
 
     // Required fields
@@ -152,6 +172,11 @@ export async function POST(request: NextRequest) {
         { error: "paymentMethod must be one of: check, cash, zeffy, debit_card, other" },
         { status: 400 },
       );
+    }
+
+    const checkNumberResult = normalizeCheckNumber(checkNumber);
+    if ("error" in checkNumberResult) {
+      return NextResponse.json({ error: checkNumberResult.error }, { status: 400 });
     }
 
     // Validate fund belongs to entity
@@ -221,9 +246,10 @@ export async function POST(request: NextRequest) {
         party: party?.trim() ?? null,
         memo: memo?.trim() ?? null,
         paymentMethod: paymentMethod ?? null,
+        checkNumber: checkNumberResult.value,
         bankAccountId: bankAccountId ?? null,
         beneficiaryCause: beneficiaryCause?.trim() ?? null,
-        receiptUrl: receiptUrl?.trim() ?? null,
+        receiptStorageKey: receiptStorageKey?.trim() ?? null,
         status: derivedStatus,
         recordedByUserId: session.user.id,
       })

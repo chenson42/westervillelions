@@ -16,6 +16,7 @@ type EditableTransaction = Pick<
   | "party"
   | "memo"
   | "paymentMethod"
+  | "checkNumber"
   | "bankAccountId"
   | "fundId"
   | "transferGroupId"
@@ -118,6 +119,7 @@ export default function TransactionForm({
   const [party, setParty] = useState(initialValues?.party ?? "");
   const [memo, setMemo] = useState(initialValues?.memo ?? "");
   const [paymentMethod, setPaymentMethod] = useState(initialValues?.paymentMethod ?? "check");
+  const [checkNumber, setCheckNumber] = useState(initialValues?.checkNumber ?? "");
   const [bankAccountId, setBankAccountId] = useState(initialValues?.bankAccountId ?? "");
   const [beneficiaryCause, setBeneficiaryCause] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -205,6 +207,7 @@ export default function TransactionForm({
                 categoryId: categoryId || null,
                 party: party || null,
                 paymentMethod: paymentMethod || null,
+                checkNumber: checkNumber || null,
                 flow: apiFlow,
               }),
         };
@@ -236,6 +239,7 @@ export default function TransactionForm({
           party: party || null,
           memo: memo || null,
           paymentMethod: paymentMethod || null,
+          checkNumber: checkNumber || null,
           bankAccountId: bankAccountId || null,
           beneficiaryCause: beneficiaryCause.trim() || null,
         };
@@ -454,6 +458,24 @@ export default function TransactionForm({
         </div>
       )}
 
+      {/* Check # (not for transfers) */}
+      {!isTransfer && !isEditingTransfer && (
+        <div>
+          <label htmlFor="txn-check-number" className="block text-sm font-medium text-gray-700 mb-1">
+            Check # <span className="text-gray-400 font-normal">(optional)</span>
+          </label>
+          <input
+            id="txn-check-number"
+            type="text"
+            value={checkNumber}
+            onChange={(e) => setCheckNumber(e.target.value)}
+            maxLength={20}
+            className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            placeholder="e.g., 8249"
+          />
+        </div>
+      )}
+
       {/* Memo */}
       <div>
         <label htmlFor="txn-memo" className="block text-sm font-medium text-gray-700 mb-1">
@@ -466,7 +488,7 @@ export default function TransactionForm({
           onChange={(e) => setMemo(e.target.value)}
           maxLength={500}
           className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
-          placeholder="Check #, transaction reference, etc."
+          placeholder="Transaction reference, notes, etc."
         />
       </div>
 

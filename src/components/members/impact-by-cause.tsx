@@ -32,6 +32,20 @@ function fyPillLabel(fy: number): string {
   return `FY${fy}–${String(fy + 1).slice(-2)}`;
 }
 
+/** Matches formatDate() in src/app/members/impact/page.tsx exactly — local
+ *  date parsing via split("-") rather than new Date(string) to avoid the
+ *  known naive-timestamp/UTC-shift bug class. Duplicated deliberately
+ *  (formatDollarsWhole above is already duplicated the same way in both
+ *  files) rather than shared. */
+function formatDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 /**
  * Client-side FY filter for the "Giving by Cause" section of /members/impact.
  * All data (all-time + every data-bearing fiscal year) is computed
@@ -49,6 +63,23 @@ export default function ImpactByCause({
 }: ImpactByCauseProps) {
   const [selected, setSelected] = useState<"all" | number>(currentFiscalYear);
   const [showMore, setShowMore] = useState(false);
+  // Keyed by causeKey — '' ("Other community support") is a valid Set member,
+  // no special-casing needed. Persists across FY-pill switches (Flow C):
+  // if the newly selected FY's cause list doesn't contain that causeKey, the
+  // row simply isn't rendered — nothing to reconcile.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(causeKey: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(causeKey)) {
+        next.delete(causeKey);
+      } else {
+        next.add(causeKey);
+      }
+      return next;
+    });
+  }
 
   const allPillYears = [...fixedFiscalYears, ...moreFiscalYears];
   if (allTime.length === 0 && allPillYears.every((fy) => (byCauseByFy[fy] ?? []).length === 0)) {
@@ -115,30 +146,65 @@ export default function ImpactByCause({
         </div>
       ) : (
         <ul className="divide-y divide-gray-50 px-6 py-2">
-          {activeList.map((cause) => (
-            <li key={cause.causeKey || "__other__"} className="py-3">
-              <div className="flex items-center justify-between mb-1.5">
-                <span
-                  className="text-sm text-gray-800 truncate max-w-[60%]"
-                  title={cause.causeLabel}
+          {activeList.map((cause) => {
+            const isExpanded = expanded.has(cause.causeKey);
+            return (
+              <li key={cause.causeKey || "__other__"} className="py-3">
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  onClick={() => toggleExpanded(cause.causeKey)}
+                  className="w-full text-left focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
                 >
-                  {cause.causeLabel}
-                </span>
-                <div className="flex items-center gap-3 ml-2 shrink-0">
-                  <span className="text-xs text-gray-500">{cause.pct}%</span>
-                  <span className="text-sm font-medium text-gray-900">
-                    {formatDollarsWhole(cause.totalCents)}
-                  </span>
-                </div>
-              </div>
-              <div className="w-full bg-gray-100 rounded-sm h-2.5">
-                <div
-                  className="bg-lions-blue h-2.5 rounded-sm"
-                  style={{ width: `${Math.max(cause.pct, 2)}%` }}
-                />
-              </div>
-            </li>
-          ))}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span
+                      className="text-sm text-gray-800 truncate max-w-[60%]"
+                      title={cause.causeLabel}
+                    >
+                      {cause.causeLabel}
+                    </span>
+                    <div className="flex items-center gap-3 ml-2 shrink-0">
+                      <span className="text-xs text-gray-500">{cause.pct}%</span>
+                      <span className="text-sm font-medium text-gray-900">
+                        {formatDollarsWhole(cause.totalCents)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-sm h-2.5">
+                    <div
+                      className="bg-lions-blue h-2.5 rounded-sm"
+                      style={{ width: `${Math.max(cause.pct, 2)}%` }}
+                    />
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <div className="mt-3 pl-1">
+                    {cause.rows.length === 0 && cause.totalCents > 0 ? (
+                      <p className="text-sm text-gray-500 italic">Detail unavailable</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {cause.rows.map((row) => (
+                          <li
+                            key={row.id}
+                            className="flex items-center justify-between text-sm gap-3"
+                          >
+                            <span className="text-gray-500 shrink-0">{formatDate(row.txnDate)}</span>
+                            <span className="text-gray-700 truncate flex-1 text-right sm:text-left sm:flex-none">
+                              {row.party ?? "Recipient not recorded"}
+                            </span>
+                            <span className="text-gray-900 font-medium shrink-0">
+                              {formatDollarsWhole(row.amountCents)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

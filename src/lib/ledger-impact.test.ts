@@ -139,10 +139,10 @@ describe("bucketGivingByCause", () => {
   // '' key mapped to "Other community support".
   it("buckets a current-FY row set by cause, sorted desc, '' key labeled", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2026-08-01", amountCents: 10_000, beneficiaryCause: "Scholarships" },
-      { txnDate: "2026-09-15", amountCents: 5_000, beneficiaryCause: "scholarships" }, // same key, different casing
-      { txnDate: "2026-10-01", amountCents: 20_000, beneficiaryCause: "Food Pantry" },
-      { txnDate: "2026-11-01", amountCents: 2_500, beneficiaryCause: null },
+      { txnDate: "2026-08-01", amountCents: 10_000, beneficiaryCause: "Scholarships", id: "t1", party: "Acme Foundation" },
+      { txnDate: "2026-09-15", amountCents: 5_000, beneficiaryCause: "scholarships", id: "t2", party: null }, // same key, different casing
+      { txnDate: "2026-10-01", amountCents: 20_000, beneficiaryCause: "Food Pantry", id: "t3", party: "Westerville Food Pantry" },
+      { txnDate: "2026-11-01", amountCents: 2_500, beneficiaryCause: null, id: "t4", party: null },
     ];
     const result = bucketGivingByCause(rows);
 
@@ -165,8 +165,8 @@ describe("bucketGivingByCause", () => {
   // and percentages are relative to THIS set's own total, not some outside total.
   it("buckets a prior-FY row set independently, pct relative to that set's own total", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2024-08-01", amountCents: 3_000, beneficiaryCause: "Youth Programs" },
-      { txnDate: "2024-09-01", amountCents: 1_000, beneficiaryCause: "Youth Programs" },
+      { txnDate: "2024-08-01", amountCents: 3_000, beneficiaryCause: "Youth Programs", id: "p1", party: "Youth Center" },
+      { txnDate: "2024-09-01", amountCents: 1_000, beneficiaryCause: "Youth Programs", id: "p2", party: null },
     ];
     const result = bucketGivingByCause(rows);
 
@@ -186,9 +186,9 @@ describe("bucketGivingByCause", () => {
   // ~100 (allowing for rounding to 1 decimal across N buckets).
   it("percentages across buckets sum to ~100 within rounding tolerance", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2026-01-01", amountCents: 3_333, beneficiaryCause: "A" },
-      { txnDate: "2026-02-01", amountCents: 3_333, beneficiaryCause: "B" },
-      { txnDate: "2026-03-01", amountCents: 3_334, beneficiaryCause: "C" },
+      { txnDate: "2026-01-01", amountCents: 3_333, beneficiaryCause: "A", id: "q1", party: null },
+      { txnDate: "2026-02-01", amountCents: 3_333, beneficiaryCause: "B", id: "q2", party: null },
+      { txnDate: "2026-03-01", amountCents: 3_334, beneficiaryCause: "C", id: "q3", party: null },
     ];
     const result = bucketGivingByCause(rows);
     const pctSum = result.reduce((s, r) => s + r.pct, 0);
@@ -202,10 +202,10 @@ describe("bucketGivingByCause", () => {
   // sort desc by totalCents, '' key always last, pct = round(total/allTime*1000)/10.
   it("all-time bucketing over the full row set matches the pre-refactor byCause formula", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2023-08-01", amountCents: 50_000, beneficiaryCause: "Vision" },
-      { txnDate: "2024-08-01", amountCents: 30_000, beneficiaryCause: "Vision" },
-      { txnDate: "2025-08-01", amountCents: 15_000, beneficiaryCause: null },
-      { txnDate: "2026-08-01", amountCents: 5_000, beneficiaryCause: "Hunger Relief" },
+      { txnDate: "2023-08-01", amountCents: 50_000, beneficiaryCause: "Vision", id: "v1", party: "Vision Clinic" },
+      { txnDate: "2024-08-01", amountCents: 30_000, beneficiaryCause: "Vision", id: "v2", party: null },
+      { txnDate: "2025-08-01", amountCents: 15_000, beneficiaryCause: null, id: "v3", party: null },
+      { txnDate: "2026-08-01", amountCents: 5_000, beneficiaryCause: "Hunger Relief", id: "v4", party: "Food Bank" },
     ];
     const allTimeCents = rows.reduce((s, r) => s + r.amountCents, 0);
     const result = bucketGivingByCause(rows);
@@ -217,6 +217,76 @@ describe("bucketGivingByCause", () => {
     expect(result[1].causeLabel).toBe("Hunger Relief");
     expect(result[2].causeKey).toBe("");
     expect(result[2].causeLabel).toBe("Other community support");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Impact Cause Drill-Down (2026-07-21) — CauseBucket.rows
+  // ---------------------------------------------------------------------------
+
+  // Named test 1: rows include id/party, sorted desc by txnDate within a bucket.
+  it("includes id and party on each row, sorted desc by txnDate within a bucket", () => {
+    const rows: GivingFoldRow[] = [
+      { txnDate: "2026-01-10", amountCents: 1_000, beneficiaryCause: "Youth Programs", id: "a1", party: "Alpha" },
+      { txnDate: "2026-03-05", amountCents: 2_000, beneficiaryCause: "Youth Programs", id: "a2", party: "Bravo" },
+      { txnDate: "2026-02-20", amountCents: 3_000, beneficiaryCause: "Youth Programs", id: "a3", party: "Charlie" },
+    ];
+    const result = bucketGivingByCause(rows);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].rows).toEqual([
+      { id: "a2", txnDate: "2026-03-05", party: "Bravo", amountCents: 2_000 },
+      { id: "a3", txnDate: "2026-02-20", party: "Charlie", amountCents: 3_000 },
+      { id: "a1", txnDate: "2026-01-10", party: "Alpha", amountCents: 1_000 },
+    ]);
+  });
+
+  // Named test 2: null-party rows are kept in rows — DECISION-024 regression guard.
+  // Query 2 / recentGifts excludes null-party rows; this fold (fed only by
+  // Query 1) must never apply that filter, or bucket.rows would stop
+  // reconciling to bucket.totalCents.
+  it("keeps null-party rows in rows — does not apply Query 2's isNotNull filter", () => {
+    const rows: GivingFoldRow[] = [
+      { txnDate: "2026-04-01", amountCents: 1_500, beneficiaryCause: "Food Pantry", id: "b1", party: null },
+      { txnDate: "2026-04-15", amountCents: 2_500, beneficiaryCause: "Food Pantry", id: "b2", party: "Donor Co" },
+    ];
+    const result = bucketGivingByCause(rows);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].rows).toHaveLength(2);
+    expect(result[0].rows.some((r) => r.id === "b1" && r.party === null)).toBe(true);
+  });
+
+  // Named test 3: each bucket's rows sum to bucket.totalCents — the direct
+  // unit-level encoding of Flow A's success outcome (reconciliation invariant).
+  it("each bucket's rows sum to bucket.totalCents", () => {
+    const rows: GivingFoldRow[] = [
+      { txnDate: "2026-01-01", amountCents: 1_000, beneficiaryCause: "Scholarships", id: "c1", party: "X" },
+      { txnDate: "2026-02-01", amountCents: 4_000, beneficiaryCause: "Scholarships", id: "c2", party: null },
+      { txnDate: "2026-03-01", amountCents: 2_000, beneficiaryCause: "Food Pantry", id: "c3", party: "Y" },
+      { txnDate: "2026-04-01", amountCents: 500, beneficiaryCause: null, id: "c4", party: null },
+    ];
+    const result = bucketGivingByCause(rows);
+
+    for (const bucket of result) {
+      const sum = bucket.rows.reduce((s, r) => s + r.amountCents, 0);
+      expect(sum).toBe(bucket.totalCents);
+    }
+  });
+
+  // Named test 4: the '' key (Other community support) bucket also gets a
+  // populated rows array — no `if (causeKey)` guard anywhere skips it.
+  it("'' key (Other community support) bucket also gets a populated rows array", () => {
+    const rows: GivingFoldRow[] = [
+      { txnDate: "2026-01-01", amountCents: 1_000, beneficiaryCause: "Scholarships", id: "d1", party: "X" },
+      { txnDate: "2026-02-01", amountCents: 750, beneficiaryCause: null, id: "d2", party: null },
+      { txnDate: "2026-03-01", amountCents: 250, beneficiaryCause: "  ", id: "d3", party: "Z" },
+    ];
+    const result = bucketGivingByCause(rows);
+
+    const otherBucket = result.find((b) => b.causeKey === "");
+    expect(otherBucket).toBeDefined();
+    expect(otherBucket!.rows).toHaveLength(2);
+    expect(otherBucket!.rows.map((r) => r.id).sort()).toEqual(["d2", "d3"]);
   });
 });
 

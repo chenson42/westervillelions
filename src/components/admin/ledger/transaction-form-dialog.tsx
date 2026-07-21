@@ -15,6 +15,7 @@ type EditableTransaction = Pick<
   | "party"
   | "memo"
   | "paymentMethod"
+  | "checkNumber"
   | "bankAccountId"
   | "fundId"
   | "transferGroupId"

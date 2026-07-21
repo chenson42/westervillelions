@@ -189,6 +189,12 @@ const navigation: NavGroup[] = [
         icon: "🔄",
       },
       {
+        name: "Security",
+        href: "/admin/security",
+        icon: "🛡️",
+        requiredFeature: FEATURES.ADMIN_SECURITY_VIEW,
+      },
+      {
         name: "Release Notes",
         href: "/admin/release-notes",
         icon: "📝",

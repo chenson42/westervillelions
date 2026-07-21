@@ -58,6 +58,7 @@ import {
   type BudgetVarianceResult,
   type AgedPublicFundFact,
   type GivingFoldRow,
+  type CauseGivingRow,
 } from "@/lib/ledger";
 
 // ---------------------------------------------------------------------------
@@ -680,8 +681,9 @@ export async function getOverview(
   const cashDisbursements = allTxns.filter(
     (t) => t.flow === "expense" && t.paymentMethod === "cash",
   ).length;
+  // Waived rows (receiptWaivedAt set) are excluded from this count — DECISION-035.
   const txnsWithoutReceipt = allTxns.filter(
-    (t) => t.flow === "expense" && !t.receiptUrl,
+    (t) => t.flow === "expense" && !t.receiptStorageKey && !t.receiptWaivedAt,
   ).length;
 
   // --------------------------------------------------------------------------
@@ -944,6 +946,7 @@ export type UncashedCheckRow = {
   amountCents: number;
   txnDate: string; // 'YYYY-MM-DD'
   memo: string | null;
+  checkNumber: string | null; // structured check # (T-18)
   ageDays: number; // computed via daysSinceTxnDate()
 };
 
@@ -1019,6 +1022,7 @@ export async function getDashboard(): Promise<DashboardData> {
       amountCents: ledgerTransactions.amountCents,
       txnDate: ledgerTransactions.txnDate,
       memo: ledgerTransactions.memo,
+      checkNumber: ledgerTransactions.checkNumber,
       fundSlug: ledgerFunds.slug,
       fundName: ledgerFunds.name,
     })
@@ -1048,6 +1052,7 @@ export async function getDashboard(): Promise<DashboardData> {
       amountCents: r.amountCents,
       txnDate: r.txnDate,
       memo: r.memo,
+      checkNumber: r.checkNumber,
       ageDays: daysSinceTxnDate(r.txnDate, now),
     };
   });
@@ -1135,9 +1140,14 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
       party: ledgerTransactions.party,
       memo: ledgerTransactions.memo,
       paymentMethod: ledgerTransactions.paymentMethod,
+      // Bank Reconciliation inc1 (T-18, DECISION-034)
+      checkNumber: ledgerTransactions.checkNumber,
       bankAccountId: ledgerTransactions.bankAccountId,
       beneficiaryCause: ledgerTransactions.beneficiaryCause,
-      receiptUrl: ledgerTransactions.receiptUrl,
+      receiptStorageKey: ledgerTransactions.receiptStorageKey,
+      receiptWaivedAt: ledgerTransactions.receiptWaivedAt,
+      receiptWaivedByUserId: ledgerTransactions.receiptWaivedByUserId,
+      receiptWaiverReason: ledgerTransactions.receiptWaiverReason,
       transferGroupId: ledgerTransactions.transferGroupId,
       status: ledgerTransactions.status,
       approvedByUserId: ledgerTransactions.approvedByUserId,
@@ -2050,6 +2060,12 @@ export type PhilanthropyByCause = {
   totalCents: number;
   /** 0–100, rounded to 1 decimal. 0 when allTimeCents is 0. */
   pct: number;
+  /** See CauseBucket.rows in src/lib/ledger.ts — same shape, re-declared here
+   *  because PhilanthropyByCause is this module's own type, not a re-export
+   *  of CauseBucket. Keep these two type literals in sync by hand; import
+   *  CauseGivingRow itself (don't redefine it) to prevent the row shape from
+   *  drifting even if the two container types stay separately declared. */
+  rows: CauseGivingRow[];
 };
 
 export type PhilanthropyByFY = {
@@ -2141,6 +2157,8 @@ export async function getPhilanthropy(
       txnDate: ledgerTransactions.txnDate,
       amountCents: ledgerTransactions.amountCents,
       beneficiaryCause: ledgerTransactions.beneficiaryCause,
+      id: ledgerTransactions.id,
+      party: ledgerTransactions.party,
     })
     .from(ledgerTransactions)
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))

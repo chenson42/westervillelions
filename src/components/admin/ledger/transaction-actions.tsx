@@ -75,6 +75,7 @@ export default function TransactionActions({
     party: transaction.party,
     memo: transaction.memo,
     paymentMethod: transaction.paymentMethod,
+    checkNumber: transaction.checkNumber,
     bankAccountId: transaction.bankAccountId,
     fundId: transaction.fundId,
     transferGroupId: transaction.transferGroupId,

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, varchar, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -618,6 +618,11 @@ export type NewLedgerDonor = typeof ledgerDonors.$inferInsert;
 // Inc 6a adds: duesPaymentId (dues auto-post idempotency key, DECISION-025),
 //              syncStale (out-of-sync marker, DECISION-025),
 //              donorId (Foundation income → donor link, DECISION-025).
+// Bank Reconciliation inc1 adds: checkNumber (structured check #, text not
+// integer, DECISION-034) + composite (bank_account_id, check_number) index.
+// Transaction Receipt Upload inc adds: receiptStorageKey (renamed from dead
+// receiptUrl paste-URL field) + receiptWaivedAt/receiptWaivedByUserId/
+// receiptWaiverReason waiver trio (DECISION-035).
 export const ledgerTransactions = pgTable(
   "ledger_transactions",
   {
@@ -639,7 +644,18 @@ export const ledgerTransactions = pgTable(
     memo: text("memo"),
     beneficiaryCause: text("beneficiary_cause"), // optional cause taxonomy tag
     paymentMethod: text("payment_method"),        // 'check' | 'cash' | 'zeffy' | 'other'
-    receiptUrl: text("receipt_url"),              // URL; upload UX deferred to inc2
+    checkNumber: text("check_number"), // structured check # (T-18); nullable — only checks have one
+    // Opaque storage key `receipts/<uuid>/<name>` (DECISION-035); renamed from
+    // receipt_url (was a dead paste-URL field, 0/147 non-null — no data migration).
+    receiptStorageKey: text("receipt_storage_key"),
+    // Waiver — mirrors approvedAt/approvedByUserId/rejectionReason's shape on this
+    // table. Nullable trio; all three null = not waived. Un-waive clears all three.
+    receiptWaivedAt: timestamp("receipt_waived_at"),
+    receiptWaivedByUserId: uuid("receipt_waived_by_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    receiptWaiverReason: text("receipt_waiver_reason"),
     // transferGroupId links the debit and credit rows of a transfer pair — no FK (self-join key)
     transferGroupId: uuid("transfer_group_id"),
     status: text("status").notNull().default("posted"), // 'posted' | 'pending' | 'rejected' (inc2)
@@ -671,6 +687,7 @@ export const ledgerTransactions = pgTable(
     index("ix_ledger_txns_fund_date").on(t.fundId, t.txnDate),
     index("ix_ledger_txns_status").on(t.status),
     index("ix_ledger_txns_transfer_group").on(t.transferGroupId),
+    index("ix_ledger_txns_check_number").on(t.bankAccountId, t.checkNumber),
   ],
 );
 
@@ -881,3 +898,32 @@ export const ledgerFilings = pgTable(
 
 export type LedgerFiling = typeof ledgerFilings.$inferSelect;
 export type NewLedgerFiling = typeof ledgerFilings.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Failed Login Visibility
+// Append-only audit log of failed sign-in attempts (Credentials + Google
+// OAuth-deactivated denials). Passive recording only — see
+// src/lib/auth/failed-login.ts for the recorder, enums, and opportunistic
+// 90-day prune. DECISION-033.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const failedLoginAttempts = pgTable(
+  "failed_login_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    attemptedEmail: varchar("attempted_email", { length: 255 }).notNull(),
+    provider: text("provider").notNull(), // 'credentials' | 'google'
+    reason: text("reason").notNull(), // see FAILED_LOGIN_REASONS in src/lib/auth/failed-login.ts
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("ix_failed_login_attempts_created_at").on(t.createdAt),
+    index("ix_failed_login_attempts_email").on(t.attemptedEmail),
+  ],
+);
+
+export type FailedLoginAttempt = typeof failedLoginAttempts.$inferSelect;
+export type NewFailedLoginAttempt = typeof failedLoginAttempts.$inferInsert;

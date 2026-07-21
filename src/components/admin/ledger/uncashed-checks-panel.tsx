@@ -48,6 +48,9 @@ export default function UncashedChecksPanel({ checks }: { checks: UncashedCheckR
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Party
                   </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                    Check #
+                  </th>
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
                     Amount
                   </th>
@@ -78,6 +81,9 @@ export default function UncashedChecksPanel({ checks }: { checks: UncashedCheckR
                         {row.fundName}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">{row.party ?? "—"}</td>
+                      <td className="px-4 py-3 text-sm text-gray-700 tabular-nums whitespace-nowrap">
+                        {row.checkNumber ?? "—"}
+                      </td>
                       <td className="px-4 py-3 text-sm text-gray-900 font-semibold tabular-nums text-right whitespace-nowrap">
                         {formatDollars(row.amountCents)}
                       </td>

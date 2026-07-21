@@ -449,7 +449,7 @@ async function main() {
         memo: t.memo,
         beneficiaryCause: t.beneficiaryCause,
         paymentMethod: t.paymentMethod,
-        receiptUrl: t.receiptUrl,
+        receiptStorageKey: t.receiptStorageKey,
         transferGroupId: null,
         status: t.status,
         reconciled: t.reconciled,

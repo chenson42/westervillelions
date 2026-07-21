@@ -13,6 +13,18 @@
  *
  * Source CSVs are treasurer financial records and intentionally live OUTSIDE the
  * repo (see paths below). Do not copy them into the repo.
+ *
+ * Bank Reconciliation inc1 (T-18, DECISION-034): rows now carry a derived
+ * `checkNumber` into the insert, so PRODUCTION's still-pending first Quicken
+ * seed gets the column for free. Several helpers below are exported so
+ * scripts/backfill-check-numbers.ts can reuse them without duplication.
+ * IMPORTANT: do NOT re-run this script (even in dry-run-then---apply form)
+ * against the already-seeded local dev DB to "pick up" checkNumber — its
+ * delete-and-reinsert idempotency model would silently discard any
+ * reconciliation/edit state layered on since the 2026-07-20 seed and
+ * cascade-delete any ledger_acknowledgments tied to the doomed row IDs.
+ * scripts/backfill-check-numbers.ts is the correct (and only) backfill path
+ * for local dev.
  */
 
 import { config } from "dotenv";
@@ -32,17 +44,24 @@ import {
   users,
 } from "../src/lib/db/schema";
 import { eq, and, like, inArray } from "drizzle-orm";
+import { classifyRegisterCheckColumn } from "../src/lib/check-number";
 
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
 const APPLY = process.argv.includes("--apply");
-const IMPORT_MARKER = "[quicken-import]";
+// Exported so scripts/backfill-check-numbers.ts (Bank Reconciliation inc1,
+// DECISION-034) can reuse the exact same idempotency marker without
+// duplicating it.
+export const IMPORT_MARKER = "[quicken-import]";
 
-const FOUNDATION_CSV =
+// Exported so scripts/backfill-check-numbers.ts can reuse the same source
+// paths without re-declaring them (DECISION-034). Do not copy these CSVs
+// into the repo.
+export const FOUNDATION_CSV =
   "/Users/cshenso/Documents/Treasurer Transfer Documents 07-2024 to 06-2026/Foundation Account/WLCF Quicken Register Export 2024-2026.csv";
-const ADMIN_CSV =
+export const ADMIN_CSV =
   "/Users/cshenso/Documents/Treasurer Transfer Documents 07-2024 to 06-2026/Administrative Account/WLC Quicken Register Export 2024-2026.csv";
 
 // Opening balances (cents) per Phase-4 spec.
@@ -58,7 +77,7 @@ const CLUB_TARGET_ENDING_CENTS = 1_621_864; // $16,218.64 (administrative + acti
 // ---------------------------------------------------------------------------
 
 /** RFC4180-lite line splitter: handles quoted fields containing commas and "" escapes. */
-function parseCsvLine(line: string): string[] {
+export function parseCsvLine(line: string): string[] {
   const fields: string[] = [];
   let cur = "";
   let inQuotes = false;
@@ -90,7 +109,7 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-type RawRow = {
+export type RawRow = {
   split: string; // "S" for split-component rows, else ""
   dateRaw: string; // "M/D/YYYY"
   isoDate: string; // "YYYY-MM-DD"
@@ -103,19 +122,19 @@ type RawRow = {
   memo: string;
 };
 
-function parseAmountToCents(raw: string): number {
+export function parseAmountToCents(raw: string): number {
   const cleaned = raw.replace(/,/g, "").trim();
   if (cleaned === "") return 0;
   return Math.round(parseFloat(cleaned) * 100);
 }
 
-function toIsoDate(raw: string): string {
+export function toIsoDate(raw: string): string {
   const [m, d, y] = raw.split("/").map((s) => parseInt(s, 10));
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 /** Parses a Quicken register CSV export into raw data rows (skips preamble/footer). */
-function parseRegisterFile(path: string): RawRow[] {
+export function parseRegisterFile(path: string): RawRow[] {
   const raw = readFileSync(path, "utf-8").replace(/^﻿/, "");
   const lines = raw.split(/\r?\n/);
 
@@ -171,7 +190,7 @@ function parseRegisterFile(path: string): RawRow[] {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-function deriveParty(payeeRaw: string, memo: string): string {
+export function deriveParty(payeeRaw: string, memo: string): string {
   const p = payeeRaw.trim();
   if (p === "" || p === "Deposit" || p === "Withdrawal" || p === "Cash withdrawal") {
     return memo.trim() || "Unknown";
@@ -290,6 +309,11 @@ type MappedTxn = {
   sourceCheckNum: string;
   sourceCategory: string;
   beneficiaryCause: string | null;
+  // Bank Reconciliation inc1 (T-18, DECISION-034): structured check number,
+  // derived via the same primary classifier scripts/backfill-check-numbers.ts
+  // uses. Null for non-check rows or when the "Check #" column holds a
+  // non-numeric marker (e.g. "Card") — see classifyRegisterCheckColumn().
+  checkNumber: string | null;
 };
 
 type SkippedRow = {
@@ -339,7 +363,7 @@ const FOUNDATION_RUDOLPH_INCOME = new Set(["Rudolph Run Sponsorship", "Rudolph R
 const FOUNDATION_OPERATIONS = new Set(["Storage Unit", "Uncategorized", "Membership"]);
 const FOUNDATION_SERVICE_PROJECTS = new Set(["Bags to Benches Expenses", "Bench Plaques", "Plastic Bags"]);
 
-function shouldSkipFoundation(row: RawRow): string | null {
+export function shouldSkipFoundation(row: RawRow): string | null {
   if (row.amountCents === 0) return "zero-amount (VOIDED / cancelled check)";
   if (row.category === "Carryover from previous fiscal year")
     return "carryover row — folded into opening balance";
@@ -395,7 +419,7 @@ function mapFoundation(row: RawRow): { fundKind: string; categoryName: string; p
   throw new Error(`Unmapped Foundation category "${cat}" (flow=${flow}, date=${row.isoDate})`);
 }
 
-function foundationPaymentMethod(row: RawRow): string {
+export function foundationPaymentMethod(row: RawRow): string {
   if (row.isoDate === "2026-03-09" && row.category === "Miscellaneous" && row.amountCents === 1000) {
     return "zeffy";
   }
@@ -419,7 +443,7 @@ const CLUB_ADMIN_EXPENSE_DIRECT: Record<string, string> = {
 
 const CLUB_DUES_LIKE = new Set(["Club Dues", "New member fee", "International new member fee"]);
 
-function shouldSkipClub(row: RawRow): string | null {
+export function shouldSkipClub(row: RawRow): string | null {
   if (row.amountCents === 0) return "zero-amount (VOIDED)";
   if (row.category === "Transfer" && row.payeeRaw === "Opening Balance")
     return "opening balance row — folded into opening balance";
@@ -458,7 +482,7 @@ function mapClub(row: RawRow): { fundKind: string; categoryName: string; partyOv
   throw new Error(`Unmapped Club category "${cat}" (flow=${flow}, date=${row.isoDate})`);
 }
 
-function clubPaymentMethod(row: RawRow): string {
+export function clubPaymentMethod(row: RawRow): string {
   if (row.action === "Check") return "check";
   if (row.action === "Teller") return "cash";
   return "other";
@@ -503,6 +527,7 @@ function buildEntityRows(
     const beneficiaryCause = eligibleForCause
       ? deriveCause({ payeeRaw: row.payeeRaw, category: row.category, memo: row.memo, checkNum: row.checkNum })
       : null;
+    const checkNumber = classifyRegisterCheckColumn(row.action, row.checkNum).checkNumber;
 
     mapped.push({
       entityKey,
@@ -518,6 +543,7 @@ function buildEntityRows(
       sourceCheckNum: row.checkNum,
       sourceCategory: row.category,
       beneficiaryCause,
+      checkNumber,
     });
   }
 
@@ -911,6 +937,7 @@ async function main() {
         memo: buildMemo(t.memo),
         beneficiaryCause: t.beneficiaryCause,
         paymentMethod: t.paymentMethod,
+        checkNumber: t.checkNumber,
         status: "posted" as const,
         reconciled: t.reconciled,
         reconciledAt: t.reconciled ? new Date() : null,
@@ -969,9 +996,18 @@ async function main() {
   console.log(`\nApply complete.`);
 }
 
-main()
-  .then(() => process.exit(process.exitCode ?? 0))
-  .catch((err) => {
-    console.error("Fatal error:", err);
-    process.exit(1);
-  });
+// Guard against auto-execution on import. scripts/backfill-check-numbers.ts
+// (Bank Reconciliation inc1, DECISION-034) imports several helpers/constants
+// from this module by name — it must NOT trigger this script's own
+// destructive-and-total --apply path (or even its dry-run parse/verify
+// pass) merely by importing it. Only run main() when this file is the
+// actual entry point invoked on the command line.
+const invokedDirectly = (process.argv[1] ?? "").replace(/\\/g, "/").endsWith("scripts/import-quicken-ledger.ts");
+if (invokedDirectly) {
+  main()
+    .then(() => process.exit(process.exitCode ?? 0))
+    .catch((err) => {
+      console.error("Fatal error:", err);
+      process.exit(1);
+    });
+}

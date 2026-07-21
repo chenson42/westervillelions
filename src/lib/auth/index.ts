@@ -7,6 +7,7 @@ import { users, accounts, members, userRoles, roles, roleFeatures, features } fr
 import { and, eq, ilike } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { sendEmail } from "@/lib/email";
+import { recordFailedLogin } from "@/lib/auth/failed-login";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
@@ -31,6 +32,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
+          recordFailedLogin({
+            attemptedEmail: credentials?.email as string | undefined,
+            provider: "credentials",
+            reason: "missing_credentials",
+          });
           return null;
         }
 
@@ -38,12 +44,33 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           where: eq(users.email, credentials.email as string),
         });
 
-        if (!user || !user.password) {
+        if (!user) {
+          recordFailedLogin({
+            attemptedEmail: credentials.email as string,
+            provider: "credentials",
+            reason: "unknown_email",
+          });
+          return null;
+        }
+
+        if (!user.password) {
+          recordFailedLogin({
+            attemptedEmail: credentials.email as string,
+            provider: "credentials",
+            reason: "no_password_set",
+            userId: user.id,
+          });
           return null;
         }
 
         // Block deactivated accounts
         if (!user.isActive) {
+          recordFailedLogin({
+            attemptedEmail: credentials.email as string,
+            provider: "credentials",
+            reason: "deactivated",
+            userId: user.id,
+          });
           return null;
         }
 
@@ -53,6 +80,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         );
 
         if (!isValidPassword) {
+          recordFailedLogin({
+            attemptedEmail: credentials.email as string,
+            provider: "credentials",
+            reason: "bad_password",
+            userId: user.id,
+          });
           return null;
         }
 
@@ -78,7 +111,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       });
       // If user doesn't exist yet (OAuth first sign-in), allow
       if (!dbUser) return true;
-      return dbUser.isActive;
+      if (!dbUser.isActive) {
+        recordFailedLogin({
+          attemptedEmail: user.email,
+          provider: "google",
+          reason: "oauth_deactivated",
+          userId: user.id,
+        });
+        return false;
+      }
+      return true;
     },
 
     async session({ session, token }) {

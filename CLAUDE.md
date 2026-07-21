@@ -79,7 +79,7 @@ src/
 │   ├── forgot-password/, reset-password/  # Password reset flow
 │   ├── access-pending/    # Landing for authenticated users with no usable role
 │   ├── (dashboard)/       # Admin portal (authenticated)
-│   │   └── admin/         # Admin functions (users, roles, permissions, members, events, groups, campaigns, announcements, programs, membership, dues, ledger, subscriptions, suggestions, testimonials, email-queue, sync-log, release-notes, contact)
+│   │   └── admin/         # Admin functions (users, roles, permissions, members, events, groups, campaigns, announcements, programs, membership, dues, ledger, subscriptions, suggestions, testimonials, email-queue, sync-log, security, release-notes, contact)
 │   ├── members/           # Member portal (authenticated — auth() per page)
 │   │   ├── events/        # Internal events & per-occurrence RSVP
 │   │   ├── events/past/   # Past events list
@@ -115,6 +115,7 @@ drizzle/
 scripts/                   # One-off tsx scripts (roster import, sync-roster, etc.)
 docs/
 ├── decisions.md           # ADR-style decision log
+├── backlog.md             # Agreed-on feature ideas not yet started (B-nn IDs)
 ├── treasurer-todo.md      # Treasurer's living checklist (books/compliance follow-ups)
 ├── work-log/              # Per-feature pipeline tracking
 ├── reviews/               # Review log + detail files
@@ -140,7 +141,7 @@ docs/
 - **Member Directory:** Contact information for club members
 - **Events:** Internal event calendar, per-occurrence RSVP system, "Add to Calendar" (.ics) download
 - **Philanthropy Dashboard:** `/members/impact` — all-time and current-FY giving totals, giving by cause (CSS bar list), giving by fiscal year, recent named gifts. Two-tier gate: `impact.view` required when `philanthropyVisibility='board'`; any linked member when `='members'`.
-- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, The Ledger (online accounting: books, reimbursements, compliance/990, reports, donors & acknowledgments), subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, in-app release notes, and contact submissions
+- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, The Ledger (online accounting: books, reimbursements, compliance/990, reports, donors & acknowledgments), subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, failed-login security log, in-app release notes, and contact submissions
 
 ## Integrations
 

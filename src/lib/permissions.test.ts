@@ -80,6 +80,7 @@ describe("getFeaturesByCategory", () => {
       FEATURES.ADMIN_DASHBOARD,
       FEATURES.ADMIN_USERS,
       FEATURES.ADMIN_ROLES,
+      FEATURES.ADMIN_SECURITY_VIEW,
     ];
 
     // Act

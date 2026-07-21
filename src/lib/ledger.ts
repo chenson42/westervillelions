@@ -366,6 +366,24 @@ export type GivingFoldRow = {
   txnDate: string;
   amountCents: number;
   beneficiaryCause: string | null;
+  /** Stable transaction id — carried through into CauseBucket.rows for the
+   *  impact-page cause drill-down (Impact Cause Drill-Down feature). */
+  id: string;
+  /** Payee/recipient name, nullable. Carried through into CauseBucket.rows
+   *  unfiltered — see the DECISION-024 note on CauseGivingRow below. */
+  party: string | null;
+};
+
+/** One individual gift row inside a CauseBucket, for the drill-down UI.
+ *  Never filters on party — includes null-party rows so that summing a
+ *  bucket's `rows` always reconciles to `bucket.totalCents` (DECISION-024
+ *  only excludes null-party rows from Query 2 / recentGifts, never from
+ *  Query 1 / this fold). Sorted desc by txnDate within each bucket. */
+export type CauseGivingRow = {
+  id: string;
+  txnDate: string;
+  party: string | null;
+  amountCents: number;
 };
 
 export type CauseBucket = {
@@ -379,6 +397,10 @@ export type CauseBucket = {
    *  (i.e. relative to THIS bucket's own total — not a global total). 0 when
    *  the bucket's total is 0. */
   pct: number;
+  /** Every individual gift row folded into this bucket, sorted desc by
+   *  txnDate. Required (not optional) — one shape for both the existing
+   *  summary consumers and the new drill-down, per architect's suggestion. */
+  rows: CauseGivingRow[];
 };
 
 /**
@@ -391,10 +413,24 @@ export type CauseBucket = {
  * sorts last, matching the ordering used by getPhilanthropy()'s all-time
  * byCause list.
  *
+ * Also accumulates each cause's individual rows (id, txnDate, party,
+ * amountCents) into `bucket.rows` in the same single pass, sorted desc by
+ * txnDate before being returned (string comparison is safe here — txnDate is
+ * always YYYY-MM-DD). This is what powers the /members/impact cause
+ * drill-down. IMPORTANT — DECISION-024 asymmetry: this fold must NEVER filter
+ * out null-party rows the way Query 2 / recentGifts does. Query 1 (the only
+ * caller of this function) has never applied a party-IS-NOT-NULL filter, and
+ * it must stay that way — otherwise a bucket's `rows` would stop summing to
+ * `bucket.totalCents` and the drill-down's numbers would silently disagree
+ * with the totals already shown on the page.
+ *
  * Empty input returns an empty array.
  */
 export function bucketGivingByCause(rows: GivingFoldRow[]): CauseBucket[] {
-  const causeMap = new Map<string, { totalCents: number; firstSeenOriginal: string }>();
+  const causeMap = new Map<
+    string,
+    { totalCents: number; firstSeenOriginal: string; rows: CauseGivingRow[] }
+  >();
   let totalCents = 0;
 
   for (const row of rows) {
@@ -404,23 +440,33 @@ export function bucketGivingByCause(rows: GivingFoldRow[]): CauseBucket[] {
     const causeKey =
       rawCause === null || rawCause.trim() === "" ? "" : rawCause.trim().toLowerCase();
 
+    const causeRow: CauseGivingRow = {
+      id: row.id,
+      txnDate: row.txnDate,
+      party: row.party,
+      amountCents: row.amountCents,
+    };
+
     const existing = causeMap.get(causeKey);
     if (existing) {
       existing.totalCents += row.amountCents;
+      existing.rows.push(causeRow);
     } else {
       causeMap.set(causeKey, {
         totalCents: row.amountCents,
         firstSeenOriginal: causeKey === "" ? "" : rawCause!.trim(),
+        rows: [causeRow],
       });
     }
   }
 
   return Array.from(causeMap.entries())
-    .map(([causeKey, { totalCents: cents, firstSeenOriginal }]) => ({
+    .map(([causeKey, { totalCents: cents, firstSeenOriginal, rows: bucketRows }]) => ({
       causeKey,
       causeLabel: causeKey === "" ? "Other community support" : firstSeenOriginal,
       totalCents: cents,
       pct: totalCents > 0 ? Math.round((cents / totalCents) * 1000) / 10 : 0,
+      rows: [...bucketRows].sort((a, b) => (a.txnDate < b.txnDate ? 1 : a.txnDate > b.txnDate ? -1 : 0)),
     }))
     .sort((a, b) => {
       // '' key (Other community support) always sorts to the end
@@ -566,7 +612,7 @@ export type GuardrailsInput = {
   incomeWithoutParty: number;
   /** Count of expense transactions where paymentMethod = 'cash' */
   cashDisbursements: number;
-  /** Count of expense transactions where receiptUrl is null */
+  /** Count of expense transactions where receiptStorageKey and receiptWaivedAt are both null (DECISION-035) */
   txnsWithoutReceipt: number;
   // ---------------------------------------------------------------------------
   // inc2 fields — all required in inc2+; callers on inc1 paths that cannot

@@ -129,20 +129,58 @@ can be referenced from work-logs, board minutes, and future sessions.
   holding period. LCI guidance allows aged public funds when earmarked for specific projects —
   document any such earmarks in board minutes. (In-app earmark support is a tracked feature follow-up.)
 
-- [ ] **T-18 — Structured check numbers in the Ledger.** Check numbers from the register live in
-  free-text memos (e.g. "Check #8249" context only in memo/party text). The Ledger dashboard's
-  uncashed-checks list (2026-07-20 feature, DECISION-031) reads memo text in v1. When check-writing
-  volume or reconciliation friction warrants it, add a structured `check_number` column to
-  `ledger_transactions`, backfill by parsing the imported memos, and surface it in the transaction
-  form + uncashed-checks list. (Ruled out of scope for the dashboard v1 by the architect.)
+- [ ] **T-18 — Structured check numbers in the Ledger.** *(In progress, 2026-07-21 — Bank
+  Reconciliation inc1.)* Original framing below turned out to be wrong on inspection
+  (DECISION-034): memo/party text almost never carries a check number, and the
+  uncashed-checks list has never read memo text for detection (it detects via
+  `paymentMethod='check'` + `flow='expense'` + `reconciled=false`; memo is only
+  ever displayed). The real numbers are recoverable from the original Quicken
+  register CSVs' "Check #" column. Schema (`check_number` text column + index)
+  and the backfill script (`scripts/backfill-check-numbers.ts`) are built and
+  dry-run verified against local dev: 101 of 105 check rows matched
+  unambiguously; 4 are genuinely ambiguous (two same-day/same-amount/same-payee
+  check pairs — see script output) and need manual resolution, not a guess.
+  `--apply` has **not** been run yet — pending treasurer review of the dry-run
+  output. Original (superseded) framing: ~~Check numbers from the register live
+  in free-text memos (e.g. "Check #8249" context only in memo/party text). The
+  Ledger dashboard's uncashed-checks list (2026-07-20 feature, DECISION-031)
+  reads memo text in v1.~~
 
-- [ ] **T-17 — Split Zeffy across two accounts (transitional state as of 2026-07-20).** All Zeffy
-  forms currently settle to the **club (admin) bank account** — a temporary arrangement so dues land
-  correctly. Plan per treasurer: open a second Zeffy account so the club account backs the dues form
-  and the Foundation account backs donation forms. Until the split is done, any *donation* received
-  through Zeffy lands in the admin account and must be forwarded to the Foundation (the Ledger's
-  direct-to-admin guardrail will flag these if recorded as admin income). After the split, verify
-  each form's payout account and update the Zeffy links on the site if they change.
+- [ ] **T-17 — Zeffy donations flow through the Activity Fund (plan revised 2026-07-21).**
+  ~~Original plan: open a second Zeffy account so the club account backs the dues form and the
+  Foundation account backs donation forms.~~ **2026-07-21 — treasurer decision: do NOT open a
+  second Zeffy account.** Keep the single Zeffy account settling to the club (admin) bank account
+  for everything. Instead, leverage the existing Activity Fund pass-through policy for donations:
+  - Dues via Zeffy → admin income (unchanged, auto-post already does this).
+  - **Donations via Zeffy → record as club Activity Fund (public) income**, then promptly sweep to
+    the Foundation per the Activity Fund's clearing-account policy (reference note below: target
+    balance $0, spend on service or sweep — never club operations). Recording them to the Activity
+    Fund rather than admin income keeps the direct-to-admin guardrail quiet; the aged-public-fund
+    guardrail still backstops any sweep that gets forgotten (>365 days).
+  - Caveat to keep in view: money given through a club-side Zeffy form is legally a gift to the
+    club, not the 501(c)(3) Foundation — donor tax-deductibility is only clean once funds are in
+    the Foundation. Keep steering larger/deduction-sensitive donors to Foundation channels, and
+    batch the sweeps often enough that donations don't sit club-side.
+  - Remaining action: none structural — fold the "sweep Zeffy donations" habit into the monthly
+    close (pairs with the T-04 board motion, which zeroes the current $84.52 the same way).
+
+- [ ] **T-21 — Fix four rows mistagged `paymentMethod='check'`.** Found 2026-07-21 by the
+  check-number backfill dry-run (`scripts/backfill-check-numbers.ts`, inc1 of
+  `2026-07-21-bank-reconciliation`): the register's "Check #" column shows these aren't paper
+  checks. Three are confirmed debit-card purchases (Check #="Card"): FSP Product Decorator
+  −$2,225.00 (10/23/2025), OTC Brands −$208.32 (10/10/2025), Walmart −$226.77 (10/9/2025) — the
+  script corrects these to `debit_card` when run with `--fix-payment-method`. One needs judgment:
+  Don Niebling +$120.00 (1/10/2026) has Check #="DEP" (a deposit tagged as check — likely
+  `paymentMethod` should be check-received or deposit, treasurer's call; the script reports it but
+  won't auto-correct). Also pending from the same dry-run: 4 ambiguous check-number assignments
+  (two same-day/same-amount/same-payee $500 check pairs to Gates At Eight — #8252/#8253 on
+  3/7/2026 and #8029/#8030 on 7/28/2024; either assignment is defensible, just pick one).
+  *2026-07-21 — backfill applied to the local DB with treasurer approval: 101 check numbers
+  written, 3 debit-card rows corrected to `paymentMethod='debit_card'`. Remaining: (a) the Don
+  Niebling $120 "DEP" row (treasurer judgment on correct payment method), (b) type the four Gates
+  At Eight check numbers in by hand via the transaction form's new Check # field (treasurer chose
+  manual assignment), (c) re-run the backfill against production when this ships (same script,
+  production DATABASE_URL) or port via the dev→prod script.*
 
 - [ ] **T-20 — Minute the petty-cash opening adjustment.** 2026-07-21: $250 of petty cash on hand
   (origin predates the books / unknown) was brought onto the books as an opening-balance

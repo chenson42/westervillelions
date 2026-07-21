@@ -19,9 +19,10 @@
  *   party?: string | null;
  *   memo?: string | null;
  *   paymentMethod?: string | null;
+ *   checkNumber?: string | null;  // structured check # (T-18); trimmed, capped at 20 chars
  *   bankAccountId?: string | null;
  *   beneficiaryCause?: string | null;
- *   receiptUrl?: string | null;
+ *   receiptStorageKey?: string | null;
  * }
  * Response 200: { id: string }
  *
@@ -51,6 +52,7 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
 const VALID_FLOWS = ["income", "expense"] as const;
 const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "other"] as const;
+const CHECK_NUMBER_MAX_LEN = 20;
 
 function isValidFlow(v: unknown): boolean {
   return typeof v === "string" && (VALID_FLOWS as readonly string[]).includes(v);
@@ -63,6 +65,22 @@ function parseDate(raw: unknown): string | null {
   const d = new Date(raw + "T00:00:00");
   if (isNaN(d.getTime())) return null;
   return raw;
+}
+
+/**
+ * Trim and length-cap checkNumber (T-18). Free-text identifier, not
+ * strict-numeric. Returns `{ error }` on invalid input, or `{ value }` with
+ * empty string normalized to null.
+ */
+function normalizeCheckNumber(v: unknown): { value: string | null } | { error: string } {
+  if (v === null) return { value: null };
+  if (typeof v !== "string") return { error: "checkNumber must be a string" };
+  const trimmed = v.trim();
+  if (!trimmed) return { value: null };
+  if (trimmed.length > CHECK_NUMBER_MAX_LEN) {
+    return { error: `checkNumber must not exceed ${CHECK_NUMBER_MAX_LEN} characters` };
+  }
+  return { value: trimmed };
 }
 
 // ---------------------------------------------------------------------------
@@ -121,9 +139,10 @@ export async function PATCH(
       party: string | null;
       memo: string | null;
       paymentMethod: string | null;
+      checkNumber: string | null;
       bankAccountId: string | null;
       beneficiaryCause: string | null;
-      receiptUrl: string | null;
+      receiptStorageKey: string | null;
       donorId: string | null;
       updatedAt: Date;
     }>;
@@ -242,6 +261,14 @@ export async function PATCH(
       update.paymentMethod = body.paymentMethod ?? null;
     }
 
+    if (body.checkNumber !== undefined) {
+      const checkNumberResult = normalizeCheckNumber(body.checkNumber);
+      if ("error" in checkNumberResult) {
+        return NextResponse.json({ error: checkNumberResult.error }, { status: 400 });
+      }
+      update.checkNumber = checkNumberResult.value;
+    }
+
     if (body.bankAccountId !== undefined) {
       update.bankAccountId = body.bankAccountId ?? null;
     }
@@ -253,8 +280,8 @@ export async function PATCH(
             ? body.beneficiaryCause.trim() || null
             : null;
     }
-    if (body.receiptUrl !== undefined) {
-      update.receiptUrl = body.receiptUrl ?? null;
+    if (body.receiptStorageKey !== undefined) {
+      update.receiptStorageKey = body.receiptStorageKey ?? null;
     }
     // Link/unlink a donor (inc6a). Validate the donor exists before linking so
     // the LinkDonorDialog can't silently no-op against a bad id.
