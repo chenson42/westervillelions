@@ -141,7 +141,7 @@ docs/
 - **Member Directory:** Contact information for club members
 - **Events:** Internal event calendar, per-occurrence RSVP system, "Add to Calendar" (.ics) download
 - **Philanthropy Dashboard:** `/members/impact` — all-time and current-FY giving totals, giving by cause (CSS bar list), giving by fiscal year, recent named gifts. Two-tier gate: `impact.view` required when `philanthropyVisibility='board'`; any linked member when `='members'`.
-- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, The Ledger (online accounting: books, reimbursements, compliance/990, reports, donors & acknowledgments), subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, failed-login security log, in-app release notes, and contact submissions
+- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, The Ledger (online accounting: books, reimbursements, compliance/990, reports, donors & acknowledgments, and an in-app Treasury User's Guide at `/admin/ledger/guide`), subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, failed-login security log, in-app release notes, and contact submissions
 
 ## Integrations
 

@@ -8,7 +8,9 @@
  * to update the paired row symmetrically (amount + date). For memo-only edits,
  * only the requested row is updated regardless.
  *
- * Guard: if txn.approvedAt is set, returns 403 (inc2 immutability).
+ * Guard: if txn.approvedAt is set, returns 403 (inc2 immutability). Also 403
+ * if txn.reconciledSessionId is set (Bank Reconciliation inc2 — the row was
+ * cleared by a closed reconciliation session; reopen it first).
  *
  * Body (all fields optional):
  * {
@@ -41,7 +43,9 @@
  * If the row is part of a transfer pair (transferGroupId non-null), BOTH rows
  * are deleted atomically.
  *
- * Guard: if txn.approvedAt is set, returns 403.
+ * Guard: if txn.approvedAt is set, returns 403. Also 403 if
+ * txn.reconciledSessionId is set (Bank Reconciliation inc2 — reopen the
+ * closed session first).
  *
  * Response 200: { deleted: number }  (1 for single row, 2 for transfer pair)
  */
@@ -151,6 +155,21 @@ export async function PATCH(
     if (existing.status === "rejected") {
       return NextResponse.json(
         { error: "Rejected transactions cannot be edited" },
+        { status: 403 },
+      );
+    }
+
+    // Bank Reconciliation inc2 guard: a row cleared by a closed reconciliation
+    // session is a FULL lock — structurally identical to the approvedAt guard
+    // above — consistent with this feature's hard-tie-out-with-no-override
+    // decision (silently degrading a closed session's arithmetic via an
+    // unflagged edit would contradict that decision's spirit).
+    if (existing.reconciledSessionId) {
+      return NextResponse.json(
+        {
+          error:
+            "This transaction was cleared by a closed reconciliation session — reopen it to edit or delete this row",
+        },
         { status: 403 },
       );
     }
@@ -383,7 +402,11 @@ export async function PATCH(
     if (updateBoth && existing.transferGroupId) {
       // Find the partner row
       const partnerRows = await db
-        .select({ id: ledgerTransactions.id, approvedAt: ledgerTransactions.approvedAt })
+        .select({
+          id: ledgerTransactions.id,
+          approvedAt: ledgerTransactions.approvedAt,
+          reconciledSessionId: ledgerTransactions.reconciledSessionId,
+        })
         .from(ledgerTransactions)
         .where(
           and(
@@ -391,12 +414,21 @@ export async function PATCH(
           ),
         );
 
-      const partnerId = partnerRows.find((r) => r.id !== id)?.id;
-      const partnerApprovedAt = partnerRows.find((r) => r.id !== id)?.approvedAt;
+      const partner = partnerRows.find((r) => r.id !== id);
+      const partnerId = partner?.id;
 
-      if (partnerApprovedAt) {
+      if (partner?.approvedAt) {
         return NextResponse.json(
           { error: "The paired transfer transaction is approved and cannot be edited" },
+          { status: 403 },
+        );
+      }
+      if (partner?.reconciledSessionId) {
+        return NextResponse.json(
+          {
+            error:
+              "The paired transfer transaction was cleared by a closed reconciliation session — reopen it to edit or delete this row",
+          },
           { status: 403 },
         );
       }
@@ -457,7 +489,13 @@ export async function DELETE(
     // Fetch the target row
     const existing = await db.query.ledgerTransactions.findFirst({
       where: eq(ledgerTransactions.id, id),
-      columns: { id: true, approvedAt: true, transferGroupId: true, status: true },
+      columns: {
+        id: true,
+        approvedAt: true,
+        transferGroupId: true,
+        status: true,
+        reconciledSessionId: true,
+      },
     });
     if (!existing) {
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
@@ -479,11 +517,27 @@ export async function DELETE(
       );
     }
 
+    // Bank Reconciliation inc2 guard: a row cleared by a closed reconciliation
+    // session is a FULL lock — see the matching guard in PATCH above.
+    if (existing.reconciledSessionId) {
+      return NextResponse.json(
+        {
+          error:
+            "This transaction was cleared by a closed reconciliation session — reopen it to edit or delete this row",
+        },
+        { status: 403 },
+      );
+    }
+
     // If part of a transfer pair, delete both rows atomically
     if (existing.transferGroupId) {
       // Find all rows in the transfer group
       const pairRows = await db
-        .select({ id: ledgerTransactions.id, approvedAt: ledgerTransactions.approvedAt })
+        .select({
+          id: ledgerTransactions.id,
+          approvedAt: ledgerTransactions.approvedAt,
+          reconciledSessionId: ledgerTransactions.reconciledSessionId,
+        })
         .from(ledgerTransactions)
         .where(eq(ledgerTransactions.transferGroupId, existing.transferGroupId));
 
@@ -491,6 +545,17 @@ export async function DELETE(
       if (pairRows.some((r) => r.approvedAt)) {
         return NextResponse.json(
           { error: "Cannot delete a transfer where one or both rows are approved" },
+          { status: 403 },
+        );
+      }
+      // If any row in the pair was cleared by a closed reconciliation session,
+      // reject the delete — same full-lock rule as the single-row guard above.
+      if (pairRows.some((r) => r.reconciledSessionId)) {
+        return NextResponse.json(
+          {
+            error:
+              "Cannot delete a transfer where one or both rows were cleared by a closed reconciliation session — reopen it first",
+          },
           { status: 403 },
         );
       }

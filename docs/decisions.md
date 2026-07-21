@@ -28,6 +28,19 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-037: Treasury User's Guide — live-value scope limited to 990 determination + current settings recap, no `ensureFilingsForFY` write from the guide
+
+**Status:** Resolved
+**Date:** 2026-07-21
+
+**Decision:** Of the whole guide, exactly two of eleven sections read the database — `compliance-calendar-section.tsx` (current FY 990 form determination, per entity) and `settings-section.tsx` (a "current values" recap of the five settings fields). Every other section, including all 14 compliance guardrails, is pure static JSX with thresholds phrased generically ("the amount configured on the Settings page," not a dollar figure). The two live reads happen once in `page.tsx` (`getEntities()`, `getComplianceOverview(entity.id, currentFiscalYear())` per entity, `getSettings()`) and are passed down as props — section components never fetch independently. The guide calls `getComplianceOverview()` directly and deliberately does **not** call `ensureFilingsForFY()` first, unlike `compliance/page.tsx`: `determine990Result` is computed from financial totals (gross receipts/assets) inside `getOverview()`, not from the `ledger_filings` rows `ensureFilingsForFY` seeds, so skipping it doesn't affect the one value the guide displays — and a read-only content page should never trigger a write side effect.
+
+**Rationale:** Phase 1 (Pass 4) identified the drift risk — hardcoded example numbers ("reserves below $1,000") rot the moment a treasurer edits Settings — and named two ways to resolve it: phrase generically, or interpolate live. Phase 2 (Ruling 3) confirmed JSX can support either cleanly but explicitly punted the per-value choice to Phase 3. Blanket-applying live interpolation everywhere would maximize the DB-dependent surface of a page whose entire value proposition (Phase 1, Flow 1) is that static content has no failure path; going generic everywhere would leave the 990 determination — the one number in this guide with real legal-filing consequences if a successor reads a stale example — silently wrong. Splitting the difference by value, not by section-type convention, keeps the failure surface to the two places where being wrong actually costs something.
+
+**Impact:** `page.tsx` needs `export const dynamic = "force-dynamic"` (matches every other Ledger subpage) and an inline try/catch per live read; `compliance-calendar-section.tsx` and `settings-section.tsx` accept an optional/nullable prop and render a one-line fallback ("Unable to load the current 990 determination — see the Compliance page." / "...see the Settings page.") on failure or on an empty `getEntities()` result, rather than the full-page `LoadErrorCard` treatment (that pattern is for a whole page failing to load, not one subsection of a long static page). The other nine sections have zero DB dependency and therefore zero new failure-path surface.
+
+---
+
 ## DECISION-036: Bank Reconciliation Sessions (inc2) — three new tables, `reconciledSessionId` provenance pointer (not a parallel status), many-to-one-ready match links, hard immutability lock on cleared rows, overlap-hard/gap-soft period validation, reopen-ordering rule, deposit-slip-vs-check-number split
 
 **Status:** Resolved

@@ -92,6 +92,12 @@ const navigation: NavGroup[] = [
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
       {
+        name: "Reconciliation",
+        href: "/admin/ledger/reconciliation",
+        icon: "🏦",
+        requiredFeature: FEATURES.LEDGER_VIEW,
+      },
+      {
         name: "Compliance",
         href: "/admin/ledger/compliance",
         icon: "📋",
@@ -114,6 +120,12 @@ const navigation: NavGroup[] = [
         href: "/admin/ledger/settings",
         icon: "⚙️",
         requiredFeature: FEATURES.LEDGER_MANAGE,
+      },
+      {
+        name: "User's Guide",
+        href: "/admin/ledger/guide",
+        icon: "📖",
+        requiredFeature: FEATURES.LEDGER_VIEW,
       },
     ],
   },

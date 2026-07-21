@@ -38,6 +38,45 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   by reading the route source, not by driving a live request from a
   restricted session. Same root gap as above.
 
+- [ ] **B-05 — Reconciliation matching grid shows no preview of what a bank
+  line is matched to.** (added 2026-07-21, priority: nice-to-have) Surfaced
+  during Phase 6 of `2026-07-21-ledger-reconciliation-sessions.md`
+  (bank-reconciliation inc2). `BankLineWithMatch` (the session-detail API
+  response) only carries `matchedTransactionId` — a bare UUID — so the
+  matching grid can only show a plain "Matched" badge + Unmatch button, not
+  the counterpart transaction's date/amount/party. A treasurer who wants to
+  double-check a match must Unmatch first (reverting the decision) to see
+  what it was matched to. Not a functional defect — ux-developer and qa both
+  flagged it as an intentional, disclosed gap, not a bug — but a real
+  workflow friction point once inc3's auto-match increases match volume. Fix:
+  extend the session-detail query (`reconciliation-queries.ts`) to join the
+  matched transaction's `date`/`amountCents`/`party` alongside
+  `matchedTransactionId`, and render a small inline summary instead of the
+  bare badge. Natural to bundle with inc3 (auto-match/Zeffy batch matching)
+  since that increment already touches this same query path.
+  Also noted in the same review: **Unmatch's `<ConfirmDialog>` uses
+  `destructive` (red) styling** despite Unmatch being a fully reversible,
+  low-stakes action (re-matching is one click). Cosmetic nit — recommend
+  softening to the non-destructive style next time this component is touched
+  (e.g. alongside the B-05 fix above), not urgent enough for its own pass.
+
+- [ ] **B-06 — No repair path for a mis-uploaded reconciliation-session
+  CSV.** (added 2026-07-21, priority: nice-to-have) Surfaced during Phase 6 of
+  `2026-07-21-ledger-reconciliation-sessions.md` (bank-reconciliation inc2),
+  named in that increment's own Phase 3 design doc as a real, if narrow, gap
+  rather than an oversight. inc2 enforces one CSV upload per session
+  (`uploadedAt` one-shot gate, intentional — the primary duplicate-upload
+  defense) with no replace/re-upload affordance. If a treasurer uploads the
+  wrong file (wrong account's export, wrong period, or a corrupted file that
+  still happens to pass header validation), the only recourse in the current
+  UI is to abandon that session — there is no delete-session or
+  clear-and-re-upload action anywhere in the product. A `DELETE
+  /api/admin/ledger/reconciliation/sessions/[sessionId]` route (blocked once
+  any match exists, mirroring the guard patterns already used elsewhere in
+  this feature) plus a matching UI affordance would close this. Deferred
+  intentionally at design time pending real-world pain; worth revisiting once
+  the treasurer works a few live months and this either comes up or doesn't.
+
 - [ ] **B-04 — Receipt/reimbursement upload routes' oversized-file error
   message is unreachable in practice.** (added 2026-07-21, priority:
   nice-to-have) Both `POST /api/admin/ledger/transactions/upload` and
@@ -71,7 +110,10 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   account) so future member-portal features get real Playwright coverage
   instead of a manual click-through every time.
 
-- [ ] **B-01 — Ledger user's guide built into the treasury page.** (added
+- [x] **B-01 — Ledger user's guide built into the treasury page.** (graduated 2026-07-21 →
+  `docs/work-log/2026-07-21-treasury-users-guide.md`; user supplied a content outline — bank
+  transition, 990 calendar, compliance/reports, Zeffy/Activity Fund routing, settings review;
+  donors doc explicitly excluded from v1.) (added
   2026-07-21, priority: soon) An in-app user's guide for The Ledger, embedded in
   the treasury/admin ledger surface — how the books are organized (two entities,
   funds, categories), how to record income/expenses/transfers, dues tracking,
@@ -83,3 +125,12 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   panels per surface). Should reflect whatever reconciliation ships from
   `2026-07-21-bank-reconciliation.md` — sequence this after that feature lands,
   or write the guide's reconciliation section against the shipped behavior.
+
+- [ ] **B-07 — Print support for the Treasury User's Guide.** (added 2026-07-21, priority:
+  nice-to-have) The guide page hides its own breadcrumb/TOC when printing, but the shared admin
+  sidebar/layout chrome still prints — a `print:hidden` pass on the shared admin layout would let
+  the treasurer print the guide cleanly as a handoff document. Small PR touching the shared
+  layout; flagged during `2026-07-21-treasury-users-guide.md` Phase 6 (footprint restriction kept
+  it out of the feature). Related: the same Phase 6 recommended the next 7-day test-coverage
+  review add a seeded narrow-permission test account (e.g., LEDGER_APPROVE-only) — same root gap
+  as B-03; noted there rather than duplicated.

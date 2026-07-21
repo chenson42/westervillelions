@@ -7,6 +7,10 @@
  * Only posted transactions may be reconciled — pending or rejected rows
  * have not cleared the bank and cannot appear on a bank statement.
  *
+ * Bank Reconciliation inc2: every write here clears `reconciledSessionId` —
+ * this route is always an out-of-band correction, never a session close, so
+ * it must never leave a stale session-provenance pointer behind (DECISION-036).
+ *
  * Gate: LEDGER_RECORD
  *
  * Body:
@@ -78,11 +82,15 @@ export async function POST(
 
     const reconciled: boolean = body.reconciled;
 
+    // Bank Reconciliation inc2: this is an out-of-band correction — always
+    // sever any session provenance so a later reopen never mistakes this row
+    // for one its close touched (DECISION-036).
     await db
       .update(ledgerTransactions)
       .set({
         reconciled,
         reconciledAt: reconciled ? new Date() : null,
+        reconciledSessionId: null,
         updatedAt: new Date(),
       })
       .where(eq(ledgerTransactions.id, id));

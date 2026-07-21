@@ -387,6 +387,20 @@ This follows the specialist-split pattern the Ledger's prior increments used
 (Also asked and declined in the same exchange: an in-app surface for
 `treasurer-todo.md`/`backlog.md` — repo files are fine.)
 
+## User expectations confirmed mid-inc2 (2026-07-21, during Phase 5)
+
+1. **No statement-file retention required:** the treasurer does not want to keep
+   uploaded CSVs — parsed bank-line data must persist in the DB tied to the
+   matched ledger entries. (Already the shipped design: parse-and-discard +
+   `ledger_bank_lines` + `ledger_reconciliation_matches` + `reconciledSessionId`
+   provenance. Phase 6 verifies this framing explicitly.)
+2. **Over-wide extracts are normal:** uploads may contain more rows than the
+   session needs, including already-reconciled items from prior months. Covered
+   by: out-of-period flagging (`inStatementPeriod=false`, excluded from
+   tie-out), per-session dedupe keys, and the matches table's UNIQUE
+   `transactionId` (a transaction can never be reconciled twice, cross-session).
+   Phase 6 verifies the double-match rejection path explicitly.
+
 ---
 
 # Phase 2 — Architectural Review (architect) — 2026-07-21

@@ -83,6 +83,7 @@ Review `CLAUDE.md` for drift introduced by the release:
 - **"Key Features"** — if the release adds a user-visible capability (a new page, a new auth flow, a new pattern), add a bullet.
 - **"Project Structure"** — if the release adds a route group or top-level directory under `src/app/`, add the corresponding line to the tree.
 - **"Common Commands"** — if the release adds a `pnpm` script that a developer or agent would need to invoke, add it to the command block.
+- **"Treasury User's Guide"** (`/admin/ledger/guide`) — if the release changes behavior on a Ledger surface the guide documents (books/register, dues, reimbursements, receipts/waivers, compliance/990, reports, uncashed checks, reconciliation, settings, Zeffy/fund routing), update the guide's matching section; if not applicable, note "guide: no applicable change" same as the existing CLAUDE.md skip note.
 
 If none of these apply (e.g., a pure bug fix touching only internal logic with no new routes or patterns), skip with a one-line note: "CLAUDE.md: no user-visible surface changes."
 

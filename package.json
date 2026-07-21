@@ -1,6 +1,6 @@
 {
   "name": "westerville-lions",
-  "version": "1.31.2",
+  "version": "1.32.0",
   "private": true,
   "engines": {
     "node": ">=20.9.0"
@@ -60,6 +60,7 @@
     "overrides": {
       "@auth/core": "0.41.1",
       "brace-expansion@>=3.0.0 <5.0.7": ">=5.0.7",
+      "sharp@<0.35.0": ">=0.35.0",
       "minimatch": "^10",
       "postcss": ">=8.5.10",
       "qs": ">=6.15.2"

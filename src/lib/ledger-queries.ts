@@ -1172,6 +1172,8 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
       rejectionReason: ledgerTransactions.rejectionReason,
       reconciled: ledgerTransactions.reconciled,
       reconciledAt: ledgerTransactions.reconciledAt,
+      // Bank Reconciliation inc2 (DECISION-036)
+      reconciledSessionId: ledgerTransactions.reconciledSessionId,
       recordedByUserId: ledgerTransactions.recordedByUserId,
       // Inc 6a columns
       duesPaymentId: ledgerTransactions.duesPaymentId,

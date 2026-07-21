@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { membershipApplications } from "@/lib/db/schema";
+import { sendEmail } from "@/lib/email";
 
 async function verifyTurnstile(token: string): Promise<boolean> {
   const secret = process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA";
@@ -76,6 +78,31 @@ export async function POST(request: NextRequest) {
       previousMemberNumber: previousMemberNumber || null,
       previousClubName: previousClubName || null,
       previousClubNumber: previousClubNumber || null,
+    });
+
+    after(async () => {
+      try {
+        const esc = (s: string) =>
+          s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+        await sendEmail({
+          from: `Westerville Lions Portal <${fromEmail}>`,
+          to: "info@westervillelions.org",
+          subject: "New membership application received",
+          html: `
+            <h2>New Membership Application</h2>
+            <p><strong>Name:</strong> ${esc(firstName)} ${esc(lastName)}</p>
+            <p><strong>Email:</strong> ${esc(email)}</p>
+            <p><strong>Phone:</strong> ${esc(phone || "(not provided)")}</p>
+            <p><strong>Member Type:</strong> ${esc(memberType || "new")}</p>
+            <p><strong>Submitted:</strong> ${esc(new Date().toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" }))}</p>
+            <p>Review this application in <a href="https://westervillelions.org/admin/membership">Admin &rarr; Membership</a>.</p>
+          `,
+        });
+      } catch {
+        // Swallow — background email task must not throw, and must never affect
+        // a response that has already been sent to the applicant.
+      }
     });
 
     return NextResponse.json({ success: true });

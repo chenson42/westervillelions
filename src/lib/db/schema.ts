@@ -625,6 +625,13 @@ export type NewLedgerDonor = typeof ledgerDonors.$inferInsert;
 // receiptWaiverReason waiver trio (DECISION-035).
 // Impact Gift Public Note inc adds: publicNote (treasurer-curated, member-facing
 // annotation, distinct from internal-only memo).
+// Bank Reconciliation inc2 adds: reconciledSessionId — pointer to which
+// session's close (if any) set reconciled/reconciledAt on this row. NULL for
+// rows toggled via the legacy per-row route (out-of-band) or never
+// reconciled. Reopen reverts only rows pointing at itself; the legacy toggle
+// route clears this to null whenever it fires (out-of-band supersedes
+// session provenance). DECISION-036 — modeled on DECISION-025's syncStale: a
+// marker, not a parallel status.
 export const ledgerTransactions = pgTable(
   "ledger_transactions",
   {
@@ -686,6 +693,14 @@ export const ledgerTransactions = pgTable(
     // Inc 6a: donor link — Foundation income → donor record (DECISION-025)
     donorId: uuid("donor_id")
       .references(() => ledgerDonors.id, { onDelete: "set null" }),
+    // Bank Reconciliation inc2: provenance pointer — which session's close (if
+    // any) set reconciled/reconciledAt on this row (DECISION-036). Forward
+    // reference: ledgerReconciliationSessions is defined later in this file,
+    // same pattern as users.memberId's forward reference to `members` above.
+    reconciledSessionId: uuid("reconciled_session_id").references(
+      (): AnyPgColumn => ledgerReconciliationSessions.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -695,6 +710,7 @@ export const ledgerTransactions = pgTable(
     index("ix_ledger_txns_status").on(t.status),
     index("ix_ledger_txns_transfer_group").on(t.transferGroupId),
     index("ix_ledger_txns_check_number").on(t.bankAccountId, t.checkNumber),
+    index("ix_ledger_txns_reconciled_session").on(t.reconciledSessionId),
   ],
 );
 
@@ -791,6 +807,127 @@ export const ledgerSettings = pgTable("ledger_settings", {
 
 export type LedgerSettings = typeof ledgerSettings.$inferSelect;
 export type NewLedgerSettings = typeof ledgerSettings.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────
+// The Ledger — Bank Reconciliation inc2: sessions, bank lines, match links
+// Session close writes the SAME ledgerTransactions.reconciled/reconciledAt
+// columns the legacy per-row toggle writes (architect Ruling 3, parent
+// work-log Phase 2 §3) — reconciledSessionId (added to ledgerTransactions,
+// below) is a provenance pointer, not a parallel status. DECISION-036.
+// Timestamp columns here use { withTimezone: true } (timestamptz) — the
+// current convention for newly-added tables (see ledgerFilings,
+// failedLoginAttempts), diverging deliberately from this file's older
+// ledger tables (ledgerEntities..ledgerReimbursements), which predate that
+// convention and remain naive timestamps.
+// ─────────────────────────────────────────────────────────────────────────
+
+export const ledgerReconciliationSessions = pgTable(
+  "ledger_reconciliation_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bankAccountId: uuid("bank_account_id")
+      .notNull()
+      .references(() => ledgerBankAccounts.id, { onDelete: "cascade" }),
+    statementPeriodStart: date("statement_period_start").notNull(),
+    statementPeriodEnd: date("statement_period_end").notNull(),
+    openingBalanceCents: integer("opening_balance_cents").notNull(),
+    closingBalanceCents: integer("closing_balance_cents").notNull(),
+    status: text("status").notNull().default("open"), // 'open' | 'closed'
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+    csvFilename: text("csv_filename"), // display-only; the file itself is never stored (parse-and-discard)
+    csvRowCount: integer("csv_row_count"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedByUserId: uuid("closed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // Last-reopen-only (current state, not an append-only log — mirrors the
+    // receipt-waiver trio's precedent, DECISION-035). Cleared on re-close.
+    reopenedAt: timestamp("reopened_at", { withTimezone: true }),
+    reopenedByUserId: uuid("reopened_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Defense-in-depth: exact-duplicate period for the same account rejected
+    // at the DB layer too, not just by the route's overlap check.
+    unique("ledger_recon_sessions_account_period_key").on(
+      t.bankAccountId,
+      t.statementPeriodStart,
+      t.statementPeriodEnd,
+    ),
+    index("ix_ledger_recon_sessions_account").on(t.bankAccountId, t.statementPeriodEnd),
+  ],
+);
+export type LedgerReconciliationSession = typeof ledgerReconciliationSessions.$inferSelect;
+export type NewLedgerReconciliationSession = typeof ledgerReconciliationSessions.$inferInsert;
+
+export const ledgerBankLines = pgTable(
+  "ledger_bank_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => ledgerReconciliationSessions.id, { onDelete: "cascade" }),
+    // Denormalized from the session for query convenience (e.g. a future
+    // cross-session audit query) — not used for cross-session dedupe, which
+    // is unnecessary given overlap is blocked at session creation.
+    bankAccountId: uuid("bank_account_id")
+      .notNull()
+      .references(() => ledgerBankAccounts.id, { onDelete: "cascade" }),
+    postingDate: date("posting_date").notNull(),
+    description: text("description").notNull(), // raw Chase text; no import-time escaping (see design doc Edge Cases)
+    // SIGNED — positive=credit, negative=debit (Chase's own convention; deliberate
+    // divergence from ledgerTransactions' positive-only + flow model).
+    amountCents: integer("amount_cents").notNull(),
+    rawType: text("raw_type"), // Chase "Type" column, kept as-is (e.g. "ACH_DEBIT")
+    // Chase's own "Check or Slip #" column, verbatim. Meaning depends on sign
+    // (deposit-slip-vs-check-number split, DECISION-036) — never split into two columns.
+    checkOrSlipNumber: text("check_or_slip_number"),
+    balanceCents: integer("balance_cents"), // Chase's running balance; display-only, not used in tie-out math
+    inStatementPeriod: boolean("in_statement_period").notNull().default(true),
+    dedupeKey: text("dedupe_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ledger_bank_lines_session_dedupe_key").on(t.sessionId, t.dedupeKey),
+    index("ix_ledger_bank_lines_session_period").on(t.sessionId, t.inStatementPeriod),
+    index("ix_ledger_bank_lines_check_slip").on(t.bankAccountId, t.checkOrSlipNumber), // shape inc3's auto-match will need
+  ],
+);
+export type LedgerBankLine = typeof ledgerBankLines.$inferSelect;
+export type NewLedgerBankLine = typeof ledgerBankLines.$inferInsert;
+
+export const ledgerReconciliationMatches = pgTable(
+  "ledger_reconciliation_matches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => ledgerReconciliationSessions.id, { onDelete: "cascade" }),
+    bankLineId: uuid("bank_line_id")
+      .notNull()
+      .references(() => ledgerBankLines.id, { onDelete: "cascade" }),
+    // UNIQUE forever — one book transaction clears against exactly one bank
+    // line, even after inc3's Zeffy batch matching. bankLineId is
+    // deliberately NOT unique — a future batch match links many transactions
+    // to one bank line; inc2's /match route enforces 1:1 at the route layer
+    // only, so inc3 can lift that route-level restriction with zero schema
+    // change (DECISION-036).
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .unique()
+      .references(() => ledgerTransactions.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+  },
+  (t) => [index("ix_ledger_recon_matches_bank_line").on(t.bankLineId)],
+);
+export type LedgerReconciliationMatch = typeof ledgerReconciliationMatches.$inferSelect;
+export type NewLedgerReconciliationMatch = typeof ledgerReconciliationMatches.$inferInsert;
 
 // Reimbursement requests — member self-service submission; requires board approval before payment.
 // Lifecycle: submitted → approved | rejected → paid.

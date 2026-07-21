@@ -18,18 +18,47 @@ interface ReceiptFileInputProps {
 type Status = "idle" | "processing" | "error";
 
 function isImageFile(file: File): boolean {
-  return file.type.startsWith("image/") || /\.(jpe?g|png)$/i.test(file.name);
+  return (
+    file.type.startsWith("image/") || /\.(jpe?g|png|heic|heif)$/i.test(file.name)
+  );
+}
+
+/**
+ * HEIC/HEIF detection (see docs/work-log/2026-07-21-receipt-heic-support.md).
+ * Browsers that can't decode HEIC also tend not to report a MIME type for it
+ * (`file.type` is `""`), so this checks both the type Safari does report
+ * (`image/heic` / `image/heif`) and the file extension.
+ *
+ * This distinction matters because a decode failure for a HEIC file must
+ * *not* fall back to uploading the original bytes the way other image decode
+ * failures do — the server's magic-bytes check only allows PDF/JPEG/PNG, so
+ * raw HEIC bytes would 400 with a confusing generic error. HEIC decode
+ * failure gets its own human-readable message instead (see handleChange).
+ */
+function isHeicFile(file: File): boolean {
+  return (
+    file.type === "image/heic" ||
+    file.type === "image/heif" ||
+    /\.(heic|heif)$/i.test(file.name)
+  );
 }
 
 /**
  * Resizes an image file client-side per the Phase 3 downscale spec (longest
- * edge 1600px, JPEG quality 0.82, PNG converted to JPEG). Pure dimension math
- * lives in src/lib/image-resize.ts; this is the thin canvas glue around it.
+ * edge 1600px, JPEG quality 0.82, PNG/HEIC converted to JPEG). Pure dimension
+ * math lives in src/lib/image-resize.ts; this is the thin canvas glue around
+ * it.
+ *
+ * Decoding uses `createImageBitmap`, which Safari (macOS + iOS) can satisfy
+ * natively for HEIC/HEIF source files via the OS's image decoders; Chrome and
+ * Firefox cannot decode HEIC and will reject the promise.
  *
  * If decoding/resizing fails for any reason, the caller falls back to
  * uploading the original file — resize is a UX nicety, never a trust
  * boundary, and it must never block an upload the way missing server-side
- * validation would.
+ * validation would. The one exception is HEIC: see the `isHeicFile` branch in
+ * `handleChange`, which intercepts a HEIC decode failure before it reaches
+ * this fallback.
  */
 async function resizeImage(file: File): Promise<{ blob: Blob; name: string }> {
   const bitmap = await createImageBitmap(file);
@@ -104,6 +133,17 @@ export default function ReceiptFileInput({
           uploadBlob = resized.blob;
           displayName = resized.name;
         } catch {
+          if (isHeicFile(file)) {
+            // Unlike other image decode failures, HEIC must not fall
+            // through to a raw-bytes upload — the server's magic-bytes
+            // check only allows PDF/JPEG/PNG and would 400 with a
+            // confusing error. Surface a human message and stop here.
+            setStatus("error");
+            setError(
+              "This browser can't read HEIC photos — use Safari, or export the photo as JPEG.",
+            );
+            return;
+          }
           // Fall back to the original file — resize is a nicety, not a
           // trust boundary, and a decode failure must not block the upload.
           uploadBlob = file;
@@ -148,7 +188,7 @@ export default function ReceiptFileInput({
         id={inputId}
         ref={inputRef}
         type="file"
-        accept=".pdf,.jpg,.jpeg,.png"
+        accept=".pdf,.jpg,.jpeg,.png,.heic,.heif"
         capture="environment"
         onChange={handleChange}
         disabled={disabled || status === "processing"}
@@ -158,7 +198,7 @@ export default function ReceiptFileInput({
       <p id={hintId} className="mt-1 text-xs text-gray-400">
         {status === "processing"
           ? "Uploading receipt…"
-          : "PDF, JPEG, or PNG, up to 10 MB. Photos are resized automatically."}
+          : "PDF, JPEG, PNG, or HEIC, up to 10 MB. Photos are resized automatically."}
       </p>
       {status === "error" && error && (
         <p className="mt-1 text-xs text-red-600" role="alert">
