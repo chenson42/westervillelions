@@ -201,11 +201,16 @@ function ImpactRecentGifts({ philanthropy }: { philanthropy: PhilanthropySummary
           const causeDisplay = gift.cause && gift.cause.trim() ? gift.cause.trim() : "Community support";
           return (
             <li key={i} className="px-6 py-3 text-sm text-gray-700">
-              <span className="font-medium text-gray-900">
-                {formatDollarsWhole(gift.amountCents)}
-              </span>{" "}
-              to {gift.party} &middot; {causeDisplay} &middot;{" "}
-              <span className="text-gray-500">{formatDate(gift.txnDate)}</span>
+              <div>
+                <span className="font-medium text-gray-900">
+                  {formatDollarsWhole(gift.amountCents)}
+                </span>{" "}
+                to {gift.party} &middot; {causeDisplay} &middot;{" "}
+                <span className="text-gray-500">{formatDate(gift.txnDate)}</span>
+              </div>
+              {gift.publicNote && (
+                <p className="text-xs text-gray-500 mt-1 break-words">{gift.publicNote}</p>
+              )}
             </li>
           );
         })}

@@ -204,6 +204,14 @@ export default async function AdminLedgerCompliancePage({
                     {flag.policyCite && (
                       <p className="text-xs mt-1 opacity-70">{flag.policyCite}</p>
                     )}
+                    {flag.linkHref && (
+                      <Link
+                        href={flag.linkHref}
+                        className="text-xs font-semibold underline mt-1 inline-block focus:outline-none focus:ring-2 focus:ring-current rounded"
+                      >
+                        View flagged transactions &rarr;
+                      </Link>
+                    )}
                   </div>
                 </div>
               </div>

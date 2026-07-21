@@ -17,6 +17,58 @@ import type { LocalReceiptStorage } from "./local";
 import type { VercelBlobStorage } from "./vercel-blob";
 
 // ---------------------------------------------------------------------------
+// Shared key format
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical format for an opaque receipt storage key: `receipts/<uuid>/<name>`.
+ *
+ * Single shared export — DECISION-035 hoisted this out of the reimbursement
+ * upload routes (where it was duplicated verbatim) so the Transaction Receipt
+ * Upload feature could reuse it instead of pasting a third copy. Every route
+ * that accepts a client-supplied `receiptStorageKey` must validate against
+ * this before writing it to the database.
+ */
+export const RECEIPT_KEY_REGEX = /^receipts\/[0-9a-f-]{36}\/[a-zA-Z0-9._-]{1,150}$/;
+
+// ---------------------------------------------------------------------------
+// Bytes -> Response BodyInit conversion
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert stored receipt bytes into a value safe to pass as a Fetch
+ * `Response` body.
+ *
+ * Regression guard (QA Phase 5, 2026-07-21): `Buffer.prototype.buffer` is the
+ * Buffer's *underlying* ArrayBuffer, not a slice scoped to the view's own
+ * `[byteOffset, byteOffset + byteLength)`. Node pools small allocations
+ * (`fs.readFileSync` on a file under `Buffer.poolSize`, default 8KB, returns a
+ * Buffer that is a *view* into a much larger shared pool ArrayBuffer with a
+ * nonzero `byteOffset`). Both receipt-view routes previously did
+ * `new Response(stored.bytes.buffer as ArrayBuffer, ...)`, which ignores
+ * `byteOffset`/`byteLength` entirely and streams the wrong region of memory
+ * (observed: an unrelated SQL string fragment) while still declaring the
+ * correct `Content-Length` for the real file — corrupting the response body
+ * and, in one reproduction, the keep-alive connection.
+ *
+ * Always convert through this helper before constructing a `Response` from
+ * stored receipt bytes — never read `.buffer` off a `Buffer`/`Uint8Array`
+ * directly.
+ *
+ * Implementation note: `Uint8Array.from(typedArray)` copies exactly
+ * `typedArray`'s own elements (respecting its `byteOffset`/`byteLength`,
+ * never the backing buffer's full extent) into a freshly allocated,
+ * exactly-sized plain `ArrayBuffer`. That makes it immune to the pooling bug
+ * by construction — and unlike `new Uint8Array(buf, offset, length)` against
+ * a Node `Buffer`'s `.buffer` (typed `ArrayBufferLike`, not assignable to
+ * `BodyInit` under this project's TS lib version), the return type here is a
+ * concrete `Uint8Array<ArrayBuffer>`.
+ */
+export function receiptBytesToBodyInit(bytes: Buffer | Uint8Array): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(bytes);
+}
+
+// ---------------------------------------------------------------------------
 // ReceiptStorage interface
 // ---------------------------------------------------------------------------
 

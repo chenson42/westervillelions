@@ -19,6 +19,9 @@
  *   checkNumber?: string;      // structured check # (T-18); trimmed, capped at 20 chars
  *   bankAccountId?: string;
  *   beneficiaryCause?: string;
+ *   publicNote?: string;      // treasurer-curated, member-facing annotation on
+ *     // /members/impact; trimmed, capped at 200 chars server-side (400 REJECT
+ *     // if over, not truncated), expense-only.
  *   receiptStorageKey?: string;
  * }
  * Response 201: { id: string; derivedFiscalYear: number }
@@ -47,12 +50,14 @@ import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getSettings, getEmailsForFeature } from "@/lib/ledger-queries";
 import { sendEmail } from "@/lib/email";
+import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
 const VALID_FLOWS = ["income", "expense"] as const;
 const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "other"] as const;
 const CHECK_NUMBER_MAX_LEN = 20;
+const PUBLIC_NOTE_MAX_LEN = 200;
 
 type Flow = (typeof VALID_FLOWS)[number];
 type PaymentMethod = (typeof VALID_METHODS)[number];
@@ -98,6 +103,24 @@ function normalizeCheckNumber(v: unknown): { value: string | null } | { error: s
   return { value: trimmed };
 }
 
+/**
+ * Trim and cap-reject publicNote (Impact Gift Public Note). Unlike memo/
+ * beneficiaryCause, this field renders unmoderated on the member-facing
+ * `/members/impact` page, so overlong input is REJECTED (400), never
+ * silently truncated — a curated public-facing sentence should never be
+ * cut off mid-word. Empty-after-trim normalizes to null.
+ */
+function normalizePublicNote(v: unknown): { value: string | null } | { error: string } {
+  if (v === undefined || v === null) return { value: null };
+  if (typeof v !== "string") return { error: "publicNote must be a string" };
+  const trimmed = v.trim();
+  if (!trimmed) return { value: null };
+  if (trimmed.length > PUBLIC_NOTE_MAX_LEN) {
+    return { error: `Keep the public note under ${PUBLIC_NOTE_MAX_LEN} characters.` };
+  }
+  return { value: trimmed };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
@@ -129,6 +152,7 @@ export async function POST(request: NextRequest) {
       checkNumber,
       bankAccountId,
       beneficiaryCause,
+      publicNote,
       receiptStorageKey,
     } = body;
 
@@ -177,6 +201,37 @@ export async function POST(request: NextRequest) {
     const checkNumberResult = normalizeCheckNumber(checkNumber);
     if ("error" in checkNumberResult) {
       return NextResponse.json({ error: checkNumberResult.error }, { status: 400 });
+    }
+
+    // publicNote (Impact Gift Public Note): trim/cap-reject, then expense-only
+    // guard (belt-and-suspenders — the impact page never renders non-expense
+    // rows regardless, but the server enforces the invariant, not just the UI).
+    const publicNoteResult = normalizePublicNote(publicNote);
+    if ("error" in publicNoteResult) {
+      return NextResponse.json({ error: publicNoteResult.error }, { status: 400 });
+    }
+    if (publicNoteResult.value && flow !== "expense") {
+      return NextResponse.json(
+        { error: "Public notes can only be attached to expense transactions" },
+        { status: 400 },
+      );
+    }
+
+    // receiptStorageKey (DECISION-035): opaque key minted by the upload route,
+    // never a client-supplied URL. Only valid for expense transactions.
+    if (receiptStorageKey !== undefined && receiptStorageKey !== null) {
+      if (typeof receiptStorageKey !== "string" || !RECEIPT_KEY_REGEX.test(receiptStorageKey)) {
+        return NextResponse.json(
+          { error: "receiptStorageKey format is invalid" },
+          { status: 400 },
+        );
+      }
+      if (flow !== "expense") {
+        return NextResponse.json(
+          { error: "Receipts can only be attached to expense transactions" },
+          { status: 400 },
+        );
+      }
     }
 
     // Validate fund belongs to entity
@@ -249,6 +304,7 @@ export async function POST(request: NextRequest) {
         checkNumber: checkNumberResult.value,
         bankAccountId: bankAccountId ?? null,
         beneficiaryCause: beneficiaryCause?.trim() ?? null,
+        publicNote: publicNoteResult.value,
         receiptStorageKey: receiptStorageKey?.trim() ?? null,
         status: derivedStatus,
         recordedByUserId: session.user.id,

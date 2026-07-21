@@ -190,3 +190,111 @@ describe("validateMagicBytes", () => {
 //   1. Local dev: BLOB_READ_WRITE_TOKEN absent → LocalReceiptStorage used (manual smoke)
 //   2. The LocalReceiptStorage class itself is fully tested above
 //   3. The upload route integration is verified via dev-server smoke test in QA Phase 5
+
+// ---------------------------------------------------------------------------
+// RECEIPT_KEY_REGEX (DECISION-035 — hoisted shared export)
+// ---------------------------------------------------------------------------
+//
+// Was previously duplicated in src/app/api/members/reimbursements/route.ts and
+// [id]/route.ts; the Transaction Receipt Upload increment hoisted it here
+// rather than pasting a third copy for the new transaction routes. These
+// tests guard that the hoist didn't change behavior.
+
+import { RECEIPT_KEY_REGEX, receiptBytesToBodyInit } from "./index";
+
+describe("RECEIPT_KEY_REGEX", () => {
+  it("accepts a well-formed key: receipts/<uuid>/<filename>", () => {
+    expect(RECEIPT_KEY_REGEX.test("receipts/550e8400-e29b-41d4-a716-446655440000/invoice.pdf")).toBe(
+      true,
+    );
+  });
+
+  it("accepts a well-formed key with a sanitized filename containing dots, dashes, underscores", () => {
+    expect(
+      RECEIPT_KEY_REGEX.test("receipts/550e8400-e29b-41d4-a716-446655440000/my_receipt-2026.07.21.jpg"),
+    ).toBe(true);
+  });
+
+  it("rejects a path-traversal-shaped string", () => {
+    expect(RECEIPT_KEY_REGEX.test("receipts/../../../etc/passwd")).toBe(false);
+  });
+
+  it("rejects a key with the wrong prefix", () => {
+    expect(RECEIPT_KEY_REGEX.test("uploads/550e8400-e29b-41d4-a716-446655440000/invoice.pdf")).toBe(
+      false,
+    );
+  });
+
+  it("rejects a key missing the uuid segment", () => {
+    expect(RECEIPT_KEY_REGEX.test("receipts/invoice.pdf")).toBe(false);
+  });
+
+  it("rejects a bare blob URL (never a URL, always an opaque key)", () => {
+    expect(
+      RECEIPT_KEY_REGEX.test("https://blob.vercel-storage.com/receipts/abc/invoice.pdf"),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// receiptBytesToBodyInit (regression — QA Phase 5, 2026-07-21)
+// ---------------------------------------------------------------------------
+//
+// Both GET .../transactions/[id]/receipt and GET .../reimbursements/[id]/receipt
+// previously constructed their Response body as `stored.bytes.buffer as
+// ArrayBuffer` — the Buffer's *underlying* ArrayBuffer, ignoring byteOffset/
+// byteLength. For small files (fs.readFileSync reads under Node's
+// Buffer.poolSize land in a shared pool, so byteOffset is nonzero and
+// `.buffer` is the whole pool, not the file), this streamed unrelated
+// in-process memory while still declaring the correct Content-Length. These
+// tests construct exactly that shape — a Buffer view with a nonzero
+// byteOffset into a larger backing ArrayBuffer — and assert the helper (and
+// the full Response body path both routes use) yields only the view's own
+// bytes.
+
+describe("receiptBytesToBodyInit", () => {
+  it("returns exactly the view's own bytes, not the underlying (larger, pooled) ArrayBuffer — regression for small-file receipt-view corruption", () => {
+    // Simulate Node's shared Buffer pool: one large backing ArrayBuffer, with
+    // the "real" 10-byte file living at a nonzero offset inside it, and
+    // unrelated sentinel bytes filling the rest (standing in for whatever
+    // other small allocation — e.g. a SQL string — happens to share the pool).
+    const pool = Buffer.alloc(200, 0xaa);
+    const payload = "0123456789"; // 10 bytes
+    pool.write(payload, 100, "utf8");
+
+    // A Buffer VIEW into the pool at offset 100, length 10 — exactly the
+    // shape fs.readFileSync returns for a small pooled read.
+    const view = Buffer.from(pool.buffer, pool.byteOffset + 100, 10);
+    expect(view.byteOffset).toBeGreaterThan(0); // guard: the test itself must be non-degenerate
+    expect(view.buffer.byteLength).toBeGreaterThan(view.byteLength); // guard: buffer really is bigger than the view
+
+    const body = receiptBytesToBodyInit(view);
+
+    expect(body.byteLength).toBe(10);
+    expect(Buffer.from(body).toString("utf8")).toBe(payload);
+  });
+
+  it("round-trips through an actual Response body with only the view's bytes — the exact path both receipt routes use", async () => {
+    const pool = Buffer.alloc(200, 0xaa);
+    const payload = "receipt-bytes"; // 13 bytes, well under Buffer.poolSize
+    pool.write(payload, 50, "utf8");
+    const view = Buffer.from(pool.buffer, pool.byteOffset + 50, payload.length);
+
+    const response = new Response(receiptBytesToBodyInit(view), {
+      status: 200,
+      headers: { "Content-Length": view.byteLength.toString() },
+    });
+    const received = Buffer.from(await response.arrayBuffer());
+
+    expect(received.byteLength).toBe(payload.length);
+    expect(received.toString("utf8")).toBe(payload);
+  });
+
+  it("passes through a non-pooled, zero-offset Buffer unchanged (no regression for the common case)", () => {
+    const bytes = Buffer.from("%PDF-1.4 mock content");
+    const body = receiptBytesToBodyInit(bytes);
+
+    expect(body.byteLength).toBe(bytes.byteLength);
+    expect(Buffer.from(body).toString("utf8")).toBe(bytes.toString("utf8"));
+  });
+});

@@ -19,6 +19,10 @@ type EditableTransaction = Pick<
   | "bankAccountId"
   | "fundId"
   | "transferGroupId"
+  | "receiptStorageKey"
+  | "receiptWaivedAt"
+  | "receiptWaiverReason"
+  | "publicNote"
 >;
 
 interface TransactionFormDialogProps {

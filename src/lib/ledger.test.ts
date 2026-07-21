@@ -22,6 +22,7 @@ import {
   computeDueDate,
   isFilingOverdue,
   deriveAckType,
+  isReceiptMissing,
   type GuardrailsInput,
   type AgedPublicFundFact,
 } from "./ledger";
@@ -584,6 +585,9 @@ const cleanState: GuardrailsInput = {
   incomeWithoutParty: 0,
   cashDisbursements: 0,
   txnsWithoutReceipt: 0,
+  // Transaction Receipt Upload (DECISION-035) — used to build Check 11's linkHref
+  entitySlug: "club",
+  fiscalYear: 2026,
   // inc2 fields — all zero = no issues
   pendingDisbursements: 0,
   unreconciledPriorMonth: 0,
@@ -740,6 +744,25 @@ describe("guardrails", () => {
     expect(flags.find((f) => f.title.toLowerCase().includes("receipt"))).toBeUndefined();
   });
 
+  // Check 11 linkHref (DECISION-035 — Transaction Receipt Upload)
+  it("Check 11's flag includes a linkHref built from entitySlug/fiscalYear when it fires", () => {
+    const state: GuardrailsInput = {
+      ...cleanState,
+      txnsWithoutReceipt: 5,
+      entitySlug: "foundation",
+      fiscalYear: 2027,
+    };
+    const flags = guardrails(state);
+    const receiptFlag = flags.find((f) => f.title.toLowerCase().includes("receipt"));
+    expect(receiptFlag?.linkHref).toBe("/admin/ledger/all?entity=foundation&fy=2027&receipt=missing");
+  });
+
+  it("Check 11's flag has no linkHref (undefined) when txnsWithoutReceipt is zero", () => {
+    const state: GuardrailsInput = { ...cleanState, txnsWithoutReceipt: 0 };
+    const flags = guardrails(state);
+    expect(flags.find((f) => f.title.toLowerCase().includes("receipt"))).toBeUndefined();
+  });
+
   // Multiple simultaneous flags
   it("returns multiple flags when multiple checks fail at once", () => {
     const state: GuardrailsInput = {
@@ -858,6 +881,50 @@ describe("guardrails", () => {
     const flags = guardrails(state);
     const cashFlag = flags.find((f) => f.title.toLowerCase().includes("cash"));
     expect(cashFlag?.detail).toContain("4 expense transactions");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isReceiptMissing (DECISION-035 — Transaction Receipt Upload)
+// ---------------------------------------------------------------------------
+
+describe("isReceiptMissing", () => {
+  it("returns true for an expense row with both receiptStorageKey and receiptWaivedAt null", () => {
+    expect(
+      isReceiptMissing({ flow: "expense", receiptStorageKey: null, receiptWaivedAt: null }),
+    ).toBe(true);
+  });
+
+  it("returns false when receiptStorageKey is set", () => {
+    expect(
+      isReceiptMissing({
+        flow: "expense",
+        receiptStorageKey: "receipts/abc/file.pdf",
+        receiptWaivedAt: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false when receiptWaivedAt is set (waived)", () => {
+    expect(
+      isReceiptMissing({ flow: "expense", receiptStorageKey: null, receiptWaivedAt: new Date() }),
+    ).toBe(false);
+  });
+
+  it("returns false when both receiptStorageKey and receiptWaivedAt are set", () => {
+    expect(
+      isReceiptMissing({
+        flow: "expense",
+        receiptStorageKey: "receipts/abc/file.pdf",
+        receiptWaivedAt: new Date(),
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false for a non-expense row regardless of the other two fields (income/transfer never count)", () => {
+    expect(
+      isReceiptMissing({ flow: "income", receiptStorageKey: null, receiptWaivedAt: null }),
+    ).toBe(false);
   });
 });
 
@@ -997,6 +1064,8 @@ const cleanStateInc3: GuardrailsInput = {
   incomeWithoutParty: 0,
   cashDisbursements: 0,
   txnsWithoutReceipt: 0,
+  entitySlug: "club",
+  fiscalYear: 2026,
   pendingDisbursements: 0,
   unreconciledPriorMonth: 0,
   firewallViolations: 0,

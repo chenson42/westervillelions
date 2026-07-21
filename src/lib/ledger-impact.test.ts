@@ -139,10 +139,10 @@ describe("bucketGivingByCause", () => {
   // '' key mapped to "Other community support".
   it("buckets a current-FY row set by cause, sorted desc, '' key labeled", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2026-08-01", amountCents: 10_000, beneficiaryCause: "Scholarships", id: "t1", party: "Acme Foundation" },
-      { txnDate: "2026-09-15", amountCents: 5_000, beneficiaryCause: "scholarships", id: "t2", party: null }, // same key, different casing
-      { txnDate: "2026-10-01", amountCents: 20_000, beneficiaryCause: "Food Pantry", id: "t3", party: "Westerville Food Pantry" },
-      { txnDate: "2026-11-01", amountCents: 2_500, beneficiaryCause: null, id: "t4", party: null },
+      { txnDate: "2026-08-01", amountCents: 10_000, beneficiaryCause: "Scholarships", id: "t1", party: "Acme Foundation", publicNote: null },
+      { txnDate: "2026-09-15", amountCents: 5_000, beneficiaryCause: "scholarships", id: "t2", party: null, publicNote: null }, // same key, different casing
+      { txnDate: "2026-10-01", amountCents: 20_000, beneficiaryCause: "Food Pantry", id: "t3", party: "Westerville Food Pantry", publicNote: null },
+      { txnDate: "2026-11-01", amountCents: 2_500, beneficiaryCause: null, id: "t4", party: null, publicNote: null },
     ];
     const result = bucketGivingByCause(rows);
 
@@ -165,8 +165,8 @@ describe("bucketGivingByCause", () => {
   // and percentages are relative to THIS set's own total, not some outside total.
   it("buckets a prior-FY row set independently, pct relative to that set's own total", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2024-08-01", amountCents: 3_000, beneficiaryCause: "Youth Programs", id: "p1", party: "Youth Center" },
-      { txnDate: "2024-09-01", amountCents: 1_000, beneficiaryCause: "Youth Programs", id: "p2", party: null },
+      { txnDate: "2024-08-01", amountCents: 3_000, beneficiaryCause: "Youth Programs", id: "p1", party: "Youth Center", publicNote: null },
+      { txnDate: "2024-09-01", amountCents: 1_000, beneficiaryCause: "Youth Programs", id: "p2", party: null, publicNote: null },
     ];
     const result = bucketGivingByCause(rows);
 
@@ -186,9 +186,9 @@ describe("bucketGivingByCause", () => {
   // ~100 (allowing for rounding to 1 decimal across N buckets).
   it("percentages across buckets sum to ~100 within rounding tolerance", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2026-01-01", amountCents: 3_333, beneficiaryCause: "A", id: "q1", party: null },
-      { txnDate: "2026-02-01", amountCents: 3_333, beneficiaryCause: "B", id: "q2", party: null },
-      { txnDate: "2026-03-01", amountCents: 3_334, beneficiaryCause: "C", id: "q3", party: null },
+      { txnDate: "2026-01-01", amountCents: 3_333, beneficiaryCause: "A", id: "q1", party: null, publicNote: null },
+      { txnDate: "2026-02-01", amountCents: 3_333, beneficiaryCause: "B", id: "q2", party: null, publicNote: null },
+      { txnDate: "2026-03-01", amountCents: 3_334, beneficiaryCause: "C", id: "q3", party: null, publicNote: null },
     ];
     const result = bucketGivingByCause(rows);
     const pctSum = result.reduce((s, r) => s + r.pct, 0);
@@ -202,10 +202,10 @@ describe("bucketGivingByCause", () => {
   // sort desc by totalCents, '' key always last, pct = round(total/allTime*1000)/10.
   it("all-time bucketing over the full row set matches the pre-refactor byCause formula", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2023-08-01", amountCents: 50_000, beneficiaryCause: "Vision", id: "v1", party: "Vision Clinic" },
-      { txnDate: "2024-08-01", amountCents: 30_000, beneficiaryCause: "Vision", id: "v2", party: null },
-      { txnDate: "2025-08-01", amountCents: 15_000, beneficiaryCause: null, id: "v3", party: null },
-      { txnDate: "2026-08-01", amountCents: 5_000, beneficiaryCause: "Hunger Relief", id: "v4", party: "Food Bank" },
+      { txnDate: "2023-08-01", amountCents: 50_000, beneficiaryCause: "Vision", id: "v1", party: "Vision Clinic", publicNote: null },
+      { txnDate: "2024-08-01", amountCents: 30_000, beneficiaryCause: "Vision", id: "v2", party: null, publicNote: null },
+      { txnDate: "2025-08-01", amountCents: 15_000, beneficiaryCause: null, id: "v3", party: null, publicNote: null },
+      { txnDate: "2026-08-01", amountCents: 5_000, beneficiaryCause: "Hunger Relief", id: "v4", party: "Food Bank", publicNote: null },
     ];
     const allTimeCents = rows.reduce((s, r) => s + r.amountCents, 0);
     const result = bucketGivingByCause(rows);
@@ -226,17 +226,17 @@ describe("bucketGivingByCause", () => {
   // Named test 1: rows include id/party, sorted desc by txnDate within a bucket.
   it("includes id and party on each row, sorted desc by txnDate within a bucket", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2026-01-10", amountCents: 1_000, beneficiaryCause: "Youth Programs", id: "a1", party: "Alpha" },
-      { txnDate: "2026-03-05", amountCents: 2_000, beneficiaryCause: "Youth Programs", id: "a2", party: "Bravo" },
-      { txnDate: "2026-02-20", amountCents: 3_000, beneficiaryCause: "Youth Programs", id: "a3", party: "Charlie" },
+      { txnDate: "2026-01-10", amountCents: 1_000, beneficiaryCause: "Youth Programs", id: "a1", party: "Alpha", publicNote: null },
+      { txnDate: "2026-03-05", amountCents: 2_000, beneficiaryCause: "Youth Programs", id: "a2", party: "Bravo", publicNote: null },
+      { txnDate: "2026-02-20", amountCents: 3_000, beneficiaryCause: "Youth Programs", id: "a3", party: "Charlie", publicNote: null },
     ];
     const result = bucketGivingByCause(rows);
 
     expect(result).toHaveLength(1);
     expect(result[0].rows).toEqual([
-      { id: "a2", txnDate: "2026-03-05", party: "Bravo", amountCents: 2_000 },
-      { id: "a3", txnDate: "2026-02-20", party: "Charlie", amountCents: 3_000 },
-      { id: "a1", txnDate: "2026-01-10", party: "Alpha", amountCents: 1_000 },
+      { id: "a2", txnDate: "2026-03-05", party: "Bravo", amountCents: 2_000, publicNote: null },
+      { id: "a3", txnDate: "2026-02-20", party: "Charlie", amountCents: 3_000, publicNote: null },
+      { id: "a1", txnDate: "2026-01-10", party: "Alpha", amountCents: 1_000, publicNote: null },
     ]);
   });
 
@@ -246,8 +246,8 @@ describe("bucketGivingByCause", () => {
   // reconciling to bucket.totalCents.
   it("keeps null-party rows in rows — does not apply Query 2's isNotNull filter", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2026-04-01", amountCents: 1_500, beneficiaryCause: "Food Pantry", id: "b1", party: null },
-      { txnDate: "2026-04-15", amountCents: 2_500, beneficiaryCause: "Food Pantry", id: "b2", party: "Donor Co" },
+      { txnDate: "2026-04-01", amountCents: 1_500, beneficiaryCause: "Food Pantry", id: "b1", party: null, publicNote: null },
+      { txnDate: "2026-04-15", amountCents: 2_500, beneficiaryCause: "Food Pantry", id: "b2", party: "Donor Co", publicNote: null },
     ];
     const result = bucketGivingByCause(rows);
 
@@ -260,10 +260,10 @@ describe("bucketGivingByCause", () => {
   // unit-level encoding of Flow A's success outcome (reconciliation invariant).
   it("each bucket's rows sum to bucket.totalCents", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2026-01-01", amountCents: 1_000, beneficiaryCause: "Scholarships", id: "c1", party: "X" },
-      { txnDate: "2026-02-01", amountCents: 4_000, beneficiaryCause: "Scholarships", id: "c2", party: null },
-      { txnDate: "2026-03-01", amountCents: 2_000, beneficiaryCause: "Food Pantry", id: "c3", party: "Y" },
-      { txnDate: "2026-04-01", amountCents: 500, beneficiaryCause: null, id: "c4", party: null },
+      { txnDate: "2026-01-01", amountCents: 1_000, beneficiaryCause: "Scholarships", id: "c1", party: "X", publicNote: null },
+      { txnDate: "2026-02-01", amountCents: 4_000, beneficiaryCause: "Scholarships", id: "c2", party: null, publicNote: null },
+      { txnDate: "2026-03-01", amountCents: 2_000, beneficiaryCause: "Food Pantry", id: "c3", party: "Y", publicNote: null },
+      { txnDate: "2026-04-01", amountCents: 500, beneficiaryCause: null, id: "c4", party: null, publicNote: null },
     ];
     const result = bucketGivingByCause(rows);
 
@@ -277,9 +277,9 @@ describe("bucketGivingByCause", () => {
   // populated rows array — no `if (causeKey)` guard anywhere skips it.
   it("'' key (Other community support) bucket also gets a populated rows array", () => {
     const rows: GivingFoldRow[] = [
-      { txnDate: "2026-01-01", amountCents: 1_000, beneficiaryCause: "Scholarships", id: "d1", party: "X" },
-      { txnDate: "2026-02-01", amountCents: 750, beneficiaryCause: null, id: "d2", party: null },
-      { txnDate: "2026-03-01", amountCents: 250, beneficiaryCause: "  ", id: "d3", party: "Z" },
+      { txnDate: "2026-01-01", amountCents: 1_000, beneficiaryCause: "Scholarships", id: "d1", party: "X", publicNote: null },
+      { txnDate: "2026-02-01", amountCents: 750, beneficiaryCause: null, id: "d2", party: null, publicNote: null },
+      { txnDate: "2026-03-01", amountCents: 250, beneficiaryCause: "  ", id: "d3", party: "Z", publicNote: null },
     ];
     const result = bucketGivingByCause(rows);
 
@@ -287,6 +287,85 @@ describe("bucketGivingByCause", () => {
     expect(otherBucket).toBeDefined();
     expect(otherBucket!.rows).toHaveLength(2);
     expect(otherBucket!.rows.map((r) => r.id).sort()).toEqual(["d2", "d3"]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Impact Gift Public Note (2026-07-21) — publicNote pass-through
+  // ---------------------------------------------------------------------------
+
+  // Named test: a non-null publicNote on a GivingFoldRow passes through
+  // unchanged onto the matching CauseGivingRow — mirrors how party/id are
+  // already asserted through the fold above.
+  it("passes a non-null publicNote through to the matching CauseGivingRow unchanged", () => {
+    const rows: GivingFoldRow[] = [
+      {
+        txnDate: "2026-05-01",
+        amountCents: 40_000,
+        beneficiaryCause: "Community Events",
+        id: "e1",
+        party: "City of Westerville",
+        publicNote: "Sponsored Westerville Autumn Arborfest 2026",
+      },
+    ];
+    const result = bucketGivingByCause(rows);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].rows[0].publicNote).toBe("Sponsored Westerville Autumn Arborfest 2026");
+  });
+
+  // Named test: a null publicNote produces a CauseGivingRow with publicNote:
+  // null (never coerced to "" or vice versa) — the display components key
+  // off truthiness (`row.publicNote &&`), so a stray "" would silently render
+  // an empty paragraph.
+  it("keeps publicNote as null when absent — never coerces null to empty string", () => {
+    const rows: GivingFoldRow[] = [
+      {
+        txnDate: "2026-05-02",
+        amountCents: 10_000,
+        beneficiaryCause: "Community Events",
+        id: "e2",
+        party: "Another Payee",
+        publicNote: null,
+      },
+    ];
+    const result = bucketGivingByCause(rows);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].rows[0].publicNote).toBeNull();
+    expect(result[0].rows[0].publicNote).not.toBe("");
+  });
+
+  // Named test: mixed rows in the same bucket — one with a note, one without
+  // — still sum totalCents correctly and each row keeps its own publicNote
+  // independently (guards against a copy-paste bug where one row's note leaks
+  // onto another during the fold's causeRow construction).
+  it("mixed-row bucket sums totalCents correctly and never cross-contaminates publicNote between rows", () => {
+    const rows: GivingFoldRow[] = [
+      {
+        txnDate: "2026-05-01",
+        amountCents: 40_000,
+        beneficiaryCause: "Community Events",
+        id: "f1",
+        party: "City of Westerville",
+        publicNote: "Sponsored Westerville Autumn Arborfest 2026",
+      },
+      {
+        txnDate: "2026-05-10",
+        amountCents: 15_000,
+        beneficiaryCause: "Community Events",
+        id: "f2",
+        party: "Another Payee",
+        publicNote: null,
+      },
+    ];
+    const result = bucketGivingByCause(rows);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].totalCents).toBe(55_000);
+    const noted = result[0].rows.find((r) => r.id === "f1");
+    const unnoted = result[0].rows.find((r) => r.id === "f2");
+    expect(noted?.publicNote).toBe("Sponsored Westerville Autumn Arborfest 2026");
+    expect(unnoted?.publicNote).toBeNull();
   });
 });
 

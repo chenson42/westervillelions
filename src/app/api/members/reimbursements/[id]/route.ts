@@ -44,8 +44,8 @@ import { db } from "@/lib/db";
 import { ledgerReimbursements } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getReimbursement } from "@/lib/ledger-queries";
+import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 
-const RECEIPT_KEY_REGEX = /^receipts\/[0-9a-f-]{36}\/[a-zA-Z0-9._-]{1,150}$/;
 const AMOUNT_MAX = 1_000_000;
 const DESC_MAX_LEN = 1000;
 const CAUSE_MAX_LEN = 200;

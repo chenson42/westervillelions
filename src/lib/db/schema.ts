@@ -623,6 +623,8 @@ export type NewLedgerDonor = typeof ledgerDonors.$inferInsert;
 // Transaction Receipt Upload inc adds: receiptStorageKey (renamed from dead
 // receiptUrl paste-URL field) + receiptWaivedAt/receiptWaivedByUserId/
 // receiptWaiverReason waiver trio (DECISION-035).
+// Impact Gift Public Note inc adds: publicNote (treasurer-curated, member-facing
+// annotation, distinct from internal-only memo).
 export const ledgerTransactions = pgTable(
   "ledger_transactions",
   {
@@ -643,6 +645,11 @@ export const ledgerTransactions = pgTable(
     party: text("party"),          // payer (income) or payee (expense); required for income at app layer
     memo: text("memo"),
     beneficiaryCause: text("beneficiary_cause"), // optional cause taxonomy tag
+    // Treasurer-curated, member-facing annotation shown on /members/impact (cause
+    // drill-down + Recent Named Gifts). Distinct from `memo`, which stays fully
+    // internal. Expense-only at the app layer; 200-char cap enforced server-side
+    // (first ledger-transaction text field rendered to members).
+    publicNote: text("public_note"),
     paymentMethod: text("payment_method"),        // 'check' | 'cash' | 'zeffy' | 'other'
     checkNumber: text("check_number"), // structured check # (T-18); nullable — only checks have one
     // Opaque storage key `receipts/<uuid>/<name>` (DECISION-035); renamed from

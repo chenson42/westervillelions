@@ -25,6 +25,12 @@
  * guardrail checks. Aged-public-fund detail text gains an optional fund-name
  * parenthetical (agedPublicFundNames()); new daysSinceTxnDate() helper feeds
  * the uncashed-checks list's age column.
+ *
+ * Transaction Receipt Upload (2026-07-21 / DECISION-035): Check 11 (expenses
+ * missing receipt documentation) now excludes administratively-waived rows
+ * via the new isReceiptMissing() pure predicate, and gains a `linkHref` deep
+ * link to the filtered transaction list. GuardrailsInput gains entitySlug and
+ * fiscalYear to build that link; GuardrailFlag gains an optional linkHref.
  */
 
 // ---------------------------------------------------------------------------
@@ -49,6 +55,13 @@ export type GuardrailFlag = {
   title: string;
   detail: string;
   policyCite?: string;
+  /**
+   * Optional deep link to the flagged rows (DECISION-035 / Transaction Receipt
+   * Upload). Lets rendering call sites (ledger-entity-detail.tsx,
+   * compliance/page.tsx) render any actionable flag generically instead of
+   * special-casing individual checks.
+   */
+  linkHref?: string;
 };
 
 export type BudgetVarianceResult = {
@@ -372,6 +385,10 @@ export type GivingFoldRow = {
   /** Payee/recipient name, nullable. Carried through into CauseBucket.rows
    *  unfiltered — see the DECISION-024 note on CauseGivingRow below. */
   party: string | null;
+  /** Treasurer-curated, member-facing annotation (Impact Gift Public Note).
+   *  Carried through into CauseBucket.rows unchanged — null stays null, never
+   *  coerced to "" (the display components key off truthiness). */
+  publicNote: string | null;
 };
 
 /** One individual gift row inside a CauseBucket, for the drill-down UI.
@@ -384,6 +401,9 @@ export type CauseGivingRow = {
   txnDate: string;
   party: string | null;
   amountCents: number;
+  /** Treasurer-curated, member-facing annotation (Impact Gift Public Note).
+   *  Null when not curated — rendered as an additive line only when truthy. */
+  publicNote: string | null;
 };
 
 export type CauseBucket = {
@@ -445,6 +465,7 @@ export function bucketGivingByCause(rows: GivingFoldRow[]): CauseBucket[] {
       txnDate: row.txnDate,
       party: row.party,
       amountCents: row.amountCents,
+      publicNote: row.publicNote,
     };
 
     const existing = causeMap.get(causeKey);
@@ -599,6 +620,27 @@ export function agedPublicFundNames(
     .map((f) => f.fundName ?? "Unnamed fund");
 }
 
+/**
+ * Pure predicate: is this expense transaction missing receipt documentation?
+ *
+ * True only when ALL of:
+ *   - flow === 'expense' (income/transfer rows never count — Phase 1 Gap 4,
+ *     expense-only scope confirmed by the user)
+ *   - receiptStorageKey is null (no file attached)
+ *   - receiptWaivedAt is null (not administratively waived — DECISION-035)
+ *
+ * Shared by the in-memory guardrail count (getOverview()'s allTxns filter)
+ * and the SQL-side `listTransactions({ missingReceipt })` filter so the two
+ * can never drift apart in meaning.
+ */
+export function isReceiptMissing(t: {
+  flow: string;
+  receiptStorageKey: string | null;
+  receiptWaivedAt: Date | null;
+}): boolean {
+  return t.flow === "expense" && !t.receiptStorageKey && !t.receiptWaivedAt;
+}
+
 export type GuardrailsInput = {
   funds: Array<FundState>;
   entityBalanceCents: number;
@@ -614,6 +656,13 @@ export type GuardrailsInput = {
   cashDisbursements: number;
   /** Count of expense transactions where receiptStorageKey and receiptWaivedAt are both null (DECISION-035) */
   txnsWithoutReceipt: number;
+  /**
+   * Entity slug + current fiscal year — used to build Check 11's `linkHref`
+   * deep link to the filtered transaction list (DECISION-035). Both are
+   * already in scope at the single call site in getOverview().
+   */
+  entitySlug: string;
+  fiscalYear: number;
   // ---------------------------------------------------------------------------
   // inc2 fields — all required in inc2+; callers on inc1 paths that cannot
   // supply these should pass 0 / 0 / 0 until they are updated.
@@ -780,6 +829,7 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
       title: "Expenses missing receipt documentation",
       detail: `${state.txnsWithoutReceipt} expense transaction${state.txnsWithoutReceipt === 1 ? "" : "s"} ${state.txnsWithoutReceipt === 1 ? "has" : "have"} no receipt URL attached. Retain receipts for ${state.settings.retentionYears} years per policy.`,
       policyCite: "Lions Financial Transparency Policy §11",
+      linkHref: `/admin/ledger/all?entity=${state.entitySlug}&fy=${state.fiscalYear}&receipt=missing`,
     });
   }
 

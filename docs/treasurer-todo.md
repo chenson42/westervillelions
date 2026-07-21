@@ -182,6 +182,29 @@ can be referenced from work-logs, board minutes, and future sessions.
   manual assignment), (c) re-run the backfill against production when this ships (same script,
   production DATABASE_URL) or port via the dev→prod script.*
 
+- [x] **T-22 — Mirror local book corrections to production.** — **2026-07-21 done** (treasurer
+  approved): check-number backfill applied to production (100 script-matched rows + 1 direct
+  update for check #8263/Arborfest, whose prod memo lacked the `[quicken-import]` marker so the
+  matcher skipped it); 3 debit-card mistags corrected; the 7 Bags to Benches rows moved to the
+  new non-giving "Program supplies" categories. Verified post-apply: 101 rows with check
+  numbers, Arborfest = 8263, 7 rows in Program supplies (counts_as_giving = false), 5
+  import-marked checks intentionally still blank (4 Gates At Eight + 1 Don Niebling — tracked
+  in T-21). Production and local books now match on all of today's corrections. Local-only data changes made
+  2026-07-21 that production still needs (apply as one batch when convenient):
+  1. Check-number backfill: run `scripts/backfill-check-numbers.ts --apply --fix-payment-method`
+     with the production `DATABASE_URL` (writes 101 check numbers; corrects the 3 debit-card
+     mistags — same as the treasurer-approved local run).
+  2. Bags to Benches recategorization: the 7 supply-reimbursement rows (Jane Enneking, Howard
+     Baum, Costco; $374.53 total; `beneficiary_cause ILIKE '%bag%'`) were moved out of "Service
+     projects" into a new non-giving "Program supplies" expense category (created in both
+     entities, `counts_as_giving = false`) per treasurer decision — they were supply
+     reimbursements, not gifts, and no longer belong on the impact dashboard. Re-run the same
+     SQL against production (idempotent — the INSERT is guarded and the UPDATE is a no-op once
+     moved).
+  Context: 2026-05-18 check #8263 to The City of Westerville ($400) was confirmed as the
+  Autumn Arborfest 2026 sponsorship — already correctly memoed and counted under
+  "Community & Civic"; no change needed.
+
 - [ ] **T-20 — Minute the petty-cash opening adjustment.** 2026-07-21: $250 of petty cash on hand
   (origin predates the books / unknown) was brought onto the books as an opening-balance
   adjustment — club Administrative Fund opening raised $19,090.10 → $19,340.10 in production and

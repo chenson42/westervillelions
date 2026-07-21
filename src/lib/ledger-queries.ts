@@ -54,6 +54,7 @@ import {
   computeDueDate,
   isFilingOverdue,
   bucketGivingByCause,
+  isReceiptMissing,
   type GuardrailFlag,
   type BudgetVarianceResult,
   type AgedPublicFundFact,
@@ -282,9 +283,17 @@ export async function listTransactions(
     search?: string;
     /** Filter to a specific status. Omit to return all statuses. */
     status?: "posted" | "pending" | "rejected";
+    /**
+     * Filter to rows matching isReceiptMissing() (DECISION-035): flow='expense'
+     * AND receiptStorageKey IS NULL AND receiptWaivedAt IS NULL. Expressed here
+     * as an equivalent Drizzle WHERE clause — kept in sync by hand with the
+     * in-memory isReceiptMissing() predicate in src/lib/ledger.ts, which is the
+     * source of truth for the condition's meaning.
+     */
+    missingReceipt?: boolean;
   } = {},
 ): Promise<LedgerTransaction[]> {
-  const { fundId, fiscalYear, flow, search, status } = opts;
+  const { fundId, fiscalYear, flow, search, status, missingReceipt } = opts;
 
   const conditions = [eq(ledgerTransactions.entityId, entityId)];
 
@@ -304,6 +313,12 @@ export async function listTransactions(
 
   if (status) {
     conditions.push(eq(ledgerTransactions.status, status));
+  }
+
+  if (missingReceipt) {
+    conditions.push(eq(ledgerTransactions.flow, "expense"));
+    conditions.push(isNull(ledgerTransactions.receiptStorageKey));
+    conditions.push(isNull(ledgerTransactions.receiptWaivedAt));
   }
 
   if (search && search.trim()) {
@@ -682,9 +697,7 @@ export async function getOverview(
     (t) => t.flow === "expense" && t.paymentMethod === "cash",
   ).length;
   // Waived rows (receiptWaivedAt set) are excluded from this count — DECISION-035.
-  const txnsWithoutReceipt = allTxns.filter(
-    (t) => t.flow === "expense" && !t.receiptStorageKey && !t.receiptWaivedAt,
-  ).length;
+  const txnsWithoutReceipt = allTxns.filter(isReceiptMissing).length;
 
   // --------------------------------------------------------------------------
   // Guardrail inputs — inc2 fields
@@ -880,6 +893,8 @@ export async function getOverview(
     incomeWithoutParty,
     cashDisbursements,
     txnsWithoutReceipt,
+    entitySlug: entity.slug,
+    fiscalYear,
     pendingDisbursements,
     unreconciledPriorMonth,
     firewallViolations,
@@ -1144,6 +1159,7 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
       checkNumber: ledgerTransactions.checkNumber,
       bankAccountId: ledgerTransactions.bankAccountId,
       beneficiaryCause: ledgerTransactions.beneficiaryCause,
+      publicNote: ledgerTransactions.publicNote,
       receiptStorageKey: ledgerTransactions.receiptStorageKey,
       receiptWaivedAt: ledgerTransactions.receiptWaivedAt,
       receiptWaivedByUserId: ledgerTransactions.receiptWaivedByUserId,
@@ -2084,6 +2100,9 @@ export type PhilanthropyRecentGift = {
   amountCents: number;
   /** Raw beneficiary_cause. null → "Other community support" in the UI. */
   cause: string | null;
+  /** Treasurer-curated, member-facing annotation (Impact Gift Public Note).
+   *  Null when not curated — rendered as an additive line only when truthy. */
+  publicNote: string | null;
 };
 
 export type PhilanthropySummary = {
@@ -2159,6 +2178,7 @@ export async function getPhilanthropy(
       beneficiaryCause: ledgerTransactions.beneficiaryCause,
       id: ledgerTransactions.id,
       party: ledgerTransactions.party,
+      publicNote: ledgerTransactions.publicNote,
     })
     .from(ledgerTransactions)
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
@@ -2253,6 +2273,7 @@ export async function getPhilanthropy(
       party: ledgerTransactions.party,
       amountCents: ledgerTransactions.amountCents,
       beneficiaryCause: ledgerTransactions.beneficiaryCause,
+      publicNote: ledgerTransactions.publicNote,
     })
     .from(ledgerTransactions)
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
@@ -2275,6 +2296,7 @@ export async function getPhilanthropy(
     party: r.party,
     amountCents: r.amountCents,
     cause: r.beneficiaryCause,
+    publicNote: r.publicNote,
   }));
 
   return {

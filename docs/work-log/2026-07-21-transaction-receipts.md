@@ -15,9 +15,9 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-21 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-21 |
 | 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-21 |
-| 4 — Implementation | TBD by tech-lead | In progress — schema complete | — | 2026-07-21 |
-| 5 — Verification | qa | Pending | — | — |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 4 — Implementation | database-admin → api-developer → ux-developer → api-developer (loop-back fix) | Complete | Loop-back fix applied (small-file receipt-view corruption) | 2026-07-21 |
+| 5 — Verification | qa | Complete | PASS | 2026-07-21 |
+| 6 — Shipped vs intent | analyst | Complete | SHIP IT | 2026-07-21 |
 
 ---
 
@@ -909,12 +909,1110 @@ migration ran).
 
 ---
 
+### Increment B — api-developer (routes + query surface) — 2026-07-21
+
+**Owner:** api-developer
+**Status:** complete
+
+### Summary
+
+Built the full server-side surface Phase 3 assigned to this increment: hoisted the duplicated
+`RECEIPT_KEY_REGEX` into `src/lib/receipt-storage/index.ts` and switched both reimbursement routes
+to import it; added the exported `isReceiptMissing()` pure predicate to `src/lib/ledger.ts` and
+rewired Check 11's `linkHref`/`entitySlug`/`fiscalYear` plumbing; added three new routes (upload,
+receipt-view proxy, waive/un-waive); and wired `receiptStorageKey` validation (regex + expense-only
+400) plus waiver-clear-on-attach into the existing transaction POST/PATCH bodies.
+`listTransactions()` gained the `missingReceipt` filter for the `all` pseudo-fund page
+ux-developer builds next. All three Phase 4 gates are green: `tsc --noEmit` clean, `pnpm test`
+391/391 passing (378 + 13 new — 5 `isReceiptMissing()` cases + 2 `linkHref` cases in
+`ledger.test.ts`, 6 `RECEIPT_KEY_REGEX` cases in `receipt-storage.test.ts`), `pnpm build:only`
+succeeds with all three new routes in the manifest. No schema/UI files touched.
+
+### What I did
+
+- **Hoisted `RECEIPT_KEY_REGEX`** into `src/lib/receipt-storage/index.ts` (exported alongside the
+  `ReceiptStorage` interface) and updated `src/app/api/members/reimbursements/route.ts` and
+  `[id]/route.ts` to import it instead of keeping their own local copies — third-copy problem the
+  architect flagged in Phase 2 never happened.
+- **`src/lib/ledger.ts`**:
+  - Added exported `isReceiptMissing(t: { flow, receiptStorageKey, receiptWaivedAt })` pure
+    predicate — expense-only, both `receiptStorageKey` and `receiptWaivedAt` must be null.
+  - `GuardrailFlag` gained an optional `linkHref?: string`.
+  - `GuardrailsInput` gained required `entitySlug: string` and `fiscalYear: number`.
+  - Check 11 now sets `linkHref: /admin/ledger/all?entity=${entitySlug}&fy=${fiscalYear}&receipt=missing`.
+  - Updated the file's top-of-module changelog comment for this increment.
+- **`src/lib/ledger-queries.ts`**:
+  - `txnsWithoutReceipt` in `getOverview()` now computed via `allTxns.filter(isReceiptMissing)`
+    (previously an inline boolean database-admin left for me per their handoff note).
+  - `guardrails({...})` call site now passes `entitySlug: entity.slug, fiscalYear,`.
+  - `listTransactions()` gained `missingReceipt?: boolean` — adds
+    `and(eq(flow,'expense'), isNull(receiptStorageKey), isNull(receiptWaivedAt))` conditions when
+    true, expressing the same rule as `isReceiptMissing()` on the SQL side (kept in sync by hand,
+    documented as such in the JSDoc since Drizzle can't share the literal predicate function).
+- **`POST /api/admin/ledger/transactions/upload`** (new) — flat route, mirrors
+  `POST /api/members/reimbursements/upload` exactly: multipart `file` field, 10MB cap checked
+  before reading bytes, `validateMagicBytes()` authoritative regardless of client-side resize,
+  opaque key `receipts/<uuid>/<sanitized-name>`, persisted via `getReceiptStorage().save()`.
+- **`GET /api/admin/ledger/transactions/[id]/receipt`** (new) — proxy-view route, mirrors
+  `GET /api/admin/ledger/reimbursements/[id]/receipt`: fetches only the `receiptStorageKey` column,
+  404s with human-readable JSON if the transaction doesn't exist, has no receipt attached, or the
+  blob is missing from storage; streams bytes inline with `Cache-Control: no-store`.
+- **`POST` + `DELETE /api/admin/ledger/transactions/[id]/receipt/waive`** (new, same file) — gated
+  `LEDGER_MANAGE`. POST: 404 if not found → 400 if `flow !== 'expense'` → 403 if approved/rejected
+  (same immutability guard as the existing PATCH/DELETE transaction routes) → 409 if a receipt is
+  already attached → 400 if `reason` missing/blank → sets all three waiver columns
+  (`receiptWaivedAt = now()`, `receiptWaivedByUserId = session.user.id`,
+  `receiptWaiverReason = reason.trim().slice(0, 500)`). DELETE: 404 → 403 (immutability) → clears
+  all three columns to null. Both return `{ id }`.
+  - **Deviation note (non-blocking):** the design doc's API Contract section lists the 400/403/404/409
+    response codes as a flat enumeration, not a literal execution order. I ordered checks
+    404 → 400 (flow) → 403 (immutability) → 409 (already has receipt) → 400 (missing reason) —
+    structural/existence checks before body-content checks. This is a defensible reading, not a
+    contract violation, but flagging the exact order here since qa's manual click-through should
+    exercise both 400 paths and the 409 path to confirm the messages match.
+- **`POST /api/admin/ledger/transactions`** — added `receiptStorageKey` validation: regex-checked
+  when present, 400 if `flow !== 'expense'`.
+- **`PATCH /api/admin/ledger/transactions/[id]`** — `receiptStorageKey: null` clears (Flow D, does
+  NOT touch waiver fields); non-null validates regex + expense-only (using the existing `newFlow`
+  pattern for simultaneous flow changes) and clears all three waiver columns in the same `UPDATE`
+  (waive-then-upload edge case from Phase 3). Extended `UpdatePayload` type with the three waiver
+  fields to carry this.
+- **Verified the `all` pseudo-fund-slug edge case** the design flagged for confirmation before it
+  becomes load-bearing: `SELECT slug FROM ledger_funds WHERE slug='all'` → 0 rows (local DB). No
+  live fund collides with the pseudo-slug ux-developer's next increment will introduce.
+- **Named unit tests** (Phase 3's list, all written and passing):
+  - `src/lib/ledger.test.ts` — new `describe("isReceiptMissing", ...)` block (5 cases: true when
+    both null; false when key set; false when waived; false when both set; false for non-expense
+    regardless of the other two fields). Extended the existing Check 11 tests with 2 cases:
+    `linkHref` built correctly from `entitySlug`/`fiscalYear` when the flag fires, and absent when
+    `txnsWithoutReceipt` is 0. Added `entitySlug`/`fiscalYear` to both `cleanState` and
+    `cleanStateInc3` fixtures (required by the type change) — no other test in the file needed
+    updating since every other `GuardrailsInput` literal spreads one of those two fixtures.
+  - `src/lib/receipt-storage/receipt-storage.test.ts` — new `describe("RECEIPT_KEY_REGEX", ...)`
+    block (6 cases): well-formed key accepted, well-formed key with dots/dashes/underscores
+    accepted, path-traversal-shaped string rejected, wrong-prefix rejected, missing-uuid-segment
+    rejected, bare blob URL rejected (guards the hoist never accidentally allows a URL through).
+
+### Gate results
+
+- `pnpm exec tsc --noEmit` — clean, no errors. (Confirmed exactly the two expected fixture errors
+  before fixing `cleanState`/`cleanStateInc3`, then clean after.)
+- `pnpm test` — **391/391 passing** (378 existing + 13 new), 11 test files, no regressions.
+- `pnpm build:only` — production build succeeded; route manifest includes
+  `/api/admin/ledger/transactions/upload`, `/api/admin/ledger/transactions/[id]/receipt`, and
+  `/api/admin/ledger/transactions/[id]/receipt/waive`.
+- `pnpm lint` — **could not run**: pre-existing environment issue unrelated to this change
+  (`ESLint 9.39.2` / `minimatch` ESM interop crash: `SyntaxError: The requested module 'minimatch'
+  does not provide an export named 'default'` inside `@eslint/eslintrc`'s dependency chain). Not
+  something introduced by this increment — flagging for deployment-engineer's dependency review
+  rather than attempting a fix inside this increment's scope.
+- No `console.log` added — every new route's catch block uses `console.error`, matching every
+  existing route in this codebase.
+
+### Outputs — API contracts for ux-developer
+
+**1. `POST /api/admin/ledger/transactions/upload`** (new)
+Gate: `LEDGER_RECORD`. Multipart `file` field (≤10MB, PDF/JPEG/PNG only via magic bytes).
+Response 200: `{ key: string }`. Errors: 400 (no file / oversized / unsupported type), 401, 403.
+Call this from both the create dialog (Flow A) and the edit dialog (Flow B/C) — the transaction id
+is irrelevant to the upload step; the returned `key` is submitted afterward as `receiptStorageKey`.
+
+**2. `GET /api/admin/ledger/transactions/[id]/receipt`** (new)
+Gate: `LEDGER_VIEW`. No body. Streams bytes inline (`Content-Disposition: inline`,
+`Cache-Control: no-store`). Use as the `href` for a "View receipt" link opened in a new tab — on
+404 the response body is `{ error: "..." }` (human-readable text, since this route is opened
+directly rather than fetched via JS in the common case).
+
+**3. `POST /api/admin/ledger/transactions/[id]/receipt/waive`** (new)
+Gate: `LEDGER_MANAGE`. Body: `{ reason: string }` (required, ≤500 chars after trim). Response 200:
+`{ id }`. Errors: 400 (`flow !== 'expense'` or missing/blank reason), 403 (forbidden, or
+approved/rejected transaction), 404, 409 (`receiptStorageKey` already set — remove the receipt
+first). Render behind a `canManage` check (existing pattern in `[fundSlug]/page.tsx`) and a
+required-reason `Dialog` per Phase 3's `receipt-waiver-control.tsx` spec.
+
+**`DELETE /api/admin/ledger/transactions/[id]/receipt/waive`** (same file) — un-waive. No body.
+Response 200: `{ id }`. Errors: 401/403/404 (same shape). Clears all three waiver columns.
+
+**4/5. `POST`/`PATCH /api/admin/ledger/transactions[/[id]]` — payload contract for the form:**
+- `receiptStorageKey?: string` (POST) / `receiptStorageKey?: string | null` (PATCH) — the opaque
+  key from the upload route. PATCH `null` removes (does NOT waive — re-flags the row). PATCH
+  non-null attaches/replaces AND silently clears any existing waiver (no client-side action needed
+  for that — it's server-enforced).
+- 400 if `receiptStorageKey` is present but the effective flow (existing flow, or the new `flow` if
+  changing it in the same request) is not `'expense'` — error message: `"Receipts can only be
+  attached to expense transactions"`. Don't let the form submit a receipt for income/transfer rows.
+- 400 if the key doesn't match the opaque-key shape — shouldn't happen in practice since the form
+  only ever gets keys from the upload route's response, but the error message is
+  `"receiptStorageKey format is invalid"` if you need to surface it.
+
+**Reading current state:** every `GET`/list path already returns `LedgerTransaction` rows including
+`receiptStorageKey`, `receiptWaivedAt`, `receiptWaivedByUserId`, `receiptWaiverReason` — no new read
+endpoint needed to render the per-row badge ("View receipt" / "No receipt" / "Waived: <reason>").
+
+**`listTransactions()` new option:** `missingReceipt?: boolean` — pass `true` (with no `fundId`) for
+the `all` pseudo-fund-slug entity-wide filtered view Phase 3 assigns to your increment. Confirmed
+no live fund resolves to slug `all` (see above) — safe to use as the special-case route segment.
+
+**`GuardrailFlag.linkHref`** — now populated on Check 11's flag. Both `ledger-entity-detail.tsx`
+and `compliance/page.tsx` need the `{flag.linkHref && <Link .../>}` block Phase 3 specifies — I did
+not touch either file (out of scope / your territory).
+
+### Deviations from the design doc
+
+- Ordering of the waive route's validation checks (404 → 400 flow → 403 immutable → 409 already-
+  has-receipt → 400 missing-reason) is my own choice among several defensible readings of the
+  design's flat status-code enumeration — see the inline deviation note above. Not a contract
+  change, just documenting the exact order for qa's click-through.
+- No other deviations. Every route name, gate, status code, and field name matches Phase 3 exactly.
+
+### Open questions / handoff notes
+
+- **Next: ux-developer**, per Phase 3's Implementation Order step 4 — `image-resize.ts` (+ test),
+  `receipt-file-input.tsx`, `receipt-waiver-control.tsx`, `transaction-form.tsx` wiring,
+  `[fundSlug]/page.tsx` (badge + waiver control + `all` mode + `receipt=missing` param), and the
+  two `flag.linkHref` renders in `ledger-entity-detail.tsx`/`compliance/page.tsx`.
+- `docs/treasurer-todo.md` shows as modified in `git status` but I did not touch it — it was
+  already dirty in the working tree before I started (T-22 entry, dated 2026-07-21, unrelated to
+  this feature). Flagging so it isn't mistaken for something this increment introduced; left
+  untouched per my scope restrictions.
+- `pnpm lint`'s `minimatch`/ESLint crash is pre-existing and unrelated to this increment — worth a
+  look at the next dependency review (deployment-engineer, 30-day cadence) since it currently
+  blocks lint entirely, not just on this diff.
+- qa's click-through should specifically hit: upload → attach on create (Flow A), attach on edit
+  (Flow B), replace (Flow C), remove (Flow D, confirms it does NOT waive), view (Flow E, both
+  success and the 404-missing-blob path), waive (with and without an existing receipt — confirms
+  the 409), un-waive, and re-attaching a receipt onto a waived row (confirms the waiver clears).
+
+---
+
+### Increment C — ux-developer (form + register + guardrail link UI) — 2026-07-21
+
+**Owner:** ux-developer
+**Status:** complete
+
+### Summary
+
+Built every client-facing surface Phase 3 assigned to this increment: the pure resize-math module
+(`image-resize.ts`, 10 unit tests), the two new client components (`receipt-file-input.tsx`,
+`receipt-waiver-control.tsx`), full receipt wiring in `transaction-form.tsx` (attach on create,
+attach/replace/remove on edit), the `[fundSlug]/page.tsx` `all` pseudo-fund-slug entity-wide mode
+with the `receipt=missing` filter and per-row receipt/waiver UI, and the `flag.linkHref` render at
+both guardrail call sites. All three Phase 4 gates are green: `tsc --noEmit` clean, `pnpm test`
+401/401 passing (391 existing + 10 new `image-resize.test.ts` cases), `pnpm build:only` succeeds
+with the full route manifest including all three of api-developer's new routes and the
+`/admin/ledger/[fundSlug]` page. No schema/API files touched (aside from the required
+`EditableTransaction` Pick-type extension in the three client files that already shared that type).
+
+### What I did
+
+- **`src/lib/image-resize.ts`** (new) — pure, no-DOM dimension math per the design's downscale
+  spec: `RECEIPT_IMAGE_MAX_DIMENSION = 1600`, `RECEIPT_IMAGE_JPEG_QUALITY = 0.82`,
+  `computeResizeDimensions(width, height, maxDimension?)` — scales the longer edge down to the max,
+  preserves aspect ratio, rounds to integers, returns dimensions unchanged when both are already
+  ≤ max, and doesn't throw on zero/negative input (defensive/documented, unreachable for a real
+  decoded image).
+- **`src/lib/image-resize.test.ts`** (new) — 10 cases: unchanged-when-under-max, landscape
+  downscale, portrait downscale, non-integer rounding, both boundary cases (`width === max`,
+  `height === max`), default-max-dimension usage, zero/negative defensive cases, and a constants
+  sanity check. All passing.
+- **`src/components/admin/ledger/receipt-file-input.tsx`** (new, client) — file picker
+  (`accept=".pdf,.jpg,.jpeg,.png" capture="environment"`), 10 MB client-side pre-check (mirrors the
+  server cap), image detection via `file.type`/extension, canvas resize glue
+  (`createImageBitmap` → `computeResizeDimensions` → `canvas.toBlob("image/jpeg", 0.82)`) for image
+  files only — PDFs upload untouched. Uploads immediately on file selection (not deferred to the
+  parent form's Save) via `POST /api/admin/ledger/transactions/upload`, then calls
+  `onUploaded({ key, displayName })`. If resize fails for any reason (decode error, no canvas
+  support), falls back to uploading the original file rather than blocking. If the upload itself
+  fails, the error renders inline (`role="alert"`) and the parent is **never** notified — the
+  transaction save is never blocked by a receipt-upload failure, per Phase 1 Flow A.
+- **`src/components/admin/ledger/receipt-waiver-control.tsx`** (new, client) — renders a "Waive"
+  button (opens a Radix `Dialog` with a required, 500-char-capped reason textarea →
+  `POST .../receipt/waive`) when `waived=false`, or an "Un-waive" button (behind
+  `<ConfirmDialog>` — never `window.confirm`, non-destructive styling since it's a reversible
+  administrative action, not data loss) when `waived=true`. Only ever rendered by the caller when
+  `canManage` is true, matching the codebase's existing gate-in-parent convention
+  (`ReconcileToggle`, `TxnDonorActions`) rather than a `usePermissions()` self-check — the parent
+  page already computes `canManage` server-side, so prop-gating avoids a redundant client-side
+  permission fetch. Server routes re-check `LEDGER_MANAGE` regardless.
+- **`src/components/admin/ledger/transaction-form.tsx`** — extended `EditableTransaction`'s `Pick`
+  with `receiptStorageKey`/`receiptWaivedAt`/`receiptWaiverReason`. Added a receipt section
+  (`showReceiptSection = !isTransfer && !isEditingTransfer && apiFlow === "expense"`, so it never
+  renders for income or transfer rows per the user's confirmed scope) with four UI states driven by
+  local state (`existingReceiptKey`, `replacingReceipt`, `pendingReceipt`, `removeReceipt`):
+  "No receipt" + file input (shows a waiver note if the row is currently waived — "Attaching a
+  receipt here will clear the waiver"), "ready to attach" (green, post-upload, with Cancel),
+  "attached" ("View receipt" link + Replace + Remove), and "will be removed" (with Undo). Remove
+  goes through `<ConfirmDialog destructive>`. Wired both submit paths: POST body includes
+  `receiptStorageKey` only when `pendingReceipt` is set (Flow A); PATCH body includes
+  `receiptStorageKey: null` when `removeReceipt` (Flow D) or the pending key when attaching/replacing
+  (Flow B/C), omitted entirely when the receipt state didn't change this edit.
+- **`src/components/admin/ledger/transaction-actions.tsx`** — added the three receipt/waiver
+  fields to the `editInitialValues` object built from the row's `LedgerTransaction`, so the edit
+  dialog receives current receipt/waiver state.
+- **`src/components/admin/ledger/transaction-form-dialog.tsx`** — extended its own
+  `EditableTransaction` `Pick` type to match (TS required it as the prop passthrough type).
+- **`src/app/(dashboard)/admin/ledger/[fundSlug]/page.tsx`**:
+  - Added the `all` pseudo-fund-slug mode (`isAllMode = fundSlug === "all"`): skips the single-fund
+    lookup/`notFound()`, fund-specific header chrome (`FundManageDialog`, "Budget / Actual Report"
+    link), and passes no `fundId` to `listTransactions()` — entity-wide across all funds and fiscal
+    year, matching Ruling 7's resolution (Check 11 is computed per-entity-across-all-funds, so this
+    is the only honest guardrail-link target). Added a "Fund" column to the table, shown only in
+    this mode (`{!fund && <th>Fund</th>}` / matching `<td>`), since the entity-wide list mixes funds
+    and the existing Party/Fund column's transfer-partner-name logic doesn't resolve without a
+    single-fund frame of reference (that partner lookup — `partnerByGroupId` — is now guarded
+    `if (fund && …)` and simply skipped in `all` mode; both sides of every transfer already appear
+    as their own rows when there's no fund filter, so the Fund column carries that information
+    instead).
+  - Added the `receipt=missing` query param (`missingReceiptFilter`), threaded into
+    `listTransactions({ missingReceipt: missingReceiptFilter || undefined })` — works on both a
+    normal fund slug (narrower drill-down) and `all` (the guardrail's actual target).
+  - Per expense row (non-transfer): a receipt-status line under the flow/status badges — "View
+    receipt" link when attached, a gray "Waived" pill (with the reason as a `title` tooltip) plus
+    `<ReceiptWaiverControl>` when waived and `canManage`, or "No receipt" text plus
+    `<ReceiptWaiverControl>` when missing and `canManage`. Read-only viewers (`LEDGER_VIEW` only)
+    see the status text/link without the interactive control.
+  - Page title/subtitle adapt to `all` mode ("All Transactions" / "Expenses Missing Receipts" when
+    filtered) and empty-state copy adapts to the three cases (fund-scoped empty, all-mode empty,
+    missing-receipt-filtered empty — "No expense transactions are missing a receipt in FY…" instead
+    of nudging toward "Record Transaction," since the empty state here means the backlog is
+    genuinely clear, not that no transactions exist).
+  - Verified before wiring: `fund` is `undefined` in `all` mode and every render/query call that
+    needs a real fund now branches on `fund` (or `fund?.id`) rather than assuming it's defined —
+    confirmed via `tsc --noEmit` passing cleanly.
+- **`src/components/admin/ledger/ledger-entity-detail.tsx`** and
+  **`src/app/(dashboard)/admin/ledger/compliance/page.tsx`** — added the
+  `{flag.linkHref && <Link href={flag.linkHref}>View flagged transactions →</Link>}` block inside
+  the existing guardrail-flag `.map()` in both files (both already imported `Link`). Only Check 11
+  populates `linkHref` today, so only that flag gains the link; every other guardrail flag renders
+  exactly as before.
+
+### Gate results
+
+- `pnpm exec tsc --noEmit` — clean, no errors.
+- `pnpm test` — **401/401 passing** (391 existing + 10 new `image-resize.test.ts` cases), 12 test
+  files, no regressions.
+- `pnpm build:only` — production build succeeded; route manifest includes
+  `/api/admin/ledger/transactions/upload`, `/api/admin/ledger/transactions/[id]/receipt`,
+  `/api/admin/ledger/transactions/[id]/receipt/waive`, and `/admin/ledger/[fundSlug]` (which now
+  covers both real fund slugs and the `all` pseudo-slug at runtime).
+- No `console.log` in any new/modified file (checked via grep across every file this increment
+  touched). No `window.confirm`/`window.alert`/`window.prompt` (grep matched only a pre-existing
+  code comment in `transaction-actions.tsx` documenting the convention, not an actual call).
+
+### How the create-flow upload-before-save works
+
+1. Admin opens "Record Transaction," selects Type = Expense, and picks a file in the Receipt
+   section's `<ReceiptFileInput>`.
+2. `ReceiptFileInput` uploads immediately on selection — not deferred to the form's Save button. If
+   the file is an image, it's decoded via `createImageBitmap`, resized with
+   `computeResizeDimensions` (longest edge 1600px), redrawn to a `<canvas>`, and re-encoded as JPEG
+   at quality 0.82 before upload; PDFs upload untouched. The resulting blob is POSTed to
+   `/api/admin/ledger/transactions/upload`, which mints and returns an opaque
+   `receipts/<uuid>/<name>` key — no transaction row exists yet at this point (mirrors the
+   reimbursement precedent's ordering).
+3. On success, `ReceiptFileInput` calls `onUploaded({ key, displayName })`, and
+   `transaction-form.tsx` stores it in `pendingReceipt` state, showing a green "✓ ready to attach"
+   confirmation.
+4. On upload failure, the error renders inline in `ReceiptFileInput` and `pendingReceipt` is never
+   set — the admin can retry, or simply click "Record Transaction" without a receipt. The save is
+   never blocked.
+5. When the admin submits the form, if `pendingReceipt` is set, its `key` is included as
+   `receiptStorageKey` in the `POST /api/admin/ledger/transactions` body; the server validates the
+   key's format and that the flow is `expense` before persisting it on the new row.
+
+Edit-mode attach/replace (Flow B/C) works identically, except the upload can happen at any time
+while the edit dialog is open, and the resulting key is sent as `receiptStorageKey` in the `PATCH`
+body instead — the server-side waiver-clear-on-attach behavior (Phase 3's edge case ruling) requires
+no client-side action; it's enforced entirely by the PATCH handler api-developer built.
+
+### Deviations from the design doc
+
+- None structural. One presentational addition beyond the design doc's explicit component list: a
+  "Fund" column on the `[fundSlug]/page.tsx` table, shown only in `all` mode. The design doc didn't
+  specify how the entity-wide list should convey which fund each row belongs to once the
+  fund-scoped frame of reference is gone (the existing Party/Fund column's transfer-partner-name
+  logic depends on knowing "the other fund" relative to a single current fund). Adding an explicit
+  Fund column seemed like the more honest and simpler resolution than trying to stretch the
+  existing transfer-partner lookup to a mode where both sides of a transfer are already visible as
+  separate rows. Flagging for qa/analyst review as a UX addition, not a contract change — no API
+  shape changed to support it (`fundNameMap` already existed).
+- Empty-state and title copy for `all` mode / `receipt=missing` is new microcopy not specified
+  verbatim in the design doc ("All Transactions," "Expenses Missing Receipts," "No expense
+  transactions are missing a receipt in FY…") — reasonable defaults per the UX Guidelines' empty-
+  state convention, but the Lions Club may want to adjust wording.
+
+### Outputs
+
+- New: `src/lib/image-resize.ts`, `src/lib/image-resize.test.ts`,
+  `src/components/admin/ledger/receipt-file-input.tsx`,
+  `src/components/admin/ledger/receipt-waiver-control.tsx`.
+- Modified: `src/components/admin/ledger/transaction-form.tsx`,
+  `src/components/admin/ledger/transaction-actions.tsx`,
+  `src/components/admin/ledger/transaction-form-dialog.tsx`,
+  `src/app/(dashboard)/admin/ledger/[fundSlug]/page.tsx`,
+  `src/components/admin/ledger/ledger-entity-detail.tsx`,
+  `src/app/(dashboard)/admin/ledger/compliance/page.tsx`.
+- No files touched outside `src/lib/` and `src/components/admin/ledger/` /
+  `src/app/(dashboard)/admin/ledger/` — no schema, no API routes, no `src/lib/auth/`, no
+  `src/components/members/`.
+- `docs/treasurer-todo.md` still shows modified in `git status` — pre-existing T-22 edit from before
+  this increment started (per api-developer's handoff note); left untouched, confirmed unrelated.
+- `docs/work-log/2026-07-21-impact-gift-public-note.md` appears as an untracked file in
+  `git status` — the concurrent analyst's work-log for a different feature; not touched.
+
+### Open questions / handoff notes for qa (Phase 5)
+
+Click-through list, covering the full Flow A→B→C→D→E→waive→un-waive→re-attach cycle Phase 3 flagged
+as easy to get backwards:
+
+1. **Flow A (attach on create):** Record Transaction → Expense → pick an image file → confirm it
+   shows "✓ ready to attach" → submit → new row shows "View receipt"; opening it in a new tab
+   streams the resized JPEG.
+2. **Flow A, PDF:** same, but pick a PDF — confirm it uploads unresized and still opens correctly.
+3. **Flow A, upload failure path:** hardest to trigger without simulating a network/server failure,
+   but worth confirming the inline error copy renders and the transaction still saves without a
+   receipt when Save is clicked anyway.
+4. **Flow B (attach on edit):** open an existing expense row with no receipt → attach → save →
+   confirm "View receipt" appears and the guardrail count decrements on next load of the
+   Ledger/Compliance overview.
+5. **Flow C (replace):** open a row with a receipt → Replace → pick a new file → save → confirm the
+   new file is what "View receipt" now streams.
+6. **Flow D (remove):** open a row with a receipt → Remove → confirm `<ConfirmDialog>` appears
+   (never a native dialog) → confirm → save → confirms the row goes back to "No receipt," **not**
+   "Waived" — removing must never imply waiving.
+7. **Flow E (view):** both the success path and a 404 (e.g., temporarily point at a transaction with
+   no receipt via direct URL) — confirm the 404 renders as readable JSON text in the new tab, not a
+   blank page.
+8. **Waive (no existing receipt):** click "Waive" on a "No receipt" row (requires `LEDGER_MANAGE`)
+   → dialog requires a non-blank reason (try submitting empty — should be blocked client-side) →
+   submit → row shows "Waived" pill with the reason in its tooltip, and the guardrail count
+   decrements.
+9. **Waive (already has a receipt) — 409 path:** confirm the Waive control never even renders for a
+   row that has `receiptStorageKey` set (the UI hides it; also worth confirming server-side 409 if
+   qa wants to hit the route directly).
+10. **Un-waive:** click "Un-waive" → `<ConfirmDialog>` (not destructive-red, but still a confirm) →
+    confirm → row goes back to "No receipt," and the guardrail count increments again.
+11. **Re-attach onto a waived row:** on a waived row, attach a real receipt via edit → save →
+    confirm the row now shows "View receipt" (not "Waived" + a receipt simultaneously) — this
+    exercises the server's waiver-clear-on-attach behavior with no client-side action.
+12. **Guardrail link:** from the Ledger Overview or Compliance page, click "View flagged
+    transactions →" on the missing-receipt flag → confirm it lands on `/admin/ledger/all` filtered
+    to the flagged rows, with the "Fund" column visible and title reading "Expenses Missing
+    Receipts."
+13. **`all` mode without the filter:** navigate to `/admin/ledger/all?entity=…&fy=…` directly (no
+    `receipt=missing`) → confirm it renders every transaction across all funds for that entity/FY,
+    with the Fund column populated correctly for both regular and transfer rows.
+14. **Permission boundaries:** confirm a `LEDGER_VIEW`-only user sees receipt status (View
+    receipt/No receipt/Waived) but never the Waive/Un-waive buttons, and never the receipt file
+    input in the edit form (the whole form is already gated behind `canRecord` at the page level via
+    `TransactionActions`/`TransactionFormDialog`, so this should already hold, but worth confirming).
+15. **Mobile (360px):** confirm the receipt file input, the waiver dialog, and the `[fundSlug]`
+    table (with its `overflow-x-auto` wrapper, now with one more column in `all` mode) all remain
+    usable at a narrow viewport.
+
+New copy strings the Lions Club may want to review: "Expenses Missing Receipts" (page title),
+"filtered to expenses missing a receipt" (subtitle), the waiver dialog's placeholder/description
+text, and "No expense transactions are missing a receipt in {FY}." (empty state).
+
+Next: **qa** for Phase 5 (typecheck/build already green above; qa's job is the manual click-through
+list, any Playwright coverage for the new flows, and the PASS/FAIL verdict), then **analyst** for
+Phase 6 shipped-vs-intent.
+
+---
+
+### Loop-back fix — api-developer — 2026-07-21
+
+**Owner:** api-developer
+**Status:** complete
+
+### Summary
+
+Fixed the defect QA's Phase 5 verdict cited: both receipt-view routes
+(`src/app/api/admin/ledger/transactions/[id]/receipt/route.ts:65` and
+`src/app/api/admin/ledger/reimbursements/[id]/receipt/route.ts:49`) constructed their `Response`
+body as `stored.bytes.buffer as ArrayBuffer` — the Buffer's *underlying* ArrayBuffer, which for any
+small file (`fs.readFileSync` reads under Node's `Buffer.poolSize`, default 8KB, return a Buffer
+that's a *view* into a much larger shared pool with a nonzero `byteOffset`) is the wrong region of
+memory, not a slice scoped to the file's own bytes — while still declaring the correct
+`Content-Length` for the real file. Reproduced QA's exact finding with a standalone repro before
+fixing (see below) and confirmed the fix resolves it byte-for-byte. Extracted the fix into one
+shared, unit-tested pure helper (`receiptBytesToBodyInit`, `src/lib/receipt-storage/index.ts`) so
+both routes use identical, correct logic and any future receipt-streaming route gets it for free.
+
+### What I did
+
+- **Reproduced the exact defect** with a standalone Node script before writing any fix: wrote a
+  29-byte file, read it via `fs.readFileSync` after allocating/discarding 50 small "junk" buffers to
+  mimic pool contention (matching QA's observed SQL-fragment collision), and confirmed
+  `bytes.byteOffset = 2328` (nonzero) and `bytes.buffer.byteLength = 8192` (the whole pool) vs. the
+  actual file's `29` bytes — i.e., `bytes.buffer` alone is provably the wrong body. Deleted the
+  scratch repro script after use (not committed).
+- **Added `receiptBytesToBodyInit(bytes: Buffer | Uint8Array): Uint8Array<ArrayBuffer>`** to
+  `src/lib/receipt-storage/index.ts`, exported alongside `RECEIPT_KEY_REGEX`. Implementation:
+  `Uint8Array.from(bytes)` — the `TypedArray.from()` static method copies exactly the source view's
+  own elements (respecting its `byteOffset`/`byteLength`, never the backing buffer's full extent)
+  into a freshly allocated, exactly-sized `ArrayBuffer`. This is immune to the pooling bug by
+  construction (there is no way to accidentally read past the view's own bytes) and returns a
+  concrete `Uint8Array<ArrayBuffer>`, which is what satisfies `Response`'s `BodyInit` type under
+  this project's TS lib version — a bare `new Uint8Array(buf, offset, length)` against a Node
+  `Buffer`'s `.buffer` (typed `ArrayBufferLike`) does not typecheck here (tried it first; TS
+  rejected `Uint8Array<ArrayBufferLike>` as not assignable to `BodyInit` — a lib.dom.d.ts generic
+  quirk, not a correctness issue, but `Uint8Array.from()` sidesteps it cleanly without a cast).
+  No `as` cast anywhere in the fix — the old bug (`.buffer as ArrayBuffer`) was exactly an `as` cast
+  hiding the wrong-bytes problem; this fix is cast-free by construction.
+- **Updated both routes** to call `receiptBytesToBodyInit(stored.bytes)` instead of
+  `stored.bytes.buffer as ArrayBuffer`, and changed the `Content-Length` header from
+  `stored.bytes.length.toString()` to `stored.bytes.byteLength.toString()` (identical value for a
+  Buffer — `length`/`byteLength` are the same for `Uint8Array` subclasses — but `byteLength` is the
+  more precise property name given the fix is specifically about byte-region correctness).
+- **Regression tests** added to `src/lib/receipt-storage/receipt-storage.test.ts` (new
+  `describe("receiptBytesToBodyInit", ...)` block, 3 cases), per QA's exact recommendation —
+  constructs a Buffer as a view into a larger backing ArrayBuffer with a nonzero `byteOffset`:
+  1. **"returns exactly the view's own bytes, not the underlying (larger, pooled) ArrayBuffer —
+     regression for small-file receipt-view corruption"** — builds a 200-byte pool Buffer with a
+     10-byte payload written at offset 100, takes a `Buffer.from(pool.buffer, pool.byteOffset+100,
+     10)` view (guarded with `expect(view.byteOffset).toBeGreaterThan(0)` and
+     `expect(view.buffer.byteLength).toBeGreaterThan(view.byteLength)` so the test itself can't
+     silently degenerate into a zero-offset case), and asserts `receiptBytesToBodyInit(view)` is
+     exactly 10 bytes and exactly the payload string — this is the direct unit-level regression for
+     the bug class.
+  2. **"round-trips through an actual Response body with only the view's bytes — the exact path both
+     receipt routes use"** — constructs a real `new Response(receiptBytesToBodyInit(view), {...})`
+     from the same pooled-view shape and reads it back via `response.arrayBuffer()`, asserting
+     byte-for-byte equality — this exercises the literal code path (`Response` construction) both
+     routes use, not just the helper in isolation, per QA's ask for "the response-body path."
+  3. **"passes through a non-pooled, zero-offset Buffer unchanged (no regression for the common
+     case)"** — confirms the fix doesn't change behavior for the ordinary case (large files,
+     `byteOffset = 0`), so this isn't just "always allocate a copy and hope."
+- **Verified the fix resolves the exact repro** by re-running the earlier standalone script's logic
+  against `Uint8Array.from(bytes)`: the fixed body is exactly 29 bytes and exactly the file's
+  content, vs. the old path's 8192-byte pool dump.
+
+### formData() decision (QA's secondary note)
+
+QA's secondary finding: uploads at/above ~10MB never reach the route's own
+`file.size > MAX_FILE_SIZE_BYTES` check because `request.formData()` throws first, falling back to
+a generic `"Invalid multipart form data"` message instead of `"File exceeds the 10 MB size limit"`.
+**Read both upload routes before deciding**
+(`src/app/api/admin/ledger/transactions/upload/route.ts` and
+`src/app/api/members/reimbursements/upload/route.ts`): both **already** wrap `request.formData()`
+in a `try/catch` that returns a graceful `400 { error: "Invalid multipart form data" }` — there is no
+missing crash guard, and no `≤5-line` addition would change that (the guard already exists in both
+files). What QA actually flagged is a **message mismatch**, not a missing try/catch: the specific
+"File exceeds the 10 MB size limit" copy is unreachable for this failure mode because the
+underlying platform throws before our own size check ever runs, and there's no reliable, portable
+way to distinguish "the body was too large" from "the multipart body was otherwise malformed" from
+inside a generic `catch` without inspecting engine-specific error internals (fragile, and out of
+scope for a loop-back fix). Per the task's explicit instruction ("do NOT redesign this now... else
+document as a known note for the analyst"), this is **documented as a known note** rather than
+changed: the existing generic 400 is still a client-actionable, human-readable error (just not the
+size-specific one), so no user-facing crash or 500 occurs — it's a copy-precision gap, not a
+correctness defect, and distinguishing the two failure modes reliably is a small design question
+(e.g., whether to set an explicit body-size limit upstream of `formData()` so oversized requests are
+rejected before parsing even starts) rather than a same-file one-liner. Flagging for analyst/tech-lead
+to decide whether it's worth a follow-up ticket.
+
+### Gate results
+
+- `pnpm exec tsc --noEmit` — clean, no errors. (One iteration needed: `new Uint8Array(bytes.buffer,
+  byteOffset, byteLength)` initially failed to typecheck against `BodyInit` —
+  `Uint8Array<ArrayBufferLike>` isn't assignable to `BodyInit` under this project's TS lib version —
+  resolved by switching to `Uint8Array.from(bytes)` with an explicit `Uint8Array<ArrayBuffer>`
+  return-type annotation on the helper, which is both correct and satisfies the type checker without
+  a cast.)
+- `pnpm test` — **404/404 passing** (401 existing + 3 new `receiptBytesToBodyInit` cases), 12 test
+  files, no regressions.
+- `pnpm build:only` — production build succeeded (exit 0), full route manifest generated including
+  both receipt-view routes, no build errors.
+- Standalone verification (not a committed test): reproduced the exact byte-offset/pool-size shape
+  QA described (`byteOffset: 2328`, `buffer.byteLength: 8192` vs. the real file's `29` bytes) against
+  a real `fs.readFileSync` small-file read, and confirmed `Uint8Array.from(bytes)` yields exactly the
+  file's 29 bytes. Script deleted after use, not committed.
+
+### Outputs
+
+- Modified: `src/lib/receipt-storage/index.ts` (new exported `receiptBytesToBodyInit()` helper),
+  `src/app/api/admin/ledger/transactions/[id]/receipt/route.ts` (uses the helper),
+  `src/app/api/admin/ledger/reimbursements/[id]/receipt/route.ts` (uses the helper),
+  `src/lib/receipt-storage/receipt-storage.test.ts` (3 new regression tests).
+- No other files touched — no schema, no migrations, no components, no other work-logs, no upload
+  route changes (existing try/catch already sufficient; see formData() decision above).
+- No `docs/decisions.md` entry added — this is a bug fix to code shipped earlier this same day under
+  DECISION-035, not a new structural decision; recommend a brief follow-up note on DECISION-035 if
+  tech-lead wants one, but not required to close this loop-back.
+
+### Open questions / handoff notes
+
+- **Next: qa** — re-run Phase 5 verification. The repro recipe QA left (a <4KB file through the real
+  upload+view routes) should now round-trip byte-for-byte; recommend also re-confirming the
+  keep-alive-connection-corruption symptom is gone (a follow-up request on the same connection should
+  no longer fail with `Parse Error: Expected HTTP/, RTSP/ or ICE/`).
+- formData()/10MB-message-precision note carried forward for analyst's Phase 6 as a non-blocking,
+  documented gap (see decision above) — not fixed, not a regression, pre-existing across both upload
+  routes.
+- No other deviations from QA's recommended fix — implemented as specified (Option: pass the
+  Buffer/typed-array directly rather than reaching into `.buffer`), with `Uint8Array.from()` chosen
+  over the two options QA listed once the direct `new Uint8Array(view)` / `new Uint8Array(buf,
+  offset, length)` forms both hit the same `BodyInit` typing wall.
+
+---
+
 # Phase 5 — Verification (qa)
 
-_(pending)_
+**Owner:** qa
+**Status:** complete
+**Date:** 2026-07-21
+
+### Summary
+
+**Verdict: FAIL.** Typecheck, all 401 named unit tests, the production build, and migration
+idempotency are all clean, and a full live click-through of Increment C's 15-item list — Flow
+A→B→C→D→E→waive→un-waive→re-attach, the guardrail link, permission gating, and rejection paths —
+passes end to end. But the manual click-through surfaced a real, reproducible defect in the
+receipt-*viewing* code path shared by both the new ledger-transaction receipt route and the
+pre-existing member-reimbursement receipt route it was built to mirror: for any receipt file small
+enough to fall under Node's internal `Buffer` pooling threshold (empirically confirmed: under
+~4KB), `GET .../receipt` streams back **the wrong bytes** — a fragment of unrelated in-process
+memory, not the stored receipt — while still declaring the correct `Content-Length`. This also
+corrupted a keep-alive HTTP connection badly enough to break the *next*, unrelated request on it.
+This is not a synthetic edge case invented by an unrealistic test file; genuinely small real-world
+receipts (a short exported PDF, a simple/blank scanned document) will trigger the identical
+failure. Per this task's instructions, a defect this concrete is a FAIL regardless of how much else
+is green — returning to api-developer with exact citations below, not fixed by qa.
+
+### What I did
+
+- Read the full work-log (Phases 1–4, all three increments) before touching anything.
+- **Type check:** `pnpm exec tsc --noEmit` — clean, no errors.
+- **Unit tests:** `pnpm test` — **401/401 passing**, 12 files. Verified by name (not just count) that
+  every test Phase 3's design doc named actually exists and passes: `image-resize.test.ts`'s 10
+  `computeResizeDimensions` cases (unchanged-under-max, landscape/portrait downscale, both boundary
+  cases, default-max-dimension, zero/negative defensive, constants sanity); `ledger.test.ts`'s
+  `isReceiptMissing` (5 cases) and Check 11 `linkHref` cases (2); `receipt-storage.test.ts`'s
+  `RECEIPT_KEY_REGEX` block (6 cases, plus the pre-existing magic-byte suite untouched).
+- **Production build:** `pnpm build:only` — succeeded; route manifest includes
+  `/api/admin/ledger/transactions/upload`, `/api/admin/ledger/transactions/[id]/receipt`,
+  `/api/admin/ledger/transactions/[id]/receipt/waive`, and `/admin/ledger/[fundSlug]` (covers both
+  real fund slugs and the `all` pseudo-slug).
+- **Migration idempotency:** re-ran `pnpm db:migrate` against the local DB. `0057_ledger_receipt_waiver.sql`
+  fired `NOTICE`/skip on every statement (rename guard false since already renamed; all four
+  `ADD COLUMN IF NOT EXISTS` skipped) — confirmed idempotent, `✅ Migrations completed successfully`.
+- **Route-level gate audit** (read every new/changed route's source, not inferred from passing tests):
+
+  | Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+  |---|---|---|---|
+  | `POST /api/admin/ledger/transactions/upload` | yes | yes | `LEDGER_RECORD` — correct (mutation-adjacent: mints a key that becomes attachable) |
+  | `GET /api/admin/ledger/transactions/[id]/receipt` | yes | yes | `LEDGER_VIEW` — correct, broader than `LEDGER_RECORD` per the reimbursement precedent; bulk PII concern doesn't apply (single-row, admin-only financial doc, not a roster/subscriber export) |
+  | `POST /api/admin/ledger/transactions/[id]/receipt/waive` | yes | yes | `LEDGER_MANAGE` — correct, matches the design's step-up argument |
+  | `DELETE /api/admin/ledger/transactions/[id]/receipt/waive` | yes | yes | `LEDGER_MANAGE` — correct |
+  | `POST /api/admin/ledger/transactions` (receiptStorageKey field) | yes (pre-existing handler) | yes (pre-existing handler) | `LEDGER_RECORD` — correct; regex + expense-only 400 confirmed present in source |
+  | `PATCH /api/admin/ledger/transactions/[id]` (receiptStorageKey field) | yes (pre-existing handler) | yes (pre-existing handler) | `LEDGER_RECORD` — correct; confirmed in source that a non-null key clears all three waiver columns in the same `UPDATE`, and `null` does NOT touch them |
+
+  Also confirmed by source read: the waive route's 409 ("already has a receipt — remove it before
+  waiving") and 403 immutability guard (approved/rejected transactions) are both present and fire in
+  the order api-developer's Increment B documented.
+- **Dev-server live click-through.** Started `pnpm dev`, confirmed the e2e admin
+  (`lions-e2e-test@westervillelions.org`) holds all four `LEDGER_*` features including
+  `LEDGER_MANAGE` (queried the local DB directly), so the full waive/un-waive cycle could be driven
+  live, not code-read. Wrote a temporary Playwright spec (not committed — deleted after this
+  verification per the cleanup instruction) that drove every item on Increment C's 15-item list
+  against the real routes: create → attach on edit (Flow B, the primary flow) → View streams inline
+  with correct `Content-Type`/`Content-Disposition: inline`/`Cache-Control: no-store` → 404 renders
+  human JSON → Replace swaps the streamed file → Remove via `<ConfirmDialog>` (confirmed — never a
+  native dialog) and confirmed it does **not** waive → Waive requires a non-blank reason (native
+  `required` blocks empty submit) → 409 confirmed when a receipt is already attached (both via the
+  UI, where the control never renders, and directly against the route) → Un-waive via
+  `<ConfirmDialog>` → re-attaching onto a waived row clears the waiver server-side with no client
+  action → guardrail link (`View flagged transactions →`) lands on `/admin/ledger/all` filtered to
+  `receipt=missing` with the `Fund` column and "Expenses Missing Receipts" title → `all` mode without
+  the filter renders correctly with the Fund column populated → 360px viewport has no page-level
+  horizontal overflow. **12/12 of these drove green on the real server.**
+- **Downscale reality check.** Uploaded a fabricated 2400×1200 JPEG (long edge 2400 > the 1600px
+  cap) via the real upload route through the actual UI file input (exercising the real
+  `createImageBitmap` → `computeResizeDimensions` → `canvas.toBlob` client path). Downloaded the
+  bytes the view route streamed back and inspected them with `sips`:
+  **original 2400×1200 → stored/streamed 1600×800, format `jpeg`.** Long edge landed exactly at the
+  1600px spec, aspect ratio preserved exactly (2400/1200 = 1600/800 = 2), PNG/JPEG-agnostic input
+  correctly normalized to JPEG output. Matches the Phase 3 downscale spec precisely.
+- **Rejection paths.** Server-side magic-byte rejection (plain text posing as `.jpg`) returns a
+  human-readable 400 — confirmed both via the UI form and directly against the upload route. A
+  9MB file uploads successfully and is correctly capped/validated. **Finding:** files at/above
+  ~10MB (including one only 4 bytes over the 10,485,760-byte cap) never reach the route's own
+  `file.size > MAX_FILE_SIZE_BYTES` check at all — `request.formData()` throws first, and the
+  response falls back to the route's generic `"Invalid multipart form data"` catch-all rather than
+  the intended `"File exceeds the 10 MB size limit"` copy. Confirmed via a `curl`-based binary
+  search independent of Playwright (9MB parses and hits the real check; 10MB does not), so this
+  isn't a Playwright multipart-encoding artifact. Not the reason for this FAIL verdict on its own,
+  but flagging since the design's promised human copy for this exact path appears to be effectively
+  unreachable in local dev — worth api-developer confirming whether this also holds against Vercel
+  Blob in staging before relying on the message.
+- **The critical defect — receipt-view routes stream the wrong bytes for small files.** While
+  driving the "Replace" step of the click-through with a 200-byte hand-built PDF (a legitimate,
+  valid-magic-bytes, tiny document — not a corrupted or adversarial input), the view route returned
+  bytes that were **not the PDF** — verified byte-for-byte via `xxd`: the response body began
+  `insert into "ledger_transactions" ("id", "entity_id", "fund_id", "bank_acc...` — a live fragment
+  of an unrelated Drizzle SQL `INSERT` statement string, evidently still resident in Node's shared
+  small-object memory at the time of the read. The file **on disk** in `.receipt-store/` was
+  confirmed correct (`%PDF-1.4...`) — the corruption happens only in how the route serializes the
+  response, not in storage. Root-caused with a minimal Node repro:
+  ```
+  const b = fs.readFileSync(smallFile);      // 200-byte file
+  b.byteOffset            // 8   (nonzero — sliced from a shared pool)
+  b.buffer.byteLength     // 8192 (Buffer.poolSize — the WHOLE pool, not this file)
+  ```
+  Both receipt-view routes construct the HTTP response as
+  `new Response(stored.bytes.buffer as ArrayBuffer, { headers: { "Content-Length": stored.bytes.length... } })`.
+  `stored.bytes.buffer` is the Buffer's **underlying** `ArrayBuffer`, not a slice scoped to
+  `[byteOffset, byteOffset + length)`. For any file `fs.readFileSync` returns from Node's internal
+  Buffer pool (empirically: files under ~4KB — confirmed 200 bytes pools, 195KB does not, `byteOffset`
+  0 vs. nonzero respectively), this sends the wrong region of memory while still declaring the
+  correct `Content-Length` for the *actual* file — a declared-vs-actual body-length mismatch that
+  also corrupted the keep-alive connection enough to break the next unrelated request (reproduced
+  directly: a subsequent Playwright request failed with
+  `Parse Error: Expected HTTP/, RTSP/ or ICE/`).
+  - **Exact citations:**
+    `src/app/api/admin/ledger/transactions/[id]/receipt/route.ts:65` (new, this increment) —
+    `return new Response(stored.bytes.buffer as ArrayBuffer, { ...`
+    `src/app/api/admin/ledger/reimbursements/[id]/receipt/route.ts:49` (pre-existing precedent this
+    increment mirrored verbatim, per Phase 2/3's explicit "mirror the reimbursement proxy route
+    exactly" guidance) — same pattern, same bug. **Not introduced by this increment — inherited from
+    the reimbursement flow, and likely already live wherever a member reimbursement receipt happens
+    to be small.**
+  - **Scope of manifestation:** confirmed this reproduces via `LocalReceiptStorage` (`fs.readFileSync`
+    pooling) — i.e., always in local dev, and in production too if `BLOB_READ_WRITE_TOKEN` is ever
+    absent and the app falls back to the local adapter (a documented risk already, DECISION-020/FU-6).
+    The Vercel Blob adapter's `read()` uses `Buffer.from(await resp.arrayBuffer())`, which wraps a
+    freshly-allocated, exactly-sized `ArrayBuffer` from `fetch()` at `byteOffset 0` — **not** pooled,
+    so this specific manifestation likely does not reproduce against Vercel Blob in production. That
+    does not make the code correct; it makes it fragile and coincidentally safe under one storage
+    backend today. Recommend fixing regardless of current production exposure.
+  - **Recommended fix (not applied — qa does not write feature code):** pass the Buffer/Uint8Array
+    directly — `new Response(stored.bytes, { ... })` — rather than reaching into `.buffer`. The Web
+    `Response` body accepts a `BufferSource` and correctly honors a typed array view's own
+    `byteOffset`/`byteLength`; there is no need to touch `.buffer` at all. (Equivalent alternative:
+    `stored.bytes.buffer.slice(stored.bytes.byteOffset, stored.bytes.byteOffset + stored.bytes.byteLength)`.)
+    Same fix needed in both files.
+- **Cleanup.** Deleted every test transaction created (verified via SQL: zero rows matching
+  `QA-%`/`CURL-DEBUG-TEST` memo patterns after cleanup), deleted every orphaned receipt blob this
+  session created under `.receipt-store/receipts/` (the app's own accepted "no orphan cleanup"
+  gap means these don't self-delete when a transaction is deleted — confirmed `.receipt-store/`
+  now contains only the single pre-existing `acknowledgments/` test fixture that was present before
+  this session started). Confirmed club-entity FY2024/FY2025 missing-receipt counts are back to
+  their original 12/34 (0 waived) — matching Phase 2's original 147-row (12+34+101) figure exactly,
+  no residual waivers or test pollution. Deleted the temporary Playwright spec and all scratch
+  fixture files; killed the dev server; confirmed port 3000 is free.
+
+### Outputs
+
+- **No implementation source files modified** — per this task's scope, all fixes are left to
+  api-developer.
+- Read for the gate audit: `src/app/api/admin/ledger/transactions/upload/route.ts`,
+  `src/app/api/admin/ledger/transactions/[id]/receipt/route.ts`,
+  `src/app/api/admin/ledger/transactions/[id]/receipt/waive/route.ts`,
+  `src/app/api/admin/ledger/transactions/route.ts`, `src/app/api/admin/ledger/transactions/[id]/route.ts`,
+  `src/app/api/admin/ledger/reimbursements/[id]/receipt/route.ts`,
+  `src/lib/receipt-storage/local.ts`, `src/lib/receipt-storage/vercel-blob.ts`.
+- Temporary, uncommitted verification artifacts (Playwright spec, test fixtures, downloaded receipt
+  bytes, cookie/storage-state files) — all deleted at the end of this session; none left in the repo.
+- No `docs/decisions.md` entry added (qa doesn't author decisions) — recommend DECISION-035 gets a
+  follow-up note once api-developer's fix lands, or a new DECISION-0NN if the fix is non-trivial.
+
+### Regression test recommendation (for api-developer, not written by qa this pass)
+
+- **`should stream the exact stored bytes for a receipt file under Node's Buffer-pool threshold —
+  regression for small-file receipt-view corruption`** — an integration-style test (route handler or
+  Playwright) that uploads a file under ~2KB, views it back, and asserts byte-for-byte equality with
+  the original upload. This needs a real HTTP round trip (or at minimum a real `fs.readFileSync` call
+  against a small file) to catch — a pure-unit mock of the storage layer would hide the exact bug,
+  since the defect lives in how the route turns `stored.bytes` into a `Response`, not in the storage
+  adapter's own read/write correctness (which is already covered and correct).
+
+### Feature-Gate Audit
+
+See the route-level gate audit table above — all six routes/payload paths this feature touches have
+`auth()` + the correct `hasFeature(FEATURES.*)` check, verified by reading the route source directly,
+not inferred from passing tests.
+
+### Coverage on Critical Modules
+
+- `src/lib/ledger.ts` — `isReceiptMissing()` and the Check 11 `linkHref` construction: fully covered
+  (5 + 2 new cases this increment, on top of the existing Check 1–10 coverage already in the file).
+- `src/lib/image-resize.ts` — 10/10 named cases from Phase 3's design, 100% of the module's exported
+  surface.
+- `src/lib/receipt-storage/index.ts` (`RECEIPT_KEY_REGEX`) — 6 cases covering accept/reject paths
+  including path-traversal and bare-URL rejection.
+- Not covered by Vitest (correctly — this is integration territory): the `Response` construction bug
+  above. No unit test over the route file exists or was expected to per Phase 3's design; this is
+  exactly the kind of defect the "manual click-through" layer of the verification stack exists to
+  catch, and it did.
+
+### Open questions / handoff notes
+
+- **Next: api-developer** (Phase 4 rework), not analyst. Fix both citations above
+  (`transactions/[id]/receipt/route.ts:65` and `reimbursements/[id]/receipt/route.ts:49`) in the
+  same pass, since it's the identical defect in both files. Add the regression test recommended
+  above before requesting re-verification.
+- Secondary, non-blocking finding for the same pass: the ~10MB+ upload path never reaches the
+  intended "File exceeds the 10 MB size limit" message locally (`request.formData()` throws first).
+  Worth a look while already in this file, but not itself a reason this verdict is FAIL.
+- **Deviation position (requested by the task, for analyst's Phase 6):** the added "Fund" column in
+  `all`-mode (Increment C's flagged deviation) is a reasonable UI necessity, not scope drift. Once
+  the fund-scoped frame of reference is removed (which Ruling 7 required for an honest guardrail-link
+  target), the existing Party/Fund column's transfer-partner-name logic has no fund to resolve
+  "the other side" relative to — some way to convey which fund each row belongs to is required for
+  the entity-wide list to be legible at all, not an optional embellishment. No API/data-model surface
+  was added to support it (`fundNameMap` already existed); it's presentational only. Recommend
+  accepting it as part of this increment rather than deferring it.
+- Once api-developer's fix lands: re-run the same click-through (the temporary Playwright spec is
+  gone, but the repro recipe above — a <4KB file through the real upload+view routes — reproduces it
+  in under a minute) and confirm byte-for-byte equality before re-issuing a verdict.
+
+---
+
+## Phase 5 — Re-verification addendum (qa) — 2026-07-21
+
+**Owner:** qa
+**Status:** complete
+
+### Summary
+
+**Verdict: PASS.** This is a focused re-verify of the loop-back fix only (the small-file
+receipt-view corruption bug), not a full re-run — the prior Phase 5 pass already covered 12/12
+click-through items, the feature-gate audit, and the downscale reality check, none of which the
+loop-back fix touched. All three gates are green (`tsc`, 404/404 tests, production build). The
+three new regression tests in `receipt-storage.test.ts` correctly construct a nonzero-`byteOffset`
+Buffer view into a larger backing `ArrayBuffer` — exactly the shape that broke before — and assert
+the fix. Live re-test against the real dev server: uploaded a genuine 168-byte PDF (well under the
+~4KB pooling threshold that triggered the original defect) through the actual
+`POST /api/admin/ledger/transactions/upload` route, attached it to a real expense transaction via
+`POST /api/admin/ledger/transactions`, and streamed it back via
+`GET /api/admin/ledger/transactions/[id]/receipt` — **byte-for-byte identical** to the original
+file, correct `Content-Length: 168`, correct `Content-Type: application/pdf`, no pool-fragment
+leakage. Repeated the fetch and interleaved an unrelated request on the same curl session — no
+keep-alive corruption, confirming the original defect's secondary symptom is also gone. Re-checked
+the pre-existing `GET /api/admin/ledger/reimbursements/[id]/receipt` route the same way (same
+shared `receiptBytesToBodyInit()` helper, same 168-byte file) — also byte-for-byte correct. QA's
+prior secondary finding (10MB `formData()` message-precision) is documented in the work-log as a
+known, non-blocking note, and I agree with that ruling on re-review — it does not gate this
+verdict. All test data, blobs, and the dev server were cleaned up; baseline (147/0/0 expense
+receipt/waiver counts, empty `.receipt-store/` beyond the pre-existing fixture, port 3000 free) is
+restored exactly.
+
+### What I did
+
+- Read the prior Phase 5 FAIL section and the "Loop-back fix — api-developer" subsection in full
+  before touching anything.
+- Read the changed source: `src/lib/receipt-storage/index.ts` (new
+  `receiptBytesToBodyInit(bytes: Buffer | Uint8Array): Uint8Array<ArrayBuffer>`, implemented as
+  `Uint8Array.from(bytes)`), both receipt-view routes
+  (`src/app/api/admin/ledger/transactions/[id]/receipt/route.ts:65`,
+  `src/app/api/admin/ledger/reimbursements/[id]/receipt/route.ts:49`) — confirmed both now call
+  `receiptBytesToBodyInit(stored.bytes)` instead of the old `stored.bytes.buffer as ArrayBuffer`,
+  and both `Content-Length` headers now read `stored.bytes.byteLength` (unchanged value, more
+  precise property name).
+- Read the 3 new tests in `src/lib/receipt-storage/receipt-storage.test.ts`
+  (`describe("receiptBytesToBodyInit", ...)`, lines ~255-298):
+  1. Direct helper test — builds a 200-byte `pool` `Buffer`, writes a 10-byte payload at offset
+     100, takes `Buffer.from(pool.buffer, pool.byteOffset + 100, 10)` (a nonzero-`byteOffset` view
+     into a larger backing buffer — the exact bug shape), asserts
+     `view.byteOffset > 0` and `view.buffer.byteLength > view.byteLength` as a self-check the test
+     can't silently degenerate, then asserts `receiptBytesToBodyInit(view)` is exactly the 10-byte
+     payload. **This is the primary regression test and it constructs the exact defect shape.**
+  2. Full `Response`-construction round-trip using the same pooled-view shape — the literal code
+     path both routes use, not just the helper in isolation.
+  3. Non-pooled, zero-offset `Buffer` passes through unchanged — confirms the fix doesn't alter the
+     ordinary (large-file) case.
+- **Type check:** `pnpm exec tsc --noEmit` — clean, no errors.
+- **Unit tests:** `pnpm test` — **404/404 passing** (401 + 3 new), 12 test files, 282ms. Matches the
+  expected count exactly.
+- **Production build:** `pnpm build:only` — exit 0, no errors, full route manifest generated
+  including both receipt-view routes and the upload/waive routes.
+- **Live re-test of the exact failing scenario**, against a fresh `pnpm dev` (started clean, killed
+  any stale process on :3000 first):
+  1. Authenticated as the e2e admin (`lions-e2e-test@westervillelions.org`, confirmed via
+     `/api/auth/session` to hold `ledger.view`/`ledger.record`/`ledger.manage`) via the real
+     NextAuth credentials callback (CSRF token + cookie jar), not a bypass.
+  2. Wrote a genuine 168-byte PDF (`%PDF-1.4` header, some filler text, `%%EOF` footer) — well
+     under the ~4KB Node `Buffer` pooling threshold that triggered the original defect.
+  3. `POST /api/admin/ledger/transactions/upload` with the real file (multipart) →
+     `200 {"key":"receipts/ccee31cf-.../small-receipt.pdf"}`.
+  4. `POST /api/admin/ledger/transactions` with `flow:"expense"`, the entity/fund ids for
+     Club/Activity Fund, and `receiptStorageKey` set to the minted key → `201`, transaction id
+     captured.
+  5. `GET /api/admin/ledger/transactions/[id]/receipt` → `200`, `content-length: 168`,
+     `content-type: application/pdf`, `content-disposition: inline`,
+     `cache-control: no-store, no-cache, must-revalidate`. Downloaded the body and ran `cmp` against
+     the original 168-byte file: **byte-for-byte identical.** No SQL-fragment or other pool-garbage
+     bytes present.
+  6. Interleaved a second, unrelated request (`GET /api/auth/session`) immediately after the
+     receipt fetch on the same curl invocation, then re-fetched the receipt a second time — both
+     succeeded normally (`200`/`200`) with the second receipt fetch again byte-for-byte identical.
+     No keep-alive connection corruption (the original bug's `Parse Error: Expected HTTP/, RTSP/ or
+     ICE/` symptom does not reproduce).
+  7. **Re-checked the pre-existing reimbursement route.** No reimbursement rows existed locally and
+     the e2e admin account has no linked member (can't submit one through the member-facing
+     `POST /api/members/reimbursements` route without a member link), so I inserted one throwaway
+     `ledger_reimbursements` row directly via SQL, reusing the same already-uploaded 168-byte
+     receipt key, memo-tagged `QA-REVERIFY-2026-07-21` for unambiguous cleanup. Fetched
+     `GET /api/admin/ledger/reimbursements/[id]/receipt` → `200`, `content-length: 168`,
+     `content-type: application/pdf` — **byte-for-byte identical** to the same original file.
+     Confirms the shared helper fixes both call sites, not just the new one.
+- **Confirmed the 10MB `formData()` note is documented and non-blocking.** Re-read the "formData()
+  decision (QA's secondary note)" section the loop-back fix wrote: both upload routes already
+  wrap `request.formData()` in `try/catch` (no missing crash guard — confirmed by reading both
+  route files), so the only gap is generic-400-vs-specific-400 copy precision for the ~10MB-and-up
+  case, not a crash or a 500. I agree this is correctly ruled non-blocking — it was true before the
+  loop-back fix and is unchanged by it; nothing in this fix's diff touches upload-size handling.
+- **Cleanup.**
+  - Deleted the SQL-inserted throwaway reimbursement row and the API-created test transaction
+    (`DELETE FROM ledger_transactions/ledger_reimbursements WHERE memo/description LIKE
+    'QA-REVERIFY-2026-07-21%'` — confirmed 1 row each before, 0 after).
+  - Deleted the uploaded receipt blob directory (`.receipt-store/receipts/ccee31cf-.../`) —
+    confirmed `.receipt-store/` now contains only the single pre-existing
+    `acknowledgments/test_ack_letter.pdf` fixture that predates this session.
+  - Confirmed baseline restored via SQL:
+    `SELECT count(*) FILTER (WHERE flow='expense'), count(*) FILTER (...receipt_storage_key IS NOT
+    NULL), count(*) FILTER (...receipt_waived_at IS NOT NULL) FROM ledger_transactions` →
+    **147 / 0 / 0** — exact match to Phase 2's original read-only baseline. `ledger_reimbursements`
+    count → **0**, matching the pre-session state.
+  - Deleted all scratch files this session created (cookie jar, uploaded/downloaded test files,
+    response JSON, header dumps) from the scratchpad directory.
+  - Killed the dev server; confirmed `lsof -ti:3000` returns nothing (port free).
+
+### Outputs
+
+- No implementation source files modified — this is a verification-only pass.
+- Read: `src/lib/receipt-storage/index.ts`,
+  `src/app/api/admin/ledger/transactions/[id]/receipt/route.ts`,
+  `src/app/api/admin/ledger/reimbursements/[id]/receipt/route.ts`,
+  `src/lib/receipt-storage/receipt-storage.test.ts`,
+  `src/app/api/admin/ledger/transactions/route.ts` (to confirm the POST body contract for the
+  live re-test).
+- No new scratch artifacts left behind — all deleted at the end of this session (verified via
+  `ls .receipt-store/` and the SQL count queries above).
+- No `docs/decisions.md` entry — nothing structural changed this pass.
+
+### Gate results (this addendum)
+
+- `pnpm exec tsc --noEmit` — clean.
+- `pnpm test` — 404/404 passing, 12 files, 282ms.
+- `pnpm build:only` — exit 0, clean.
+- Live byte-compare (transactions receipt route): 168/168 bytes, exact match.
+- Live byte-compare (reimbursements receipt route): 168/168 bytes, exact match.
+- Keep-alive / repeated-fetch check: no corruption, no dropped connection.
+
+### Verdict: PASS
+
+### Open questions / handoff notes
+
+- **Next: analyst** for Phase 6 shipped-vs-intent. Carry forward from the prior Phase 5 pass: the
+  "Fund" column addition in `all` mode is a reasonable UI necessity, not scope drift (recommend
+  accepting as part of this increment). Carry forward the 10MB `formData()` message-precision gap
+  as a documented, non-blocking, pre-existing note (not introduced or fixed by this feature) —
+  worth a follow-up ticket if the club wants the size-specific error message to actually be
+  reachable, but not a Phase 6 blocker.
+- No further loop-backs needed on the receipt-view corruption bug — fixed, regression-tested at
+  the unit level, and independently re-confirmed live against both affected routes with real
+  byte-for-byte comparison in this addendum.
 
 ---
 
 # Phase 6 — Shipped vs Intent (analyst)
 
-_(pending)_
+**Owner:** analyst
+**Status:** complete
+**Date:** 2026-07-21
+
+### Summary
+
+**Verdict: SHIP IT.** The shipped feature delivers exactly what Phase 1 promised and what the user
+locked in afterward: expense transactions can now have a receipt attached at create or edit time,
+images are downscaled client-side to a legible-but-small JPEG before upload with an authoritative
+server-side re-check, the guardrail count that started this whole request is now actionable (it
+links straight to the flagged rows) and — per the user's own decision, not a Phase 1 default — can
+genuinely reach zero via an audited waiver mechanism. Independently re-verified the DB end-state
+myself (`147` expense rows / `0` with a receipt / `0` waived / no fund resolves to slug `all`) —
+matches QA's numbers exactly, and the shape (`receipt_storage_key`, three waiver columns, correct FK)
+is live. The one process bump — a real, user-facing byte-corruption bug in receipt streaming — is
+exactly what the pipeline is for: QA caught it before ship, api-developer fixed it same-day with a
+targeted regression test, and QA re-verified live with a byte-for-byte comparison. That is the
+loop-back working as designed, not a mark against the feature.
+
+### What I did
+
+- Re-read this work-log in full: Phase 1 (my own prior review), Phase 2 (architect), Phase 3
+  (tech-lead), all three Phase 4 increments plus the loop-back fix, and both Phase 5 passes (FAIL →
+  fix → PASS).
+- Independently ran read-only `psql` against the local DB (the same one QA used) to confirm the
+  shipped end-state without re-trusting QA's numbers blindly:
+  `SELECT count(*) FILTER (WHERE flow='expense'), count(*) FILTER (...receipt_storage_key IS NOT
+  NULL), count(*) FILTER (...receipt_waived_at IS NOT NULL) FROM ledger_transactions` → **147 / 0 /
+  0** — exact match to both Phase 2's original baseline and QA's post-cleanup baseline. Also
+  confirmed `receipt_storage_key`/`receipt_waived_at`/`receipt_waived_by_user_id`/
+  `receipt_waiver_reason` are live columns with the correct FK, and that no `ledger_funds.slug`
+  equals `all` (the pseudo-slug's precondition, checked twice already by api-developer and
+  ux-developer — now three-for-three).
+- Read the shipped source for brand/invariant spot-checks rather than re-deriving QA's functional
+  verification: `receipt-waiver-control.tsx` (`ConfirmDialog` import + usage confirmed, `rounded-2xl`
+  on its `Dialog.Content`), `transaction-form.tsx` (`ConfirmDialog` import + usage for Remove),
+  grepped both plus `receipt-file-input.tsx` for `window.confirm`/`alert`/`prompt` — none found.
+  Grepped `src/lib/permissions.ts` to confirm `LEDGER_VIEW`/`LEDGER_RECORD`/`LEDGER_MANAGE` exist
+  with the descriptions the design doc's gating argument depends on.
+- Walked every flow named in my own Phase 1 review (A–E, waive, un-waive) against QA's two Phase 5
+  passes' click-through evidence and api-developer/ux-developer's stated implementation, rather than
+  re-running the app myself (per this task's explicit instruction: no dev server, no build gates —
+  QA already ran live byte-compare verification this same day).
+- Weighed the three items this task specifically flagged: the streaming defect's loop-back, the
+  "Fund" column deviation, and the two known non-blocking notes (10MB message precision, waiver
+  fixture gap) — see rulings below.
+- Appended two items to `docs/backlog.md` (safe to append per this task's scope): a cross-reference
+  note on existing **B-03** (the waiver control's `LEDGER_MANAGE` gate was verified live only against
+  the all-permissions e2e admin, same root fixture gap B-03 already names) and a new **B-04** (the
+  10MB upload message-precision gap). Did not touch `docs/treasurer-todo.md` or `docs/decisions.md`,
+  per scope.
+
+### Intent-vs-shipped diff
+
+1. **"No place to add a receipt."**
+   Phase 1 said: attach/replace/remove a receipt on an expense transaction, create and edit, gated
+   `LEDGER_RECORD`, view gated `LEDGER_VIEW`.
+   Shipped: exactly this — `receipt-file-input.tsx` in the create dialog (Flow A) and edit dialog
+   (Flow B/C), a dedicated proxy view route gated `LEDGER_VIEW`, Remove behind `<ConfirmDialog
+   destructive>`.
+   **Verdict: matches.**
+
+2. **"Store the receipts" (with the DECISION-020 translation surfaced to the user).**
+   Phase 1 said: opaque storage key in a renamed `receipt_storage_key` column, bytes in blob storage
+   (or the local dev fallback), never a client-visible URL — explicitly flagged as a translation of
+   the user's "store in the database" framing, confirmed by architect in Phase 2.
+   Shipped: exact match — column renamed (verified data-free, 147/147 preserved, by both database-
+   admin and my own independent re-check), key format regex-validated server-side, bytes streamed
+   through an auth-gated proxy, never a raw URL.
+   **Verdict: matches.**
+
+3. **"Scale pictures down small but still legible."**
+   Phase 1 said this needed a concrete number from tech-lead; no number existed at Phase 1.
+   Shipped: 1600px long edge, JPEG quality 0.82, PNG normalized to JPEG, PDFs pass through
+   untouched — QA independently verified this against a real 2400×1200 upload through the actual UI
+   path and confirmed the stored/streamed file measured exactly 1600×800 via `sips`.
+   **Verdict: matches** (Phase 1 deferred the number; Phase 3 set it; QA proved it lands).
+
+4. **Historical backlog / waiver mechanism.**
+   Phase 1 recommended shipping upload-only and treating a waiver as a separate decision unless the
+   user said otherwise. The user explicitly overrode that recommendation and chose the waiver
+   mechanism for this increment, with a recorded reason and audit columns.
+   Shipped: three-column waiver (`receiptWaivedAt`/`receiptWaivedByUserId`/`receiptWaiverReason`),
+   gated `LEDGER_MANAGE` (a step-up from `LEDGER_RECORD`, argued by architect from the existing
+   `LEDGER_APPROVE`-vs-`LEDGER_RECORD` precedent), 409 if a receipt is already attached, waiver
+   clears automatically on real-receipt attach, un-waive restores the flag. All of this was
+   independently confirmed live by QA (waive/un-waive/re-attach-clears-waiver, items 8–11 of the
+   click-through) and matches the user's decision precisely.
+   **Verdict: matches the user's decision** (a deliberate, confirmed deviation from Phase 1's own
+   *recommendation* — correctly so, since the user, not the analyst, gets the final call on scope).
+
+5. **Guardrail becomes actionable.**
+   Phase 1 flagged the bare, unlinked count as a gap; the user then explicitly chose to fix it in
+   this same increment.
+   Shipped: `GuardrailFlag.linkHref` renders as "View flagged transactions →" at both call sites
+   (`ledger-entity-detail.tsx`, `compliance/page.tsx`), landing on the new `/admin/ledger/all`
+   entity-wide filtered view — QA drove this live (click-through item 12) and confirmed the correct
+   title/filter/Fund column.
+   **Verdict: matches.**
+
+6. **Non-expense rows.**
+   Phase 1 flagged as an open question; the user answered expense-only for v1.
+   Shipped: `showReceiptSection` in `transaction-form.tsx` explicitly excludes transfers and
+   non-expense flows; the guardrail and waiver logic are both hard-gated to `flow === 'expense'`
+   (`isReceiptMissing()`, waive route's 400).
+   **Verdict: matches.**
+
+### Deviation ruling — the "Fund" column in `all`-mode
+
+Increment C added a "Fund" column to the transaction table, visible only in the new entity-wide
+`all` pseudo-fund-slug mode, and flagged it as a deviation for my review. **Ruling: necessary UI,
+not scope drift — accepted as part of this increment, no follow-up needed.**
+
+Reasoning: architect's Ruling 7 required the guardrail link to target an entity-wide view (Check 11
+is computed per-entity-across-all-funds, so a single-fund link would misrepresent the flagged set).
+Once the fund-scoped frame of reference is gone, the existing Party/Fund column's transfer-partner
+lookup has nothing to resolve "the other side" against — some way to convey which fund each row
+belongs to is a requirement for the entity-wide list to be legible at all, not an optional
+embellishment layered on top of the ask. No API or data-model surface was added to support it
+(`fundNameMap` already existed); it's presentational only, and QA independently confirmed it renders
+correctly for both regular and transfer rows in `all` mode. This is the correct kind of drift: the
+architecture required a consequence the design doc didn't spell out verbatim, and the implementer
+resolved it in the simplest honest way rather than punting or hacking the existing column.
+
+### Streaming-defect loop-back — process ruling
+
+The Phase 5 FAIL (both receipt-view routes streaming a stale Buffer-pool memory fragment instead of
+the actual file, for any receipt under ~4KB) is weighed as **the pipeline working as designed, not a
+mark against the feature or the increment that shipped it.** Specifics:
+
+- The bug was inherited from the pre-existing reimbursement proxy route, which this increment was
+  explicitly instructed (Phase 2/3) to mirror "exactly" — copying a real, already-live latent defect
+  is a legitimate failure mode for a mirror-the-precedent design, not a new mistake introduced this
+  increment.
+- QA found it via the layer of verification built for exactly this: a manual click-through with a
+  genuinely small real file, not a synthetic/adversarial one — this is precisely the "reproducible,
+  concrete defect" bar the pipeline sets for a FAIL regardless of how much else is green.
+- The fix (`receiptBytesToBodyInit()`, a `Uint8Array.from()` copy) is correct by construction (no
+  `as` cast hiding a wrong-region read), was proven against a standalone repro before and after, and
+  was applied to **both** affected routes in one pass rather than just the new one — closing the
+  bug at its actual root (a shared, previously-copy-pasted body-construction pattern) instead of
+  patching only the file this increment touched.
+- Re-verification was independent and live: a genuine 168-byte PDF through the real upload → attach
+  → view round trip on both routes, byte-for-byte `cmp`, plus a keep-alive-corruption re-check. Not
+  a re-run of the same unit tests — an actual repeat of the failing scenario.
+- Net effect: the reimbursement flow is now *also* fixed as a side effect of this feature's QA pass,
+  which is a real, if incidental, win beyond this ticket's own scope.
+
+### Edge cases (per template)
+
+| Case | Verdict | Notes |
+|---|---|---|
+| Empty state | pass | `all`-mode + `receipt=missing` empty copy ("No expense transactions are missing a receipt in FY…") correctly reads as "backlog is clear," not "nothing exists here" — the right empty-state framing for a filtered compliance view. |
+| Failure microcopy | pass | Upload failure renders inline (`role="alert"`) and never blocks the transaction save (verified by QA, both code-read and live); 404 on missing/deleted blob renders human JSON, confirmed live. |
+| Permission gates | pass, with a coverage caveat | All three tiers (`LEDGER_RECORD` attach, `LEDGER_VIEW` view, `LEDGER_MANAGE` waive) confirmed present server-side by QA's route-level source audit and exercised live for the all-permissions e2e admin. The `LEDGER_MANAGE`-vs-`LEDGER_VIEW` boundary specifically was **not** exercised live from a restricted session — code-read only for that one distinction. Tracked as a fixture gap (B-03), not a functional gap: the gate exists in source and is the correct key: verified by two independent readers (QA, then me) of the same route file. |
+| Mobile (360px) | pass | QA drove the file input, waiver dialog, and the now-wider (`all`-mode Fund column) table at 360px live; confirmed no page-level horizontal overflow. |
+
+### Known non-blocking notes — final disposition
+
+- **10MB `formData()` message-precision gap.** Pre-existing on both upload routes before this
+  feature (inherited, not introduced), confirmed by QA to be a copy-precision gap only — the user
+  still gets a human-readable 400, just the generic one instead of the size-specific one. Logged as
+  **B-04** in `docs/backlog.md` this session. Not a ship blocker: no crash, no silent failure, no
+  data loss.
+- **Waiver UI never live-tested against a `LEDGER_VIEW`-only session.** This is the fixture gap
+  `B-03` already names (an e2e admin bound to every `FEATURES.*` key is the only signed-in fixture
+  available); the underlying server-side gate was verified correct by source read twice over
+  (QA, then me, independently). Cross-referenced onto `B-03` this session rather than opening a
+  duplicate ticket, since it's the identical root cause B-03 already tracks.
+
+### Follow-ups (tracked, non-blocking — feature ships without them)
+
+- **B-04** (new, this session) — oversized-upload error message is unreachable; fix scope TBD, not
+  urgent.
+- **B-03** (existing, cross-referenced this session) — e2e fixture for a restricted admin session;
+  now also covers this feature's `LEDGER_MANAGE` boundary, not just the original `admin.security_view`
+  case.
+
+Neither blocks ship. Both are fixture/tooling debt, not user-facing defects.
+
+### Outputs
+
+- `docs/work-log/2026-07-21-transaction-receipts.md` — this Phase 6 section, and the Per-Phase
+  Status table's Phase 6 row updated to `Complete` / `SHIP IT` / 2026-07-21.
+- `docs/backlog.md` — appended a cross-reference note to **B-03** and added new **B-04**.
+- No other files modified. No dev server started, no build/test gates re-run (per this task's
+  instructions) — relied on QA's Phase 5 live byte-compare evidence, independently spot-checked via
+  read-only `psql` (147/0/0 expense-receipt-waiver counts, correct columns/FK, no fund slug `all`)
+  and targeted source reads (ConfirmDialog usage, `rounded-2xl`, no native dialogs, `LEDGER_*`
+  feature keys).
+
+### Open questions / handoff notes
+
+- None blocking. This closes the pipeline for `2026-07-21-transaction-receipts.md`.
+- Next work, if picked up later: **B-01** (Ledger user's guide) should eventually document the
+  receipt-upload and waiver flow once written; **B-04** and the `B-03` cross-reference are available
+  for whoever next touches e2e fixtures or upload-size handling.

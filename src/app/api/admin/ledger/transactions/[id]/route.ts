@@ -22,7 +22,13 @@
  *   checkNumber?: string | null;  // structured check # (T-18); trimmed, capped at 20 chars
  *   bankAccountId?: string | null;
  *   beneficiaryCause?: string | null;
- *   receiptStorageKey?: string | null;
+ *   publicNote?: string | null;  // treasurer-curated, member-facing annotation
+ *     // on /members/impact; null clears; non-null trims/caps at 200 chars
+ *     // server-side (400 REJECT if over, not truncated), expense-only.
+ *   receiptStorageKey?: string | null;  // DECISION-035: null clears (does NOT
+ *     // waive — re-flags the row); non-null attaches/replaces (regex-
+ *     // validated, expense-only) and CLEARS any existing waiver in the same
+ *     // UPDATE (a real receipt supersedes an administrative excuse).
  * }
  * Response 200: { id: string }
  *
@@ -47,12 +53,14 @@ import { ledgerTransactions, ledgerFunds, ledgerCategories, ledgerDonors } from 
 import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
 const VALID_FLOWS = ["income", "expense"] as const;
 const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "other"] as const;
 const CHECK_NUMBER_MAX_LEN = 20;
+const PUBLIC_NOTE_MAX_LEN = 200;
 
 function isValidFlow(v: unknown): boolean {
   return typeof v === "string" && (VALID_FLOWS as readonly string[]).includes(v);
@@ -79,6 +87,25 @@ function normalizeCheckNumber(v: unknown): { value: string | null } | { error: s
   if (!trimmed) return { value: null };
   if (trimmed.length > CHECK_NUMBER_MAX_LEN) {
     return { error: `checkNumber must not exceed ${CHECK_NUMBER_MAX_LEN} characters` };
+  }
+  return { value: trimmed };
+}
+
+/**
+ * Trim and cap-reject publicNote (Impact Gift Public Note). Unlike memo/
+ * beneficiaryCause, this field renders unmoderated on the member-facing
+ * `/members/impact` page, so overlong input is REJECTED (400), never
+ * silently truncated. `null` clears; empty-after-trim also normalizes to
+ * `null` (matches the memo/beneficiaryCause empty-string-to-null convention
+ * in this same handler).
+ */
+function normalizePublicNote(v: unknown): { value: string | null } | { error: string } {
+  if (v === null) return { value: null };
+  if (typeof v !== "string") return { error: "publicNote must be a string" };
+  const trimmed = v.trim();
+  if (!trimmed) return { value: null };
+  if (trimmed.length > PUBLIC_NOTE_MAX_LEN) {
+    return { error: `Keep the public note under ${PUBLIC_NOTE_MAX_LEN} characters.` };
   }
   return { value: trimmed };
 }
@@ -142,7 +169,11 @@ export async function PATCH(
       checkNumber: string | null;
       bankAccountId: string | null;
       beneficiaryCause: string | null;
+      publicNote: string | null;
       receiptStorageKey: string | null;
+      receiptWaivedAt: Date | null;
+      receiptWaivedByUserId: string | null;
+      receiptWaiverReason: string | null;
       donorId: string | null;
       updatedAt: Date;
     }>;
@@ -280,8 +311,52 @@ export async function PATCH(
             ? body.beneficiaryCause.trim() || null
             : null;
     }
+    // publicNote (Impact Gift Public Note): trim/cap-reject, then expense-only
+    // guard against the *effective* flow (existing flow, or the new flow value
+    // if changing it in the same request — reuses `newFlow` above, the same
+    // pattern already used for category/receipt validation in this handler).
+    if (body.publicNote !== undefined) {
+      const publicNoteResult = normalizePublicNote(body.publicNote);
+      if ("error" in publicNoteResult) {
+        return NextResponse.json({ error: publicNoteResult.error }, { status: 400 });
+      }
+      if (publicNoteResult.value && newFlow !== "expense") {
+        return NextResponse.json(
+          { error: "Public notes can only be attached to expense transactions" },
+          { status: 400 },
+        );
+      }
+      update.publicNote = publicNoteResult.value;
+    }
+    // receiptStorageKey (DECISION-035): null → remove (Flow D — does NOT touch
+    // waiver fields, a removed receipt should re-flag the row). Non-null →
+    // attach/replace (Flow B/C) — regex-validated, expense-only, and clears
+    // any existing waiver in the same UPDATE (a real receipt supersedes an
+    // administrative excuse; no dual state).
     if (body.receiptStorageKey !== undefined) {
-      update.receiptStorageKey = body.receiptStorageKey ?? null;
+      if (body.receiptStorageKey === null) {
+        update.receiptStorageKey = null;
+      } else {
+        if (
+          typeof body.receiptStorageKey !== "string" ||
+          !RECEIPT_KEY_REGEX.test(body.receiptStorageKey)
+        ) {
+          return NextResponse.json(
+            { error: "receiptStorageKey format is invalid" },
+            { status: 400 },
+          );
+        }
+        if (newFlow !== "expense") {
+          return NextResponse.json(
+            { error: "Receipts can only be attached to expense transactions" },
+            { status: 400 },
+          );
+        }
+        update.receiptStorageKey = body.receiptStorageKey;
+        update.receiptWaivedAt = null;
+        update.receiptWaivedByUserId = null;
+        update.receiptWaiverReason = null;
+      }
     }
     // Link/unlink a donor (inc6a). Validate the donor exists before linking so
     // the LinkDonorDialog can't silently no-op against a bad id.

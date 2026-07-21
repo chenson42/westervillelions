@@ -20,6 +20,7 @@ import TransactionActions from "@/components/admin/ledger/transaction-actions";
 import FundManageDialog from "@/components/admin/ledger/fund-manage-dialog";
 import ReconcileToggle, { ReconcileAllButton } from "@/components/admin/ledger/reconcile-toggle";
 import TxnDonorActions from "@/components/admin/ledger/txn-donor-actions";
+import ReceiptWaiverControl from "@/components/admin/ledger/receipt-waiver-control";
 import type { LedgerTransaction } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -64,7 +65,7 @@ export default async function AdminLedgerFundPage({
   searchParams,
 }: {
   params: Promise<{ fundSlug: string }>;
-  searchParams: Promise<{ entity?: string; fy?: string }>;
+  searchParams: Promise<{ entity?: string; fy?: string; receipt?: string }>;
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
@@ -80,7 +81,7 @@ export default async function AdminLedgerFundPage({
   const canManage = await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE);
 
   const { fundSlug } = await params;
-  const { entity: entityParam, fy: fyParam } = await searchParams;
+  const { entity: entityParam, fy: fyParam, receipt: receiptParam } = await searchParams;
 
   // Validate entity
   const entities = await getEntities();
@@ -90,10 +91,17 @@ export default async function AdminLedgerFundPage({
   const entity = await getEntity(resolvedEntitySlug);
   if (!entity) redirect("/admin/ledger");
 
-  // Validate fund slug
+  // `all` pseudo-fund-slug (DECISION-035): entity-wide register, skipping the
+  // single-fund lookup/chrome — the only honest target for the missing-receipt
+  // guardrail link, since Check 11 is computed per-entity across all funds.
+  // Confirmed no real fund resolves to slug "all" before this became load-bearing.
+  const isAllMode = fundSlug === "all";
+  const missingReceiptFilter = receiptParam === "missing";
+
+  // Validate fund slug (skipped entirely in `all` mode)
   const allFunds = await getFunds(entity.id);
-  const fund = allFunds.find((f) => f.slug === fundSlug);
-  if (!fund) notFound();
+  const fund = isAllMode ? undefined : allFunds.find((f) => f.slug === fundSlug);
+  if (!isAllMode && !fund) notFound();
 
   // Validate fiscal year
   const currentFY = currentFiscalYear(new Date());
@@ -105,7 +113,11 @@ export default async function AdminLedgerFundPage({
   const [bankAccounts, categories, transactions, fiscalYears, ackSummary] = await Promise.all([
     getBankAccounts(entity.id),
     getCategories(entity.id),
-    listTransactions(entity.id, { fundId: fund.id, fiscalYear }),
+    listTransactions(entity.id, {
+      fundId: fund?.id,
+      fiscalYear,
+      missingReceipt: missingReceiptFilter || undefined,
+    }),
     listLedgerFiscalYears(entity.id),
     // Only fetch ack statuses for Foundation entities (donationsDeductible=true)
     isFoundationEntity && canRecord
@@ -127,9 +139,12 @@ export default async function AdminLedgerFundPage({
     .filter((t) => t.transferGroupId)
     .map((t) => t.transferGroupId!);
 
-  // Fetch all transfer partners (rows that share a transferGroupId with transactions in this view)
+  // Fetch all transfer partners (rows that share a transferGroupId with transactions in this view).
+  // Not needed in `all` mode: both sides of every transfer are already present
+  // in `transactions` (no fundId filter), so each row shows its own Fund
+  // column value instead of a resolved partner-fund label.
   let allRelatedTxns: LedgerTransaction[] = [];
-  if (transferGroupIds.length > 0) {
+  if (fund && transferGroupIds.length > 0) {
     // listTransactions on the entity (no fundId filter) for the same FY, then filter by groupId
     const entityTxns = await listTransactions(entity.id, { fiscalYear });
     const groupSet = new Set(transferGroupIds);
@@ -140,9 +155,11 @@ export default async function AdminLedgerFundPage({
 
   // Map: transferGroupId → partner row (the other row in the pair, different fundId)
   const partnerByGroupId = new Map<string, LedgerTransaction>();
-  for (const txn of allRelatedTxns) {
-    if (txn.transferGroupId && txn.fundId !== fund.id) {
-      partnerByGroupId.set(txn.transferGroupId, txn);
+  if (fund) {
+    for (const txn of allRelatedTxns) {
+      if (txn.transferGroupId && txn.fundId !== fund.id) {
+        partnerByGroupId.set(txn.transferGroupId, txn);
+      }
     }
   }
 
@@ -152,6 +169,23 @@ export default async function AdminLedgerFundPage({
   const fundNameMap = new Map(allFunds.map((f) => [f.id, f.name]));
 
   const basePath = `/admin/ledger/${fundSlug}`;
+
+  const pageTitle = fund
+    ? fund.name
+    : missingReceiptFilter
+      ? "Expenses Missing Receipts"
+      : "All Transactions";
+  const pageSubtitle = fund ? (
+    <>
+      <span className="capitalize">{fund.kind} fund</span> &bull; {entity.shortName ?? entity.name} &bull;{" "}
+      {fiscalYearLabel(fiscalYear)}
+    </>
+  ) : (
+    <>
+      All funds &bull; {entity.shortName ?? entity.name} &bull; {fiscalYearLabel(fiscalYear)}
+      {missingReceiptFilter && " • filtered to expenses missing a receipt"}
+    </>
+  );
 
   return (
     <div className="space-y-6">
@@ -169,12 +203,10 @@ export default async function AdminLedgerFundPage({
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-3xl font-bold text-gray-900">{fund.name}</h1>
-            {canManage && <FundManageDialog fund={fund} />}
+            <h1 className="text-3xl font-bold text-gray-900">{pageTitle}</h1>
+            {canManage && fund && <FundManageDialog fund={fund} />}
           </div>
-          <p className="mt-1 text-sm text-gray-500 capitalize">
-            {fund.kind} fund &bull; {entity.shortName ?? entity.name} &bull; {fiscalYearLabel(fiscalYear)}
-          </p>
+          <p className="mt-1 text-sm text-gray-500">{pageSubtitle}</p>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -185,12 +217,14 @@ export default async function AdminLedgerFundPage({
             Approvals
           </Link>
 
-          <Link
-            href={`/admin/ledger/${fundSlug}/report?entity=${resolvedEntitySlug}&fy=${fiscalYear}`}
-            className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] inline-flex items-center"
-          >
-            Budget / Actual Report
-          </Link>
+          {fund && (
+            <Link
+              href={`/admin/ledger/${fundSlug}/report?entity=${resolvedEntitySlug}&fy=${fiscalYear}`}
+              className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] inline-flex items-center"
+            >
+              Budget / Actual Report
+            </Link>
+          )}
 
           <Link
             href={`/admin/ledger/reports?entity=${resolvedEntitySlug}&fy=${fiscalYear}`}
@@ -242,6 +276,11 @@ export default async function AdminLedgerFundPage({
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Type
                 </th>
+                {!fund && (
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Fund
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Category
                 </th>
@@ -272,10 +311,16 @@ export default async function AdminLedgerFundPage({
             <tbody className="divide-y divide-gray-200 bg-white">
               {transactions.length === 0 ? (
                 <tr>
-                  <td colSpan={canRecord ? 8 : 6}>
+                  <td colSpan={(canRecord ? 8 : 6) + (fund ? 0 : 1)}>
                     <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500 m-4">
-                      <p className="font-medium">No transactions recorded for this fund in {fiscalYearLabel(fiscalYear)}.</p>
-                      {canRecord && (
+                      <p className="font-medium">
+                        {missingReceiptFilter
+                          ? `No expense transactions are missing a receipt in ${fiscalYearLabel(fiscalYear)}.`
+                          : fund
+                            ? `No transactions recorded for this fund in ${fiscalYearLabel(fiscalYear)}.`
+                            : `No transactions recorded in ${fiscalYearLabel(fiscalYear)}.`}
+                      </p>
+                      {canRecord && !missingReceiptFilter && (
                         <p className="mt-2 text-sm">
                           Use &ldquo;Record Transaction&rdquo; above to add the first entry.
                         </p>
@@ -316,7 +361,54 @@ export default async function AdminLedgerFundPage({
                           {flowLabel(txn.flow, isTransfer)}
                         </span>
                         {statusBadge(txn.status)}
+                        {/* Receipt indicator — expense rows only (DECISION-035) */}
+                        {!isTransfer && txn.flow === "expense" && (
+                          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                            {txn.receiptStorageKey ? (
+                              <a
+                                href={`/api/admin/ledger/transactions/${txn.id}/receipt`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                              >
+                                View receipt
+                              </a>
+                            ) : txn.receiptWaivedAt ? (
+                              <>
+                                <span
+                                  className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200"
+                                  title={txn.receiptWaiverReason ?? undefined}
+                                >
+                                  Waived
+                                </span>
+                                {canManage && (
+                                  <ReceiptWaiverControl
+                                    transactionId={txn.id}
+                                    waived
+                                    waiverReason={txn.receiptWaiverReason}
+                                  />
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-xs text-gray-400">No receipt</span>
+                                {canManage && (
+                                  <ReceiptWaiverControl
+                                    transactionId={txn.id}
+                                    waived={false}
+                                    waiverReason={null}
+                                  />
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </td>
+                      {!fund && (
+                        <td className="px-4 py-3 text-sm text-gray-600 max-w-[140px]">
+                          <span className="truncate block">{fundNameMap.get(txn.fundId) ?? "—"}</span>
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-sm text-gray-600 max-w-[140px]">
                         {txn.categoryId ? (
                           categoryNameMap.get(txn.categoryId) ?? <span className="text-gray-400">—</span>

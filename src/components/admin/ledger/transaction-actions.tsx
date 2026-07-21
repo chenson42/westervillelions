@@ -79,6 +79,10 @@ export default function TransactionActions({
     bankAccountId: transaction.bankAccountId,
     fundId: transaction.fundId,
     transferGroupId: transaction.transferGroupId,
+    receiptStorageKey: transaction.receiptStorageKey,
+    receiptWaivedAt: transaction.receiptWaivedAt,
+    receiptWaiverReason: transaction.receiptWaiverReason,
+    publicNote: transaction.publicNote,
   };
 
   const deleteTitle = isTransfer ? "Delete transfer?" : "Delete transaction?";

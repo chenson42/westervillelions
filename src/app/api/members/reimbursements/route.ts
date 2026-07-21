@@ -38,8 +38,8 @@ import {
 } from "@/lib/ledger-queries";
 import { sendEmail } from "@/lib/email";
 import { FEATURES } from "@/lib/permissions";
+import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 
-const RECEIPT_KEY_REGEX = /^receipts\/[0-9a-f-]{36}\/[a-zA-Z0-9._-]{1,150}$/;
 const AMOUNT_MAX = 1_000_000; // $10,000 ceiling for a single reimbursement
 const DESC_MAX_LEN = 1000;
 const CAUSE_MAX_LEN = 200;

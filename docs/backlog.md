@@ -30,6 +30,31 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   admin account and restores it after), so permission-gate redirects on
   admin sub-pages get real browser coverage instead of a standing code-read
   exception.
+  Also surfaced during Phase 6 of `2026-07-21-transaction-receipts.md`: the
+  receipt-waiver control's `LEDGER_MANAGE`-vs-`LEDGER_VIEW` distinction (waive
+  button hidden client-side, and the waive/un-waive routes' server-side
+  `hasFeature(LEDGER_MANAGE)` gate) was verified live only against the
+  all-permissions e2e admin; a `LEDGER_VIEW`-only denied request was confirmed
+  by reading the route source, not by driving a live request from a
+  restricted session. Same root gap as above.
+
+- [ ] **B-04 — Receipt/reimbursement upload routes' oversized-file error
+  message is unreachable in practice.** (added 2026-07-21, priority:
+  nice-to-have) Both `POST /api/admin/ledger/transactions/upload` and
+  `POST /api/members/reimbursements/upload` intend to return
+  `"File exceeds the 10 MB size limit"` for a file over the 10MB cap, but
+  `request.formData()` throws first for bodies at/above roughly that size, so
+  the response falls back to the routes' generic `try/catch`
+  `"Invalid multipart form data"` 400 instead — confirmed via `curl`-based
+  binary search (9MB parses and hits the real size check; 10MB does not) in
+  QA's Phase 5 pass of `2026-07-21-transaction-receipts.md`. Not a crash or a
+  500 — both routes already return a human-readable 400 either way — just a
+  copy-precision gap: the specific size-limit message never actually shows.
+  Fix (scope TBD in Phase 1): likely an explicit body-size limit configured
+  upstream of `request.formData()` (e.g., checking `Content-Length` before
+  parsing, or a route-level body-size config) so oversized uploads are
+  rejected with the intended message before multipart parsing begins. Same
+  fix should apply to both upload routes since they share the pattern.
 
 - [ ] **B-02 — No Playwright auth fixture for a signed-in member (only admin).**
   (added 2026-07-21, priority: nice-to-have) `e2e/helpers/auth.ts` only has
