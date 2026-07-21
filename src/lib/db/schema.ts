@@ -571,6 +571,11 @@ export const ledgerCategories = pgTable(
     form990Line: text("form_990_line"),     // nullable IRS 990 line reference (inc4 prep)
     sortOrder: integer("sort_order").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
+    // false marks categories whose spend is operational/fundraising overhead
+    // (e.g. "Fundraising event costs", "Operations", "Insurance & bonding") —
+    // excluded from philanthropy/impact reporting even though the money still
+    // flows through a giving-eligible fund kind. See DECISION-030.
+    countsAsGiving: boolean("counts_as_giving").notNull().default(true),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },

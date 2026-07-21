@@ -191,6 +191,88 @@ function fiscalYearOf(isoDate: string): number {
 }
 
 // ---------------------------------------------------------------------------
+// Cause taxonomy — stamps `beneficiaryCause` on Foundation + club-activity
+// EXPENSE rows so the /members/impact "Giving by Cause" breakdown is
+// meaningful. Applied at row-build time, regardless of whether a given row
+// happens to satisfy the app's isGiving() predicate (see CLAUDE.md/decisions
+// for that predicate — this script does not read or depend on it).
+//
+// Rule order matters: payee/memo overrides are checked before the more
+// generic register-category fallbacks, because several Foundation categories
+// ("Philanthropic donation", "Special Grant", "Miscellaneous") are shared by
+// many different beneficiaries and can only be disambiguated by payee/memo.
+// ---------------------------------------------------------------------------
+
+const CAUSE_VISION = "Vision & Eye Care";
+const CAUSE_YOUTH = "Youth & Education";
+const CAUSE_HUNGER = "Hunger & Basic Needs";
+const CAUSE_HEALTH = "Health & Disability";
+const CAUSE_DISASTER = "Disaster Relief";
+const CAUSE_LIONS_INTL = "Lions International Programs";
+const CAUSE_CIVIC = "Community & Civic";
+const CAUSE_RECYCLING = "Bags to Benches (Recycling)";
+const CAUSE_FUNDRAISING = "Fundraising event costs";
+
+/** Register categories mapped to a categoryName that is deliberately cause-less (ops/insurance). */
+const NO_CAUSE_CATEGORY_NAMES = new Set(["Operations", "Insurance & bonding"]);
+
+function ci(haystack: string, needle: string): boolean {
+  return haystack.toLowerCase().includes(needle.toLowerCase());
+}
+
+/**
+ * Returns the beneficiary cause for a Foundation/club-activity EXPENSE row, or
+ * null if the row is deliberately cause-less (operations/insurance) or if it
+ * genuinely didn't match any rule (the caller flags the latter for review).
+ */
+function deriveCause(args: {
+  payeeRaw: string;
+  category: string; // raw register category (pre-mapping)
+  memo: string;
+  checkNum: string;
+}): string | null {
+  const { payeeRaw, category, memo, checkNum } = args;
+
+  if (ci(memo, "arborfest")) return CAUSE_CIVIC;
+  if (ci(payeeRaw, "heritage middle school")) return CAUSE_HUNGER;
+  if (ci(payeeRaw, "gates at eight") || ci(payeeRaw, "gates at 8")) return CAUSE_YOUTH;
+  if (ci(payeeRaw, "qdoba")) return CAUSE_YOUTH;
+  if (category === "Boys State/Girls State") return CAUSE_YOUTH;
+  if (["Scholarships", "High School Scholarships", "BMX Race Scholarships"].includes(category))
+    return CAUSE_YOUTH;
+  if (ci(payeeRaw, "westerville area resource ministry")) return CAUSE_HUNGER;
+  if (ci(payeeRaw, "westerville caring and sharing")) return CAUSE_HUNGER;
+  if (ci(payeeRaw, "cohatch worthington")) return CAUSE_HUNGER;
+  if (ci(payeeRaw, "the big bus")) return CAUSE_HUNGER;
+  if (ci(payeeRaw, "howard baum") && (ci(memo, "trash bag") || ci(memo, "bags to benches")))
+    return CAUSE_RECYCLING;
+  if (ci(payeeRaw, "jane enneking")) return CAUSE_RECYCLING;
+  if (ci(payeeRaw, "costco") && ci(memo, "trash bag")) return CAUSE_RECYCLING;
+  if (["Bags to Benches Expenses", "Bags to Benches", "Bench Plaques", "Plastic Bags"].includes(category))
+    return CAUSE_RECYCLING;
+  if (ci(payeeRaw, "foundation fighting blindness")) return CAUSE_VISION;
+  if (ci(payeeRaw, "vosh")) return CAUSE_VISION;
+  if (ci(payeeRaw, "pilot dogs")) return CAUSE_VISION;
+  if (ci(payeeRaw, "olf eye care fund")) return CAUSE_VISION;
+  if (ci(payeeRaw, "ohio lions eye research foundation")) return CAUSE_VISION;
+  if (ci(payeeRaw, "central ohio lions eye bank")) return CAUSE_VISION;
+  if (ci(payeeRaw, "ossbpts foundation")) return CAUSE_VISION;
+  if (category === "Sensory Garden") return CAUSE_VISION;
+  if (ci(payeeRaw, "ohio lions foundation")) return ci(memo, "sensory garden") ? CAUSE_VISION : CAUSE_LIONS_INTL;
+  if (ci(payeeRaw, "westerville special olympics")) return CAUSE_HEALTH;
+  if (ci(payeeRaw, "central ohio diabetes association")) return CAUSE_HEALTH;
+  if (ci(payeeRaw, "ohio lions pediatric cancer foundation")) return CAUSE_HEALTH;
+  if (ci(payeeRaw, "camp echoing hills")) return CAUSE_HEALTH;
+  if (category === "Special Grant" && (checkNum === "8200" || checkNum === "8201")) return CAUSE_DISASTER;
+  if (ci(payeeRaw, "lions clubs international foundation")) return CAUSE_LIONS_INTL;
+  if (category === "Special Interest Grants" && ci(payeeRaw, "city of westerville")) return CAUSE_CIVIC;
+  if (["Rudolph Run Expenses", "Pancake Breakfast Expenses", "WinterFest"].includes(category))
+    return CAUSE_FUNDRAISING;
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Mapped transaction shape (entity-agnostic, ready for insertion)
 // ---------------------------------------------------------------------------
 
@@ -207,6 +289,7 @@ type MappedTxn = {
   reconciled: boolean;
   sourceCheckNum: string;
   sourceCategory: string;
+  beneficiaryCause: string | null;
 };
 
 type SkippedRow = {
@@ -297,6 +380,11 @@ function mapFoundation(row: RawRow): { fundKind: string; categoryName: string; p
       return { fundKind: "charitable", categoryName: "Public donations" };
     }
     if (row.checkNum === "8245") return { fundKind: "charitable", categoryName: "Charitable donation out" }; // Qdoba
+    // Bags to Benches supplies mis-filed as Miscellaneous in the register (9/23/2025
+    // Howard Baum $24.99) — belongs with its sibling supply rows in Service projects.
+    if (/bags to benches/i.test(row.memo)) {
+      return { fundKind: "charitable", categoryName: "Service projects" };
+    }
     return { fundKind: "charitable", categoryName: "Operations" };
   }
   if (cat === "Officer Bonding") return { fundKind: "charitable", categoryName: "Insurance & bonding" };
@@ -410,6 +498,12 @@ function buildEntityRows(
       entityKey === "foundation" ? foundationPaymentMethod(row) : clubPaymentMethod(row);
     const reconciled = row.clr === "C" || row.clr === "R";
 
+    const eligibleForCause =
+      flow === "expense" && (mapping.fundKind === "charitable" || mapping.fundKind === "activity");
+    const beneficiaryCause = eligibleForCause
+      ? deriveCause({ payeeRaw: row.payeeRaw, category: row.category, memo: row.memo, checkNum: row.checkNum })
+      : null;
+
     mapped.push({
       entityKey,
       fundKind: mapping.fundKind,
@@ -423,6 +517,7 @@ function buildEntityRows(
       reconciled,
       sourceCheckNum: row.checkNum,
       sourceCategory: row.category,
+      beneficiaryCause,
     });
   }
 
@@ -507,6 +602,44 @@ function printReviewLists(mapped: MappedTxn[]) {
       )}  source category="${t.sourceCategory}" → "${t.categoryName}"`,
     );
   }
+}
+
+/** Rows eligible for a cause (Foundation + club-activity expense) that got null and aren't deliberately cause-less. */
+function printCauseReport(mapped: MappedTxn[]) {
+  const eligible = mapped.filter(
+    (t) => t.flow === "expense" && (t.fundKind === "charitable" || t.fundKind === "activity"),
+  );
+
+  const unmatched = eligible.filter(
+    (t) => t.beneficiaryCause === null && !NO_CAUSE_CATEGORY_NAMES.has(t.categoryName),
+  );
+  console.log(`\n  Beneficiary-cause: unmatched public-fund expense rows (${unmatched.length}):`);
+  for (const t of unmatched) {
+    console.log(
+      `    [${t.entityKey}/${t.fundKind}] ${t.txnDate}  ${t.party}  ${money(-t.amountCents)}  category="${t.sourceCategory}"  memo="${t.memo}"`,
+    );
+  }
+
+  const deliberateNull = eligible.filter(
+    (t) => t.beneficiaryCause === null && NO_CAUSE_CATEGORY_NAMES.has(t.categoryName),
+  );
+
+  const byCause = new Map<string, { cents: number; count: number }>();
+  for (const t of eligible) {
+    const key = t.beneficiaryCause ?? "(null — Operations/Insurance)";
+    const bucket = byCause.get(key) ?? { cents: 0, count: 0 };
+    bucket.cents += t.amountCents;
+    bucket.count += 1;
+    byCause.set(key, bucket);
+  }
+  console.log(`\n  Beneficiary-cause totals (Foundation + club-activity expense rows):`);
+  const rows = Array.from(byCause.entries()).sort((a, b) => b[1].cents - a[1].cents);
+  for (const [cause, bucket] of rows) {
+    console.log(`    ${cause.padEnd(35)} ${money(-bucket.cents).padStart(12)}  (${bucket.count} rows)`);
+  }
+  console.log(
+    `    (deliberate-null Operations/Insurance rows included above: ${deliberateNull.length})`,
+  );
 }
 
 function printTotals(label: string, mapped: MappedTxn[]) {
@@ -600,6 +733,7 @@ async function main() {
 
   printSkipped([...foundationResult.skipped, ...clubResult.skipped]);
   printReviewLists([...foundationResult.mapped, ...clubResult.mapped]);
+  printCauseReport([...foundationResult.mapped, ...clubResult.mapped]);
 
   if (!foundationOk || !clubOk) {
     console.error(`\n${"!".repeat(78)}`);
@@ -775,6 +909,7 @@ async function main() {
         amountCents: t.amountCents,
         party: t.party,
         memo: buildMemo(t.memo),
+        beneficiaryCause: t.beneficiaryCause,
         paymentMethod: t.paymentMethod,
         status: "posted" as const,
         reconciled: t.reconciled,

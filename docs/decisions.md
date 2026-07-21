@@ -28,6 +28,58 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-030: Philanthropy/impact reporting counts TRUE GIFTS only — fundraising-overhead and operational spend excluded via a new per-category `counts_as_giving` flag, with conservative null-inclusion
+
+**Status:** Resolved
+**Date:** 2026-07-20
+
+**Decision:**
+
+`/members/impact` (all-time/current-FY giving totals, giving by cause, giving by fiscal year, recent named gifts) previously counted every posted, non-transfer expense row on an `activity`/`charitable`/`scholarship` fund as philanthropic giving. That predicate over-counted: fundraising event costs, general operations, and insurance & bonding are real expenses against public/charitable funds but are not gifts given to a cause — they are the overhead of running the club/Foundation. A new `ledger_categories.counts_as_giving` boolean (`NOT NULL DEFAULT true`) marks categories whose spend is operational/fundraising overhead; `false` excludes a category's transactions from philanthropy reporting even though the transaction otherwise satisfies the existing giving-eligible fund-kind rule. Three categories were flagged `false` on migration: `Fundraising event costs`, `Operations`, `Insurance & bonding` (all entities, expense flow).
+
+The giving predicate — duplicated by design at two synced sites, `isGiving()` (`src/lib/ledger.ts`) and the SQL `WHERE` clause inside `getPhilanthropy()` (`src/lib/ledger-queries.ts`) — was extended at both sites with the same rule: `categoryCountsAsGiving !== false` (helper) / `counts_as_giving IS NOT FALSE`-equivalent via `LEFT JOIN` + `OR(isNull, = true)` (SQL). A **null or missing flag stays INCLUDED** — a transaction with no `categoryId`, or whose category has never had the flag set explicitly to `false`, is not silently dropped from the report; it keeps appearing under "Other community support." Only an explicit `false` excludes a row.
+
+**Rationale:** The conservative null-inclusion choice was deliberate, not an oversight. `categoryId` is nullable on `ledger_transactions` (`onDelete: 'set null'`), so uncategorized or since-recategorized public-fund expenses exist and will continue to exist. Defaulting an unset/unknown flag to *exclude* would silently shrink the giving total every time a category went uncategorized or a category row was deleted — the opposite failure mode from the one this decision fixes, and harder to notice because it fails quiet rather than loud. Requiring an explicit `false` means every exclusion is a deliberate, auditable act (a migration UPDATE or a future admin toggle), never an accident of missing data.
+
+Only surfaces that need the "true gift" meaning were touched. `determine990()` and `get990Prep()` were audited and left untouched — the 990 needs actual expense totals (operations, insurance, and fundraising costs all belong on the return), which is the opposite of what this refinement excludes; narrowing the predicate there would corrupt compliance math. `getDonor()`'s `givingHistory` (money donors give *to* the club, `flow='income'`) is a different, unrelated concept from `isGiving()` (money the club/Foundation gives *out*, `flow='expense'`) and was not touched.
+
+**Impact:**
+- `src/lib/db/schema.ts` — `ledgerCategories.countsAsGiving: boolean("counts_as_giving").notNull().default(true)`.
+- `drizzle/migrations/0053_ledger_category_counts_as_giving.sql` — idempotent `ADD COLUMN IF NOT EXISTS` + guarded `UPDATE` flagging the three named categories false across all entities.
+- `src/lib/ledger.ts` — `isGiving(row, fundKind, categoryCountsAsGiving?)` gains a 3rd optional parameter; existing call shape (2-arg) unaffected.
+- `src/lib/ledger-queries.ts` — `getPhilanthropy()`'s two queries (aggregate fold + recent-named-gifts) both gain a `LEFT JOIN` to `ledger_categories` and the `counts_as_giving` filter.
+- `src/lib/ledger-impact.test.ts` — 5 new `isGiving()` cases covering explicit `false`/`true`/`null`/omitted, and `false` stacked with an already-disqualifying fund kind.
+- Dev-DB giving total: $86,682.64 → $61,999.54 (−$24,683.10 across 43 excluded transactions).
+- Full work-log: `docs/work-log/2026-07-20-impact-true-gifts.md`.
+
+---
+
+## DECISION-029: Ledger fund opening/ending balances rolled forward past their static seed for any FY after the fund's first
+
+**Status:** Resolved
+**Date:** 2026-07-20
+
+**Decision:**
+
+Bug fix (display-side counterpart to DECISION-028). `getOverview()`, `getFundReport()`, and `getEntityReport()` in `src/lib/ledger-queries.ts` all computed a fund's `openingCents` for the selected FY as the raw `fund.openingBalanceCents` seed — a static value anchored once at the fund's inception (e.g. 6/30/2024) and never itself mutated — and `endingCents` as `openingCents + <selected-FY posted income> − <selected-FY posted expense>`. For any FY after the fund's first, this silently dropped every prior fiscal year's net activity from both figures. Seeded with 276 real transactions spanning FY2024-25 and FY2025-26 (`scripts/import-quicken-ledger.ts`, 2026-07-20), the bug became visible for the first time: `/admin/ledger` showed the club's Administrative Fund at $19,090.10 (the raw seed) instead of the true $16,134.12, Activity at $0.00 instead of $84.52, and the Foundation's Charitable Fund at $28,569.30 instead of $4,836.57.
+
+**Fix:** each affected function now runs a companion "pre-FY rollforward" query — `SELECT fund_id, flow, SUM(amount_cents) FROM ledger_transactions WHERE status='posted' AND txn_date < <FY start> GROUP BY fund_id, flow`, unbounded below, posted-only — and feeds the result into a new pure function, `rolledForwardOpeningCents(seedCents, preFyTxns)` in `src/lib/ledger.ts`. That function filters defensively to `status === 'posted'` (belt-and-suspenders with the SQL WHERE clause, same defense-in-depth posture as the DECISION-026 Ruling 3 unique index) and delegates the actual summation to the existing canonical `fundBalanceCents()` — no second, hand-rolled balance formula, matching the reuse discipline DECISION-028 established. `endingCents` is then `rolledForwardOpening + <selected-FY posted income> − <selected-FY posted expense>`, unchanged in shape from before.
+
+**Call sites fixed:** `getOverview()` (one companion query, batched across all of the entity's funds), `getFundReport()` (one companion query, single fund), `getEntityReport()` (one companion query, batched across all of the entity's funds — mirrors `getOverview()`'s shape exactly). **Call sites already correct / unaffected:** `getComplianceOverview()`, `get990Prep()`, and the `entityBalance` sums inside `getEntityReport()`/`getOverview()` all derive their entity-level balance by summing `fundSummaries[].endingCents` or `fundReports[].endingCents` — once the three primary functions were fixed, these derived sums became correct automatically with no code change. The `agedPublicFunds` guardrail path (Query A2 + `countAgedPublicFunds()`, DECISION-028) was already cross-FY-correct by construction and was not touched.
+
+**Behavioral note:** `entityBalanceCents` fed into `guardrails()` (Check 4 — reserves below threshold — and Check 6 — negative fund balance, per-fund) now reflects the TRUE rolled-forward balance rather than a FY-scoped delta-only figure. This is a correctness fix, not a meaning change: both checks' intent was always "is the club's real money low or negative right now," and the FY-scoped figure was silently wrong for any FY after a fund's first.
+
+**Rationale:** Reusing `fundBalanceCents()` rather than hand-rolling a third balance formula keeps every "balance" in the codebase provably identical in arithmetic (same discipline DECISION-028 established for the cross-FY aged-funds figure). Filtering defensively inside `rolledForwardOpeningCents()` even though the SQL query already filters to `status='posted'` follows the project's established defense-in-depth pattern (DECISION-026 Ruling 3) and — unlike the SQL-only alternative — gives this money-figure computation a real Vitest seam, since `ledger-queries.ts` functions have no DB-mocking test infrastructure in this codebase (same gap DECISION-028's rationale names).
+
+**Impact:**
+- `src/lib/ledger.ts` — new exported `rolledForwardOpeningCents(seedCents, preFyTxns)`.
+- `src/lib/ledger-queries.ts` — new pre-FY rollforward query + `rolledForwardOpeningCents()` call in `getOverview()`, `getFundReport()`, `getEntityReport()`. `FundReport`/`FundSummary` type doc comments updated to describe the rolled-forward `openingCents` contract.
+- `src/lib/ledger.test.ts` — new `describe("rolledForwardOpeningCents", ...)` block: first-FY regression, later-FY rollforward with the real repro numbers, pre-FY pending/rejected exclusion, zero-seed fund, multi-row netting.
+- No schema change, no new routes.
+- Full work-log: `docs/work-log/2026-07-20-ledger-balance-rollforward.md`.
+
+---
+
 ## DECISION-028: Lions Fund-Compliance Guardrails — aged-public-fund gate corrected to a true cross-FY balance; gating logic extracted into a testable pure function
 
 **Status:** Resolved (corrects part of DECISION-027)

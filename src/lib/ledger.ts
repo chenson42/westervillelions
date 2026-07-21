@@ -137,6 +137,42 @@ export function fundBalanceCents(
 }
 
 // ---------------------------------------------------------------------------
+// rolledForwardOpeningCents — display-side counterpart to DECISION-028
+// ---------------------------------------------------------------------------
+
+/**
+ * Rolls a fund's static opening-balance seed forward to the start of a given
+ * fiscal year by netting all POSTED transactions dated strictly before that
+ * FY. `openingBalanceCents` on `ledger_funds` is a one-time seed anchored at
+ * the fund's inception — it is never itself mutated — so any FY after the
+ * first must add back the net effect of every prior year's activity before
+ * it can be treated as "opening balance for this FY".
+ *
+ * Reuses the canonical `fundBalanceCents()` (same reuse discipline as
+ * DECISION-028's cross-FY balance) — no second, hand-rolled balance formula.
+ *
+ * Filters to `status === 'posted'` defensively: the caller (getOverview and
+ * friends) is expected to pass an already posted-only, pre-FY-bounded query
+ * result (mirrors Query A2's shape/style — SQL WHERE status='posted'), but
+ * this function does not trust that contract blindly, the same way the DB
+ * carries a defense-in-depth unique index behind an app-layer check
+ * (DECISION-026 Ruling 3) — a display figure this consumer-facing warrants
+ * the extra safety margin.
+ *
+ * @param seedCents    The fund's static openingBalanceCents seed value.
+ * @param preFyTxns    Rows dated strictly before the target FY's start,
+ *                     across any status — pending/rejected rows are excluded
+ *                     here, not just expected to be pre-filtered by the caller.
+ */
+export function rolledForwardOpeningCents(
+  seedCents: number,
+  preFyTxns: Array<FlowRow & { status: string }>,
+): number {
+  const posted = preFyTxns.filter((t) => t.status === "posted");
+  return fundBalanceCents(seedCents, posted);
+}
+
+// ---------------------------------------------------------------------------
 // entityBalanceCents
 // ---------------------------------------------------------------------------
 
@@ -274,10 +310,12 @@ export type IsGivingRow = {
 };
 
 /**
- * Returns true if a transaction row is philanthropic giving.
+ * Returns true if a transaction row is philanthropic giving — i.e. a TRUE
+ * GIFT eligible to appear in the /members/impact totals.
  *
  * Rule: flow='expense' AND transferGroupId IS NULL AND
- *       fund.kind IN ('activity', 'charitable', 'scholarship').
+ *       fund.kind IN ('activity', 'charitable', 'scholarship') AND
+ *       categoryCountsAsGiving !== false.
  *
  * NOTE: This rule is duplicated as a SQL WHERE predicate in
  * getPhilanthropy() in src/lib/ledger-queries.ts. Both definitions
@@ -287,13 +325,104 @@ export type IsGivingRow = {
  * Administrative fund rows are excluded by the fund.kind set — member dues
  * money (kind='administrative') is NEVER philanthropy. (DECISION: see Phase 3
  * design doc, docs/work-log/2026-06-25-ledger-impact.md.)
+ *
+ * DECISION-030: `categoryCountsAsGiving` is the transaction's category's
+ * `counts_as_giving` flag (nullable — a txn's categoryId can be null, or its
+ * category row simply omitted by the caller). Only an EXPLICIT `false`
+ * excludes the row — fundraising-event-cost / operations / insurance
+ * categories are flagged false so their spend never inflates giving totals.
+ * `null` or `undefined` (uncategorized txns, or callers that don't have the
+ * category loaded) stays INCLUDED: this is the conservative choice so
+ * uncategorized public-fund expenses keep appearing as "Other community
+ * support" rather than silently vanishing from the report.
  */
-export function isGiving(row: IsGivingRow, fundKind: string): boolean {
+export function isGiving(
+  row: IsGivingRow,
+  fundKind: string,
+  categoryCountsAsGiving?: boolean | null,
+): boolean {
   return (
     row.flow === "expense" &&
     row.transferGroupId === null &&
-    (fundKind === "activity" || fundKind === "charitable" || fundKind === "scholarship")
+    (fundKind === "activity" || fundKind === "charitable" || fundKind === "scholarship") &&
+    categoryCountsAsGiving !== false
   );
+}
+
+// ---------------------------------------------------------------------------
+// bucketGivingByCause — impact dashboard FY filter pills
+// ---------------------------------------------------------------------------
+
+export type GivingFoldRow = {
+  /** YYYY-MM-DD. Unused by this function directly — callers pre-filter rows
+   *  to a fiscal year (or pass all rows for the all-time bucket) before
+   *  calling. Kept on the type so callers can pass the same row shape they
+   *  already fetch from getPhilanthropy()'s giving query. */
+  txnDate: string;
+  amountCents: number;
+  beneficiaryCause: string | null;
+};
+
+export type CauseBucket = {
+  /** LOWER(TRIM(beneficiary_cause)) or '' for null/empty rows. */
+  causeKey: string;
+  /** First-seen original casing from the raw rows, or "Other community
+   *  support" when causeKey is ''. */
+  causeLabel: string;
+  totalCents: number;
+  /** 0–100, rounded to 1 decimal, relative to the sum of `rows` passed in
+   *  (i.e. relative to THIS bucket's own total — not a global total). 0 when
+   *  the bucket's total is 0. */
+  pct: number;
+};
+
+/**
+ * Groups a set of already-filtered giving rows by cause. Pure function, no
+ * DB access — callers pre-filter `rows` to whatever scope they want a
+ * breakdown for (all-time, a single fiscal year, etc.) and percentages are
+ * computed relative to that scope's own total.
+ *
+ * Sorted desc by totalCents; the '' key ("Other community support") always
+ * sorts last, matching the ordering used by getPhilanthropy()'s all-time
+ * byCause list.
+ *
+ * Empty input returns an empty array.
+ */
+export function bucketGivingByCause(rows: GivingFoldRow[]): CauseBucket[] {
+  const causeMap = new Map<string, { totalCents: number; firstSeenOriginal: string }>();
+  let totalCents = 0;
+
+  for (const row of rows) {
+    totalCents += row.amountCents;
+
+    const rawCause = row.beneficiaryCause;
+    const causeKey =
+      rawCause === null || rawCause.trim() === "" ? "" : rawCause.trim().toLowerCase();
+
+    const existing = causeMap.get(causeKey);
+    if (existing) {
+      existing.totalCents += row.amountCents;
+    } else {
+      causeMap.set(causeKey, {
+        totalCents: row.amountCents,
+        firstSeenOriginal: causeKey === "" ? "" : rawCause!.trim(),
+      });
+    }
+  }
+
+  return Array.from(causeMap.entries())
+    .map(([causeKey, { totalCents: cents, firstSeenOriginal }]) => ({
+      causeKey,
+      causeLabel: causeKey === "" ? "Other community support" : firstSeenOriginal,
+      totalCents: cents,
+      pct: totalCents > 0 ? Math.round((cents / totalCents) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => {
+      // '' key (Other community support) always sorts to the end
+      if (a.causeKey === "" && b.causeKey !== "") return 1;
+      if (b.causeKey === "" && a.causeKey !== "") return -1;
+      return b.totalCents - a.totalCents;
+    });
 }
 
 // ---------------------------------------------------------------------------

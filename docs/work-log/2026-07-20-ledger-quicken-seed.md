@@ -159,3 +159,66 @@ Note: the register data spans calendar Jul 2024–Jun 2026, which under this cod
 - **Source CSVs remain outside the repo**, exactly as required — nothing under `~/Documents/Treasurer Transfer Documents 07-2024 to 06-2026/` was copied into the working tree or committed.
 - **Nothing was committed.** Per instructions, this is a script-run-only task; `scripts/import-quicken-ledger.ts` is a new untracked file and the DB writes are already live in the local dev DB. Awaiting the user's explicit go-ahead before any `git add`/`git commit`.
 - **Script left in place** at `scripts/import-quicken-ledger.ts` for potential re-runs (e.g., if the treasurer sends a corrected export later) — it's fully idempotent via the `[quicken-import]` memo marker.
+
+---
+
+# Phase 4b — `beneficiaryCause` taxonomy addition (full-stack-developer) — 2026-07-20
+
+**Owner:** full-stack-developer
+**Status:** complete
+
+## Summary
+
+Extended `scripts/import-quicken-ledger.ts` to stamp `beneficiaryCause` on every imported Foundation and club-activity **expense** row, using an exact payee/memo/category taxonomy supplied by the requesting session. Previously every imported row had `beneficiaryCause = NULL`, so `/members/impact`'s "Giving by Cause" breakdown collapsed everything into "Other community support." Re-ran the script (dry-run then `--apply`) against the local dev DB; reconciliation still passes exactly, zero unmatched public-fund expense rows, and independent SQL confirms the totals. No app code (`src/`) was touched — script + re-run only, per the task's explicit constraint (another session had uncommitted `src/` changes in flight).
+
+## What I did
+
+- Read both source CSVs **in full** (194 + 119 lines — small enough to review every row, not sample) to hand-verify every payee/memo/category combination against the supplied taxonomy before writing the mapping function, rather than guessing at exact string spellings.
+- Added a `deriveCause()` function to the script: a priority-ordered rule list (payee/memo overrides checked before generic register-category fallbacks, since Foundation categories like "Philanthropic donation" and "Special Grant" are shared by many different beneficiaries and can only be disambiguated by payee/memo) implementing the 9-cause taxonomy: Vision & Eye Care, Youth & Education, Hunger & Basic Needs, Health & Disability, Disaster Relief, Lions International Programs, Community & Civic, Bags to Benches (Recycling), Fundraising event costs.
+- Added `beneficiaryCause: string | null` to the `MappedTxn` type; computed at row-build time, gated to `flow === "expense" && fundKind in (charitable, activity)` — administrative-fund rows and all income rows are left `null` unconditionally, per spec.
+- Wired `beneficiaryCause` into the `--apply` insert payload.
+- Added `printCauseReport()`: prints per-cause dollar/row totals plus two distinct buckets — genuinely **unmatched** public-fund expense rows (would indicate a taxonomy gap) vs. **deliberately null** rows (categoryName `Operations` or `Insurance & bonding`, which the spec explicitly excludes). Wired into the existing dry-run report output.
+- Ran a **dry-run first** — reconciliation passed exactly ($4,836.57 / $16,218.64) and 0 unmatched rows on the first attempt, because every row had already been hand-verified against the CSVs.
+- Hit a schema/DB mismatch on the first `--apply` attempt: `ledger_categories.counts_as_giving` (an uncommitted `schema.ts` column from the other in-flight session, per the task's warning) wasn't yet present on the local DB at that moment, and the transaction rolled back cleanly (confirmed via `psql` — transaction count unchanged before/after). By the time I checked, the column already existed (the other session's `db:push` had landed concurrently) — added nothing myself beyond confirming via `\d ledger_categories`, then retried `--apply`, which succeeded.
+- **Did not touch any `src/` file** — confirmed via `git diff src/lib/db/schema.ts` that the only relevant unstaged change was the `countsAsGiving` column addition (unrelated to this task; the script doesn't reference it).
+- Verified post-apply via **independent SQL** (not the script's own numbers): per-cause `SUM`/`COUNT` grouped over the exact giving predicate (`flow='expense' AND transfer_group_id IS NULL AND status='posted' AND fund.kind IN ('activity','charitable','scholarship')`), and a second query confirming the 9 null-cause rows are exactly the 7 `Operations` + 2 `Insurance & bonding` rows — both queries matched the script's dry-run output to the penny.
+- Ran `pnpm exec tsc --noEmit` — clean (exit 0).
+
+## Outputs
+
+- **Modified:** `/Users/cshenso/git/westervillelions/scripts/import-quicken-ledger.ts` — added `deriveCause()`, `CAUSE_*` constants, `NO_CAUSE_CATEGORY_NAMES`, `ci()` helper, `printCauseReport()`, `beneficiaryCause` field on `MappedTxn` and the insert payload. No other files touched.
+- **DB writes** (local dev DB, `--apply`, idempotent re-run of the existing `[quicken-import]` seed): re-deleted and re-inserted the same 276 `ledger_transactions` rows, now with `beneficiary_cause` populated on all Foundation + club-activity expense rows per the taxonomy below. No schema change made by this task (the one column gap encountered belongs to the other in-flight session, not this one).
+- **No new env var, no new `FEATURES` entry** — pure data-seed extension.
+
+### Final per-cause dollar table (independent SQL, matches script dry-run exactly)
+
+| Cause | Rows | Dollars |
+|---|---|---|
+| Youth & Education | 14 | $23,300.00 |
+| Fundraising event costs | 33 | $21,689.17 |
+| Hunger & Basic Needs | 9 | $13,300.00 |
+| Vision & Eye Care | 15 | $10,900.00 |
+| Disaster Relief | 2 | $5,000.00 |
+| Health & Disability | 8 | $4,750.00 |
+| Lions International Programs | 4 | $4,000.00 |
+| *(null — Operations/Insurance, deliberate)* | 9 | $2,968.94 |
+| Community & Civic | 1 | $400.00 |
+| Bags to Benches (Recycling) | 7 | $374.53 |
+
+(102 total public-fund expense rows across Foundation + club-activity combined; not directly comparable to the Foundation-only reconciliation figure below, which is scoped to the Foundation entity's charitable fund only.)
+
+**Reconciliation after re-import:** Foundation Charitable fund DB balance $4,836.57 (target $4,836.57) — OK. Club (Administrative + Activity) DB balance $16,218.64 (target $16,218.64) — OK. Both confirmed via the script's own post-apply DB verification and independently via `psql`.
+
+**Unmatched public-fund expense rows: 0.** Every row eligible for a cause (Foundation any category + club-activity expense) matched a taxonomy rule or fell into the deliberate-null Operations/Insurance set.
+
+## Judgment calls
+
+- **Category `"Sensory Garden"` (standalone, line 88 of the Foundation CSV — Ohio Lions Foundation, −$200, 6/20/2025, no memo)**: the supplied taxonomy only explicitly covered "Ohio Lions Foundation rows whose *memo* mentions sensory garden" (matching line 18, the 3/7/2026 −$200 row with memo "Lions sensory garden"). This row instead carries the register category `"Sensory Garden"` itself with no memo. Treated it as Vision & Eye Care by direct category match — same payee, same $200 amount as the memo-tagged sibling row, clearly the same annual sensory-garden pledge, just categorized differently by the treasurer in that fiscal year. Flagging in case the treasurer intended something else by using a distinct category string.
+- Everything else matched the supplied taxonomy unambiguously after reading every row in both CSVs — no other judgment calls were needed; all 102 eligible rows were traceable to an explicit rule in the brief (payee, category, or memo condition).
+
+## Open questions / handoff notes
+
+- **No qa/analyst phase invoked** — same rationale as Phase 4/5/6 above: this is a data-seed extension against the local dev DB, not a shipped feature with its own UI flow. The natural manual check is loading `/members/impact` in the browser and confirming "Giving by Cause" now shows the 9 named causes instead of a single "Other community support" bucket (note: the impact page's `getPhilanthropy`/`isGiving` predicate may exclude some of these rows depending on how the other in-flight session's `counts_as_giving` column and Phase-3-referenced "DECISION-030" ultimately get wired up — that's out of scope here and untouched by this task).
+- **`counts_as_giving` column**: encountered as a pre-existing (uncommitted, in-flight) `schema.ts` change from another session while `--apply` was running; the local DB already had the column by the time of inspection (the other session's `db:push` landed concurrently). Nothing in this task added, migrated, or otherwise touched that column — noting it here only because it caused a transient `--apply` failure (cleanly rolled back) that resolved itself without action.
+- Source CSVs remain outside the repo, unchanged from Phase 4.
+- Nothing committed — same as Phase 4, awaiting explicit go-ahead.

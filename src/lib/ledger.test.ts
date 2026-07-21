@@ -11,6 +11,7 @@
 import { describe, it, expect } from "vitest";
 import {
   fundBalanceCents,
+  rolledForwardOpeningCents,
   entityBalanceCents,
   grossReceiptsCents,
   budgetVariance,
@@ -121,6 +122,54 @@ describe("fundBalanceCents", () => {
       { flow: "expense", amountCents: 5_000 },
     ];
     expect(fundBalanceCents(0, rows)).toBe(7_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rolledForwardOpeningCents — 2026-07-20 balance rollforward bug fix
+// (display-side counterpart to DECISION-028; see DECISION-029)
+// ---------------------------------------------------------------------------
+
+describe("rolledForwardOpeningCents", () => {
+  it("first FY (no pre-FY txns): opening = seed (regression — current behavior preserved)", () => {
+    expect(rolledForwardOpeningCents(2_856_930, [])).toBe(2_856_930);
+  });
+
+  it("later FY: opening = seed + prior income − prior expense (real repro numbers: seed 2856930, prior net −2373273 → opening 483657)", () => {
+    // Prior-FY net of −2,373,273 expressed as separate posted income/expense
+    // totals, exactly as the pre-FY rollforward query in getOverview()
+    // returns them (grouped by flow).
+    const preFyTxns = [
+      { flow: "income", amountCents: 1_000_000, status: "posted" },
+      { flow: "expense", amountCents: 3_373_273, status: "posted" },
+    ];
+    expect(rolledForwardOpeningCents(2_856_930, preFyTxns)).toBe(483_657);
+  });
+
+  it("pre-FY pending/rejected txns excluded from rollforward", () => {
+    const preFyTxns = [
+      { flow: "income", amountCents: 50_000, status: "posted" },
+      // These would corrupt the rollforward if not excluded — pending and
+      // rejected rows are not real, settled money.
+      { flow: "income", amountCents: 999_999, status: "pending" },
+      { flow: "expense", amountCents: 999_999, status: "rejected" },
+    ];
+    expect(rolledForwardOpeningCents(10_000, preFyTxns)).toBe(60_000);
+  });
+
+  it("fund with zero seed and prior activity (club Activity: 0 + 8452 → 8452)", () => {
+    const preFyTxns = [{ flow: "income", amountCents: 8_452, status: "posted" }];
+    expect(rolledForwardOpeningCents(0, preFyTxns)).toBe(8_452);
+  });
+
+  it("nets multiple posted pre-FY rows across flows, same as fundBalanceCents", () => {
+    const preFyTxns = [
+      { flow: "income", amountCents: 60_000, status: "posted" },
+      { flow: "expense", amountCents: 40_000, status: "posted" },
+      { flow: "income", amountCents: 10_000, status: "posted" },
+      { flow: "expense", amountCents: 5_000, status: "posted" },
+    ];
+    expect(rolledForwardOpeningCents(0, preFyTxns)).toBe(25_000);
   });
 });
 

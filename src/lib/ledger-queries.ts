@@ -43,6 +43,7 @@ import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, sql
 import { getFiscalYear, currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import {
   fundBalanceCents,
+  rolledForwardOpeningCents,
   grossReceiptsCents,
   budgetVariance,
   guardrails,
@@ -50,9 +51,11 @@ import {
   determine990,
   computeDueDate,
   isFilingOverdue,
+  bucketGivingByCause,
   type GuardrailFlag,
   type BudgetVarianceResult,
   type AgedPublicFundFact,
+  type GivingFoldRow,
 } from "@/lib/ledger";
 
 // ---------------------------------------------------------------------------
@@ -85,14 +88,17 @@ export type FundReportCategoryLine = {
 
 export type FundReport = {
   fund: LedgerFund;
+  /** Rolled forward: fund.openingBalanceCents seed + net of all POSTED
+   *  transactions dated before the FY start (DECISION-029). NOT the raw
+   *  fund.openingBalanceCents seed for any FY after the fund's first. */
   openingCents: number;
   income: FundReportCategoryLine[];
   expense: FundReportCategoryLine[];
-  /** Sum of all posted income actuals */
+  /** Sum of all posted income actuals (FY-scoped) */
   totalIncomeCents: number;
-  /** Sum of all posted expense actuals */
+  /** Sum of all posted expense actuals (FY-scoped) */
   totalExpenseCents: number;
-  /** Posted ending balance (openingCents + posted income - posted expense) */
+  /** Posted ending balance (rolled-forward openingCents + FY posted income - FY posted expense) */
   endingCents: number;
   /** Sum of pending (unposted) expense amounts — "encumbered" figure */
   pendingExpenseCents: number;
@@ -100,12 +106,15 @@ export type FundReport = {
 
 export type FundSummary = {
   fund: LedgerFund;
+  /** Rolled forward: fund.openingBalanceCents seed + net of all POSTED
+   *  transactions dated before the FY start (DECISION-029). NOT the raw
+   *  fund.openingBalanceCents seed for any FY after the fund's first. */
   openingCents: number;
-  /** Posted income only */
+  /** Posted income only (FY-scoped) */
   incomeCents: number;
-  /** Posted expense only */
+  /** Posted expense only (FY-scoped) */
   expenseCents: number;
-  /** Posted ending balance */
+  /** Posted ending balance (rolled-forward openingCents + FY income - FY expense) */
   endingCents: number;
   /** Pending (unposted) expense amounts — encumbered figure */
   pendingExpenseCents: number;
@@ -370,6 +379,34 @@ export async function getFundReport(
       ),
     );
 
+  // 4b. Pre-FY rollforward: posted-only totals for this fund dated strictly
+  // before the FY start, grouped by flow (mirrors Query A2's shape/style —
+  // see DECISION-028/029). Rolls fund.openingBalanceCents forward past its
+  // static inception-date seed so openingCents/endingCents reflect all prior
+  // fiscal years' activity, not just the one seed value (display-side
+  // counterpart to DECISION-028's cross-FY balance fix).
+  const preFyRows = await db
+    .select({
+      flow: ledgerTransactions.flow,
+      totalCents: sql<string>`COALESCE(SUM(${ledgerTransactions.amountCents}), 0)`,
+    })
+    .from(ledgerTransactions)
+    .where(
+      and(
+        eq(ledgerTransactions.fundId, fundId),
+        eq(ledgerTransactions.status, "posted"),
+        lt(ledgerTransactions.txnDate, start),
+      ),
+    )
+    .groupBy(ledgerTransactions.flow);
+
+  const preFyFlowRows = preFyRows.map((r) => ({
+    flow: r.flow,
+    amountCents: Number(r.totalCents),
+    status: "posted",
+  }));
+  const rolledForwardOpening = rolledForwardOpeningCents(fund.openingBalanceCents, preFyFlowRows);
+
   // 5. Build lookup maps — actuals use posted transactions only (inc2: status filter)
   const budgetMap = new Map<string, number>(); // key = `${categoryId}_${flow}`
   for (const b of budgetRows) {
@@ -455,11 +492,11 @@ export async function getFundReport(
   // Actuals here are derived from postedTxns only (inc2: status filter)
   const totalIncomeCents = income.reduce((s, l) => s + l.actualCents, 0);
   const totalExpenseCents = expense.reduce((s, l) => s + l.actualCents, 0);
-  const endingCents = fund.openingBalanceCents + totalIncomeCents - totalExpenseCents;
+  const endingCents = rolledForwardOpening + totalIncomeCents - totalExpenseCents;
 
   return {
     fund,
-    openingCents: fund.openingBalanceCents,
+    openingCents: rolledForwardOpening,
     income,
     expense,
     totalIncomeCents,
@@ -543,6 +580,37 @@ export async function getOverview(
   // Build a fund lookup map (id → kind) for firewall computation
   const fundKindById = new Map<string, string>(funds.map((f) => [f.id, f.kind]));
 
+  // Pre-FY rollforward query (DECISION-029, display-side counterpart to
+  // DECISION-028): posted-only, unbounded below (txn_date < FY start), grouped
+  // by fund + flow — mirrors Query A2's shape/style. fund.openingBalanceCents
+  // is a static seed anchored at the fund's inception; for any FY after the
+  // first, prior years' net activity must be added back before the seed can
+  // be treated as "opening balance for this FY". Without this, both
+  // openingCents and endingCents silently drop every prior FY's net activity.
+  const preFyTotalsRows = await db
+    .select({
+      fundId: ledgerTransactions.fundId,
+      flow: ledgerTransactions.flow,
+      totalCents: sql<string>`COALESCE(SUM(${ledgerTransactions.amountCents}), 0)`,
+    })
+    .from(ledgerTransactions)
+    .where(
+      and(
+        eq(ledgerTransactions.entityId, entityId),
+        inArray(ledgerTransactions.fundId, fundIds),
+        eq(ledgerTransactions.status, "posted"),
+        lt(ledgerTransactions.txnDate, start),
+      ),
+    )
+    .groupBy(ledgerTransactions.fundId, ledgerTransactions.flow);
+
+  const preFyRowsByFundId = new Map<string, Array<{ flow: string; amountCents: number; status: string }>>();
+  for (const fund of funds) preFyRowsByFundId.set(fund.id, []);
+  for (const row of preFyTotalsRows) {
+    const arr = preFyRowsByFundId.get(row.fundId);
+    if (arr) arr.push({ flow: row.flow, amountCents: Number(row.totalCents), status: "posted" });
+  }
+
   // Build fund summaries — balances computed from POSTED transactions only (inc2)
   const fundSummaries: FundSummary[] = funds.map((fund) => {
     const txns = txnsByFund.get(fund.id) ?? [];
@@ -556,11 +624,15 @@ export async function getOverview(
       .filter((t) => t.flow === "expense")
       .reduce((s, t) => s + t.amountCents, 0);
     const pendingExpenseCents = pendingTxns.reduce((s, t) => s + t.amountCents, 0);
-    const endingCents = fund.openingBalanceCents + incomeCents - expenseCents;
+    const rolledForwardOpening = rolledForwardOpeningCents(
+      fund.openingBalanceCents,
+      preFyRowsByFundId.get(fund.id) ?? [],
+    );
+    const endingCents = rolledForwardOpening + incomeCents - expenseCents;
 
     return {
       fund,
-      openingCents: fund.openingBalanceCents,
+      openingCents: rolledForwardOpening,
       incomeCents,
       expenseCents,
       endingCents,
@@ -569,6 +641,16 @@ export async function getOverview(
   });
 
   // Entity-level aggregates — gross receipts from posted income only
+  //
+  // DECISION-029 note: entityBalance is now the TRUE rolled-forward balance
+  // (fundSummaries[].endingCents each roll forward past their fund's seed —
+  // see the pre-FY rollforward block above), not a FY-scoped delta-only
+  // figure. This is a behavior change for two guardrail(s) in guardrails()
+  // below that consume it: Check 4 (reserves below threshold, entityBalance)
+  // and Check 6 (negative fund balance, per-fund endingCents). Both checks'
+  // *intent* was always "is the club's real money low/negative right now" —
+  // the FY-scoped figure was silently wrong for any FY after the first, so
+  // this fixes those guardrails too, it does not change their meaning.
   const entityBalance = fundSummaries.reduce((s, f) => s + f.endingCents, 0);
   const postedIncomeTxns = allTxns.filter((t) => t.status === "posted" && t.flow === "income");
   const grossReceipts = grossReceiptsCents(postedIncomeTxns);
@@ -1433,6 +1515,33 @@ export async function getEntityReport(
     txnsByFund.get(txn.fundId)?.push(txn);
   }
 
+  // 4b. Pre-FY rollforward: posted-only totals per fund dated strictly before
+  // the FY start (DECISION-029, mirrors getOverview's identical query). Rolls
+  // each fund.openingBalanceCents seed forward past prior fiscal years.
+  const preFyTotalsRows = await db
+    .select({
+      fundId: ledgerTransactions.fundId,
+      flow: ledgerTransactions.flow,
+      totalCents: sql<string>`COALESCE(SUM(${ledgerTransactions.amountCents}), 0)`,
+    })
+    .from(ledgerTransactions)
+    .where(
+      and(
+        eq(ledgerTransactions.entityId, entityId),
+        inArray(ledgerTransactions.fundId, fundIds),
+        eq(ledgerTransactions.status, "posted"),
+        lt(ledgerTransactions.txnDate, start),
+      ),
+    )
+    .groupBy(ledgerTransactions.fundId, ledgerTransactions.flow);
+
+  const preFyRowsByFundId = new Map<string, Array<{ flow: string; amountCents: number; status: string }>>();
+  for (const fund of funds) preFyRowsByFundId.set(fund.id, []);
+  for (const row of preFyTotalsRows) {
+    const arr = preFyRowsByFundId.get(row.fundId);
+    if (arr) arr.push({ flow: row.flow, amountCents: Number(row.totalCents), status: "posted" });
+  }
+
   // 5. Fetch categories per distinct fundKind (at most 2 queries for club/foundation)
   const distinctKinds = [...new Set(funds.map((f) => f.kind))];
   const categoriesByKind = new Map<string, LedgerCategory[]>();
@@ -1511,11 +1620,15 @@ export async function getEntityReport(
     const expense = buildLines("expense");
     const totalIncomeCents = income.reduce((s, l) => s + l.actualCents, 0);
     const totalExpenseCents = expense.reduce((s, l) => s + l.actualCents, 0);
-    const endingCents = fund.openingBalanceCents + totalIncomeCents - totalExpenseCents;
+    const rolledForwardOpening = rolledForwardOpeningCents(
+      fund.openingBalanceCents,
+      preFyRowsByFundId.get(fund.id) ?? [],
+    );
+    const endingCents = rolledForwardOpening + totalIncomeCents - totalExpenseCents;
 
     fundReports.push({
       fund,
-      openingCents: fund.openingBalanceCents,
+      openingCents: rolledForwardOpening,
       income,
       expense,
       totalIncomeCents,
@@ -1789,6 +1902,15 @@ export type PhilanthropySummary = {
   byCause: PhilanthropyByCause[];
   /** Sorted desc by fiscalYear (most recent first). */
   byFiscalYear: PhilanthropyByFY[];
+  /**
+   * Per-fiscal-year cause breakdowns for the FY filter pills on
+   * /members/impact — keyed by fiscal-year start-year integer. Always
+   * contains exactly 4 keys: the current FY and the 3 prior FYs, regardless
+   * of whether any giving was recorded in a given year (a year with no
+   * giving maps to an empty array). Percentages within each year's array
+   * are relative to THAT year's total, not the all-time total.
+   */
+  byCauseByFy: Record<number, PhilanthropyByCause[]>;
   /** Up to recentGiftsLimit rows, party IS NOT NULL, sorted desc by txnDate. */
   recentGifts: PhilanthropyRecentGift[];
 };
@@ -1810,10 +1932,19 @@ export type PhilanthropySummary = {
  *   AND transfer_group_id IS NULL
  *   AND flow = 'expense'
  *   AND fund.kind IN ('activity', 'charitable', 'scholarship')
+ *   AND category.counts_as_giving IS NOT FALSE
  *
  * Administrative fund rows (kind='administrative') are excluded by omission
  * from the IN list — never appear in philanthropy totals (DECISION: see Phase 3
  * design doc, docs/work-log/2026-06-25-ledger-impact.md).
+ *
+ * DECISION-030: TRUE GIFTS ONLY. category is LEFT JOINed (categoryId is
+ * nullable on ledger_transactions) — a transaction with no category, or
+ * whose category row doesn't set counts_as_giving to false, stays INCLUDED
+ * (conservative: uncategorized public-fund spend keeps appearing under
+ * "Other community support" rather than silently vanishing). Only an
+ * explicit counts_as_giving=false (fundraising event costs, operations,
+ * insurance & bonding, etc.) excludes a row from these totals.
  *
  * DECISION-024: null-party rows are excluded from the "Recent gifts" list.
  * Those dollars are still captured in allTimeCents, currentFyCents, byCause,
@@ -1835,12 +1966,14 @@ export async function getPhilanthropy(
     })
     .from(ledgerTransactions)
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .leftJoin(ledgerCategories, eq(ledgerTransactions.categoryId, ledgerCategories.id))
     .where(
       and(
         eq(ledgerTransactions.status, "posted"),
         isNull(ledgerTransactions.transferGroupId),
         eq(ledgerTransactions.flow, "expense"),
         inArray(ledgerFunds.kind, ["activity", "charitable", "scholarship"]),
+        or(isNull(ledgerCategories.countsAsGiving), eq(ledgerCategories.countsAsGiving, true)),
       ),
     )
     .orderBy(asc(ledgerTransactions.txnDate));
@@ -1859,58 +1992,51 @@ export async function getPhilanthropy(
 
   const currentFY = currentFiscalYear(new Date());
 
+  // FY filter pills on /members/impact: current FY + the 3 prior FYs.
+  const targetFYs = [currentFY, currentFY - 1, currentFY - 2, currentFY - 3];
+  const targetFYSet = new Set(targetFYs);
+
   let allTimeCents = 0;
   let currentFyCents = 0;
 
-  // causeKey → { totalCents, firstSeenOriginal }
-  const causeMap = new Map<string, { totalCents: number; firstSeenOriginal: string }>();
   // fiscalYear (number) → totalCents
   const fyMap = new Map<number, number>();
+  // fiscalYear (number) → giving rows for that FY, but only for the target
+  // FYs the impact page's pills care about — no need to retain every row
+  // for every historical FY in memory.
+  const rowsByTargetFy = new Map<number, GivingFoldRow[]>();
 
   for (const row of givingRows) {
     allTimeCents += row.amountCents;
 
-    // Current-FY filter
     const rowFY = getFiscalYear(parseYMD(row.txnDate));
     if (rowFY === currentFY) {
       currentFyCents += row.amountCents;
     }
 
-    // By-cause grouping: normalize to lower-trimmed key; null/empty → ''
-    const rawCause = row.beneficiaryCause;
-    const causeKey =
-      rawCause === null || rawCause.trim() === ""
-        ? ""
-        : rawCause.trim().toLowerCase();
-    const existing = causeMap.get(causeKey);
-    if (existing) {
-      existing.totalCents += row.amountCents;
-    } else {
-      // First-seen original casing: '' key uses fixed label; others use original value.
-      causeMap.set(causeKey, {
-        totalCents: row.amountCents,
-        firstSeenOriginal: causeKey === "" ? "" : rawCause!.trim(),
-      });
-    }
-
     // By-FY grouping
     fyMap.set(rowFY, (fyMap.get(rowFY) ?? 0) + row.amountCents);
+
+    // Per-target-FY row collection, for byCauseByFy below. Single pass over
+    // the already-fetched givingRows — no extra DB round trip.
+    if (targetFYSet.has(rowFY)) {
+      const arr = rowsByTargetFy.get(rowFY) ?? [];
+      arr.push(row);
+      rowsByTargetFy.set(rowFY, arr);
+    }
   }
 
-  // Build byCause: sort desc by totalCents; '' key always last
-  const byCause: PhilanthropyByCause[] = Array.from(causeMap.entries())
-    .map(([causeKey, { totalCents, firstSeenOriginal }]) => ({
-      causeKey,
-      causeLabel: causeKey === "" ? "Other community support" : firstSeenOriginal,
-      totalCents,
-      pct: allTimeCents > 0 ? Math.round((totalCents / allTimeCents) * 1000) / 10 : 0,
-    }))
-    .sort((a, b) => {
-      // '' key (Other community support) always sorts to the end
-      if (a.causeKey === "" && b.causeKey !== "") return 1;
-      if (b.causeKey === "" && a.causeKey !== "") return -1;
-      return b.totalCents - a.totalCents;
-    });
+  // Build byCause (all-time, unchanged behavior — now delegates to the
+  // shared bucketGivingByCause() helper so all-time and per-FY breakdowns
+  // can never drift out of sync).
+  const byCause: PhilanthropyByCause[] = bucketGivingByCause(givingRows);
+
+  // Build byCauseByFy: one cause breakdown per target FY, percentages
+  // relative to that FY's own total. A target FY with no rows yields [].
+  const byCauseByFy: Record<number, PhilanthropyByCause[]> = {};
+  for (const fy of targetFYs) {
+    byCauseByFy[fy] = bucketGivingByCause(rowsByTargetFy.get(fy) ?? []);
+  }
 
   // Build byFiscalYear: sort desc by fiscalYear
   const byFiscalYear: PhilanthropyByFY[] = Array.from(fyMap.entries())
@@ -1933,12 +2059,14 @@ export async function getPhilanthropy(
     })
     .from(ledgerTransactions)
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .leftJoin(ledgerCategories, eq(ledgerTransactions.categoryId, ledgerCategories.id))
     .where(
       and(
         eq(ledgerTransactions.status, "posted"),
         isNull(ledgerTransactions.transferGroupId),
         eq(ledgerTransactions.flow, "expense"),
         inArray(ledgerFunds.kind, ["activity", "charitable", "scholarship"]),
+        or(isNull(ledgerCategories.countsAsGiving), eq(ledgerCategories.countsAsGiving, true)),
         isNotNull(ledgerTransactions.party),
       ),
     )
@@ -1957,6 +2085,7 @@ export async function getPhilanthropy(
     currentFyCents,
     byCause,
     byFiscalYear,
+    byCauseByFy,
     recentGifts,
   };
 }

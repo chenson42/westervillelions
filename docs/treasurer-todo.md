@@ -30,9 +30,19 @@ can be referenced from work-logs, board minutes, and future sessions.
   Mapped to the club's activity fund in the Ledger, but the cash physically sits in admin checking.
   Going forward, deposit fundraiser/donation money to the Foundation account — the Ledger's
   direct-to-admin guardrail (v1.26.0) now warns on this pattern.
-- [ ] **T-05 — Confirm double officer bonding is intentional.** CNA Surety $187/yr from admin
-  (10/2024, 9/2025) and Western Surety $187/yr from the Foundation (3/2025, 2/2026). Two entities
-  holding two bonds is legitimate; confirm it isn't duplicate coverage left over from a carrier switch.
+- [ ] **T-05 — Officer bonding: verify, transfer, and track renewals.** Both entities carry fidelity
+  bonds at $187/yr: club via CNA Surety from admin (10/2024, 9/2025), Foundation via Western Surety
+  from the Foundation account (3/2025, 2/2026). Western Surety is a CNA Surety company; two bonds for
+  two legal entities is almost certainly intentional — the certificates will confirm. Incoming-treasurer
+  steps:
+  - [ ] Locate both bond certificates and confirm whether coverage is position-based ("Treasurer of…")
+    or names the prior treasurer individually — if named, notify the surety to transfer to Chris Henson.
+  - [ ] Check each bond's coverage limit against peak balances (Foundation swings to ~$45k around
+    Rudolph Run season); raise with the board if the limit is materially below peak.
+  - [ ] Renewal calendar: club/CNA invoice expected ~September 2026 (pay from admin); Foundation/
+    Western Surety expected ~February 2027 (pay from Foundation).
+  - [ ] Once verified current and correctly named, tick the "treasurer bonded" checkbox in the
+    Ledger's settings so the compliance view reflects it.
 - [ ] **T-06 — One PO box or two?** USPS box rental paid from the Foundation ($256, 12/2024) and
   from admin ($268, 12/2025). If it's one box, pick the account that pays it consistently.
 
@@ -83,6 +93,15 @@ can be referenced from work-logs, board minutes, and future sessions.
   each form's payout account and update the Zeffy links on the site if they change.
 
 ## Reference notes (context, not action items)
+
+- **Zeffy payouts land as Monday lump deposits.** Zeffy sweeps the prior week's payments into the
+  bank account every Monday, so one bank-statement line covers several individual Ledger rows (dues
+  auto-post records each member's payment separately, on the day they paid — keep it that way).
+  Reconciliation practice: for each Monday deposit, sum the Zeffy-method Ledger transactions from
+  the preceding week — Zeffy takes no fees (tips go to Zeffy directly), so the sum should equal the
+  deposit exactly. A mismatch means a payment straddled the payout cutoff or was recorded with the
+  wrong method. If manual matching gets tedious as volume grows, consider a "payout batch"
+  reconciliation feature (enter the deposit, check off the rows it contains, totals must match).
 
 - Fundraisers (Rudolph Run, Pancake Breakfast) run through the **Foundation** account, not the
   club's activity fund — the Ledger's category catalog was extended to match (Foundation income

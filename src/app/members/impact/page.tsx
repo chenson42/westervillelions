@@ -4,6 +4,8 @@ import { auth } from "@/lib/auth";
 import { getSettings, getPhilanthropy, type PhilanthropySummary } from "@/lib/ledger-queries";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { currentFiscalYear } from "@/lib/fiscal-year";
+import ImpactByCause from "@/components/members/impact-by-cause";
 
 export const dynamic = "force-dynamic";
 
@@ -91,10 +93,18 @@ async function ImpactDashboard() {
     );
   }
 
+  const currentFY = currentFiscalYear(new Date());
+  const fiscalYears = [currentFY, currentFY - 1, currentFY - 2, currentFY - 3];
+
   return (
     <div className="space-y-6 max-w-3xl">
       <ImpactHeadlineStats philanthropy={philanthropy} />
-      <ImpactByCause philanthropy={philanthropy} />
+      <ImpactByCause
+        allTime={philanthropy.byCause}
+        byCauseByFy={philanthropy.byCauseByFy}
+        fiscalYears={fiscalYears}
+        currentFiscalYear={currentFY}
+      />
       <ImpactByFiscalYear philanthropy={philanthropy} />
       {philanthropy.recentGifts.length > 0 && (
         <ImpactRecentGifts philanthropy={philanthropy} />
@@ -104,11 +114,19 @@ async function ImpactDashboard() {
 }
 
 function ImpactHeadlineStats({ philanthropy }: { philanthropy: PhilanthropySummary }) {
+  // The books only go back to the earliest recorded fiscal year, so label the
+  // total honestly ("Since July 2024") rather than "All-Time". byFiscalYear is
+  // sorted desc, so the earliest FY is the last entry (start-year, July start).
+  const earliestFy = philanthropy.byFiscalYear.at(-1)?.fiscalYear;
+  const totalLabel = earliestFy
+    ? `Community Giving Since July ${earliestFy}`
+    : "Total Community Giving";
+
   return (
     <div className="grid sm:grid-cols-2 gap-4">
       <div className="bg-white rounded-2xl shadow-sm p-6">
         <p className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-1">
-          All-Time Community Giving
+          {totalLabel}
         </p>
         <p className="text-3xl font-bold text-lions-blue">
           {formatDollarsWhole(philanthropy.allTimeCents)}
@@ -122,44 +140,6 @@ function ImpactHeadlineStats({ philanthropy }: { philanthropy: PhilanthropySumma
           {formatDollarsWhole(philanthropy.currentFyCents)}
         </p>
       </div>
-    </div>
-  );
-}
-
-function ImpactByCause({ philanthropy }: { philanthropy: PhilanthropySummary }) {
-  if (philanthropy.byCause.length === 0) return null;
-
-  return (
-    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-100">
-        <h3 className="text-base font-semibold text-gray-900">Giving by Cause</h3>
-      </div>
-      <ul className="divide-y divide-gray-50 px-6 py-2">
-        {philanthropy.byCause.map((cause) => (
-          <li key={cause.causeKey || "__other__"} className="py-3">
-            <div className="flex items-center justify-between mb-1.5">
-              <span
-                className="text-sm text-gray-800 truncate max-w-[60%]"
-                title={cause.causeLabel}
-              >
-                {cause.causeLabel}
-              </span>
-              <div className="flex items-center gap-3 ml-2 shrink-0">
-                <span className="text-xs text-gray-500">{cause.pct}%</span>
-                <span className="text-sm font-medium text-gray-900">
-                  {formatDollarsWhole(cause.totalCents)}
-                </span>
-              </div>
-            </div>
-            <div className="w-full bg-gray-100 rounded-sm h-2.5">
-              <div
-                className="bg-lions-blue h-2.5 rounded-sm"
-                style={{ width: `${Math.max(cause.pct, 2)}%` }}
-              />
-            </div>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

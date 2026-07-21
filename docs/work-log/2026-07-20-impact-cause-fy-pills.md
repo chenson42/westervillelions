@@ -1,0 +1,133 @@
+# Impact Dashboard — Giving by Cause FY Filter Pills — Work Log
+
+> **Slug:** `2026-07-20-impact-cause-fy-pills`
+> **Surface:** (dashboard) member portal — `/members/impact`
+> **Permission(s):** none new — reuses the existing `impact.view` gate (page-level, unchanged)
+> **Estimated complexity:** small
+> **Pipeline mode:** Accelerated — Phases 1–3 condensed into a single orchestrator-authored brief (no separate analyst/architect/tech-lead passes). Full rationale below.
+
+---
+
+## Per-Phase Status
+
+| Phase | Owner | Status | Verdict | Date |
+|-------|-------|--------|---------|------|
+| 1 — Functional refinement | orchestrator (condensed) | Skipped — condensed into brief | — | 2026-07-20 |
+| 2 — Architectural review | orchestrator (condensed) | Skipped — condensed into brief | — | 2026-07-20 |
+| 3 — Technical design | orchestrator (condensed) | Skipped — condensed into brief | — | 2026-07-20 |
+| 4 — Implementation | full-stack-developer | Complete | — | 2026-07-20 |
+| 5 — Verification | full-stack-developer (self-verified per explicit task scope) | Complete | PASS | 2026-07-20 |
+| 6 — Shipped vs intent | analyst | Pending | — | — |
+
+---
+
+# Phases 1–3 (condensed — see brief)
+
+The orchestrating agent's brief served as the functional spec, design constraints, and implementer assignment in one document. Reproduced in full below for traceability, since CLAUDE.md requires no silent skips.
+
+**User spec:**
+- Pills above the "Giving by Cause" list on `/members/impact`: one per each of the current fiscal year plus the 3 prior fiscal years, most recent first, plus an "All" pill.
+- Default selection: the current fiscal year.
+- Clicking a pill re-filters the cause breakdown to that FY (All = all-time).
+- Pill for a past FY with zero giving still renders; selecting it shows a friendly empty message with a hint to view All.
+- Percentages within a selection are relative to that selection's own total.
+
+**Design constraints (given, not re-derived):**
+- Compute per-FY cause buckets server-side inside the existing single-pass fold in `getPhilanthropy()` — no extra DB round-trips.
+- New client component receives all-time + per-FY data as props; pill switching is local `useState`, no URL params, no server round-trip.
+- Pill styling follows the `DuesStatusFilter` idiom (`src/components/admin/dues-status-filter.tsx`).
+- Respect the existing `counts_as_giving` / giving predicate exactly as-is (DECISION-030) — do not alter it.
+
+No architectural or functional gaps surfaced during implementation that would have warranted escalating back to a full Phase 1/2/3 pass — the brief was self-consistent and matched the existing `getPhilanthropy()` / `PhilanthropySummary` shape closely enough that no invariant was at risk.
+
+**Implementer:** full-stack-developer (small, tightly coupled — one pure helper, one query-layer extension, one new client component, ~150 lines total).
+
+---
+
+# Phase 4 — Implementation (full-stack-developer)
+
+**Status:** complete
+
+## Summary
+
+Added a pure, unit-tested `bucketGivingByCause()` helper to `src/lib/ledger.ts`, extended `getPhilanthropy()` in `src/lib/ledger-queries.ts` to compute per-fiscal-year cause breakdowns (current FY + 3 prior) inside its existing single-pass fold with zero new DB queries, and built a new client component `ImpactByCause` that renders the FY pills and swaps the cause list locally. The old server-rendered `ImpactByCause` function in the page was removed in favor of the new client component of the same name.
+
+## What I did
+
+- Extracted the inline "group giving rows by cause" logic from `getPhilanthropy()` into a new pure, exported function `bucketGivingByCause(rows: GivingFoldRow[]): CauseBucket[]` in `src/lib/ledger.ts`. It buckets by normalized `beneficiaryCause`, sorts desc by total with the `''` ("Other community support") key always last, and computes `pct` relative to the *passed-in* row set's own total — not a global total. This lets the same function serve both the all-time bucket and any single-FY bucket.
+- `getPhilanthropy()` now:
+  - Computes `targetFYs = [currentFY, currentFY-1, currentFY-2, currentFY-3]`.
+  - In the same loop that already builds `allTimeCents`/`currentFyCents`/`fyMap`, also buckets rows into `rowsByTargetFy: Map<number, GivingFoldRow[]>` for just those 4 years — no extra DB round trip, same single pass over `givingRows`.
+  - Builds `byCause` via `bucketGivingByCause(givingRows)` (replaces the old duplicated inline logic — now guaranteed to match any per-FY bucket's formula since both go through the same function).
+  - Builds `byCauseByFy: Record<number, PhilanthropyByCause[]>` — one entry per target FY, always present even when a year has no giving (empty array, not omitted).
+- Extended `PhilanthropySummary` with `byCauseByFy`.
+- Built `src/components/members/impact-by-cause.tsx` (`"use client"`): renders an "All" pill + 4 FY pills (`fyPillLabel()` → `"FY2026–27"` style, shortened from the full `fiscalYearLabel()` format since the full label is too long for a pill), defaults `useState` selection to `currentFiscalYear`, swaps the rendered cause list locally with no server round-trip. Empty state: "No giving recorded yet this fiscal year." plus a "View All giving instead" link back to the All pill, shown inline in the card per the UX empty-state idiom. Pill styling matches `DuesStatusFilter` exactly (`bg-lions-blue text-white` selected / `bg-white text-gray-700 border border-gray-300 hover:bg-gray-50` unselected, `rounded-lg`, `focus:ring-2 focus:ring-lions-blue`).
+- Updated `src/app/members/impact/page.tsx`: imports the new component, computes `fiscalYears`/`currentFY` via `currentFiscalYear()` from `src/lib/fiscal-year.ts`, passes `byCause` (all-time) + `byCauseByFy` + `fiscalYears` + `currentFiscalYear` as props, and removed the old server-rendered `ImpactByCause` function (same name, now shadowed by the import). Headline stats, by-fiscal-year table, and recent gifts sections are untouched.
+
+## Outputs
+
+- `src/lib/ledger.ts` — added `bucketGivingByCause()`, `GivingFoldRow`, `CauseBucket` (new section, after `isGiving`).
+- `src/lib/ledger-queries.ts` — extended `getPhilanthropy()` fold to build `byCauseByFy` in the existing single pass; `PhilanthropySummary` type gained `byCauseByFy: Record<number, PhilanthropyByCause[]>`; imports `bucketGivingByCause` and `GivingFoldRow` from `@/lib/ledger`.
+- `src/components/members/impact-by-cause.tsx` — new client component (pills + cause list + empty state).
+- `src/app/members/impact/page.tsx` — wires the new component in, removes the old inline `ImpactByCause`.
+- `src/lib/ledger-impact.test.ts` — added a `describe("bucketGivingByCause", ...)` block, 5 new tests (current-FY bucket, prior-FY bucket, empty-rows → `[]`, pct-sums-to-~100 sanity, all-time-unchanged formula parity).
+- No schema change, no new `FEATURES` key, no new env var.
+
+## Implementer Notes
+
+- Percentages are deliberately scoped to each bucket's own total (not the all-time total) per the brief — a cause that's 100% of a slow year's giving shows as 100% for that year's pills, not diluted against all-time totals.
+- `byCauseByFy` always has exactly 4 keys (current + 3 prior), even for years with zero rows, so the client component never has to special-case a missing key — `byCauseByFy[fy] ?? []` is defensive but should never actually hit the `??` fallback in practice.
+- Kept the `fyPillLabel()` short-label formatter local to the client component rather than adding a new export to `src/lib/fiscal-year.ts`, since it's presentation-only and not needed elsewhere yet — if another surface needs the same short format later, promote it then.
+
+---
+
+# Phase 5 — Verification (self-verified per explicit task scope: "you are Phase 4+5")
+
+**Date:** 2026-07-20
+**Verified by:** full-stack-developer
+
+## Type Check
+
+`pnpm exec tsc --noEmit`: **PASS** (no output, exit 0)
+
+## Unit Tests
+
+`pnpm test`: **PASS** — 337 passed (332 baseline + 5 new `bucketGivingByCause` tests). No regressions.
+
+## Production Build
+
+`pnpm build:only`: **PASS** — `/members/impact` compiled as a dynamic (`ƒ`) route alongside all other routes; no build errors.
+
+## Dev-Server / Live Check
+
+Dev server was already running on `localhost:3000` (not restarted, per instruction).
+
+- `curl` unauthenticated `GET /members/impact` → `307` redirect to `/signin?callbackUrl=%2Fmembers%2Fimpact` — confirms the route compiles and the auth gate fires correctly with no server error.
+- The e2e admin user (`E2E_ADMIN_EMAIL` in `.env.local`) is not member-linked by default, so it would only ever see the "Account Not Linked" state — insufficient to exercise the pills. Per the escalation path in the task brief, I:
+  1. Queried the dev DB (`DATABASE_URL` in `.env.local`, the local Neon dev database — not production) for a member row not already linked to a user; found none (every active member already has a linked `users` row, consistent with the "members must always have user accounts" project convention). Confirmed `users.member_id` has no unique constraint (checked schema + migrations), so temporarily pointing the e2e admin's `member_id` at an existing member is safe and reversible with no FK/uniqueness conflict.
+  2. `UPDATE users SET member_id = '102f53a4-e293-4e17-8e8a-a22151999ac2' WHERE email = 'lions-e2e-test@westervillelions.org'` (Chris Henson's member row). Confirmed the e2e admin already holds `impact.view` (visibility is `'board'` in `ledger_settings`), so no additional permission wiring was needed.
+  3. Wrote a temporary Playwright spec (`e2e/tmp-impact-fy-pills.spec.ts`, since deleted) that signs in via `signInAsAdmin()`, loads `/members/impact`, and asserts: no "Account Not Linked" state; all 5 pills render (`All`, `FY2026–27`, `FY2025–26`, `FY2024–25`, `FY2023–24`); the current-FY pill (`FY2026–27`) is selected by default (`bg-lions-blue` class); the current FY shows the empty message + "View All giving instead" link (this dataset has no FY2026 giving yet); clicking `All` shows the full all-time list; clicking `FY2025–26` (has data) shows that year's breakdown; clicking `FY2023–24` (no data) shows the empty message again.
+  4. Ran it: **PASS** (1/1, after fixing one locator ambiguity — `getByText("Youth & Education")` initially matched both the cause-list label and a "Recent Named Gifts" line item; scoped with `{ exact: true }`).
+  5. Reverted: `UPDATE users SET member_id = NULL WHERE email = 'lions-e2e-test@westervillelions.org'` — confirmed via the `RETURNING` clause that `member_id` is back to `NULL`.
+  6. Deleted `e2e/tmp-impact-fy-pills.spec.ts` and the `test-results/` artifacts directory it produced. `git status` afterward shows no e2e/test-results residue.
+
+## Manual Click-Through
+
+| Flow | Result | Notes |
+|------|--------|-------|
+| Load `/members/impact` as a member-linked user with giving data | PASS | Pills render: All, FY2026–27, FY2025–26, FY2024–25, FY2023–24 |
+| Default selection = current FY | PASS | `FY2026–27` pill pre-selected (`bg-lions-blue`) |
+| Current FY has no giving → empty state | PASS | "No giving recorded yet this fiscal year." + "View All giving instead" link shown |
+| Click "All" | PASS | Full all-time cause list renders, largest cause "Youth & Education" visible, empty message gone |
+| Click a past FY with giving (FY2025–26) | PASS | That year's cause breakdown renders |
+| Click a past FY with no giving (FY2023–24) | PASS | Empty state renders again |
+
+## Verdict
+
+**PASS**
+
+---
+
+# Phase 6 — Shipped vs Intent (analyst)
+
+Not yet run — nominating **analyst** to close the pipeline (Phase 6, shipped-vs-intent review) next.
