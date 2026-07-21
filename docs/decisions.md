@@ -28,6 +28,394 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-036: Bank Reconciliation Sessions (inc2) — three new tables, `reconciledSessionId` provenance pointer (not a parallel status), many-to-one-ready match links, hard immutability lock on cleared rows, overlap-hard/gap-soft period validation, reopen-ordering rule, deposit-slip-vs-check-number split
+
+**Status:** Resolved
+**Date:** 2026-07-21
+
+**Decision:**
+
+Phase 3 technical design for Bank Reconciliation inc2 (work-log:
+`docs/work-log/2026-07-21-ledger-reconciliation-sessions.md`) locked the
+following, building on this feature's Phase 2 rulings (same parent work-log,
+`docs/work-log/2026-07-21-bank-reconciliation.md`):
+
+1. **Three new tables, one new column, no second schema module:**
+   `ledger_reconciliation_sessions` (bank account + statement period, opening/
+   closing balances, `status` open|closed, upload metadata, close/reopen
+   audit fields), `ledger_bank_lines` (parsed Chase CSV rows — signed
+   `amountCents`, raw `checkOrSlipNumber`, `inStatementPeriod` flag, a
+   `(sessionId, dedupeKey)` unique constraint), `ledger_reconciliation_matches`
+   (bank line ↔ transaction links), and `ledgerTransactions.reconciledSessionId`
+   (nullable FK, `ON DELETE SET NULL`).
+2. **`reconciledSessionId` is a provenance pointer, not a parallel reconciled
+   state** — modeled directly on DECISION-025's `sync_stale` precedent
+   ("add a marker, don't fork state"). Session close still writes the same
+   `ledgerTransactions.reconciled`/`reconciledAt` columns the legacy per-row
+   toggle already writes; the new column only records *which session, if
+   any,* set them. Reopen reverts only rows where `reconciledSessionId`
+   points at itself. The legacy toggle route is extended to clear
+   `reconciledSessionId` to null on every write (either direction) — an
+   out-of-band correction always supersedes session provenance, so the two
+   mechanisms can never end up pointing at stale, conflicting state.
+3. **Match-link cardinality is many-to-one-ready without a future schema
+   change.** `ledger_reconciliation_matches.transactionId` is `UNIQUE`
+   forever (a book row clears against exactly one bank line, even after
+   inc3). `bankLineId` is deliberately **not** unique at the schema layer —
+   inc2's `/match` route enforces a 1:1 rule itself (reject if the bank line
+   already has a match), which inc3 can simply remove at the route layer to
+   enable Zeffy lump-deposit batch matching, with zero migration required.
+4. **Reconciled-row immutability: a full lock, not a `syncStale`-style
+   silent-degradation marker.** A transaction with `reconciledSessionId` set
+   cannot be edited (any field) or deleted via the standard transaction
+   routes until its closing session is reopened — structurally identical to
+   the existing `approvedAt` guard. This was a genuine choice (the architect
+   flagged reusing `syncStale` as a reasonable alternative); the harder lock
+   was chosen because this feature's defining decision is a **hard** tie-out
+   with no discrepancy-note escape hatch (User Decision, parent work-log
+   Phase 1) — silently degrading a closed session's arithmetic via an
+   unflagged edit would contradict that decision's spirit. `syncStale`
+   keeps its original, narrower scope (a dues-payment source edit after
+   reconcile).
+5. **Period validation splits hard-block from soft-warning.** Overlapping
+   periods on the same bank account are a hard block (409) at session
+   creation, checked against sessions of *any* status, inclusive of shared
+   boundary days. Non-contiguous periods (a gap between the prior session's
+   close and this session's start) are a **soft, non-blocking** warning only
+   — required to keep the User Decision supporting arbitrary historical
+   periods (the 24-month T-13 backlog, worked non-sequentially) functional,
+   while the one thing that would actually corrupt tie-out math (double-
+   claimed bank-statement days) stays hard-blocked.
+6. **Reopen ordering rule.** A closed session cannot be reopened if any
+   *later-period* closed session exists for the same bank account — standard
+   bank-rec discipline preventing an inconsistent audit trail from revisiting
+   an earlier period after later periods have already finalized on top of it.
+7. **Deposit-slip vs. check-number split, resolving inc1's forwarded Phase 6
+   note.** Chase's own "Check or Slip #" CSV column is stored verbatim on
+   every bank line regardless of sign (no schema fork). It is copied into a
+   newly created transaction's `checkNumber` field only when the bank line
+   is a debit (negative `amountCents`); for a credit/deposit line, the value
+   is never auto-populated into `checkNumber`, since Chase's column
+   conflates "check number" and "deposit slip number" — the exact category
+   confusion T-21/DECISION-034 uncovered on the `payment_method` side. This
+   keeps inc3's future check-number-first auto-match matching key clean.
+8. **Bank lines store signed cents, diverging from `ledgerTransactions`'
+   positive-only + `flow` model.** Deliberate: a bank line has no `flow`
+   until matched to a book row; forcing a sign-to-flow translation at parse
+   time would be a premature, lossy interpretation this staging table
+   doesn't need.
+9. **Parse-and-discard confirmed at the implementation level:** the CSV
+   upload route never persists the uploaded file; only derived
+   `ledger_bank_lines` rows are written, per the architect's Phase 2 ruling.
+10. **No new `FEATURES` key.** `LEDGER_RECORD` gates create/upload/match/
+    unmatch/create-from-bank-line/close; `LEDGER_MANAGE` gates reopen;
+    `LEDGER_VIEW` gates reads — all enforced server-side in each route body.
+
+**Rationale:**
+
+Every structural choice here reuses an existing, proven shape in this
+codebase (DECISION-025's marker-not-fork precedent, the `approvedAt`
+immutability idiom, DECISION-035's last-state-only audit-field trio) rather
+than inventing a new convention. The two genuinely new pieces of judgment —
+the immutability lock's strictness and the overlap/gap split — both follow
+directly from the User's explicit hard-tie-out and historical-backlog
+decisions rather than from an assumed default.
+
+**Impact:**
+
+- `src/lib/db/schema.ts` — three new tables (`ledgerReconciliationSessions`,
+  `ledgerBankLines`, `ledgerReconciliationMatches`) plus
+  `ledgerTransactions.reconciledSessionId`.
+- New migration `00NN_ledger_reconciliation_sessions.sql` — number is
+  next-free at implementation time (`0057_ledger_receipt_waiver.sql` is
+  latest as of this writing, claimed by the concurrent transaction-receipts
+  work; expect `0058+`, implementer re-checks).
+- `src/app/api/admin/ledger/transactions/[id]/reconcile/route.ts` — clears
+  `reconciledSessionId` to null on every toggle write.
+- `src/app/api/admin/ledger/transactions/[id]/route.ts` — new immutability
+  guard mirroring `approvedAt`'s.
+- New `src/lib/reconciliation.ts` (+ `reconciliation.test.ts`, 22 named
+  tests) and `src/lib/reconciliation-queries.ts`.
+- New API routes under `src/app/api/admin/ledger/reconciliation/sessions/`
+  (create, list, detail, upload, match, unmatch, create-from-bank-line,
+  close, reopen).
+- New admin pages under
+  `src/app/(dashboard)/admin/ledger/reconciliation/` and eight new
+  components under `src/components/admin/ledger/`; new `admin-sidebar.tsx`
+  nav entry.
+- Implementer sequence: database-admin → api-developer → ux-developer.
+
+---
+
+## DECISION-035: Transaction Receipt Upload + Waiver — column rename to `receipt_storage_key`, three-column waiver (not a side table), `LEDGER_MANAGE` gating, shared `RECEIPT_KEY_REGEX`, downscale numbers, `all` pseudo-fund-slug for the guardrail link
+
+**Status:** Resolved
+**Date:** 2026-07-21
+
+**Decision:**
+
+Phase 3 technical design for Transaction Receipt Upload (work-log:
+`docs/work-log/2026-07-21-transaction-receipts.md`) locked the following, building on Phase 2's
+architectural rulings:
+
+1. **`ledger_transactions.receipt_url` → `receipt_storage_key`, nullable, data-free rename.**
+   Verified 0/147 expense rows have a non-null value (Phase 2 read-only query), so this is a pure
+   rename with no backfill branch — copies DECISION-020's opaque-key + proxy-route pattern
+   already proven for member reimbursements, except nullable (an expense transaction can
+   legitimately lack a receipt; a reimbursement request cannot). Migration
+   `0057_ledger_receipt_waiver.sql` guards the rename for both "old column still present" and
+   "already renamed" states so it's safe to re-run on every deploy.
+2. **Waiver = three nullable columns on `ledger_transactions`, not a side table:**
+   `receiptWaivedAt` / `receiptWaivedByUserId` / `receiptWaiverReason`. Same shape as this table's
+   existing `approvedAt`/`approvedByUserId`/`rejectionReason` — a 1:1, low-cardinality
+   who/when/why annotation, not a 1:many relationship that would justify a table. Un-waiving
+   clears all three (reversible, not an append-only audit log — the user asked for a recorded
+   reason for the *current* state, not a history of every waive/unwaive cycle).
+3. **Waiving is gated `LEDGER_MANAGE`, not `LEDGER_RECORD`.** Waiving suppresses a compliance
+   signal — a judgment call over whether a control requirement applies to a row — which is the
+   same tier distinction that already separates `LEDGER_APPROVE` from `LEDGER_RECORD` for
+   approve/reject. If waiving were gated `LEDGER_RECORD`, anyone who can enter a transaction could
+   silently zero out the compliance count. No new `FEATURES` key was needed — `LEDGER_MANAGE`
+   already exists for exactly this class of structural/governance authority over the books.
+4. **Route shape:** `POST /api/admin/ledger/transactions/upload` (flat, no `[id]` — mirrors the
+   reimbursement upload precedent, since a receipt can attach before the transaction record
+   exists), `GET /api/admin/ledger/transactions/[id]/receipt` (proxy view), and
+   `POST`+`DELETE /api/admin/ledger/transactions/[id]/receipt/waive` (waive / un-waive) as a
+   dedicated sibling sub-route — matching this codebase's established precedent
+   (`/approve`, `/reject`, `/reconcile`, `/acknowledge`) of a permission-tier step-up living in
+   its own route file, never a conditional branch inside the shared PATCH handler.
+5. **`RECEIPT_KEY_REGEX` hoisted** from its two duplicated definitions
+   (`src/app/api/members/reimbursements/route.ts` and `.../[id]/route.ts`) into a single export
+   in `src/lib/receipt-storage/index.ts`, imported at all four call sites (the two existing plus
+   the two new transaction routes) rather than pasting a third copy.
+6. **Downscale target: 1600px longest edge, JPEG quality 0.82; PNG converts to JPEG; PDF passes
+   through untouched; HEIC stays out of scope** (the existing magic-byte/accept-list boundary
+   never admitted it). 1600px keeps typical receipt text legible on zoom while shedding a modern
+   phone photo's native 3000-4000px dimension; 0.82 is above the quality where JPEG block
+   artifacts become visible on small receipt-font text. Pure dimension math lives in a new
+   `src/lib/image-resize.ts` (unit-testable, no DOM); canvas/`toBlob()` glue is a thin client
+   component, mirroring the `permissions.ts`/`permissions-server.ts` pure/environment split.
+7. **Guardrail-to-list link resolves the fund-scoped-vs-entity-scoped mismatch (Phase 2 Ruling 7)
+   via a new `all` pseudo-fund-slug**, not a new page. The compliance guardrail count is computed
+   per-entity across all of that entity's funds, but the only filterable transaction list is
+   fund-scoped. `[fundSlug]/page.tsx` gains a special case for the literal segment `all`: skip the
+   single-fund lookup and fund-specific balance/budget chrome, render only the shared header and
+   a transaction table built without a `fundId` filter. `GuardrailFlag` gains an optional
+   `linkHref`, populated by Check 11 as
+   `/admin/ledger/all?entity=<slug>&fy=<fy>&receipt=missing`, and both rendering call sites
+   (`ledger-entity-detail.tsx`, `compliance/page.tsx`) render it generically.
+8. **Uploading a real receipt onto a waived row clears the waiver** (not the reverse; removing a
+   receipt does not waive it). An actual receipt supersedes an administrative excuse; the
+   alternative (both fields set simultaneously) is an unresolvable dual state with no clear UI
+   story.
+
+**Rationale:** Every one of these mirrors an existing, proven pattern in this codebase
+(DECISION-020's storage adapter, the approve/reject sibling-route shape, the
+`approvedAt`/`rejectionReason` column shape, the `permissions.ts`/`permissions-server.ts` pure/
+impure split) rather than inventing a new convention — the only genuinely new code is the
+canvas-based image downscale, which has no repo precedent to copy (confirmed in Phase 1/2: no
+`sharp`/`pica`/`browser-image-compression` dependency exists or is needed).
+
+**Impact:** `schema.ts` gains 3 columns and one rename on `ledgerTransactions`; migration
+`0057_ledger_receipt_waiver.sql`; 3 new/changed API routes plus payload changes on the existing
+`POST`/`PATCH .../transactions[/[id]]`; new `src/lib/image-resize.ts`,
+`receipt-file-input.tsx`, `receipt-waiver-control.tsx`; `[fundSlug]/page.tsx`,
+`ledger-entity-detail.tsx`, and `compliance/page.tsx` render the new receipt state and the
+guardrail's actionable link. No new `FEATURES` keys, no new tables. Implementer sequence:
+database-admin → api-developer → ux-developer.
+
+---
+
+## DECISION-034: Ledger Check Numbers (T-18, inc1) — text column, CSV-replay backfill (not memo-parsing, not re-running the destructive importer), uncashed-checks detection unchanged
+
+**Status:** Resolved
+**Date:** 2026-07-21
+
+**Decision:**
+
+Phase 3 technical design for Bank Reconciliation inc1 (work-log:
+`docs/work-log/2026-07-21-ledger-check-number.md`) locked the backfill
+mechanism after the task's stated premise — "check numbers live in
+free-text memos," per `docs/treasurer-todo.md` T-18 and the parent
+work-log's Intent — turned out to be empirically false on inspection:
+
+1. **`check_number` is `text`, not `integer`**, with a composite, non-unique
+   index on `(bank_account_id, check_number)`. Matches this codebase's
+   convention for numeric-looking identifier fields (`last4`, `slug`) that
+   are only ever exact-matched, never subject to arithmetic or range
+   queries — and avoids baking in a leading-zero/format assumption the real
+   data doesn't need but a future account's data might.
+2. **Backfill source is the original Quicken register CSVs, not memo/party
+   text.** Sampling the local DB's 109 `paymentMethod='check'` rows showed
+   memo/party text almost never contains a check number — the one row that
+   does ("Replacement for check #8045") refers to a *different* check's
+   number than its own row. Tracing further: `scripts/import-quicken-ledger.ts`
+   already parses a `checkNum` field from the register's "Check #" column at
+   import time; it's discarded before insert, used only for cause-derivation
+   and console logs. The real numbers are recoverable, near-unambiguously,
+   from the source CSVs (still on disk, paths already hardcoded in that
+   script).
+3. **Backfill mechanism is a new, additive, `UPDATE`-only script
+   (`scripts/backfill-check-numbers.ts`), not a re-run of
+   `import-quicken-ledger.ts`.** That importer's idempotency model is
+   destructive-and-total: it deletes every `[quicken-import]`-marked row and
+   reinserts all of them fresh with new UUIDs, computing `reconciled`/
+   `reconciledAt` from the CSV's own "Clr" column rather than live DB state.
+   Re-running it today would silently discard any reconciliation/edit state
+   the treasurer has layered on via the admin UI since the 2026-07-20 seed,
+   and cascade-delete any `ledgerAcknowledgments` referencing a
+   soon-to-be-replaced transaction ID. The new script instead matches each
+   CSV register row to its corresponding existing DB row by
+   (`entityId`, `txnDate`, `amountCents`, `paymentMethod='check'`, `flow`,
+   `[quicken-import]` marker) and does a targeted `UPDATE ... SET
+   check_number = $1 WHERE id = $2` — never touching any other column, never
+   changing the row's `id`. Zero or multiple matches are logged to a review
+   list rather than guessed at, satisfying Phase 1's low-confidence-review
+   requirement at the point where this dataset's actual ambiguity lives
+   (CSV-to-row matching), not at a memo-regex step with almost no signal to
+   parse. `import-quicken-ledger.ts` itself gets an *additive* enhancement
+   (capture `checkNumber` in its row-builder) purely so that production's
+   still-pending first seed (production is unseeded per project memory)
+   gets the column for free — that enhancement is not re-run against the
+   already-seeded local DB.
+4. **A memo-parsing pure function (`parseCheckNumberFromMemo` in the new
+   `src/lib/check-number.ts`) is kept, but demoted to a low-confidence
+   enrichment hint** surfaced only on rows the CSV-match step can't resolve
+   — never the primary mechanism. Its test suite is built directly from the
+   real ambiguous example found in the data (the "replacement for check
+   #8045" row, whose own actual number is 8049).
+5. **Uncashed-checks detection is unchanged**, correcting a mischaracterization
+   in the parent work-log's framing. `getDashboard()`'s uncashed-checks query
+   already detects via `paymentMethod='check'` + `flow='expense'` +
+   `reconciled=false` (DECISION-031/032) — memo is only ever displayed, never
+   used for detection. `checkNumber` is added as a new displayed column only;
+   detection does not switch to requiring a non-null `checkNumber`, since that
+   would silently drop legitimate uncashed checks lacking a backfilled/typed
+   number.
+6. **Surfaced, not fixed: 3 rows mistagged `paymentMethod='check'`** (Walmart,
+   OTC Brands, FSP Product Decorator — all register "Check #"="Card") are
+   actually debit-card purchases per the register's own data. The backfill
+   script reports this plainly and offers a separate, explicit
+   `--fix-payment-method` opt-in flag — never bundled into the default
+   `--apply` — since it's a real but independently-scoped data-quality fix
+   discovered as a byproduct, not this increment's stated column.
+
+**Rationale:**
+
+Every choice here follows from checking the stated premise against real data
+before designing around it, rather than building the memo-parser the task
+framing assumed was needed. A regex parser built to spec against a premise
+that doesn't hold would have produced a "backfill" that silently populated
+almost nothing, while a destructive-reinsert "backfill" (the more literal
+reading of "re-run the idempotent importer") would have quietly destroyed
+weeks of admin-UI reconciliation state the first time someone ran it. The
+CSV-replay-plus-safe-UPDATE design gets near-total, low-risk coverage for
+the one dataset that actually needs backfilling (local dev; production isn't
+seeded yet) while leaving every other column and every row ID untouched.
+
+**Impact:**
+
+- `src/lib/db/schema.ts` — `ledgerTransactions.checkNumber` (text, nullable) +
+  composite index.
+- `drizzle/migrations/00NN_ledger_check_number.sql` (new; NN = next free slot
+  at implementation time, after `0055`).
+- `src/lib/check-number.ts` (new) — `parseCheckNumberFromMemo()`,
+  `classifyRegisterCheckColumn()`; `src/lib/check-number.test.ts` (new) — ten
+  named unit tests.
+- `scripts/backfill-check-numbers.ts` (new) — additive, dry-run-default,
+  `--apply` to write, `--fix-payment-method` opt-in for the debit-card
+  correction.
+- `scripts/import-quicken-ledger.ts` — additive `checkNumber` capture in the
+  row-builder (for production's still-pending first seed); not re-run
+  against local dev as part of this increment.
+- `src/components/admin/ledger/transaction-form.tsx`,
+  `src/components/admin/ledger/uncashed-checks-panel.tsx`,
+  `src/lib/ledger-queries.ts` (`UncashedCheckRow` widen),
+  `src/app/api/admin/ledger/transactions/route.ts` and `.../[id]/route.ts`.
+- Full design: `docs/work-log/2026-07-21-ledger-check-number.md`, Phase 3 —
+  Technical Design.
+
+---
+
+## DECISION-033: Failed Login Visibility — table/enum shape, permission-naming convention, opportunistic-prune pattern, IP/UA deferred
+
+**Status:** Resolved
+**Date:** 2026-07-21
+
+**Decision:**
+
+Phase 3 technical design for Failed Login Visibility (work-log:
+`docs/work-log/2026-07-21-failed-login-visibility.md`) locked five
+implementation-level choices Phase 2 explicitly deferred:
+
+1. **New table `failed_login_attempts`** — `id` (uuid), `attempted_email`
+   (`varchar(255)`, length-capped at the recorder call site, not relying on
+   the DB constraint to reject-and-throw), `provider` (text: `"credentials"`
+   | `"google"`), `reason` (text, six values —
+   `missing_credentials`/`unknown_email`/`no_password_set`/`deactivated`/
+   `bad_password`/`oauth_deactivated`), nullable `user_id` FK
+   `ON DELETE SET NULL` (mirrors `event_occurrence_overrides.cancelled_by_user_id`,
+   DECISION-001), `created_at` as `timestamptz` (not naive `timestamp` — this
+   project has a documented naive-timestamp-as-UTC bug on unrelated
+   `eventRsvps`/occurrence columns). Two indexes: `created_at` (reverse-chron
+   list) and `attempted_email` (search + grouped `GROUP BY`). Split across
+   two migrations, `0054_failed_login_attempts.sql` (table) and
+   `0055_admin_security_permission.sql` (permission), following this repo's
+   established convention (`0044_ledger_books.sql` → `0045_ledger_permissions.sql`,
+   `0040_dues_tracking.sql` → `0041_dues_permissions.sql`) rather than one
+   combined file.
+2. **Permission key: `FEATURES.ADMIN_SECURITY_VIEW = "admin.security_view"`.**
+   Architect Ruling 5 left the naming convention open (bare-noun `admin.*`
+   style vs. action-suffixed `*.view` style, both precedented in the same
+   catalog). Chose the action-suffixed style to leave room for a future
+   `admin.security_manage` (e.g., a manual "clear old entries" action) without
+   a rename, matching the `DUES_VIEW`/`DUES_MANAGE` and
+   `LEDGER_VIEW`/`LEDGER_MANAGE` precedent. Bound to `admin` role only (locked
+   user decision) — not `treasurer` or `board_member`.
+3. **Opportunistic prune, piggybacked on insert, unconditional deletion** —
+   no cron/worker infra exists in this project. Cutoff computed by a pure,
+   independently-unit-tested function `pruneCutoff(now: Date = new Date())`
+   returning `now - 90 days` as a plain JS `Date`, rather than a Postgres
+   `now() - interval '90 days'` SQL expression — this makes prune-window
+   correctness testable without a DB connection and sidesteps any
+   Postgres-interval-syntax edge case.
+4. **IP address / user agent capture ruled OUT of v1.** `next/headers`'
+   `headers()` would very likely work inside NextAuth's `authorize()`/`signIn`
+   callbacks (they execute inside the App Router route handler NextAuth
+   registers), but "very likely" isn't good enough to bake an unverified API
+   call into a fire-and-forget block that must never throw, for a feature
+   Phase 1 explicitly scoped as a nice-to-have. Deferred as a candidate,
+   additive (`ADD COLUMN IF NOT EXISTS`), non-blocking fast-follow.
+5. **`Credentials.authorize()`'s existing `if (!user || !user.password) return null;` must be split into two branches** (`unknown_email` vs.
+   `no_password_set`) to preserve the six-way reason granularity the analyst
+   required — this is a real logic change, not just an additive recorder
+   call, and was called out explicitly so the implementer doesn't under-scope
+   it as "add six calls."
+
+**Rationale:**
+
+Each choice follows existing repo precedent over inventing a new one: the
+migration split matches every prior new-table-plus-permission feature; the
+`timestamptz`/nullable-FK/index choices directly reuse patterns this codebase
+already debugged into correctness (DECISION-001, the naive-timestamp bug);
+the `pruneCutoff()` pure-function design keeps a security-relevant retention
+rule testable and DB-independent, the same discipline DECISION-031/032
+applied to `getDashboard()`'s query-layer seams. Deferring IP/UA capture
+trades a nice-to-have for a smaller, better-verified v1 surface, consistent
+with the analyst's own framing of it as optional.
+
+**Impact:**
+
+- `src/lib/db/schema.ts` — new `failedLoginAttempts` table + types; `varchar` added to the top-of-file import list.
+- `src/lib/permissions.ts` — `FEATURES.ADMIN_SECURITY_VIEW` + `FEATURE_DESCRIPTIONS` entry.
+- `src/lib/auth/failed-login.ts` (new) — recorder, `normalizeAttemptedEmail`, `pruneCutoff`, shared enums/labels; `src/lib/auth/failed-login.test.ts` (new) — five named unit tests.
+- `src/lib/auth/index.ts` — six `recordFailedLogin()` call sites, including the required branch split.
+- `src/app/(dashboard)/admin/security/page.tsx` (new), `src/components/admin/admin-sidebar.tsx` (new nav item).
+- `drizzle/migrations/0054_failed_login_attempts.sql`, `drizzle/migrations/0055_admin_security_permission.sql` (new).
+- Full design: `docs/work-log/2026-07-21-failed-login-visibility.md`, Phase 3 — Technical Design.
+
+---
+
 ## DECISION-032: Ledger Dashboard — implementation-level calls from Phase 3 design (error boundary, mobile table pattern, EntitySwitcher non-reuse, uncashed-checks flow scoping, fund-name guardrail widen)
 
 **Status:** Resolved
