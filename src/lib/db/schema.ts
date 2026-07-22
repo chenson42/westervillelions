@@ -657,7 +657,7 @@ export const ledgerTransactions = pgTable(
     // internal. Expense-only at the app layer; 200-char cap enforced server-side
     // (first ledger-transaction text field rendered to members).
     publicNote: text("public_note"),
-    paymentMethod: text("payment_method"),        // 'check' | 'cash' | 'zeffy' | 'other'
+    paymentMethod: text("payment_method"),        // 'check' | 'cash' | 'zeffy' | 'debit_card' | 'bill_pay' | 'other'
     checkNumber: text("check_number"), // structured check # (T-18); nullable — only checks have one
     // Opaque storage key `receipts/<uuid>/<name>` (DECISION-035); renamed from
     // receipt_url (was a dead paste-URL field, 0/147 non-null — no data migration).

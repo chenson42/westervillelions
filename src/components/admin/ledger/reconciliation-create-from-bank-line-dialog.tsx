@@ -12,6 +12,7 @@ const METHOD_LABELS: Record<string, string> = {
   cash: "Cash",
   zeffy: "Zeffy",
   debit_card: "Debit Card",
+  bill_pay: "Bill Pay",
   other: "Other",
 };
 

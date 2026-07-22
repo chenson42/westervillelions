@@ -184,3 +184,13 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   the class of bug that reached production twice now (missing token → read-only FS write). Consider
   a smoke test that boots the app under `NODE_ENV=production` against an ephemeral DB and asserts an
   upload→view→delete cycle, so an adapter-selection regression fails in CI, not in production.
+
+- [ ] **B-13 — Centralize the ledger payment-method list + labels.**
+  (added 2026-07-22, priority: should-do) The expense/ledger payment-method set
+  (`check/cash/zeffy/debit_card/bill_pay/other`) is duplicated across three API validators
+  (`transactions`, `transactions/[id]`, reconciliation `create-from-bank-line`) and two
+  `METHOD_LABELS` dropdown maps — adding "Bill Pay" (2026-07-22) meant editing six places, and the
+  reimbursement pay set drifted to a smaller `check/cash/other` list. Hoist one shared const +
+  label map into `src/lib/` and import everywhere. While there: the register/fund-detail cell
+  (`[fundSlug]/page.tsx` ~L455) renders the raw stored value with CSS `capitalize`, so `debit_card`
+  and `bill_pay` show as "Debit_card" / "Bill_pay" — route it through the shared label map too.

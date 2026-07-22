@@ -62,7 +62,7 @@ import { RECEIPT_KEY_REGEX, getReceiptStorage } from "@/lib/receipt-storage";
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
 const VALID_FLOWS = ["income", "expense"] as const;
-const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "other"] as const;
+const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "bill_pay", "other"] as const;
 const CHECK_NUMBER_MAX_LEN = 20;
 const PUBLIC_NOTE_MAX_LEN = 200;
 
@@ -304,7 +304,7 @@ export async function PATCH(
     if (body.paymentMethod !== undefined) {
       if (body.paymentMethod !== null && !isValidMethod(body.paymentMethod)) {
         return NextResponse.json(
-          { error: "paymentMethod must be one of: check, cash, zeffy, debit_card, other" },
+          { error: "paymentMethod must be one of: check, cash, zeffy, debit_card, bill_pay, other" },
           { status: 400 },
         );
       }

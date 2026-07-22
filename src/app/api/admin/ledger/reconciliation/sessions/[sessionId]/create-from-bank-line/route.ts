@@ -56,7 +56,7 @@ import {
 } from "@/lib/reconciliation-queries";
 
 const VALID_FLOWS = ["income", "expense"] as const;
-const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "other"] as const;
+const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "bill_pay", "other"] as const;
 const CHECK_NUMBER_MAX_LEN = 20;
 
 type Flow = (typeof VALID_FLOWS)[number];
@@ -201,7 +201,7 @@ export async function POST(
     // Payment method — optional
     if (paymentMethod !== undefined && paymentMethod !== null && !isValidMethod(paymentMethod)) {
       return NextResponse.json(
-        { error: "paymentMethod must be one of: check, cash, zeffy, debit_card, other" },
+        { error: "paymentMethod must be one of: check, cash, zeffy, debit_card, bill_pay, other" },
         { status: 400 },
       );
     }

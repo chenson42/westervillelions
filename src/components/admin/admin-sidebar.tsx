@@ -79,9 +79,9 @@ const navigation: NavGroup[] = [
   {
     label: "Treasury",
     // Ordered most-used to least-used for a working treasurer: the Ledger hub
-    // and Dues are day-to-day, Reconciliation/Reports/Compliance are the
-    // monthly review cycle, Donors and Settings are periodic/rare, and the
-    // reference guide sits last.
+    // is day-to-day, Reconciliation/Reports/Compliance are the monthly review
+    // cycle, Dues is a one-month-a-year burst so it sits below those, Donors
+    // and Settings are periodic/rare, and the reference guide sits last.
     items: [
       {
         name: "Ledger",
@@ -90,16 +90,16 @@ const navigation: NavGroup[] = [
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
       {
-        name: "Dues",
-        href: "/admin/dues",
-        icon: "💵",
-        requiredFeature: FEATURES.DUES_VIEW,
-      },
-      {
         name: "Reconciliation",
         href: "/admin/ledger/reconciliation",
         icon: "🏦",
         requiredFeature: FEATURES.LEDGER_VIEW,
+      },
+      {
+        name: "Dues",
+        href: "/admin/dues",
+        icon: "💵",
+        requiredFeature: FEATURES.DUES_VIEW,
       },
       {
         name: "Reports",
