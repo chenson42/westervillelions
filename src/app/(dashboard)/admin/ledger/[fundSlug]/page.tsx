@@ -239,6 +239,7 @@ export default async function AdminLedgerFundPage({
               funds={allFunds}
               categories={categories}
               bankAccounts={bankAccounts}
+              defaultFundId={fund?.id}
               triggerLabel="Record Transaction"
             />
           )}

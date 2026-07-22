@@ -39,6 +39,10 @@ interface TransactionFormProps {
   initialValues?: EditableTransaction;
   /** The linked row ID when editing a transfer pair */
   transferPartnerId?: string;
+  /** Default fund for a NEW transaction — e.g. the fund whose page opened the
+   *  dialog. Ignored in edit mode (initialValues.fundId wins) and falls back to
+   *  the first fund when absent. */
+  defaultFundId?: string;
 }
 
 type FlowMode = "income" | "expense" | "transfer" | "income_refund" | "expense_refund";
@@ -96,6 +100,7 @@ export default function TransactionForm({
   onCancel,
   initialValues,
   transferPartnerId,
+  defaultFundId,
 }: TransactionFormProps) {
   const router = useRouter();
   const isEdit = Boolean(initialValues);
@@ -115,7 +120,9 @@ export default function TransactionForm({
   const [txnDate, setTxnDate] = useState(
     initialValues?.txnDate ?? new Date().toISOString().slice(0, 10)
   );
-  const [fundId, setFundId] = useState(initialValues?.fundId ?? (funds[0]?.id ?? ""));
+  const [fundId, setFundId] = useState(
+    initialValues?.fundId ?? defaultFundId ?? (funds[0]?.id ?? "")
+  );
   const [sourceFundId, setSourceFundId] = useState(
     isEditingTransfer ? (initialValues?.fundId ?? "") : ""
   );

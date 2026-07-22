@@ -42,6 +42,9 @@ interface TransactionFormDialogProps {
   /** When provided, opens in edit mode for this transaction */
   initialValues?: EditableTransaction;
   transferPartnerId?: string;
+  /** Default fund for a new transaction — e.g. the fund whose page opened this
+   *  dialog. Ignored in edit mode. */
+  defaultFundId?: string;
   /** Whether the dialog is controlled externally */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -61,6 +64,7 @@ export default function TransactionFormDialog({
   triggerLabel,
   initialValues,
   transferPartnerId,
+  defaultFundId,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
 }: TransactionFormDialogProps) {
@@ -119,6 +123,7 @@ export default function TransactionFormDialog({
             onCancel={() => setOpen(false)}
             initialValues={initialValues}
             transferPartnerId={transferPartnerId}
+            defaultFundId={defaultFundId}
           />
         </Dialog.Content>
       </Dialog.Portal>
