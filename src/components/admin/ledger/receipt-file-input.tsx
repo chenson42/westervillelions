@@ -2,6 +2,11 @@
 
 import { useRef, useState } from "react";
 import { computeResizeDimensions, RECEIPT_IMAGE_JPEG_QUALITY } from "@/lib/image-resize";
+import {
+  classifyHeicDecodeFailure,
+  decodeHeicFileToJpegBlob,
+  getHeicDecodeFailureMessage,
+} from "@/lib/heic-decode";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB — same cap as the upload route enforces
 
@@ -15,7 +20,10 @@ interface ReceiptFileInputProps {
   idSuffix?: string;
 }
 
-type Status = "idle" | "processing" | "error";
+// "preparing" covers native decode, the WASM chunk fetch/decode (HEIC only),
+// and the post-WASM resize — none of that is network upload yet. "uploading"
+// starts only once the fetch to the upload route actually begins.
+type Status = "idle" | "preparing" | "uploading" | "error";
 
 function isImageFile(file: File): boolean {
   return (
@@ -32,8 +40,10 @@ function isImageFile(file: File): boolean {
  * This distinction matters because a decode failure for a HEIC file must
  * *not* fall back to uploading the original bytes the way other image decode
  * failures do — the server's magic-bytes check only allows PDF/JPEG/PNG, so
- * raw HEIC bytes would 400 with a confusing generic error. HEIC decode
- * failure gets its own human-readable message instead (see handleChange).
+ * raw HEIC bytes would 400 with a confusing generic error. Instead, a native
+ * decode failure on a HEIC file gets one more attempt via the WASM decoder
+ * in @/lib/heic-decode (any browser, not just Chrome/Firefox — see
+ * handleChange); only if that also fails does the admin see an error.
  */
 function isHeicFile(file: File): boolean {
   return (
@@ -120,7 +130,7 @@ export default function ReceiptFileInput({
       return;
     }
 
-    setStatus("processing");
+    setStatus("preparing");
     setError(null);
 
     try {
@@ -134,22 +144,34 @@ export default function ReceiptFileInput({
           displayName = resized.name;
         } catch {
           if (isHeicFile(file)) {
-            // Unlike other image decode failures, HEIC must not fall
-            // through to a raw-bytes upload — the server's magic-bytes
-            // check only allows PDF/JPEG/PNG and would 400 with a
-            // confusing error. Surface a human message and stop here.
-            setStatus("error");
-            setError(
-              "This browser can't read HEIC photos — use Safari, or export the photo as JPEG.",
-            );
-            return;
+            // Native decode failed on a HEIC file — try the WASM decoder
+            // before giving up, regardless of browser (this also covers the
+            // rare case of Safari itself failing on an unusual HEIC
+            // variant). Unlike other image decode failures, HEIC must not
+            // fall through to a raw-bytes upload — the server's magic-bytes
+            // check only allows PDF/JPEG/PNG and would 400 with a confusing
+            // error.
+            try {
+              const jpegBlob = await decodeHeicFileToJpegBlob(file);
+              const jpegAsFile = new File([jpegBlob], file.name, { type: "image/jpeg" });
+              const resized = await resizeImage(jpegAsFile); // existing path, now succeeds — it's a JPEG
+              uploadBlob = resized.blob;
+              displayName = resized.name;
+            } catch (wasmErr) {
+              setStatus("error");
+              setError(getHeicDecodeFailureMessage(classifyHeicDecodeFailure(wasmErr)));
+              return;
+            }
+          } else {
+            // Fall back to the original file — resize is a nicety, not a
+            // trust boundary, and a decode failure must not block the upload.
+            uploadBlob = file;
+            displayName = file.name || "receipt";
           }
-          // Fall back to the original file — resize is a nicety, not a
-          // trust boundary, and a decode failure must not block the upload.
-          uploadBlob = file;
-          displayName = file.name || "receipt";
         }
       }
+
+      setStatus("uploading");
 
       const formData = new FormData();
       formData.append("file", uploadBlob, displayName);
@@ -191,12 +213,14 @@ export default function ReceiptFileInput({
         accept=".pdf,.jpg,.jpeg,.png,.heic,.heif"
         capture="environment"
         onChange={handleChange}
-        disabled={disabled || status === "processing"}
+        disabled={disabled || status === "preparing" || status === "uploading"}
         className="block w-full text-sm text-gray-700 file:mr-4 file:rounded-lg file:border-0 file:bg-lions-blue file:px-4 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-lions-blue-dark file:transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue rounded-lg"
         aria-describedby={hintId}
       />
       <p id={hintId} className="mt-1 text-xs text-gray-400">
-        {status === "processing"
+        {status === "preparing"
+          ? "Preparing photo…"
+          : status === "uploading"
           ? "Uploading receipt…"
           : "PDF, JPEG, PNG, or HEIC, up to 10 MB. Photos are resized automatically."}
       </p>

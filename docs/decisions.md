@@ -28,6 +28,59 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-038: HEIC WASM decode fallback — `heic2any` (MIT wrapper, embeds LGPL-3.0 libheif WASM), client-only, no `next.config.ts` change
+
+**Status:** Resolved
+**Date:** 2026-07-21
+
+**Decision:** Add `heic2any@^0.0.4` as the WASM HEIC decoder for
+`docs/work-log/2026-07-21-receipt-heic-wasm-fallback.md`, chosen over
+`libheif-js` and `heic-decode`. Dynamically imported (`import("heic2any")`)
+from a new `src/lib/heic-decode.ts` module, itself imported only by the
+existing client component `src/components/admin/ledger/receipt-file-input.tsx`
+— triggered exclusively after a native `createImageBitmap()` failure on a
+HEIC/HEIF file, so it never loads for Safari or for any successful
+native-decode path. No schema, no server route, no `FEATURES` key, no
+`next.config.ts` change.
+
+**Rationale:** All three Phase 1-named candidates wrap the same underlying
+decoder (libheif compiled to WASM); the choice came down to packaging and
+API fit, verified by unpacking each tarball rather than trusting READMEs.
+`heic2any`'s bundle embeds its WASM inline (no separate `.wasm` asset file,
+instantiated inside a `Blob`-backed `Worker`), which is what makes the
+"no bundler/asset-pipeline config needed" property true — the two
+lower-level candidates consume libheif's raw Emscripten output and would
+carry asset-loading risk this project's `next.config.ts` isn't currently
+configured for. `heic2any` also has the best API fit: File/Blob in, JPEG
+Blob out, feeding straight back into the existing `resizeImage()` canvas
+pipeline in `image-resize.ts` without new pixel-buffer glue. Zero
+transitive npm dependencies (`heic-decode` carries one: `libheif-js`).
+
+**License class, addressed explicitly per this decision's own review
+criteria:** `heic2any`'s own code is MIT (verified via its `LICENSE.md` and
+`package.json`). It embeds a compiled build of **libheif**, which upstream
+is **LGPL-3.0**, and HEIC's HEVC codec carries patent-pool licensing
+considerations in principle. Judged acceptable for this project: consumed
+unmodified as an npm dependency (ordinary LGPL linking/consumption, not the
+modify-and-redistribute case LGPL's copyleft targets), used strictly
+client-side and decode-only inside a small nonprofit's internal admin tool
+by an authenticated treasurer converting a receipt photo they already
+possess — not a commercial product, not redistributed as a standalone
+artifact. If this judgment is ever revisited, the removal surface is a
+single dynamic-import call site.
+
+**Impact:** New `dependencies` entry in `package.json` (`heic2any`,
+installed in Phase 4). New file `src/lib/heic-decode.ts` (pure failure
+classifier + message lookup + one thin `import("heic2any")` wrapper,
+mirroring the `image-resize.ts` pure-logic/DOM-glue split). No change to
+`next.config.ts` — confirmed the existing CSP (`worker-src 'self' blob:`,
+`script-src ... 'unsafe-eval' ...`) already permits the `Blob`-Worker/WASM
+mechanics `heic2any` uses. Full reasoning and dependency-by-dependency
+comparison in the Phase 2 section of
+`docs/work-log/2026-07-21-receipt-heic-wasm-fallback.md`.
+
+---
+
 ## DECISION-037: Treasury User's Guide — live-value scope limited to 990 determination + current settings recap, no `ensureFilingsForFY` write from the guide
 
 **Status:** Resolved

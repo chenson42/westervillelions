@@ -11,6 +11,32 @@ follow-ups may also land here when they don't warrant an immediate work-log.
 
 ---
 
+- [ ] **B-08 — Member reimbursement upload has no HEIC support at all.**
+  (added 2026-07-21, priority: nice-to-have) Flagged during Phase 1 of
+  `docs/work-log/2026-07-21-receipt-heic-wasm-fallback.md` and confirmed
+  out of scope for that increment. `src/components/members/reimbursement-form.tsx`
+  (`accept=".pdf,.jpg,.jpeg,.png"`, no HEIC in the accept list, no
+  client-side resize/decode step) is a fully separate implementation from
+  the admin Ledger's `receipt-file-input.tsx` — it doesn't share code, so
+  the WASM HEIC decode fallback landing there does nothing for members. A
+  member picking a `.heic` file today is either blocked by the OS picker's
+  extension filter or uploads raw HEIC bytes the server's magic-bytes check
+  rejects. Lower urgency than the admin flow: members mostly upload from
+  the same phone that took the photo, and iOS Safari's picker already
+  re-encodes to JPEG in that case. Fix (scope TBD in Phase 1): likely reuse
+  the same native-decode-then-WASM-fallback approach and `heic-decode.ts`
+  helper this increment introduces, once there's a resize pipeline on this
+  surface to plug it into (there isn't one today).
+
+- [ ] **B-09 — Member profile picture upload has no HEIC-specific handling.**
+  (added 2026-07-21, priority: nice-to-have) Same source as B-08.
+  `src/components/members/profile-picture-uploader.tsx` (`accept="image/*"`)
+  has no HEIC-specific handling and wasn't touched by the receipt HEIC WASM
+  fallback work. Confirmed out of scope for that increment; flagging so the
+  gap has a record rather than being silently left. Lower priority than
+  B-08 — profile pictures are a smaller, more discretionary upload than a
+  reimbursement receipt.
+
 - [ ] **B-03 — No e2e fixture for an authenticated user lacking a specific
   admin sub-permission (only a full-Admin account exists).** (added
   2026-07-21, priority: nice-to-have) `e2e/helpers/auth.ts`'s only signed-in
