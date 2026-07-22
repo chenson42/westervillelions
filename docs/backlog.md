@@ -160,3 +160,12 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   it out of the feature). Related: the same Phase 6 recommended the next 7-day test-coverage
   review add a seeded narrow-permission test account (e.g., LEDGER_APPROVE-only) — same root gap
   as B-03; noted there rather than duplicated.
+
+- [ ] **B-10 — CI-repeatable fixture for modern iPhone HEIC (10-bit `heix` + HDR gain-map `tmap`).**
+  (added 2026-07-21, priority: should-do) The `2026-07-21-heic-modern-iphone-decode.md` defect —
+  heic2any's stale libheif rejecting modern iPhone photos — was only catchable with a real 48 MP
+  `heix`/`tmap` file, and the only such file available is the user's personal photo, which exists
+  on one machine and must never be committed. Source or generate a small non-personal fixture in
+  that format (e.g., a downscaled photo taken specifically for this purpose, or ffmpeg/libheif-cli
+  generated 10-bit output) and add it to `e2e/fixtures/heic/` with a decode e2e case, so a future
+  decoder regression on modern files fails in CI instead of in production.

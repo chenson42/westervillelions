@@ -14,17 +14,23 @@ import { signInAsAdmin } from "./helpers/auth";
  * natively — confirmed directly during Phase 5 verification via
  * `createImageBitmap()` on the same fixture used below, which rejects with
  * "InvalidStateError: The source image could not be decoded." — so these
- * tests genuinely exercise the WASM (`heic2any`) fallback path, not a
- * native-decode short-circuit.
+ * tests genuinely exercise the WASM fallback path, not a native-decode
+ * short-circuit. The decoder behind that fallback was originally
+ * `heic2any`; it's now `libheif-js`
+ * (docs/work-log/2026-07-21-heic-modern-iphone-decode.md, DECISION-039) —
+ * the trigger condition, WASM-chunk-load-vs-decode stage split, and error
+ * copy this spec asserts on are unchanged by that swap.
  *
- * Fixtures (e2e/fixtures/heic/):
+ * Fixtures (e2e/fixtures/heic/) — provenance predates the decoder swap;
+ * the fixture files themselves are unchanged and still exercise the same
+ * wiring against the new decoder:
  *   - valid.heic: a real HEIC photo pulled from heic2any's own repo demo
  *     assets (https://github.com/alexcorvi/heic2any/tree/master/demo,
  *     MIT-licensed project), used here purely as decode-test input.
  *   - corrupt.heic: the first 8000 bytes of valid.heic — a truncated file
  *     with a valid-looking ftyp header but incomplete/corrupt HEVC payload,
- *     so it reaches heic2any's decode step and fails there (not at the
- *     WASM-chunk-load step).
+ *     so it reaches the WASM decoder's decode step and fails there (not at
+ *     the chunk-load step).
  *   - not-actually-heic.heic: plain text renamed to a `.heic` extension —
  *     exercises isHeicFile()'s extension-only detection (Phase 1 Gap /
  *     Phase 3 edge case: "a .heic-named file that isn't real HEIC").
@@ -63,7 +69,7 @@ test.describe("admin ledger receipt upload — HEIC WASM fallback", () => {
     const fileInput = page.locator('input[type="file"][id^="receipt-file-input"]');
     await fileInput.setInputFiles(path.join(FIXTURES_DIR, "corrupt.heic"));
 
-    // Assert — heic2any's WASM chunk loads fine (this isn't a connectivity
+    // Assert — the WASM chunk loads fine (this isn't a connectivity
     // failure), but decoding the truncated bytes fails, so the admin must
     // see the "decode" message, never the "chunk-load" one, and never the
     // retired "use Safari" copy.

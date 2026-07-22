@@ -28,9 +28,100 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
-## DECISION-038: HEIC WASM decode fallback — `heic2any` (MIT wrapper, embeds LGPL-3.0 libheif WASM), client-only, no `next.config.ts` change
+## DECISION-039: HEIC WASM decoder swap — `libheif-js` (`wasm-bundle` subpath) replaces `heic2any`, main-thread decode, no `next.config.ts` change
 
 **Status:** Resolved
+**Date:** 2026-07-21
+
+**Decision:** Replace `heic2any` with `libheif-js@^1.19.8`, imported
+exclusively via its `libheif-js/wasm-bundle` subpath
+(`import("libheif-js/wasm-bundle")`), in `src/lib/heic-decode.ts`. Same
+trigger condition as DECISION-038 (only after a native
+`createImageBitmap()` failure on a HEIC/HEIF file in
+`receipt-file-input.tsx`) and the same dynamic-`import()`-only,
+own-async-chunk shape — Safari and every successful native-decode path
+still never fetch it. `heic2any` is removed outright; no dual-decoder
+fallback.
+
+**Rationale:** `heic2any@0.0.4` embeds a `libheif` WASM build too old to
+parse modern iPhone HEIC (10-bit `heix` + HDR gain-map `tmap`, 48 MP) —
+reproduced against a real user photo (decode failure in 201 ms,
+`Could not parse HEIF file`) in
+`docs/work-log/2026-07-21-heic-modern-iphone-decode.md`. It's also
+unmaintained since ~2021 with no newer release, so there's no "wait for
+an update" option. `libheif-js@1.19.8` decodes the same file correctly
+(independently re-verified in this review: 787 ms, correct 4284×5712
+dimensions, non-blank RGBA output), is actively maintained (last
+published 2025-06-12, steady history since 2020, explicit policy of
+tracking upstream `libheif`), and carries zero transitive runtime
+dependencies (strictly better than the `heic-decode` package DECISION-038
+rejected for depending on `libheif-js` transitively — this decision takes
+it directly instead).
+
+`libheif-js` ships three entry points; unpacked the real tarball rather
+than trusting the README. The default `libheif-js` import (2.1 MB,
+"classic pure-JS" build) and the `libheif-js/wasm` split-asset entry
+(Node-only `fs.readFileSync` of a separate `.wasm` file — no browser
+story, would need real asset-pipeline config this project doesn't carry)
+were both rejected. `libheif-js/wasm-bundle` (1.4 MB raw / ~521 KB gzip)
+inlines its WASM as base64 in the JS — verified directly, no separate
+`.wasm` fetch — the same packaging property that made `heic2any`
+viable under DECISION-038's "no asset-pipeline/CSP changes" requirement.
+Modest size increase over `heic2any` (~180 KB gzip) accepted as the cost
+of a decoder that actually decodes the target files; it's still a single
+lazy chunk under the same gate.
+
+`libheif-js` decodes on the calling thread (no internal Worker, unlike
+`heic2any`'s Blob-backed Worker). Re-verified 787 ms for the reproduction
+file. Ruled acceptable for now without a Worker wrapper: the receipt
+upload UI already shows a "Preparing photo…" state and disables the file
+input during decode, this is an authenticated-treasurer, occasional-use
+admin flow (not public or latency-sensitive), and a Worker wrapper would
+add real marshaling complexity for a UX gain not currently needed.
+Revisit if decode times grow or main-thread contention becomes an issue —
+not filed as a backlog item by this decision, flagged in the work-log for
+whoever hits it next.
+
+**License class, addressed explicitly per this decision's own review
+criteria:** `libheif-js`'s own `package.json` now declares
+`"license": "LGPL-3.0"` directly for the wrapper (one notch stricter than
+`heic2any`'s MIT-wrapper-around-LGPL shape — same underlying compiled
+`libheif` either way, LGPL-3.0, unchanged from DECISION-038). DECISION-038's
+acceptability reasoning applies unchanged: consumed unmodified as an npm
+dependency (ordinary LGPL linking/consumption, not the modify-and-
+redistribute case LGPL's copyleft targets), used strictly client-side,
+decode-only, inside a small nonprofit's internal admin tool by an
+authenticated treasurer converting a receipt photo they already possess —
+not a commercial product, not redistributed as a standalone artifact. If
+this judgment is ever revisited, the removal surface is still a single
+dynamic-import call site. Zero transitive runtime dependencies, confirmed
+by inspecting the installed package's `package.json` (no `"dependencies"`
+key).
+
+**Impact:** `package.json`: `heic2any` removed, `libheif-js@^1.19.8`
+added. `src/lib/heic-decode.ts`: decoder call replaced; new RGBA→JPEG
+canvas-encode glue added inside this file (libheif-js hands back raw
+pixel data via `image.display()`, not a Blob) — lives here rather than in
+`image-resize.ts` because that module owns *resizing an already-decoded
+image*, a different concern from *encoding a decoder-specific raw pixel
+buffer*; folding it in there would leak a decoder-specific data shape
+into a module whose callers only ever hand it images/Blobs. Public
+contract of `heic-decode.ts` is unchanged
+(`decodeHeicFileToJpegBlob(file): Promise<Blob>`, `HeicDecodeStageError`,
+stages `"chunk-load"`/`"decode"`, `classifyHeicDecodeFailure`, messages)
+— `receipt-file-input.tsx` requires zero changes. No `next.config.ts`
+change; no schema, route, or `FEATURES` change. Full reasoning, entry-
+point comparison table, and implementation sketch in the Phase 2/3
+sections of
+`docs/work-log/2026-07-21-heic-modern-iphone-decode.md`.
+
+---
+
+## DECISION-038: HEIC WASM decode fallback — `heic2any` (MIT wrapper, embeds LGPL-3.0 libheif WASM), client-only, no `next.config.ts` change
+
+**Status:** Superseded by DECISION-039 (dependency choice only — the
+trigger condition, dynamic-import-only shape, and "own async chunk, never
+loaded by Safari" invariant this decision established all still stand)
 **Date:** 2026-07-21
 
 **Decision:** Add `heic2any@^0.0.4` as the WASM HEIC decoder for

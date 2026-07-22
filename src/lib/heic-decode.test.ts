@@ -1,12 +1,29 @@
 /**
  * Unit tests for src/lib/heic-decode.ts
- * (docs/work-log/2026-07-21-receipt-heic-wasm-fallback.md, Phase 3's 16-test list)
+ * (docs/work-log/2026-07-21-receipt-heic-wasm-fallback.md, Phase 3's 16-test
+ * list; decoder swapped to libheif-js per
+ * docs/work-log/2026-07-21-heic-modern-iphone-decode.md.)
  *
  * The classifier, message lookup, and error class are pure and imported
  * directly. decodeHeicFileToJpegBlob's own tests intercept the dynamic
- * `import("heic2any")` via `vi.doMock` + `vi.resetModules()` per test, since
- * different tests need the mocked module to behave differently (ESM-shaped,
- * UMD-shaped, rejecting, etc.) — no real WASM runtime involved.
+ * `import("libheif-js/wasm-bundle")` via `vi.doMock` + `vi.resetModules()`
+ * per test, since different tests need the mocked module to behave
+ * differently (ESM-shaped, bare-factory-shaped, rejecting, etc.) — no real
+ * WASM runtime involved. The canvas encode step (`encodeRgbaToJpegBlob`) is
+ * NOT unit-tested here — canvas isn't available in Vitest's Node
+ * environment; its real-canvas behavior is covered by qa's Phase 5 manual
+ * click-through against a real HEIC fixture in a real browser. What IS
+ * covered here is that decode reaches a correctly-shaped `display()` call
+ * with a mocked HeifImage, by having the mocked `display()` invoke its
+ * callback with a falsy value — which lets these tests assert the call
+ * shape and the resulting "decode"-stage failure without ever reaching
+ * `document`.
+ *
+ * Mocked `HeifDecoder` constructors below use `vi.fn().mockImplementation(
+ * function () {...})` (a real `function`, not an arrow) because
+ * decodeHeicFileToJpegBlob calls `new libheif.HeifDecoder()` — an arrow
+ * function can't be used as a constructor, and vi.fn() silently drops the
+ * mock's return value for `new` calls when the implementation is an arrow.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,9 +32,8 @@ import {
   getHeicDecodeFailureMessage,
   HEIC_DECODE_FAILURE_MESSAGES,
   HeicDecodeStageError,
-  resolveHeic2AnyExport,
+  resolveLibheifModule,
 } from "./heic-decode";
-import { RECEIPT_IMAGE_JPEG_QUALITY } from "./image-resize";
 
 describe("classifyHeicDecodeFailure", () => {
   it("returns \"chunk-load\" for a HeicDecodeStageError constructed with stage \"chunk-load\"", () => {
@@ -75,6 +91,27 @@ describe("HeicDecodeStageError", () => {
   });
 });
 
+describe("resolveLibheifModule", () => {
+  it("unwraps { default: <promise-of-namespace> } (ESM-shaped interop) by awaiting the promise", async () => {
+    const namespace = { HeifDecoder: class {} };
+    const mod = { default: Promise.resolve(namespace) };
+    await expect(resolveLibheifModule(mod)).resolves.toBe(namespace);
+  });
+
+  it("unwraps a bare namespace value with no .default (interop shape with no wrapping)", async () => {
+    const namespace = { HeifDecoder: class {} };
+    await expect(resolveLibheifModule(namespace)).resolves.toBe(namespace);
+  });
+
+  it("invokes .default when it is a bare factory function, then awaits its result", async () => {
+    const namespace = { HeifDecoder: class {} };
+    const factory = vi.fn().mockResolvedValue(namespace);
+    const mod = { default: factory };
+    await expect(resolveLibheifModule(mod)).resolves.toBe(namespace);
+    expect(factory).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("decodeHeicFileToJpegBlob", () => {
   const file = new File([new Uint8Array([1, 2, 3])], "receipt.heic", { type: "image/heic" });
 
@@ -83,57 +120,12 @@ describe("decodeHeicFileToJpegBlob", () => {
   });
 
   afterEach(() => {
-    vi.doUnmock("heic2any");
+    vi.doUnmock("libheif-js/wasm-bundle");
     vi.resetModules();
   });
 
-  it("resolves to the JPEG Blob when the mocked module exports { default: fn } (ESM-shaped interop)", async () => {
-    const jpegBlob = new Blob(["jpeg-bytes"], { type: "image/jpeg" });
-    const fn = vi.fn().mockResolvedValue(jpegBlob);
-    vi.doMock("heic2any", () => ({ default: fn }));
-
-    const { decodeHeicFileToJpegBlob } = await import("./heic-decode");
-    const result = await decodeHeicFileToJpegBlob(file);
-    expect(result).toBe(jpegBlob);
-  });
-
-  // Covers the "bare callable, no .default" UMD/CJS interop shape via
-  // resolveHeic2AnyExport directly (see that function's doc comment): the
-  // ESM-shaped case above is exercised end-to-end through decodeHeicFileTo-
-  // JpegBlob + vi.mock, but Vitest's mock factory must return a plain
-  // object, so a bare-function module value can't be produced by mocking
-  // `import("heic2any")` itself.
-  it("unwraps to the module value itself when it resolves as a bare callable with no .default (UMD/CJS interop shape)", () => {
-    const bareCallable = vi.fn();
-    expect(resolveHeic2AnyExport(bareCallable)).toBe(bareCallable);
-  });
-
-  it("takes the first element when the mocked heic2any resolves with a Blob[] (multi-image HEIC container)", async () => {
-    const first = new Blob(["first"], { type: "image/jpeg" });
-    const second = new Blob(["second"], { type: "image/jpeg" });
-    const fn = vi.fn().mockResolvedValue([first, second]);
-    vi.doMock("heic2any", () => ({ default: fn }));
-
-    const { decodeHeicFileToJpegBlob } = await import("./heic-decode");
-    const result = await decodeHeicFileToJpegBlob(file);
-    expect(result).toBe(first);
-  });
-
-  it("throws a HeicDecodeStageError tagged \"decode\" when the mocked heic2any resolves with an empty Blob[]", async () => {
-    const fn = vi.fn().mockResolvedValue([]);
-    vi.doMock("heic2any", () => ({ default: fn }));
-
-    const { decodeHeicFileToJpegBlob, HeicDecodeStageError: ImportedError } = await import(
-      "./heic-decode"
-    );
-    await expect(decodeHeicFileToJpegBlob(file)).rejects.toMatchObject({
-      stage: "decode",
-    });
-    await expect(decodeHeicFileToJpegBlob(file)).rejects.toBeInstanceOf(ImportedError);
-  });
-
   it("throws a HeicDecodeStageError tagged \"chunk-load\" when the mocked module import itself rejects", async () => {
-    vi.doMock("heic2any", () => {
+    vi.doMock("libheif-js/wasm-bundle", () => {
       throw new Error("network error loading chunk");
     });
 
@@ -143,28 +135,86 @@ describe("decodeHeicFileToJpegBlob", () => {
     });
   });
 
-  it("throws a HeicDecodeStageError tagged \"decode\" when the import succeeds but the mocked heic2any(...) call rejects", async () => {
-    const fn = vi.fn().mockRejectedValue(new Error("corrupt HEIC bytes"));
-    vi.doMock("heic2any", () => ({ default: fn }));
-
-    const { decodeHeicFileToJpegBlob } = await import("./heic-decode");
-    await expect(decodeHeicFileToJpegBlob(file)).rejects.toMatchObject({
-      stage: "decode",
+  it("throws a HeicDecodeStageError tagged \"decode\" when decode() returns an empty array", async () => {
+    const HeifDecoder = vi.fn().mockImplementation(function () {
+      return { decode: vi.fn().mockReturnValue([]) };
     });
+    vi.doMock("libheif-js/wasm-bundle", () => ({ default: Promise.resolve({ HeifDecoder }) }));
+
+    const { decodeHeicFileToJpegBlob, HeicDecodeStageError: ImportedError } = await import(
+      "./heic-decode"
+    );
+    await expect(decodeHeicFileToJpegBlob(file)).rejects.toMatchObject({ stage: "decode" });
+    await expect(decodeHeicFileToJpegBlob(file)).rejects.toBeInstanceOf(ImportedError);
   });
 
-  it("calls the mocked heic2any with { blob: file, toType: \"image/jpeg\", quality: RECEIPT_IMAGE_JPEG_QUALITY }", async () => {
-    const jpegBlob = new Blob(["jpeg-bytes"], { type: "image/jpeg" });
-    const fn = vi.fn().mockResolvedValue(jpegBlob);
-    vi.doMock("heic2any", () => ({ default: fn }));
+  it("takes the first image for a multi-image container and frees every returned image handle", async () => {
+    const freeFirst = vi.fn();
+    const freeSecond = vi.fn();
+    const display = vi.fn((_target, callback) => callback(false)); // fail fast, before the canvas step
+    const first = { get_width: () => 10, get_height: () => 10, display, free: freeFirst };
+    const second = { get_width: () => 10, get_height: () => 10, display: vi.fn(), free: freeSecond };
+    const HeifDecoder = vi.fn().mockImplementation(function () {
+      return { decode: vi.fn().mockReturnValue([first, second]) };
+    });
+    vi.doMock("libheif-js/wasm-bundle", () => ({ default: Promise.resolve({ HeifDecoder }) }));
 
     const { decodeHeicFileToJpegBlob } = await import("./heic-decode");
-    await decodeHeicFileToJpegBlob(file);
+    await expect(decodeHeicFileToJpegBlob(file)).rejects.toMatchObject({ stage: "decode" });
 
-    expect(fn).toHaveBeenCalledWith({
-      blob: file,
-      toType: "image/jpeg",
-      quality: RECEIPT_IMAGE_JPEG_QUALITY,
+    // Only the first image's display() is ever called...
+    expect(display).toHaveBeenCalledTimes(1);
+    expect(second.display).not.toHaveBeenCalled();
+    // ...but both handles are freed regardless of which one was used.
+    expect(freeFirst).toHaveBeenCalledTimes(1);
+    expect(freeSecond).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls display() with a correctly-shaped { data, width, height } target sized to the image dimensions", async () => {
+    const display = vi.fn((_target, callback) => callback(false));
+    const image = { get_width: () => 4, get_height: () => 3, display, free: vi.fn() };
+    const HeifDecoder = vi.fn().mockImplementation(function () {
+      return { decode: vi.fn().mockReturnValue([image]) };
     });
+    vi.doMock("libheif-js/wasm-bundle", () => ({ default: Promise.resolve({ HeifDecoder }) }));
+
+    const { decodeHeicFileToJpegBlob } = await import("./heic-decode");
+    await expect(decodeHeicFileToJpegBlob(file)).rejects.toMatchObject({ stage: "decode" });
+
+    expect(display).toHaveBeenCalledTimes(1);
+    const [target] = display.mock.calls[0];
+    expect(target.width).toBe(4);
+    expect(target.height).toBe(3);
+    expect(target.data).toBeInstanceOf(Uint8ClampedArray);
+    expect(target.data.length).toBe(4 * 3 * 4);
+  });
+
+  it("throws a HeicDecodeStageError tagged \"decode\" when display()'s callback fires with a falsy value", async () => {
+    const display = vi.fn((_target, callback) => callback(null));
+    const image = { get_width: () => 2, get_height: () => 2, display, free: vi.fn() };
+    const HeifDecoder = vi.fn().mockImplementation(function () {
+      return { decode: vi.fn().mockReturnValue([image]) };
+    });
+    vi.doMock("libheif-js/wasm-bundle", () => ({ default: Promise.resolve({ HeifDecoder }) }));
+
+    const { decodeHeicFileToJpegBlob, HeicDecodeStageError: ImportedError } = await import(
+      "./heic-decode"
+    );
+    await expect(decodeHeicFileToJpegBlob(file)).rejects.toBeInstanceOf(ImportedError);
+    await expect(decodeHeicFileToJpegBlob(file)).rejects.toMatchObject({ stage: "decode" });
+  });
+
+  it("throws a HeicDecodeStageError tagged \"decode\" when decoder.decode() itself throws", async () => {
+    const HeifDecoder = vi.fn().mockImplementation(function () {
+      return {
+        decode: vi.fn().mockImplementation(() => {
+          throw new Error("Could not parse HEIF file");
+        }),
+      };
+    });
+    vi.doMock("libheif-js/wasm-bundle", () => ({ default: Promise.resolve({ HeifDecoder }) }));
+
+    const { decodeHeicFileToJpegBlob } = await import("./heic-decode");
+    await expect(decodeHeicFileToJpegBlob(file)).rejects.toMatchObject({ stage: "decode" });
   });
 });
