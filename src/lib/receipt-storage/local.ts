@@ -1,7 +1,7 @@
 /**
  * LocalReceiptStorage adapter — DECISION-020.
  *
- * Used in local development when BLOB_READ_WRITE_TOKEN is absent.
+ * Used in local development and test (NODE_ENV !== "production" — DECISION-040).
  * Writes files under `.receipt-store/<key>` relative to the repo root.
  *
  * The `.receipt-store/` directory is gitignored so no receipt data ever

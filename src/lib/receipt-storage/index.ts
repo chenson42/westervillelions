@@ -1,11 +1,17 @@
 /**
- * Pluggable receipt storage interface — DECISION-020.
+ * Pluggable receipt storage interface — DECISION-020, adapter selection
+ * amended by DECISION-040.
  *
- * `getReceiptStorage()` selects the adapter at runtime based on the presence
- * of the BLOB_READ_WRITE_TOKEN environment variable:
+ * `getReceiptStorage()` selects the adapter at runtime based on NODE_ENV:
  *
- *   - BLOB_READ_WRITE_TOKEN set → VercelBlobStorage (production)
- *   - BLOB_READ_WRITE_TOKEN absent → LocalReceiptStorage (local dev / test)
+ *   - NODE_ENV === "production" → DatabaseReceiptStorage (Postgres, ledger_receipt_files)
+ *   - otherwise (development, test) → LocalReceiptStorage (.receipt-store/)
+ *
+ * No environment variable controls this selection, in production or
+ * anywhere else. NODE_ENV is platform-set (next build/next start, Vitest,
+ * Playwright, pnpm dev) rather than admin-configured, so it cannot be
+ * silently left unset the way BLOB_READ_WRITE_TOKEN was — that gap is what
+ * broke production receipt uploads before this change (see work-log intent).
  *
  * The interface stores an opaque `key` (pattern: receipts/<uuid>/<filename>).
  * The key is never a URL — the underlying storage location is never returned
@@ -14,7 +20,7 @@
  */
 
 import type { LocalReceiptStorage } from "./local";
-import type { VercelBlobStorage } from "./vercel-blob";
+import type { DatabaseReceiptStorage } from "./database";
 
 // ---------------------------------------------------------------------------
 // Shared key format
@@ -103,9 +109,9 @@ let _instance: ReceiptStorage | null = null;
 /**
  * Returns the singleton `ReceiptStorage` adapter for the current environment.
  *
- * Adapter selection:
- *   - `BLOB_READ_WRITE_TOKEN` present → `VercelBlobStorage` (never imported in local dev)
- *   - absent → `LocalReceiptStorage` (writes to `.receipt-store/` in repo root)
+ * Adapter selection (DECISION-040):
+ *   - `NODE_ENV === "production"` → `DatabaseReceiptStorage` (Postgres, ledger_receipt_files)
+ *   - otherwise → `LocalReceiptStorage` (writes to `.receipt-store/` in repo root)
  *
  * The instance is cached for the lifetime of the process. Call is synchronous
  * so callers do not need to await the factory.
@@ -113,27 +119,16 @@ let _instance: ReceiptStorage | null = null;
 export function getReceiptStorage(): ReceiptStorage {
   if (_instance) return _instance;
 
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    // Lazy synchronous require — avoids loading @vercel/blob in local dev.
-    // The dynamic require is intentional: the module is only present in
-    // production / CI where the Vercel runtime has installed it.
+  if (process.env.NODE_ENV === "production") {
+    // Lazy synchronous require — avoids loading @/lib/db (and opening a DB
+    // connection) in local dev / test, where NODE_ENV !== "production" and
+    // this branch never runs.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { VercelBlobStorage: VBS } = require("./vercel-blob") as {
-      VercelBlobStorage: new () => VercelBlobStorage;
+    const { DatabaseReceiptStorage: DRS } = require("./database") as {
+      DatabaseReceiptStorage: new () => DatabaseReceiptStorage;
     };
-    _instance = new VBS();
+    _instance = new DRS();
   } else {
-    // FU-6: Warn in production when BLOB_READ_WRITE_TOKEN is absent.
-    // LocalReceiptStorage writes to the function's ephemeral filesystem, which
-    // is destroyed on every cold start and redeployment. Without the token, all
-    // uploaded receipts will be permanently lost after the next deploy.
-    if (process.env.NODE_ENV === "production") {
-      console.warn(
-        "[receipt-storage] BLOB_READ_WRITE_TOKEN is not set in production. " +
-          "Falling back to LocalReceiptStorage — receipt files will be lost on redeployment. " +
-          "Set BLOB_READ_WRITE_TOKEN in your Vercel environment variables.",
-      );
-    }
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { LocalReceiptStorage: LRS } = require("./local") as {
       LocalReceiptStorage: new () => LocalReceiptStorage;

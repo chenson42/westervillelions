@@ -57,7 +57,7 @@ import { ledgerTransactions, ledgerFunds, ledgerCategories, ledgerDonors } from 
 import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
+import { RECEIPT_KEY_REGEX, getReceiptStorage } from "@/lib/receipt-storage";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
@@ -377,6 +377,17 @@ export async function PATCH(
         update.receiptWaiverReason = null;
       }
     }
+    // DECISION-040 defect fix (a): capture the previous receipt key so its bytes
+    // can be deleted after a successful remove/replace. Only fires when
+    // receiptStorageKey is actually changing to a *different* value than what's
+    // already stored — an idempotent resubmit of the same key must not delete
+    // the very bytes it's pointing at.
+    const oldReceiptKeyToDelete =
+      body.receiptStorageKey !== undefined &&
+      existing.receiptStorageKey &&
+      existing.receiptStorageKey !== update.receiptStorageKey
+        ? existing.receiptStorageKey
+        : null;
     // Link/unlink a donor (inc6a). Validate the donor exists before linking so
     // the LinkDonorDialog can't silently no-op against a bad id.
     if (body.donorId !== undefined) {
@@ -458,6 +469,26 @@ export async function PATCH(
         .update(ledgerTransactions)
         .set(update)
         .where(eq(ledgerTransactions.id, id));
+    }
+
+    // Best-effort cleanup, deliberately AFTER the DB write succeeds — the DB row
+    // is the source of truth for which key is "live"; only delete bytes once
+    // nothing references them anymore. (Differs from the acknowledgment-letter
+    // route's delete-BEFORE-save: that route is uploading new bytes in the same
+    // request, so it must free the old key before writing the new one; this
+    // route only ever receives an already-uploaded key, so there's no ordering
+    // hazard — deleting after is strictly safer here.) Non-fatal: an orphan is
+    // a recoverable data-hygiene issue, not worth failing the edit over.
+    if (oldReceiptKeyToDelete) {
+      try {
+        await getReceiptStorage().delete(oldReceiptKeyToDelete);
+      } catch (err) {
+        console.error(
+          "[transaction-receipt] Failed to delete old receipt key:",
+          oldReceiptKeyToDelete,
+          err,
+        );
+      }
     }
 
     return NextResponse.json({ id });

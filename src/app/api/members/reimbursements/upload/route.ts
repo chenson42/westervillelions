@@ -84,9 +84,9 @@ export async function POST(request: NextRequest) {
     const safeName = sanitizeFilename(file.name || "receipt");
     const key = `receipts/${uuid}/${safeName}`;
 
-    // Persist via the pluggable storage interface (DECISION-020)
+    // Persist via the pluggable storage interface (DECISION-020, DECISION-040)
     // In local dev: writes to .receipt-store/<key>
-    // In production: writes to Vercel Blob
+    // In production: writes bytes to the ledger_receipt_files Postgres table
     await getReceiptStorage().save(key, bytes, contentType);
 
     // Return the opaque key only — NOT a blob URL or filesystem path

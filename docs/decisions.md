@@ -28,6 +28,146 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-040: Receipt storage moves to Postgres — `DatabaseReceiptStorage` adapter, `NODE_ENV`-gated selection (no new required env var), `@vercel/blob` removed
+
+**Status:** Resolved
+**Date:** 2026-07-21
+
+**Decision:**
+
+Add a third `ReceiptStorage` adapter, `DatabaseReceiptStorage`, backed by a new
+dedicated table `ledger_receipt_files` (bytes live off the hot ledger/reimbursement/
+acknowledgment rows, keyed by the existing opaque `receipts/<uuid>/<name>` key —
+DECISION-020's key format is unchanged). `getReceiptStorage()`'s selection rule
+changes from "`BLOB_READ_WRITE_TOKEN` present → Blob" to:
+
+```
+process.env.NODE_ENV === "production" → DatabaseReceiptStorage
+otherwise (development, test)          → LocalReceiptStorage
+```
+
+**No new environment variable, in production or anywhere else.** `NODE_ENV` is
+platform-set by `next build`/`next start` (true on every Vercel-hosted deployment —
+Production *and* Preview, both of which share the same `DATABASE_URL` and neither
+of which has a writable persistent filesystem) and by Vitest/Playwright/`pnpm dev`
+for the other branch — never a value an operator manually configures per
+environment, so it cannot be silently left unset the way `BLOB_READ_WRITE_TOKEN`
+was. `LocalReceiptStorage` remains the zero-config dev/test adapter, and the
+factory's `.receipt-store/` path never activates in any Vercel-built runtime.
+
+`@vercel/blob` is dropped from `package.json`; `src/lib/receipt-storage/vercel-blob.ts`
+is deleted outright, not kept behind a dead branch. The external dependency,
+the token requirement, and the Hobby-plan Blob cap are fully eliminated, matching
+the user's stated decision.
+
+**Table shape** (`schema.ts` first, then an idempotent migration):
+
+```ts
+export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() { return "bytea"; },
+});
+
+export const ledgerReceiptFiles = pgTable("ledger_receipt_files", {
+  key: text("key").primaryKey(),               // receipts/<uuid>/<name> — DECISION-020 format
+  contentType: text("content_type").notNull(),
+  bytes: bytea("bytes").notNull(),
+  byteSize: integer("byte_size").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+```
+
+This is the first use of Drizzle's `customType` in this codebase (no prior binary
+column exists); it is not a new dependency — `customType` ships in `drizzle-orm/pg-core`,
+already installed. A separate table (not a `bytea` column inline on
+`ledger_transactions` / `ledger_reimbursements` / `ledger_acknowledgments`) keeps
+those hot, frequently-`SELECT *`'d tables narrow — same reasoning that already
+produced `ledgerFilings`, `ledgerReconciliationMatches`, etc. as side tables rather
+than columns bolted onto a busy parent. Naming follows the `ledger_*` family since
+100% of current consumers (ledger transactions, reimbursements, acknowledgment
+letters) are Ledger-domain features. No `CHECK` constraint on `key`'s format,
+consistent with this codebase's precedent of validating enum/pattern-shaped
+columns at the app layer only (`ledger_transactions.status`, `ledger_reimbursements.status`).
+10 MB receipts are trivial for Postgres `bytea`/TOAST and for `postgres.js`'s
+message handling — no config changes needed.
+
+`DatabaseReceiptStorage.save()` is `INSERT ... ON CONFLICT (key) DO UPDATE SET
+content_type = excluded.content_type, bytes = excluded.bytes, byte_size =
+excluded.byte_size` — preserves the interface's upsert semantics (matches Blob's
+`allowOverwrite: true`, Local's unconditional `writeFileSync`). `read()` returns
+`null` on a missing key (never throws); `delete()` is a no-op on a missing key
+(never throws). The `ReceiptStorage` interface itself does not change.
+
+**Two pre-existing defects are folded into this work, not deferred:**
+
+1. **Orphan-bytes on receipt remove/replace** — `src/app/api/admin/ledger/transactions/[id]/route.ts`
+   (~line 355) nulls `receiptStorageKey` without calling `getReceiptStorage().delete()`
+   on the old key. Harmless under disposable Blob storage; becomes permanent,
+   unbounded row growth inside the primary database once bytes live in Postgres.
+   The acknowledgment-letter route already deletes-then-saves correctly — this
+   fix makes the transaction-receipt path match the codebase's own established
+   pattern. In scope for Phase 4, on the exact file this change touches.
+2. **Byte-corruption guard adoption gap** — `receiptBytesToBodyInit()` is only
+   called by 2 of 4 read routes; `acknowledgments/[id]/letter/route.ts` (line 77)
+   and `members/reimbursements/[id]/receipt/route.ts` (line 50) still do the
+   unguarded `stored.bytes.buffer` pattern. This project's DB driver is
+   `postgres.js` (`drizzle-orm/postgres-js`), not `pg`/node-postgres — `postgres.js`
+   decodes `bytea` via `Buffer.from(hexString, "hex")`, which is subject to the
+   same small-allocation pooling behavior as `fs.readFileSync` (nonzero
+   `byteOffset` into a shared pool ArrayBuffer for buffers under
+   `Buffer.poolSize >> 1`). The exact bug class the guard exists for is reachable
+   again on the new byte source, not just theoretically. Both remaining call
+   sites route through `receiptBytesToBodyInit()` as part of this work, before
+   the byte source changes underneath them.
+
+Both are small, sit directly on files this change already modifies, and get
+strictly worse (defect 1) or newly live again (defect 2) as a direct result of
+the byte-source swap — bundled here rather than spun into separate bug-fix
+work-log entries.
+
+**Rationale:**
+
+The user's whole motivation is eliminating a required-env-var-in-production
+footgun (`BLOB_READ_WRITE_TOKEN` unset → silent fallback to `LocalReceiptStorage`
+→ `fs.writeFileSync` on Vercel's read-only FS → 500 on every receipt upload).
+`DATABASE_URL` is present in every environment, so naive "DB present → DB adapter"
+logic was considered and rejected — it would force the DB adapter into local dev
+and any future test that calls the factory, killing the zero-config `.receipt-store/`
+dev experience and risking real network+DB round-trips in unit tests. An explicit
+opt-in var (e.g. `RECEIPT_STORAGE=database`) was also rejected — it reintroduces
+the exact same footgun class it's meant to replace: a manually-set flag that can
+be forgotten, and forgetting it would silently reselect `LocalReceiptStorage` in
+production, breaking uploads in exactly the way that triggered this work. Dropping
+`LocalReceiptStorage` entirely (DB always) was rejected too — it would require a
+reachable `DATABASE_URL` before any local contributor or CI run could exercise
+receipts, with no adapter this project has ever built to mock that boundary.
+`NODE_ENV === "production"` is the only signal that is both automatic (never a
+human's job to set) and precisely correlated with "no persistent writable
+filesystem is available" — which is the actual constraint driving adapter choice,
+not the vaguer "are we in prod."
+
+**Impact:**
+- New: `src/lib/receipt-storage/database.ts` (`DatabaseReceiptStorage`).
+- Removed: `src/lib/receipt-storage/vercel-blob.ts`; `@vercel/blob` dropped from `package.json`.
+- `src/lib/receipt-storage/index.ts`: factory selection rule changes to the
+  `NODE_ENV` check above; the FU-6 "warn in production, falling back to Local"
+  log line is removed (Local can no longer be selected in production).
+- `schema.ts` gains `bytea` customType export + `ledgerReceiptFiles` table; a new
+  idempotent migration adds `CREATE TABLE IF NOT EXISTS ledger_receipt_files (...)`.
+- `src/app/api/admin/ledger/transactions/[id]/route.ts`: Flow D gains a
+  `getReceiptStorage().delete(oldKey)` call.
+- `src/app/api/admin/ledger/acknowledgments/[id]/letter/route.ts` and
+  `src/app/api/members/reimbursements/[id]/receipt/route.ts`: route reads through
+  `receiptBytesToBodyInit()`.
+- No data migration — no existing production receipts to move (user-confirmed;
+  uploads have been failing since v1.31 shipped).
+- No `FEATURES` change — this is a backend adapter swap, permissions are
+  unaffected.
+- Refines DECISION-020 (adapter selection rule and adapter roster both change;
+  the `ReceiptStorage` interface and opaque-key/proxy-route model are unchanged
+  and remain authoritative).
+
+---
+
 ## DECISION-039: HEIC WASM decoder swap — `libheif-js` (`wasm-bundle` subpath) replaces `heic2any`, main-thread decode, no `next.config.ts` change
 
 **Status:** Resolved

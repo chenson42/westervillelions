@@ -186,7 +186,6 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 - `GOOGLE_GROUPS_CLIENT_SECRET` - OAuth client secret for Group sync
 - `GOOGLE_GROUPS_REFRESH_TOKEN` - Refresh token used by Group sync (domain-wide delegation)
 - `GOOGLE_ADMIN_EMAIL` - Workspace admin address used as the impersonation subject for Group sync
-- `BLOB_READ_WRITE_TOKEN` - Vercel Blob token for reimbursement receipt storage (The Ledger). **Required in production** or receipts fall back to the ephemeral local filesystem and are lost on redeploy. Absent locally → zero-config `LocalReceiptStorage` adapter (`.receipt-store/`). See DECISION-020 (supersedes DECISION-018).
 
 ## Database Migrations
 

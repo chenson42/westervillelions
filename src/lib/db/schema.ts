@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, varchar, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, varchar, customType, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -1071,3 +1071,35 @@ export const failedLoginAttempts = pgTable(
 
 export type FailedLoginAttempt = typeof failedLoginAttempts.$inferSelect;
 export type NewFailedLoginAttempt = typeof failedLoginAttempts.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Receipt Storage in the Database — DECISION-040
+// Bytes for ledger transaction receipts, reimbursement receipts, and
+// acknowledgment letters, keyed by the existing opaque
+// `receipts/<uuid>/<name>` / `acknowledgments/<uuid>/<name>` key (DECISION-020
+// format, unchanged). Deliberately a side table, not a bytea column on
+// ledger_transactions/ledger_reimbursements/ledger_acknowledgments — keeps
+// those hot, frequently-SELECT *'d rows narrow (same reasoning that produced
+// ledger_filings, ledger_reconciliation_matches, etc. as side tables).
+// created_at is NOT re-stamped on ON CONFLICT DO UPDATE (see
+// DatabaseReceiptStorage.save()) — first-write-wins for the timestamp,
+// deliberate per architect Suggestion.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** First binary column in this schema. driverData/data both Buffer — postgres.js decodes bytea to Buffer natively, no custom to/fromDriver mapping needed. */
+export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+export const ledgerReceiptFiles = pgTable("ledger_receipt_files", {
+  key: text("key").primaryKey(), // receipts/<uuid>/<name> or acknowledgments/<uuid>/<name> — DECISION-020 format
+  contentType: text("content_type").notNull(),
+  bytes: bytea("bytes").notNull(),
+  byteSize: integer("byte_size").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type LedgerReceiptFile = typeof ledgerReceiptFiles.$inferSelect;
+export type NewLedgerReceiptFile = typeof ledgerReceiptFiles.$inferInsert;

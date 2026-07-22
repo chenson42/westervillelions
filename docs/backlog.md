@@ -169,3 +169,18 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   that format (e.g., a downscaled photo taken specifically for this purpose, or ffmpeg/libheif-cli
   generated 10-bit output) and add it to `e2e/fixtures/heic/` with a decode e2e case, so a future
   decoder regression on modern files fails in CI instead of in production.
+
+- [ ] **B-11 — Live HTTP round-trip test for the acknowledgment-letter view route's byte guard.**
+  (added 2026-07-21, priority: nice-to-have) In `2026-07-21-receipt-storage-in-database.md`, the
+  `receiptBytesToBodyInit()` fix on `acknowledgments/[id]/letter` GET was verified only by
+  code-identity argument (same two-line change already proven live on two other routes), not a
+  live authenticated HTTP round-trip — it needs an ack-gift + letter-upload fixture. Low risk;
+  close it when the ack-acknowledgment e2e fixtures exist.
+
+- [ ] **B-12 — CI tripwire for "storage adapter silently wrong in production."**
+  (added 2026-07-21, priority: should-do) The Vercel-Blob-token bug (and its DB replacement) both
+  hinge on `getReceiptStorage()` picking the right adapter by environment. There's no automated
+  guard that a production-mode build actually round-trips a receipt through the intended backend —
+  the class of bug that reached production twice now (missing token → read-only FS write). Consider
+  a smoke test that boots the app under `NODE_ENV=production` against an ephemeral DB and asserts an
+  upload→view→delete cycle, so an adapter-selection regression fails in CI, not in production.

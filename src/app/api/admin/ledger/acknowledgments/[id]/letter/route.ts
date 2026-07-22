@@ -22,7 +22,7 @@ import { FEATURES } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { ledgerAcknowledgments } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { getReceiptStorage } from "@/lib/receipt-storage";
+import { getReceiptStorage, receiptBytesToBodyInit } from "@/lib/receipt-storage";
 import { validateMagicBytes } from "@/lib/receipt-magic-bytes";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -74,12 +74,12 @@ export async function GET(
       return NextResponse.json({ error: "Letter file not found in storage" }, { status: 404 });
     }
 
-    return new Response(stored.bytes.buffer as ArrayBuffer, {
+    return new Response(receiptBytesToBodyInit(stored.bytes), {
       status: 200,
       headers: {
         "Content-Type": stored.contentType,
         "Content-Disposition": "inline",
-        "Content-Length": stored.bytes.length.toString(),
+        "Content-Length": stored.bytes.byteLength.toString(),
         "Cache-Control": "no-store, no-cache, must-revalidate",
       },
     });

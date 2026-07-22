@@ -187,9 +187,11 @@ describe("validateMagicBytes", () => {
 // Note: getReceiptStorage() factory is not directly unit-testable in this Vitest
 // configuration because it uses synchronous require() which cannot resolve relative
 // modules in the ESM test environment. Factory behavior is verified by:
-//   1. Local dev: BLOB_READ_WRITE_TOKEN absent → LocalReceiptStorage used (manual smoke)
+//   1. Local dev/test: NODE_ENV !== "production" → LocalReceiptStorage used (DECISION-040)
 //   2. The LocalReceiptStorage class itself is fully tested above
-//   3. The upload route integration is verified via dev-server smoke test in QA Phase 5
+//   3. The DatabaseReceiptStorage class is fully tested in database.test.ts
+//   4. The NODE_ENV === "production" branch is verified via `next start` smoke
+//      test in QA Phase 5 (see work-log 2026-07-21-receipt-storage-in-database.md)
 
 // ---------------------------------------------------------------------------
 // RECEIPT_KEY_REGEX (DECISION-035 — hoisted shared export)

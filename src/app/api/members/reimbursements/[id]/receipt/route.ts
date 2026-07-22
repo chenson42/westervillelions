@@ -18,7 +18,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getReimbursement } from "@/lib/ledger-queries";
-import { getReceiptStorage } from "@/lib/receipt-storage";
+import { getReceiptStorage, receiptBytesToBodyInit } from "@/lib/receipt-storage";
 
 export async function GET(
   _request: NextRequest,
@@ -47,12 +47,12 @@ export async function GET(
       return NextResponse.json({ error: "Receipt file not found" }, { status: 404 });
     }
 
-    return new Response(stored.bytes.buffer as ArrayBuffer, {
+    return new Response(receiptBytesToBodyInit(stored.bytes), {
       status: 200,
       headers: {
         "Content-Type": stored.contentType,
         "Content-Disposition": "inline",
-        "Content-Length": stored.bytes.length.toString(),
+        "Content-Length": stored.bytes.byteLength.toString(),
         "Cache-Control": "no-store, no-cache, must-revalidate",
       },
     });
