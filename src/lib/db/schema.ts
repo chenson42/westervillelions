@@ -37,6 +37,10 @@ export const members = pgTable("members", {
   joinDate: timestamp("join_date"),
   membershipEndedDate: date("membership_ended_date"),
   isActive: boolean("is_active").notNull().default(true),
+  // 'prospective' | 'active' | 'ended' — server-derived isActive = (membershipStatus === 'active')
+  // via isActiveForStatus() in src/lib/members.ts; no route accepts client-submitted isActive.
+  // No DB CHECK constraint — consistent with ledger_transactions.status pattern (DECISION-041).
+  membershipStatus: text("membership_status").notNull().default("active"),
   duesCategory: text("dues_category").notNull().default("individual"), // 'individual' | 'family'
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

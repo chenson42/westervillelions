@@ -15,7 +15,9 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-26 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-26 |
 | 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-26 |
-| 4 — Implementation | database-admin → api-developer → ux-developer | Pending | — | — |
+| 4 — Implementation (schema) | database-admin | Complete | — | 2026-07-26 |
+| 4 — Implementation (server) | api-developer | Pending | — | — |
+| 4 — Implementation (client) | ux-developer | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -472,24 +474,41 @@ No new pages. Files to modify:
 
 ---
 
-# Phase 4 — Implementation
+# Phase 4 — Implementation (schema) — 2026-07-26
 
-## Files Created
+**Owner:** database-admin
+**Status:** complete
 
-- `path/to/file` — purpose
+### Summary
 
-## Files Modified
+Added `members.membershipStatus` (`prospective | active | ended`, `text`, `NOT NULL DEFAULT 'active'`) directly below the existing `isActive` column in `src/lib/db/schema.ts`, per the Phase 3 design's exact column definition. `isActive` is untouched — still a stored boolean, still defaults to `true` — and remains the application's job to keep derived (`isActiveForStatus()`, api-developer's next step). Migration `0061_members_membership_status.sql` adds the column idempotently and backfills existing `is_active = false` rows to `'ended'`. No CHECK constraint, per DECISION-041.
 
-- `path/to/file` — what changed
+### What I did
 
-## Schema Changes
+- Added `membershipStatus: text("membership_status").notNull().default("active")` to the `members` table in `src/lib/db/schema.ts`, immediately after the existing `isActive` line, with an inline comment pointing to `isActiveForStatus()` (api-developer's upcoming helper in `src/lib/members.ts`) and to DECISION-041 for the no-CHECK-constraint rationale.
+- Confirmed `0060_ledger_receipt_files.sql` is the current highest migration (`ls drizzle/migrations/*.sql | sort | tail`), so `0061` is correct and uncollided.
+- Wrote `drizzle/migrations/0061_members_membership_status.sql`:
+  - `ALTER TABLE members ADD COLUMN IF NOT EXISTS membership_status text NOT NULL DEFAULT 'active';`
+  - Backfill: `UPDATE members SET membership_status = 'ended' WHERE is_active = false AND membership_status <> 'ended';` — idempotent (no-op on re-run once every `is_active=false` row already reads `'ended'`).
+  - No CHECK constraint, matching DECISION-041 and the `ledger_transactions.status` / `ledger_reimbursements.status` / `ledger_filings.status` precedent already in `schema.ts`.
+- Did not touch application logic, routes, `src/lib/members.ts`, `src/lib/google-groups.ts`, roster scripts, or any UI — those are api-developer's and ux-developer's steps per the Phase 3 implementation order.
+- Ran `pnpm install` (node_modules was absent in this environment) then `pnpm exec tsc --noEmit` — **PASS, zero errors**.
+- Did **not** run `pnpm db:migrate` or `pnpm db:push` against any live database, per instructions — that's deferred to whoever next has `.env.local` access and should be done before/alongside api-developer's work. The Phase 3 design's manual backfill spot-check ("every row where `is_active = false` reads `membership_status = 'ended'` after migration") is still an open verification step against the real dev DB.
 
-- [Tables / columns added, or "none"]
-- Migration file: `drizzle/migrations/NNNN_*.sql` (idempotent)
+### Outputs
 
-## Implementer Notes
+- `src/lib/db/schema.ts` — `members` table, new `membershipStatus` column (see diff: line ~39-43, right after `isActive`).
+- `drizzle/migrations/0061_members_membership_status.sql` — new file, two idempotent statements (`ADD COLUMN IF NOT EXISTS` + guarded `UPDATE` backfill), no CHECK constraint (DECISION-041).
+- Tables affected: `members` only.
+- No role bindings or feature-key seed rows — this feature introduces no new `FEATURES.*` key (confirmed by architect and tech-lead).
+- Local apply command (not run by me): `export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate`, then `pnpm db:push` (schema.ts also changed).
 
-[Tradeoffs taken, anything that diverged from the design and why.]
+### Open questions / handoff notes
+
+- **New column available to api-developer:** `members.membershipStatus: string` (`"prospective" | "active" | "ended"` at the app layer, `text` in the DB, default `"active"`). `members.isActive` unchanged in shape — still `boolean`, still `notNull().default(true)` — but its *meaning going forward* is "derived from `membershipStatus`," which api-developer's helpers (`isActiveForStatus`, `shouldProvisionOnMemberCreate`, `shouldProvisionOnMemberUpdate`, `resolveJoinDate` in `src/lib/members.ts`) must enforce on every write path — no route should accept a client-submitted `isActive` anymore.
+- Foreign keys/relationships: none new — this is a plain column add on an existing table, no new FK.
+- **Next agent: api-developer**, per Phase 3's implementation order: build `src/lib/members.ts` helpers + `src/lib/members.test.ts`, update `src/lib/google-groups.ts` (`isEligibleForClubList` + `syncClubMembersList` query change) + `src/lib/google-groups.test.ts`, wire `POST`/`PATCH /api/admin/members`, add the `approve_prospective` branch to `PATCH /api/admin/membership-applications/[id]`, and fix `scripts/import-roster.ts` / `scripts/sync-roster.ts` to set `membershipStatus` alongside `isActive` (flagged by both architect and tech-lead as a real drift risk if skipped).
+- **Before api-developer's work lands in a real environment**, someone with `.env.local` access should run `pnpm db:migrate` (or `pnpm dev`, which replays migrations on startup) and spot-check the backfill: every pre-existing `is_active = false` row should now read `membership_status = 'ended'`, everything else `'active'`. I did not have/use a live `DATABASE_URL` in this session, so this manual verification step (called out explicitly in the Phase 3 design) is still outstanding.
 
 ---
 
