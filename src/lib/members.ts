@@ -16,6 +16,63 @@ import { sendEmail } from "@/lib/email";
 import crypto from "crypto";
 
 // ---------------------------------------------------------------------------
+// Membership status — pure helpers (no DB calls; unit-testable)
+//
+// Invariant (DECISION-041 / Phase 3 design, docs/work-log/2026-07-26-prospective-members.md):
+// isActive is a fully derived value: isActive === (membershipStatus === 'active').
+// No route may accept a client-submitted isActive — it is always computed here.
+// ---------------------------------------------------------------------------
+
+export type MembershipStatus = "prospective" | "active" | "ended";
+
+/** The single source of truth for the isActive/membershipStatus invariant. */
+export function isActiveForStatus(status: MembershipStatus): boolean {
+  return status === "active";
+}
+
+/** POST /api/admin/members gate: provision only when creating an active member. */
+export function shouldProvisionOnMemberCreate(status: MembershipStatus): boolean {
+  return status === "active";
+}
+
+/**
+ * PATCH /api/admin/members/[id] gate — unifies two previously-separate concerns
+ * into one condition:
+ *   (a) the pre-existing "defensive: email changed, no linked user" case, now
+ *       correctly restricted to landing-as-active only (closes the bug where
+ *       editing a prospect's email would silently provision them a login), and
+ *   (b) the new induction case: status transitions to 'active' with no linked
+ *       user, regardless of whether the email changed in the same request.
+ * Never provisions on a transition INTO 'active' if a user is already linked
+ * (re-affirm the link instead — provisionUserForMember already does that).
+ */
+export function shouldProvisionOnMemberUpdate(input: {
+  previousStatus: MembershipStatus;
+  newStatus: MembershipStatus;
+  hasLinkedUser: boolean;
+  emailChanged: boolean;
+}): boolean {
+  if (input.newStatus !== "active" || input.hasLinkedUser) return false;
+  const becameActive = input.previousStatus !== "active" && input.newStatus === "active";
+  return input.emailChanged || becameActive;
+}
+
+/**
+ * joinDate rule (decision #8): set at transition-to-active if still null.
+ * An explicit admin-submitted joinDate always wins. `now` is injectable for tests.
+ */
+export function resolveJoinDate(input: {
+  becameActive: boolean;
+  existingJoinDate: Date | null;
+  submittedJoinDate: Date | null;
+  now?: Date;
+}): Date | null {
+  if (input.submittedJoinDate) return input.submittedJoinDate;
+  if (input.becameActive && !input.existingJoinDate) return input.now ?? new Date();
+  return input.existingJoinDate;
+}
+
+// ---------------------------------------------------------------------------
 // Welcome email
 // ---------------------------------------------------------------------------
 

@@ -16,7 +16,7 @@
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-26 |
 | 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-26 |
 | 4 — Implementation (schema) | database-admin | Complete | — | 2026-07-26 |
-| 4 — Implementation (server) | api-developer | Pending | — | — |
+| 4 — Implementation (server) | api-developer | Complete | — | 2026-07-26 |
 | 4 — Implementation (client) | ux-developer | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
@@ -509,6 +509,80 @@ Added `members.membershipStatus` (`prospective | active | ended`, `text`, `NOT N
 - Foreign keys/relationships: none new — this is a plain column add on an existing table, no new FK.
 - **Next agent: api-developer**, per Phase 3's implementation order: build `src/lib/members.ts` helpers + `src/lib/members.test.ts`, update `src/lib/google-groups.ts` (`isEligibleForClubList` + `syncClubMembersList` query change) + `src/lib/google-groups.test.ts`, wire `POST`/`PATCH /api/admin/members`, add the `approve_prospective` branch to `PATCH /api/admin/membership-applications/[id]`, and fix `scripts/import-roster.ts` / `scripts/sync-roster.ts` to set `membershipStatus` alongside `isActive` (flagged by both architect and tech-lead as a real drift risk if skipped).
 - **Before api-developer's work lands in a real environment**, someone with `.env.local` access should run `pnpm db:migrate` (or `pnpm dev`, which replays migrations on startup) and spot-check the backfill: every pre-existing `is_active = false` row should now read `membership_status = 'ended'`, everything else `'active'`. I did not have/use a live `DATABASE_URL` in this session, so this manual verification step (called out explicitly in the Phase 3 design) is still outstanding.
+
+---
+
+# Phase 4 — Implementation (server) — 2026-07-26
+
+**Owner:** api-developer
+**Status:** complete
+
+### Summary
+
+Built exactly to the Phase 3 API contract: added the four pure helpers (`isActiveForStatus`, `shouldProvisionOnMemberCreate`, `shouldProvisionOnMemberUpdate`, `resolveJoinDate`) to `src/lib/members.ts`; added `isEligibleForClubList`/`CLUB_LIST_ELIGIBLE_STATUSES` to `src/lib/google-groups.ts` and switched `syncClubMembersList()`'s query from `isActive = true` to the explicit allow-list; wired `membershipStatus` (server-derives `isActive`, never trusts client input) into `POST`/`PATCH /api/admin/members`; added the `approve_prospective` action plus the `approve`-branch `syncClubMembersList` bug fix and a new duplicate-email guard to `PATCH /api/admin/membership-applications/[id]`; and updated both roster scripts to keep `membershipStatus` in sync with `isActive`. All named unit tests are written and passing.
+
+### What I did
+
+- `src/lib/members.ts` — added `MembershipStatus` type and the four pure helpers verbatim per the Phase 3 design (no DB calls). No changes to `provisionUserForMember`.
+- `src/lib/members.test.ts` (new) — 17 tests: `isActiveForStatus` (3 cases), `shouldProvisionOnMemberCreate` (3 cases), `shouldProvisionOnMemberUpdate` (7 cases, including the induction gap, the prospect-email-change non-bug, and the ended→active reactivation case), `resolveJoinDate` (4 cases). Mocks `@/lib/db` (same pattern as `permissions-server.test.ts`) since `members.ts` transitively imports it via `provisionUserForMember`'s dependencies.
+- `src/lib/google-groups.ts` — added `CLUB_LIST_ELIGIBLE_STATUSES` (`["active", "prospective"]`) and `isEligibleForClubList()`; changed `syncClubMembersList()`'s query from `and(eq(members.isActive, true))` to `inArray(members.membershipStatus, CLUB_LIST_ELIGIBLE_STATUSES)` (explicit allow-list, not a negation, per the architect's ruling). `syncGoogleGroup()` (per-committee sync) is untouched — confirmed out of scope per the Phase 1 analyst's note.
+- `src/lib/google-groups.test.ts` (new) — 4 tests: `isEligibleForClubList` for `active`/`prospective`/`ended`, plus a sanity check that the allow-list is exactly `["active", "prospective"]`. Mocks `@/lib/db`.
+- `POST /api/admin/members` — accepts `membershipStatus` (validated against the 3 allowed values, defaults to `"active"` if omitted/invalid, matching today's checkbox-defaulted-true behavior); `isActive` is now always `isActiveForStatus(membershipStatus)`, never client-trusted; `provisionUserForMember` gated by `shouldProvisionOnMemberCreate`; `joinDate` set per the design's exact formula (prospects get `null`, active creates get submitted-or-now); response omits `userLinked` entirely for a skipped-provisioning create (was previously always present).
+- `PATCH /api/admin/members/[id]` — same `membershipStatus`→`isActive` derivation (falls back to the existing status if the client omits/sends an invalid value, rather than silently defaulting to `"active"` — a deliberate deviation from POST's default, since an edit without an explicit status change shouldn't reactivate someone); replaced the old "email changed + no linked user" defensive block with the unified `shouldProvisionOnMemberUpdate` gate (now covers induction and reactivation, and correctly *skips* provisioning a prospect whose email changes); `joinDate` now runs through `resolveJoinDate`; the existing `users.isActive` sync block (`activeChanged`) is untouched, so active→prospective/ended still locks portal login for free.
+- `PATCH /api/admin/membership-applications/[id]` — `action` now accepts `"approve" | "approve_prospective" | "reject"` (400 on anything else); added a case-insensitive duplicate-email guard (409) before either approve branch — this route previously had none at all; `approve` now also fires `syncClubMembersList` (the named bug fix — it was simply missing before); new `approve_prospective` branch inserts `membershipStatus: "prospective"`, `isActive: false`, `joinDate: null`, does **not** call `provisionUserForMember`, and fires the same fire-and-forget sync.
+- `scripts/import-roster.ts` (line ~118) and `scripts/sync-roster.ts` (4 call sites) — both now compute `membershipStatus` (`"active"` or `"ended"` — no prospective signal exists in either roster source, matching the migration's own backfill rule) and pass it alongside `isActive` on every insert/update, closing the drift risk both the architect and tech-lead flagged.
+- Did not touch: `src/app/members/page.tsx` (directory query), `member-form.tsx`, `application-action-buttons.tsx`, `admin/members/page.tsx` (badge/filter), `member-search.tsx`, `member-directory.tsx` — all explicitly ux-developer's step per the Phase 3 implementation order.
+
+### Outputs
+
+**Files changed:**
+- `src/lib/members.ts` — added `MembershipStatus`, `isActiveForStatus`, `shouldProvisionOnMemberCreate`, `shouldProvisionOnMemberUpdate`, `resolveJoinDate`.
+- `src/lib/members.test.ts` — new, 17 tests.
+- `src/lib/google-groups.ts` — added `CLUB_LIST_ELIGIBLE_STATUSES`, `isEligibleForClubList`; changed `syncClubMembersList()` query.
+- `src/lib/google-groups.test.ts` — new, 4 tests.
+- `src/app/api/admin/members/route.ts` — `POST` handler.
+- `src/app/api/admin/members/[id]/route.ts` — `PATCH` handler.
+- `src/app/api/admin/membership-applications/[id]/route.ts` — `PATCH` handler, new `approve_prospective` action, sync-on-approve fix, duplicate-email guard.
+- `scripts/import-roster.ts`, `scripts/sync-roster.ts` — `membershipStatus` mapping added alongside `isActive`.
+
+**API contracts for the next agent:**
+
+| Route / function | Auth + gate | Request | Response |
+|---|---|---|---|
+| `POST /api/admin/members` | `auth()` + `FEATURES.MEMBERS_EDIT` | Body drops `isActive`, adds `membershipStatus?: "prospective" \| "active" \| "ended"` (default `"active"`) | `201 { ...member, userLinked?: "created" \| "existing" }` — `userLinked` is **absent** (not `undefined` in a visible sense, but omitted from the JSON) when the create was prospective. UI must not assume it's always present. |
+| `PATCH /api/admin/members/[id]` | `auth()` + `FEATURES.MEMBERS_EDIT` | Body drops `isActive`, adds `membershipStatus?: "prospective" \| "active" \| "ended"` (falls back to the existing status if omitted/invalid — no default-to-active) | `200 <updated member>`, now includes `membershipStatus` |
+| `PATCH /api/admin/membership-applications/[id]` | `auth()` + `FEATURES.MEMBERSHIP_MANAGE` | `{ action: "approve" \| "approve_prospective" \| "reject", adminNotes? }` | `200 { success: true }` on success; `400` invalid action; `404` application not found; `409` duplicate email (new — applies to both approve branches) |
+| `isActiveForStatus`, `shouldProvisionOnMemberCreate`, `shouldProvisionOnMemberUpdate`, `resolveJoinDate` | n/a (pure) | see `src/lib/members.ts` | — |
+| `isEligibleForClubList`, `CLUB_LIST_ELIGIBLE_STATUSES` | n/a (pure) | see `src/lib/google-groups.ts` | — |
+
+- Schema changes: none — `membershipStatus` column already landed in Phase 4 (schema). No new migration.
+- No new `FEATURES.*` key (confirmed, matches Phase 2/3 rulings).
+
+### Test results
+
+- `pnpm exec tsc --noEmit` — **PASS**, zero errors.
+- `pnpm test` — **PASS**, 480/480 tests across 17 files (17 new in `members.test.ts` + 4 new in `google-groups.test.ts` = 21 new; 459 pre-existing, all still green).
+- `pnpm lint` — **could not run**: this sandbox's ESLint install is broken independent of this change (`ESLint: 9.39.2` crashes at startup with `SyntaxError: The requested module 'minimatch' does not provide an export named 'default'`, inside `@eslint/eslintrc`'s `override-tester.js` — a pnpm/ESM interop issue in `node_modules`, not a lint finding). Flagging for deployment-engineer/qa to confirm in an environment with a working `node_modules`; not something this change caused or can fix from application code.
+- `pnpm build:only` — **partially verified**: Turbopack compiled successfully and `next build`'s own internal TypeScript pass ("Finished TypeScript") succeeded with no errors. The build then failed at the "Collecting page data" step with `Error: DATABASE_URL or DB_URL environment variable is not set` — this sandbox has no `.env.local` / live `DATABASE_URL`, a pre-existing environment limitation (confirmed via `env | grep DATABASE_URL` returning nothing) affecting every route that touches `@/lib/db` at page-data-collection time, not specific to this feature. Compilation + typecheck stages passing is the strongest signal available in this sandbox that the change is build-clean; qa/deployment-engineer should re-run the full `pnpm build:only` against a real `DATABASE_URL` before ship.
+
+### Deviations from the design
+
+- None functionally. One clarified interpretation: the design's PATCH contract doesn't explicitly state what happens if `membershipStatus` is omitted or invalid on an edit. I chose "fall back to the existing status" rather than "default to active" (which is POST's rule) — defaulting an edit-without-a-status-field to `"active"` would silently reactivate an ended/prospective member on any edit that forgets to include the field, which is a worse failure mode than a no-op. Flagging explicitly since it's not spelled out verbatim in the Phase 3 doc.
+
+### Open questions / handoff notes
+
+- **Next agent: ux-developer**, per the Phase 3 implementation order (step 3). Needs to build:
+  - `src/components/admin/member-form.tsx` — replace the "Active Member" checkbox with a 3-option `membershipStatus` control; stop submitting `isActive`.
+  - `src/components/admin/application-action-buttons.tsx` — third button for `approve_prospective`.
+  - `src/app/(dashboard)/admin/members/page.tsx` — third badge state + filter branch for `prospective`/`ended`.
+  - `src/components/admin/member-search.tsx` — new filter `<option>`s.
+  - `src/app/members/page.tsx` — directory query switches to `inArray(members.membershipStatus, ["active", "prospective"])` (import `inArray`); `membersWithTags` gains `membershipStatus`.
+  - `src/components/members/member-directory.tsx` — `Member` interface gains `membershipStatus`; render a "Prospective" pill.
+- **Response-shape gotcha for the UI to grep for:** any existing code reading `response.userLinked` after `POST /api/admin/members` must handle it being absent for a prospective create (Phase 3's own flagged risk — I did not find any current UI usage during this pass, but ux-developer should re-grep once building the form).
+- **`pnpm lint` and full `pnpm build:only` verification are still outstanding** in a working environment — see Test results above. Not a code defect from this change; flagging so qa doesn't assume these were skipped for a bad reason.
+- **Manual backfill spot-check** (every pre-existing `is_active = false` row now reads `membership_status = 'ended'`) is still outstanding per database-admin's Phase 4 note — nobody in this pipeline has yet run `pnpm db:migrate` against a live DB.
+- Confirmed no `console.log` added in any production path (only pre-existing `console.error`/`console.warn` patterns reused, consistent with the rest of `google-groups.ts` and the members routes).
+- Confirmed no native browser dialogs touched (server-only work).
 
 ---
 

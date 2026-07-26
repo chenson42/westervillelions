@@ -47,6 +47,11 @@ async function syncRoster(filePath: string) {
     const branch = row["Branch"] || null;
     const phone = row["telephone"] || null;
     const isActive = row["Status"] === "Active Member";
+    // membershipStatus mirrors isActive here — this roster has no "prospective"
+    // signal, so a not-active row maps to "ended" (matches the migration 0061
+    // backfill rule). Keep both columns in sync — see isActiveForStatus() in
+    // src/lib/members.ts and docs/work-log/2026-07-26-prospective-members.md.
+    const membershipStatus: "active" | "ended" = isActive ? "active" : "ended";
     const joinDate = parseDate(row["Start Date"]);
 
     if (!rawEmail || !rawName) continue;
@@ -88,6 +93,7 @@ async function syncRoster(filePath: string) {
               branch,
               joinDate,
               isActive,
+              membershipStatus,
               updatedAt: new Date(),
             })
             .where(eq(members.id, existingMember.id));
@@ -103,6 +109,7 @@ async function syncRoster(filePath: string) {
             branch,
             joinDate,
             isActive,
+            membershipStatus,
           });
           console.log(`➕ Created member record for existing user: ${firstName} ${lastName} (${email})`);
         }
@@ -123,6 +130,7 @@ async function syncRoster(filePath: string) {
           branch,
           joinDate,
           isActive,
+          membershipStatus,
         });
 
         console.log(`✅ Created: ${firstName} ${lastName} (${email})`);
