@@ -13,7 +13,7 @@
 | Phase | Owner | Status | Verdict | Date |
 |-------|-------|--------|---------|------|
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-26 |
-| 2 — Architectural review | architect | Pending | — | — |
+| 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-26 |
 | 3 — Technical design | tech-lead | Pending | — | — |
 | 4 — Implementation | TBD by tech-lead | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
@@ -122,21 +122,109 @@ This is the actual Leonaida scenario if she'd gone through the formal applicatio
 
 ## Verdict
 
-[Approved | Approved with suggestions | Needs revision]
+**Approved with suggestions**
 
-## Placement
+The `membershipStatus` model and the `isActive`-untouched split are structurally sound and I'm confirming both, with one correction to the locked plan (a real provisioning bug the analyst's six-surface list didn't name) and a set of suggestions (DB-level CHECK constraint, script updates, admin-list filter tab) that don't block Phase 3 but should be in the design doc.
 
-- Directory placement: [src/...]
-- Server vs Client split: [where 'use client' is needed and why]
-- Dependencies: [new dep needed (yes/no), evaluation against criteria]
+## The core invariant (this is the ruling that resolves the "crux" question)
 
-## Invariants Touched
+**`isActive` becomes a fully derived boolean: `isActive = (membershipStatus === 'active')`. It is not touched, widened, or repurposed — it keeps meaning exactly what it means today ("counts as a real, dues-liable, portal-eligible member").** Legal combinations, no others:
 
-- [Invariant, how this change respects it (or how it changes it — requires CLAUDE.md update)]
+| membershipStatus | isActive |
+|---|---|
+| `active` | `true` |
+| `prospective` | `false` |
+| `ended` | `false` |
 
-## Notes
+This is the reconciliation the analyst flagged as undecided: prospective members read `isActive = false`, same value as `ended`. That's correct and desirable — it means every one of the "hide prospects" surfaces (dues, admin stat, CSV export) needs **zero code change**, because they already filter on `isActive = true`, which already excludes prospects for free. The only two surfaces that need to change are the two the analyst already named as changing: club@ sync (to *include* prospects) and the directory (to *include* prospects, per the locked decision #3 the analyst didn't have when writing Phase 1). Both of those move off `isActive` entirely and onto an explicit `membershipStatus`-aware filter — they do not renegotiate what `isActive` means.
 
-[Anything Phase 3 must honor.]
+Because `isActive` is derived, no route handler should accept `isActive` as client-submitted input going forward — the server computes it from the submitted `membershipStatus` on every insert/update. This closes off the possibility of an admin-form bug ever producing `status='prospective', isActive=true` (which would leak a prospect into dues billing) or `status='active', isActive=false` (which would silently block a real member's login).
+
+## Definitive read-surface enumeration
+
+**Stays on `isActive`, zero code change (verified correct under the derived-boolean rule):**
+1. `listMemberDuesStatus` / `getDuesMethodTotals` (`src/lib/dues-queries.ts` lines 141, 202) — `WHERE m.is_active = true`. Correctly excludes prospects.
+2. Admin dashboard "Total Members" stat (`src/app/(dashboard)/admin/page.tsx` line 31) — `eq(members.isActive, true)`. Correctly excludes prospects.
+3. Admin members list default filter (`src/app/(dashboard)/admin/members/page.tsx`, `status === "active"` branch) — correctly excludes prospects from the default view.
+4. CSV/Zeffy export (`src/app/api/admin/members/export/route.ts` line 34) — correctly excludes prospects.
+5. Portal login gate, both providers (`src/lib/auth/index.ts` lines 67, 114) — reads `users.isActive`, kept in sync from `members.isActive` by `PATCH /api/admin/members/[id]` line 97. Moot for prospects directly (they never get a `users` row — see write-path section below), but the derived rule means if one ever existed it would correctly stay locked out.
+6. Google-sign-in auto-link-by-name query (`src/lib/auth/index.ts` line 171, `eq(members.isActive, true)`) — correctly refuses to auto-link a Google sign-in to a *prospective* member's record. Desirable: no portal identity attaches to a prospect until induction.
+
+**Switches to an explicit `membershipStatus`-aware filter (named in the locked decisions, confirming the exact spots):**
+7. `syncClubMembersList()` (`src/lib/google-groups.ts` lines 141–144) — change `and(eq(members.isActive, true))` to `inArray(members.membershipStatus, ["active", "prospective"])`. Use an explicit allow-list of the two statuses, not `ne(..., "ended")` — a future fourth status shouldn't silently ride onto club@ without a deliberate code change.
+8. Member directory query (`src/app/members/page.tsx` line 17) — change `eq(members.isActive, true)` to the same `inArray(members.membershipStatus, ["active", "prospective"])`.
+
+**New reads, don't exist today:**
+9. Directory row/badge component (whatever renders rows under `src/components/members/member-directory.tsx`) needs `membershipStatus` passed through to render a "Prospective" badge.
+10. Admin members list status pill (`src/app/(dashboard)/admin/members/page.tsx` lines 297–305) — currently a binary Active/Inactive `rounded-full` pill keyed on `member.isActive`. Needs a third visual state keyed on `member.membershipStatus` (Active / Prospective / Ended). Keep the existing `rounded-full` pill convention — that's correct today and stays correct with three states.
+11. `member-form.tsx` (lines 433–448) — the "Active Member" checkbox is replaced by a 3-option control (radio group or `<select>`, per the analyst's note) bound to `membershipStatus`. The form must stop submitting `isActive` at all; per the invariant above, the API derives it server-side.
+
+## A gap the locked decisions don't cover — flagging before Phase 3, not relitigating scope
+
+**Decision #2 ("prospects get no portal login, `provisionUserForMember` must not run") is not automatically satisfied by adding the column — two existing write paths call it unconditionally or near-unconditionally, and one required write path (induction) doesn't call it at all today:**
+
+- `POST /api/admin/members` (`src/app/api/admin/members/route.ts` lines 108–117) — **calls `provisionUserForMember` unconditionally on every member creation, regardless of any status field.** This is the Leonaida flow's literal entry point (Flow 1, "Add Member" form). Left as-is, adding `membershipStatus` to the form without gating this call means every prospective add would still wrongly provision portal login + fire the welcome email — silently defeating decision #2 on day one. **Must become conditional on `membershipStatus === "active"`.**
+- `PATCH /api/admin/members/[id]` (`src/app/api/admin/members/[id]/route.ts` lines 101–125, the "defensive: provision if email changed and no linked user" block) — same problem on edit: changing a prospect's email today would auto-provision them a login. **Must also gate on the post-update `membershipStatus === "active"`.**
+- **The prospective → active transition (induction) has no provisioning path at all today.** `PATCH /api/admin/members/[id]` only auto-provisions when an email changes and no linked user exists — it has no branch keyed on a status transition. Inducting Leonaida in July, as written today, would flip her `membershipStatus` to `active` and leave her with no portal account, forever, unless the admin *also* happens to edit her email in the same request. **Tech-lead must design an explicit branch:** when `existing.membershipStatus !== "active" && data.membershipStatus === "active"` and no linked user exists, call `provisionUserForMember`. This is new behavior the locked decisions imply but don't spell out — call it out explicitly in the Phase 3 doc rather than let it fall through as an assumed side effect of the email-changed check.
+- `PATCH /api/admin/membership-applications/[id]` (decision #5's new "Approve as Prospective" branch) — structurally must be a separate code path from "Approve" that never calls `provisionUserForMember`, not a shared call gated by a flag. Keep the two branches visually and structurally distinct in the route so a future edit to one doesn't accidentally leak into the other.
+
+## Migration / schema
+
+- Add to `src/lib/db/schema.ts` first: `membershipStatus: text("membership_status").notNull().default("active")` on the `members` table (schema is source of truth — code change precedes migration).
+- Idempotent migration (new file, next number is `0061_members_membership_status.sql` per the highest existing migration `0060`):
+  ```sql
+  ALTER TABLE members ADD COLUMN IF NOT EXISTS membership_status text NOT NULL DEFAULT 'active';
+
+  -- Backfill: existing isActive=true rows already correctly default to 'active'.
+  -- Existing isActive=false rows were "ended" under today's semantics — there's no
+  -- historical signal that any of them were prospective, so backfill them to 'ended'.
+  UPDATE members SET membership_status = 'ended' WHERE is_active = false AND membership_status <> 'ended';
+  ```
+- **Suggestion (not a blocker):** a DB-level CHECK constraint enforcing `is_active = (membership_status = 'active')` would make the invariant unbreakable instead of merely application-enforced. I did not find a CHECK-constraint precedent anywhere in `drizzle/migrations/` (the existing 60 migrations are all `ADD COLUMN IF NOT EXISTS` / seed-guard style), so this would be a new pattern for this codebase — recommend it to tech-lead as an optional hardening step, not a requirement, since the write-path fixes above are the load-bearing fix either way.
+- **Real finding this surfaced:** `scripts/import-roster.ts` line 118 sets `isActive: row.Status === "Active Member"` directly, with no `membershipStatus`. After this migration, any row that script inserts/updates would default to `membershipStatus = 'active'` regardless of the `isActive` value it computes — violating the invariant for any roster row where `isActive` comes out `false`. **This script (and check `scripts/sync-roster.ts` too) needs a matching `membershipStatus` mapping in Phase 4**, or — if the optional CHECK constraint above is adopted — the script's writes would simply fail loudly instead of drifting silently, which is arguably the safer outcome. Either way, name it in the Phase 3 doc so it isn't discovered in production.
+
+## `joinDate` — confirming the analyst's framing, no schema change
+
+- `joinDate` is set at induction (prospective → active), never at prospective creation. No enforcement needed beyond "the induction API call sets `joinDate = new Date()` if it's still null" (tech-lead's call whether that's automatic or admin-confirmed at the induction step — either is fine architecturally).
+- **"Date added as prospect" already exists — `members.createdAt`.** No new column needed; this directly answers the analyst's open question 4's implicit ask. Don't add a second timestamp column for this.
+
+## Directory implementation — high-level (component design left to tech-lead)
+
+- `src/app/members/page.tsx` stays a Server Component — no interactivity is added by this feature, so no `'use client'` boundary crosses here. Query change only (item 8 above).
+- The badge itself is a static render, not stateful — belongs in whatever Server Component currently renders each directory row (`src/components/members/member-directory.tsx` per the existing file layout), not a new client component. A "Prospective" pill next to the existing group/position tags is the natural placement; follow the `rounded-full` pill convention already used for group tags on this page (not the `rounded-2xl` card convention — that's for the card container, not an in-card badge).
+
+## Dependencies
+
+None required. Text column + Drizzle `inArray`/`eq`, both already in use throughout the codebase. No new package needed against any of the five evaluation criteria.
+
+## Permissions — confirmed, no gaps
+
+- `FEATURES.MEMBERS_EDIT` correctly gates every status-mutation route (`POST /api/admin/members`, `PATCH /api/admin/members/[id]`) — no change.
+- `FEATURES.MEMBERSHIP_MANAGE` correctly gates `PATCH /api/admin/membership-applications/[id]`, including the new "Approve as Prospective" action — it's a third value of the same `action` field on an already-gated route, not a new surface. No new key needed.
+- `FEATURES.MEMBERS_VIEW` already gates the admin members list read; the member directory (`/members`) is a general authenticated-portal page (checks `session?.user` only, no feature gate, unchanged by this feature) — consistent with how it works today for every other member-portal page.
+- Confirmed: **no new `FEATURES.*` key for this feature.**
+
+## Invariant compliance
+
+- **Server/client boundary:** no new client-side interactivity required. `member-form.tsx` is already `'use client'` (existing interactive form) — the 3-way status control fits inside its existing boundary, nothing new crosses server/client.
+- **Migrations idempotent:** confirmed — `ADD COLUMN IF NOT EXISTS` + a backfill `UPDATE` guarded by a `WHERE` clause that becomes a no-op on re-run, matching this repo's established migration style.
+- **No native dialogs:** not implicated. If Phase 3 wants a distinct destructive "End membership" action separate from the existing edit-and-save flow, it must use `<ConfirmDialog>` — but if it's just a dropdown value change under the existing Save button (as today), no new confirm is required. Tech-lead's call.
+- **Permissions gating:** confirmed above, no gaps.
+- **Directory/placement:** no new top-level module or directory needed. All touched files sit inside existing directories (`src/lib/db/schema.ts`, `drizzle/migrations/`, `src/lib/google-groups.ts`, `src/app/members/page.tsx`, `src/components/members/`, `src/app/(dashboard)/admin/members/`, `src/components/admin/member-form.tsx`, `src/app/api/admin/members/`, `src/app/api/admin/membership-applications/[id]/route.ts`).
+
+## Implementer split
+
+**Specialist split: database-admin → api-developer → ux-developer.** This spans schema (new column + migration + backfill), four+ route handlers (`POST`/`PATCH` members, `PATCH` membership-applications with a new action branch, the google-groups query change), and three UI surfaces (member-form status control, admin list badge, directory badge). That's well past the full-stack-developer threshold (~150 lines, small + tightly coupled) — this is exactly the shape "every increment of The Ledger ran cleanly" through the specialist split. Suggested order:
+1. **database-admin** — `membershipStatus` column in schema.ts + migration 0061 + backfill (and, if adopted, the CHECK constraint).
+2. **api-developer** — the four write-path fixes above (conditional provisioning in create/edit, the new induction-provisioning branch, the approve-as-prospective branch, the sync-on-approve bug fix from decision #6), plus the `google-groups.ts` and directory-query filter changes. Also owns updating `scripts/import-roster.ts` / `sync-roster.ts` to set `membershipStatus` alongside `isActive`.
+3. **ux-developer** — member-form 3-way control, admin list third badge state, directory "Prospective" badge component.
+
+## Notes for Phase 3 (tech-lead must resolve, not re-litigate)
+
+- Design the explicit induction-provisioning branch (see gap above) — this is the single highest-risk omission if it isn't named in the design doc.
+- Decide whether the admin members list needs an explicit "Prospective" filter/tab (today's `status` query param supports `active`/inactive-ish views) — not required by any locked decision, but the admin who manages inductions will want to find all prospects at a glance; call it in-scope or explicitly defer it.
+- Decide whether the CHECK constraint suggestion is worth taking given it's a new pattern for this migration set — fine either way, but say so explicitly so Phase 4 doesn't have to guess.
+- Name the unit tests for the derived-boolean invariant and the three provisioning gates (create-as-prospective skips provisioning, edit-a-prospective-email skips provisioning, induct-to-active triggers provisioning) — these are exactly the kind of "quiet violation" a 30-day code review would otherwise have to catch after the fact.
 
 ---
 
