@@ -14,8 +14,8 @@
 |-------|-------|--------|---------|------|
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-26 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-26 |
-| 3 — Technical design | tech-lead | Pending | — | — |
-| 4 — Implementation | TBD by tech-lead | Pending | — | — |
+| 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-26 |
+| 4 — Implementation | database-admin → api-developer → ux-developer | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -232,45 +232,243 @@ None required. Text column + Drizzle `inArray`/`eq`, both already in use through
 
 ## Summary
 
-[One paragraph: what we're building and why.]
+We're adding a third member lifecycle state, `membershipStatus` (`prospective | active | ended`), so people engaged with the club before formal induction (the Leonaida case) can ride the `club@westervillelions.org` email list without being counted as dues-liable, directory-listed, portal-eligible members. `isActive` keeps its exact current meaning ("counts as a real member") and becomes a value the server derives from `membershipStatus` on every write — never client input again. Two read surfaces (club@ sync, member directory) move onto an explicit `membershipStatus`-aware filter; six surfaces stay on `isActive` untouched. The two-thirds of this feature that are actually new risk are (a) a provisioning bug the locked decisions surfaced but no existing code path closes — the prospective→active induction transition must trigger `provisionUserForMember`, and today nothing does — and (b) a real pre-existing bug fix: application approval never fires `syncClubMembersList`. Both are fixed here. No new `FEATURES` key, no new page, no new table.
 
 ## Permissions
 
-- Permission key(s): `area.action`
-- Default role bindings: [list]
+No new `FEATURES.*` key (confirmed, matches Phase 2 ruling). Existing gates, verified against the actual route files:
 
-## API Contract
+| Route | Gate (as it exists today, unchanged) |
+|---|---|
+| `GET /api/admin/members` | `FEATURES.MEMBERS_VIEW` |
+| `POST /api/admin/members` | `FEATURES.MEMBERS_EDIT` |
+| `PATCH /api/admin/members/[id]` | `FEATURES.MEMBERS_EDIT` |
+| `DELETE /api/admin/members/[id]` | `FEATURES.MEMBERS_DELETE` |
+| `PATCH /api/admin/membership-applications/[id]` (incl. new `approve_prospective` action) | `FEATURES.MEMBERSHIP_MANAGE` |
+| `/admin/members` (page) | `FEATURES.MEMBERS_EDIT` (page-level `redirect` at line 30) |
+| `/members` (directory) | authenticated-only, no feature gate — unchanged, consistent with every other member-portal page |
 
-- `POST /api/...` — purpose, request body, response shape
-- `GET /api/...` — purpose, query params, response shape
-- Or server-action signatures: `async function actionName(input): Promise<Result>`
+Every touched route already has its `auth()` + `hasFeature()` check in place; Phase 4 must not remove or weaken any of them.
 
 ## Data Model
 
-[New tables / columns / indexes, or "No schema changes required."]
+**New column, no new table.**
+
+`src/lib/db/schema.ts` — add directly below the existing `isActive` line (currently line 39) in the `members` table:
+
+```ts
+isActive: boolean("is_active").notNull().default(true),
+membershipStatus: text("membership_status").notNull().default("active"), // 'prospective' | 'active' | 'ended'
+```
+
+`isActive` is **not removed, not renamed, not repurposed** — it stays a stored `boolean` column, exactly as the architect ruled. It is maintained as a derived value by application code, not by the database.
+
+**The invariant:** `isActive === (membershipStatus === 'active')`. Every route that writes `members` computes `isActive` server-side from the submitted `membershipStatus`; no route accepts a client-submitted `isActive` value anymore (closes the exact hole the architect named: a form bug producing `status='prospective', isActive=true` would leak a prospect into dues billing).
+
+**Migration `drizzle/migrations/0061_members_membership_status.sql`** (0060 is the current highest, confirmed via `ls drizzle/migrations`):
+
+```sql
+-- Prospective Members (docs/work-log/2026-07-26-prospective-members.md)
+-- Adds a 3-state membership_status column. is_active remains a stored column;
+-- it is maintained as a derived value (is_active = (membership_status = 'active'))
+-- by every application write path — see isActiveForStatus() in src/lib/members.ts.
+-- No DB-level CHECK constraint — see DECISION-041 in docs/decisions.md for why.
+
+ALTER TABLE members ADD COLUMN IF NOT EXISTS membership_status text NOT NULL DEFAULT 'active';
+
+-- Backfill: existing is_active=true rows are already correctly 'active' via the
+-- column default. Existing is_active=false rows were "ended" under today's
+-- semantics -- there is no historical signal that any of them were prospective.
+UPDATE members SET membership_status = 'ended' WHERE is_active = false AND membership_status <> 'ended';
+```
+
+**CHECK constraint — explicitly declined, not just deferred.** The architect flagged this as an optional hardening step and noted no CHECK-constraint precedent existed in `drizzle/migrations/`. I looked further: this codebase has an *explicit, on-the-record decision against* DB-level CHECK constraints on status-like text columns — `src/lib/db/schema.ts` lines 935, 958, and 1018 each carry the comment `"No CHECK constraint on status — consistent with ledger_transactions.status pattern (inc1 precedent)"`. Adding one here would contradict a standing convention, not extend it. There's a second, sharper reason: this codebase's Drizzle schema has no first-class representation for CHECK constraints anywhere, and the invariant "`schema.ts` is the source of truth; anything in the live DB that isn't in `schema.ts` is dropped on the next `pnpm db:push`" makes an unrepresented constraint a risk to reason about on every future schema change, for a guarantee the application-level helpers (below) already provide and that `members.test.ts` regression-guards. Logged as **DECISION-041** in `docs/decisions.md`. If a future incident ever shows the application-level guard was insufficient, revisit then — don't pre-build for a failure mode with no observed instance in this codebase's history.
+
+**`joinDate`** — no schema change (confirmed by architect: `createdAt` already answers "date added as prospect"). Behavior: set at the prospective/ended → active transition if still null; never touched otherwise. Detailed in API Contract below.
+
+## API Contract
+
+### `src/lib/members.ts` — new pure helpers (this is what makes the invariant and the provisioning gates unit-testable without a DB, matching this repo's existing test convention — see `src/lib/dues.test.ts`, `src/lib/ledger.test.ts`, both pure-function-only, no DB mocking anywhere in the test suite)
+
+```ts
+export type MembershipStatus = "prospective" | "active" | "ended";
+
+/** The single source of truth for the isActive/membershipStatus invariant. */
+export function isActiveForStatus(status: MembershipStatus): boolean {
+  return status === "active";
+}
+
+/** POST /api/admin/members gate: provision only when creating an active member. */
+export function shouldProvisionOnMemberCreate(status: MembershipStatus): boolean {
+  return status === "active";
+}
+
+/**
+ * PATCH /api/admin/members/[id] gate — unifies two previously-separate concerns
+ * into one condition:
+ *   (a) the pre-existing "defensive: email changed, no linked user" case, now
+ *       correctly restricted to landing-as-active only (closes the bug where
+ *       editing a prospect's email would silently provision them a login), and
+ *   (b) the new induction case: status transitions to 'active' with no linked
+ *       user, regardless of whether the email changed in the same request.
+ * Never provisions on a transition INTO 'active' if a user is already linked
+ * (re-affirm the link instead — provisionUserForMember already does that).
+ */
+export function shouldProvisionOnMemberUpdate(input: {
+  previousStatus: MembershipStatus;
+  newStatus: MembershipStatus;
+  hasLinkedUser: boolean;
+  emailChanged: boolean;
+}): boolean {
+  if (input.newStatus !== "active" || input.hasLinkedUser) return false;
+  const becameActive = input.previousStatus !== "active" && input.newStatus === "active";
+  return input.emailChanged || becameActive;
+}
+
+/**
+ * joinDate rule (decision #8): set at transition-to-active if still null.
+ * An explicit admin-submitted joinDate always wins. `now` is injectable for tests.
+ */
+export function resolveJoinDate(input: {
+  becameActive: boolean;
+  existingJoinDate: Date | null;
+  submittedJoinDate: Date | null;
+  now?: Date;
+}): Date | null {
+  if (input.submittedJoinDate) return input.submittedJoinDate;
+  if (input.becameActive && !input.existingJoinDate) return input.now ?? new Date();
+  return input.existingJoinDate;
+}
+```
+
+### `src/lib/google-groups.ts`
+
+```ts
+export const CLUB_LIST_ELIGIBLE_STATUSES = ["active", "prospective"] as const;
+
+/** club@ list eligibility (decision: prospects ride the list, ended members don't). */
+export function isEligibleForClubList(status: MembershipStatus): boolean {
+  return CLUB_LIST_ELIGIBLE_STATUSES.includes(status as typeof CLUB_LIST_ELIGIBLE_STATUSES[number]);
+}
+```
+
+`syncClubMembersList()` (currently lines 141–144) changes from:
+```ts
+const activeMembers = await db.select({ email: members.email }).from(members)
+  .where(and(eq(members.isActive, true)));
+```
+to:
+```ts
+const eligibleMembers = await db.select({ email: members.email }).from(members)
+  .where(inArray(members.membershipStatus, CLUB_LIST_ELIGIBLE_STATUSES));
+```
+Explicit allow-list (`inArray`), not `ne(..., "ended")` — a future fourth status must be a deliberate code change to land on club@, per the architect's ruling.
+
+### `POST /api/admin/members`
+
+- **Request body:** drops `isActive`, adds `membershipStatus: "prospective" | "active" | "ended"` (default `"active"` if omitted, matching today's checkbox-defaulted-true behavior).
+- **Behavior change:** `isActive: data.isActive ?? true` (current line 104) becomes `isActive: isActiveForStatus(membershipStatus)`. The `provisionUserForMember` call (currently unconditional, lines 108–127) becomes conditional on `shouldProvisionOnMemberCreate(membershipStatus)`. When skipped, `userLinked` is omitted from the response (no user was created or linked) — the response shape gains an implicit "prospects don't get a `userLinked` field" contract; UI must not assume it's present.
+- **`joinDate`:** for a prospective create, stays `null` regardless of any `joinDate` value submitted from a stale form state (there's no "becameActive" transition on create, so `resolveJoinDate` isn't invoked here — creation is simpler: `joinDate: membershipStatus === "active" ? (data.joinDate ? new Date(data.joinDate) : new Date()) : null`). This preserves today's create-time behavior for full-member adds (an admin can still backdate a join date) while guaranteeing prospects never get one.
+- **club@ sync:** unchanged — fires for every create regardless of status (a prospect must land on the list immediately).
+- Response: unchanged `{ ...newMember, userLinked? }`, `newMember` now includes `membershipStatus`.
+
+### `PATCH /api/admin/members/[id]`
+
+- **Request body:** same `isActive` → `membershipStatus` swap as POST.
+- Server computes `newIsActive = isActiveForStatus(data.membershipStatus)` (replaces line 64's `data.isActive ?? true`).
+- **Transition detection:** `const becameActive = existing.membershipStatus !== "active" && data.membershipStatus === "active";` — this single boolean answers the architect's flagged gap (prospective→active AND ended→active both count; reactivating a former member gets the same treatment as inducting a new prospect, which is correct — no special-casing needed).
+- **Unified provisioning block** replaces the current "defensive: if email changed and no linked user, provision" block (lines 102–125):
+  ```ts
+  const linkedUser = await db.query.users.findFirst({ where: eq(users.memberId, existing.id) });
+  if (shouldProvisionOnMemberUpdate({
+    previousStatus: existing.membershipStatus,
+    newStatus: data.membershipStatus,
+    hasLinkedUser: Boolean(linkedUser),
+    emailChanged,
+  })) {
+    // same provisionUserForMember() call + EMAIL_CONFLICT handling as today
+  }
+  ```
+  This one block now covers both the legacy email-changed case (correctly restricted to landing-as-active) and the new induction case (fires even with no email change).
+- **`joinDate`:** `joinDate: resolveJoinDate({ becameActive, existingJoinDate: existing.joinDate, submittedJoinDate: data.joinDate ? new Date(data.joinDate) : null })`.
+- **Existing `users.isActive` sync (lines 88–98) is untouched** — `activeChanged` already fires whenever computed `isActive` flips, in either direction. This is also how the active→prospective downgrade edge case (below) gets handled for free.
+- club@ sync: unchanged, still fires on every update.
+
+### `PATCH /api/admin/membership-applications/[id]`
+
+- **Request body:** `action: "approve" | "approve_prospective" | "reject"` (was `"approve" | "reject"`).
+- **New duplicate-email guard**, applied before either approve branch inserts a `members` row (today this route has *no* case-insensitive email-conflict check at all, unlike `POST /api/admin/members` — a real gap surfaced by asking "what happens on approve_prospective with a duplicate email"): reject with `409` if `lower(email)` already exists on another `members` row.
+- **`approve`** (existing branch, bug fix applied): insert with `membershipStatus: "active"`, `isActive: true`, `joinDate: new Date()` (unchanged) → `provisionUserForMember` (unchanged) → **now also fires `syncClubMembersList({ triggerSource: "member_added", triggeredByUserId: session.user.id }).catch(...)`, fire-and-forget, matching the pattern in `POST /api/admin/members`**. This is the named bug fix — today this call is simply missing.
+- **`approve_prospective`** (new branch): insert with `membershipStatus: "prospective"`, `isActive: false`, `joinDate: null` → **does not call `provisionUserForMember`** → fires the same fire-and-forget `syncClubMembersList(...)`.
+- **`reject`**: unchanged.
+- `membershipApplications.status` stays `"approved"` for both `approve` and `approve_prospective` — there's no third value on the application's own status column. Whether a given approval landed the person as active or prospective is answered by looking at the created `members` row's `membershipStatus` (matched by email), not by the application record. This is an explicit design call, not an oversight — no schema change to `membershipApplications` is in scope.
 
 ## Component / Page Plan
 
-- Pages to create: [list]
-- Components to create: [list]
-- Files to modify: [list]
+No new pages. Files to modify:
+
+- **`src/components/admin/member-form.tsx`** — `MemberFormData.isActive: boolean` → `MemberFormData.membershipStatus: "prospective" | "active" | "ended"`. Replace the checkbox (lines 433–448) with a `<select id="membershipStatus" name="membershipStatus">` (Prospective / Active / Ended), defaulting to `"active"` for new-member state (line 69), matching today's checked-by-default behavior. `handleChange`'s existing generic branch (`value || null`) already handles a `<select>` correctly — no special-casing needed since all three option values are non-empty strings. The "Membership Ended" date field (lines 267–282) stays in the form unconditionally (preserves existing records with a set date), but ux-developer should visually de-emphasize it (e.g., `disabled`/greyed) when `membershipStatus !== "ended"` — a UX nicety, not a hard requirement, and not worth a `<ConfirmDialog>` since it's a plain field inside the existing Save flow, not a new destructive action.
+- **`src/components/admin/application-action-buttons.tsx`** — add a third button, "Approve as Prospective," calling `handleAction("approve_prospective")`. `handleAction`'s type widens to `"approve" | "approve_prospective" | "reject"`; success toast branches on the action for accurate copy (e.g., "Application approved as prospective — added to club email list.").
+- **`src/app/(dashboard)/admin/members/page.tsx`** —
+  - Status pill (lines 296–306): third visual state. Active → unchanged (`bg-green-100 text-green-800`). Prospective → `bg-lions-gold/20 text-lions-blue-dark` (gold accent per UX guidelines, not a card border — this is a `rounded-full` pill, the correct existing convention for status badges on this page). Ended → unchanged from today's "Inactive" styling (`bg-gray-100 text-gray-500`), just relabeled "Ended."
+  - Status filter branch (lines 60–64): add `else if (status === "prospective") conditions.push(eq(members.membershipStatus, "prospective"))` and the equivalent for `"ended"`. The existing `"active"`/`"inactive"` branches (isActive-keyed) are untouched — zero behavior change for any bookmarked/linked URL using today's filter.
+- **`src/components/admin/member-search.tsx`** — add two new `<option>`s to the status `<select>` (lines 141–143): `value="prospective"` label "Prospective only" and `value="ended"` label "Ended only". Relabel the existing `value="inactive"` option from "Inactive only" to "Prospective + Ended" for clarity (value/behavior unchanged — this keeps every existing `?status=inactive` link working exactly as today).
+- **`src/app/members/page.tsx`** — line 17's `where: eq(members.isActive, true)` → `where: inArray(members.membershipStatus, ["active", "prospective"])` (import `inArray` from `drizzle-orm`, already imported for other queries in this file's sibling admin page). `membersWithTags` mapping (lines 69–80) gains `membershipStatus: member.membershipStatus`.
+- **`src/components/members/member-directory.tsx`** — `Member` interface (lines 13–24) gains `membershipStatus: "prospective" | "active" | "ended"`. In the member card's tag row (next to `groupTags`/`branch`/`serviceBadge`, lines 241–262), render a "Prospective" pill when `member.membershipStatus === "prospective"`: `bg-lions-gold/20 text-lions-blue-dark text-xs font-semibold rounded-full px-2 py-1 whitespace-nowrap` — same pill shape as every other tag already on this card, gold as an accent per the brand guidelines, no `lions-red`. Active members render no extra badge (unchanged today).
+- **`scripts/import-roster.ts`** (line 118) and **`scripts/sync-roster.ts`** (lines 49, 90, 105, 125) — both currently write `isActive` with no `membershipStatus`, which after this migration would default every imported row to `membershipStatus = 'active'` regardless of the computed `isActive` value, violating the invariant for any `isActive: false` row (Ended member imported via roster sync would incorrectly read `membershipStatus: 'active'` and re-appear on club@). Fix: both scripts compute `const membershipStatus: MembershipStatus = isActive ? "active" : "ended";` (import roster has no signal for "prospective" — mirrors the migration's own backfill rule) and pass it alongside `isActive` on every insert/update.
 
 ## Implementation Order
 
-1. Schema (if any) → add migration in `drizzle/migrations/` and update `src/lib/db/schema.ts`
-2. `FEATURES` entry in `src/lib/permissions.ts` + role binding migration
-3. Route handlers / server actions
-4. UI
-5. Email notification (if applicable) — enqueue via `sendEmail` in `src/lib/email.ts`
-6. Release notes entry
+1. **database-admin** — `membershipStatus` column in `schema.ts` (below existing `isActive` field) + migration `0061_members_membership_status.sql` (add column, backfill, no CHECK constraint per DECISION-041). Run `pnpm db:migrate` locally and confirm the backfill: every row where `is_active = false` reads `membership_status = 'ended'` after the migration, every other row reads `'active'` (manual spot-check via `psql`/Drizzle Studio — this codebase has no DB-integration test harness, so this is a manual verification step, not a Vitest test; note it in the Phase 4 work-log).
+2. **api-developer** —
+   a. `src/lib/members.ts` — add `MembershipStatus`, `isActiveForStatus`, `shouldProvisionOnMemberCreate`, `shouldProvisionOnMemberUpdate`, `resolveJoinDate`; write `src/lib/members.test.ts` (see Unit Tests below).
+   b. `src/lib/google-groups.ts` — add `isEligibleForClubList`/`CLUB_LIST_ELIGIBLE_STATUSES`, update `syncClubMembersList`'s query; write `src/lib/google-groups.test.ts`.
+   c. `POST /api/admin/members`, `PATCH /api/admin/members/[id]` — wire the new helpers in per the API Contract above.
+   d. `PATCH /api/admin/membership-applications/[id]` — third action, duplicate-email guard, sync-on-approve fix, sync-on-approve_prospective.
+   e. `scripts/import-roster.ts`, `scripts/sync-roster.ts` — `membershipStatus` mapping fix.
+3. **ux-developer** — `member-form.tsx` status `<select>`, `application-action-buttons.tsx` third button, `admin/members/page.tsx` badge + filter branch, `member-search.tsx` new options, `app/members/page.tsx` query, `member-directory.tsx` badge.
+4. No email notification changes — induction reuses the existing `provisionUserForMember` → `sendWelcomeEmail` → `sendEmail()` path unchanged; no new template.
+5. Release notes — tech-lead, after Phase 6 SHIP IT.
 
 ## Edge Cases & Risks
 
-- [Thing that could fail or that needs special handling]
+- **Active → Prospective downgrade — decided: no special handling needed.** The existing `activeChanged` block in `PATCH /api/admin/members/[id]` (lines 88–98, untouched) already flips the linked `users.isActive` to `false` any time computed `isActive` transitions `true → false` — which now happens for both `→ ended` and `→ prospective`. Their portal login is locked out immediately, matching "prospects get no portal access." Their `users` row and `memberId` link are preserved (not deleted), so a later re-induction re-activates the same account rather than orphaning it. No new code needed here — this is the payoff of keeping `isActive` derived instead of introducing a parallel gate.
+- **Prospect email already tied to an existing `users` row.** Because prospective creates skip `provisionUserForMember` entirely (`shouldProvisionOnMemberCreate` returns `false`), the `users` table is never touched for a prospective create — no `EMAIL_CONFLICT` path exists to worry about. The pre-existing case-insensitive `members.email` uniqueness check (unconditional, unchanged) still prevents two `members` rows sharing an email.
+- **Ended → Active reactivation.** Handled by the same `becameActive` condition as prospective → active — no separate branch. `resolveJoinDate` correctly leaves an already-set `joinDate` untouched (a returning member keeps their original tenure date) while still stamping `joinDate` for a never-set one.
+- **`syncClubMembersList` fire-and-forget failure visibility.** Unchanged and explicitly out of scope for this feature (confirmed, matches the Phase 1 analyst's framing) — a failed Google API call is still silent to the admin beyond `google_group_sync_log`. Pre-existing gap, not introduced or worsened here.
+- **Duplicate email on `approve_prospective`.** Closed by the new case-insensitive guard added to the applications route (see API Contract) — applies to both `approve` and `approve_prospective`, since the risk existed for `approve` too and was never checked.
+- **Stale `userLinked` assumption in the admin UI.** Any code reading `response.userLinked` after a `POST /api/admin/members` call must handle it being `undefined` for a prospective create — grep for `userLinked` usage during Phase 4 to confirm nothing assumes it's always present.
+- **`scripts/import-roster.ts` / `sync-roster.ts` drift** — flagged above; if skipped, the next roster import silently mislabels every "not active" roster row as `membershipStatus: 'active'`, which would leak ended members back onto club@ on the next sync. This must ship in the same PR as the migration, not deferred.
+
+## Unit Tests (implementer delivers these in Phase 4, per this repo's pure-function test convention — no DB mocking anywhere in the existing suite)
+
+**`src/lib/members.test.ts`** (new file):
+- `describe("isActiveForStatus")` — `"active"` → `true`; `"prospective"` → `false`; `"ended"` → `false`.
+- `describe("shouldProvisionOnMemberCreate")` — `"active"` → `true`; `"prospective"` → `false`; `"ended"` → `false`.
+- `describe("shouldProvisionOnMemberUpdate")`:
+  - prospective → active, no linked user → `true` (the induction gap the architect flagged).
+  - active, email changed, no linked user → `true` (legacy defensive path, preserved).
+  - active, email changed, has linked user → `false` (already provisioned; re-affirm link only).
+  - **prospective, email changed, no linked user → `false`** (the exact bug being fixed: editing a prospect's email must not silently provision them a login).
+  - active → ended, no linked user → `false` (never provision on a downgrade).
+  - active → active (no status change, no email change) → `false` (no-op).
+  - ended → active, no linked user → `true` (reactivation gets the same treatment as induction).
+- `describe("resolveJoinDate")`:
+  - `becameActive: true`, `existingJoinDate: null`, `submittedJoinDate: null` → returns `now`.
+  - `becameActive: true`, `existingJoinDate: null`, `submittedJoinDate: <date>` → returns the submitted date (admin override wins).
+  - `becameActive: true`, `existingJoinDate: <date>`, `submittedJoinDate: null` → returns the existing date (never overwritten).
+  - `becameActive: false` → returns `submittedJoinDate ?? existingJoinDate` (unchanged behavior for non-transition edits).
+
+**`src/lib/google-groups.test.ts`** (new file):
+- `describe("isEligibleForClubList")` — `"active"` → `true`; `"prospective"` → `true`; `"ended"` → `false`.
+
+**Not covered by Vitest, covered by manual verification instead (name explicitly so QA doesn't assume a missing test file is a gap):**
+- Migration backfill correctness (`membership_status` matches `is_active` post-migration) — no DB-integration test harness exists in this repo; database-admin verifies via a manual query against the dev DB after running `pnpm db:migrate`, and records the result in the Phase 4 work-log entry.
+- `approve_prospective` end-to-end (insert + no-provision + sync-fires) and the duplicate-email 409 on the applications route — no route-handler test precedent exists in this codebase (grep confirms zero `route.test.ts` files); qa covers this via the Phase 5 manual click-through, not a new Vitest pattern introduced here.
 
 ## Implementer
 
-[database-admin | api-developer | ux-developer | full-stack-developer]
+**Specialist split: database-admin → api-developer → ux-developer**, per the Phase 2 ruling (schema + 3+ route handlers + 3 UI surfaces is well past the full-stack-developer ~150-line threshold).
 
 ---
 
