@@ -19,7 +19,7 @@
 | 4 — Implementation (server) | api-developer | Complete | — | 2026-07-26 |
 | 4 — Implementation (client) | ux-developer | Complete | — | 2026-07-26 |
 | 5 — Verification | qa | Complete | PASS | 2026-07-26 |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 6 — Shipped vs intent | analyst | Complete | SHIP WITH NOTES | 2026-07-26 |
 
 ---
 
@@ -798,31 +798,68 @@ Neither of these is a code defect — both are "the runner couldn't reach it," w
 
 ## VERDICT
 
-[SHIP IT | SHIP WITH NOTES | NEEDS REWORK]
+**SHIP WITH NOTES**
 
 ## ONE-LINE TAKE
 
-> [The shipped feature in one honest sentence.]
+> This solves Chuck's actual problem — Leonaida, and everyone like her, can now sit on club@ as a Prospective member without touching dues, counts, exports, the directory-as-full-member, or portal login, and gets a clean induction into full membership later — and I traced every hop of that path against the real shipped code (not just the work-log's claims); the only things keeping this from a clean SHIP IT are two verification steps this sandbox structurally cannot run (a live-DB migration spot-check and a real click-through), which are pre-deploy chores, not defects.
+
+## The Leonaida Scenario, Traced End to End
+
+**(a) Admin adds her as prospective, or approves her application as prospective:**
+- Manual add — `src/app/api/admin/members/route.ts:97-127` — `membershipStatus` is read from the client, validated against `["prospective","active","ended"]`, and `isActive` is computed server-side via `isActiveForStatus(membershipStatus)` — never read from client input. `src/components/admin/member-form.tsx` has zero references to `isActive` (grepped) — the only control is the `membershipStatus` `<select>` at lines 451-469.
+- Application approval — `src/app/api/admin/membership-applications/[id]/route.ts:98-119` — the new `approve_prospective` branch inserts `membershipStatus: "prospective", isActive: false, joinDate: null`, structurally separate from the `approve` branch (not a shared call gated by a flag, matching the architect's explicit requirement at line 171 of Phase 2).
+- Duplicate-email guard (lines 44-57) applies to both approve branches — a real gap the old code never checked, closed here as a byproduct of asking "what if Leonaida's email collides."
+
+**(b) She lands on club@:**
+- `src/lib/google-groups.ts:17-21,149-159` — `CLUB_LIST_ELIGIBLE_STATUSES = ["active","prospective"]`, explicit allow-list (not a negation, per the architect's ruling so a future 4th status can't silently ride the list); `syncClubMembersList()`'s query is `inArray(members.membershipStatus, CLUB_LIST_ELIGIBLE_STATUSES)`. Both write paths (manual add, `approve_prospective`) fire this fire-and-forget after insert.
+
+**(c) She is NOT billed dues / not counted:**
+- `src/lib/dues-queries.ts:141,202` (`WHERE m.is_active = true`), `src/app/(dashboard)/admin/page.tsx:31` ("Total Members" stat), `src/app/api/admin/members/export/route.ts:34` (CSV export) — all three still key on `isActive`, **zero code changed in any of them**, and correctly exclude her because `isActive` is derived to `false` for `membershipStatus: "prospective"`. This is the payoff of the architect's "derived boolean" ruling and I verified it by reading the actual file lines, not by trusting the claim.
+- She does show up in the member directory (`src/app/members/page.tsx:17`, `inArray(..., ["active","prospective"])`) with a gold "Prospective" pill (`src/components/members/member-directory.tsx:243-247`) — this is the locked decision, not a bug: she's engaged with the club, just not dues-liable.
+- She gets no portal account: `shouldProvisionOnMemberCreate("prospective")` returns `false` (confirmed in `src/lib/members.ts` and its 17 passing unit tests), so `provisionUserForMember` never runs on her create, and the `approve_prospective` branch explicitly skips the call with an inline comment. No welcome email fires — correct, matches decision "no portal account/welcome email on create."
+
+**(d) She is smoothly inducted in July:**
+- Admin flips her `membershipStatus` to `active` on `PATCH /api/admin/members/[id]`. `shouldProvisionOnMemberUpdate` (`src/lib/members.ts`, wired at `route.ts:132-160`) fires `provisionUserForMember` because `previousStatus !== "active" && newStatus === "active"` and no linked user exists — this is the exact gap the architect flagged in Phase 2 (nothing today would have provisioned her otherwise) and it is now closed and regression-tested (`members.test.ts`, "prospective → active, no linked user → true").
+- `resolveJoinDate` stamps `joinDate = now()` at the moment of induction since hers was `null` — she doesn't get backdated tenure from her prospective period, matching the locked decision.
+- `activeChanged` (pre-existing block, untouched) flips her linked `users.isActive` to `true`, so her new portal account works for login immediately — no separate code needed, verified by reading `route.ts:118-126`.
+
+All four legs check out against the actual shipped files, not just the work-log's narrative.
 
 ## What's Working
 
-- [Specific. The flow that works well and why.]
+- **The derived-`isActive` design decision paid for itself exactly as the architect predicted.** Five of six read surfaces (dues, admin stat, CSV export, portal login gate, Google auto-link) needed *zero code changes* and are still correct today, because `isActive` never stopped meaning what it always meant. That's the single best piece of engineering judgment in this feature and it held up under direct file inspection.
+- **The induction-provisioning gap the architect caught in Phase 2 review (not the original request) is the single highest-value fix in this whole feature** — without it, Leonaida would have been inducted in July and simply never gotten a login, silently, forever. It's implemented, wired, and regression-tested by name.
+- **The bug fix Chuck actually asked for** (application approval never fired `syncClubMembersList`) is fixed and reads as a one-line, obviously-correct diff at `membership-applications/[id]/route.ts:92-95`.
 
 ## Intent-vs-Shipped Diff
 
-- Phase 1 said: [X]. Shipped: [Y]. Verdict: [matches | acceptable drift | regression]
+- Phase 1 said: a third member lifecycle state so prospects ride club@ without being dues-liable. Shipped: `membershipStatus` column, derived `isActive`, club@ query switched to an allow-list. **Verdict: matches.**
+- Phase 1 said (Open Question 1): should a prospective member get a portal login? Recommended no. Shipped: `shouldProvisionOnMemberCreate`/`shouldProvisionOnMemberUpdate` gate every write path; confirmed zero provisioning on prospective creates. **Verdict: matches.**
+- Phase 1 said (Open Question 2): should prospects appear in the directory? Recommendation was "no, confirm with Chuck" — the locked decisions (handed to Phase 2/3) resolved this to **yes, with a badge**. Shipped: prospects appear in `/members` with a gold "Prospective" pill. **Verdict: matches the locked decision, which is a legitimate resolution of the open question, not a silent reinterpretation** — it's called out explicitly in Phase 2's ruling.
+- Phase 1 said (Open Question 3): should `/admin/membership` approval get a third "approve as prospective" action? Flagged as "a real gap, not scope creep." Shipped: `approve_prospective` action, fully wired, with a duplicate-email guard that didn't exist before. **Verdict: matches, and closes a bug the original request wouldn't have caught on its own.**
+- Phase 1 said (Open Question 4): `joinDate` at induction, not creation. Shipped: `resolveJoinDate` stamps it only on the transition-to-active if still null, never overwrites an existing date (covers reactivation correctly too). **Verdict: matches.**
+- Phase 1 said (Open Question 5): confirm "Prospective" as the on-screen term with Chuck. **This was never actually re-confirmed with Chuck at any later phase** — ux-developer's own Phase 4 notes admit "I proceeded with 'Prospective' ... but it was never explicitly re-confirmed." **Verdict: acceptable drift for ship, but an open loop — see follow-ups.**
+- Phase 1 flagged: dues-category confirmation at induction time (Flow 2's failure path) has no prompt; `duesCategory` still just defaults to `'individual'`. **Verdict: acceptable drift** — this was already a pre-existing gap in the regular member-edit flow, not introduced or worsened by this feature, and Phase 1 itself only flagged it as "worth" doing, not a requirement.
+- Phase 1 flagged: Google Group sync failure is silent to the admin beyond the sync-log page. **Verdict: acceptable drift, unchanged** — explicitly out of scope per Phase 1's own framing, confirmed unworsened by qa's audit.
+- Phase 2 flagged: `scripts/import-roster.ts` / `scripts/sync-roster.ts` would silently mislabel "not active" rows as `membershipStatus: 'active'` if left unfixed. Shipped: both scripts updated to compute `membershipStatus` from `isActive` alongside every write. **Verdict: matches, closed before it could bite in production.**
 
 ## Edge Cases
 
-- Empty state: [pass | fail | not applicable]
-- Failure microcopy: [pass | fail]
-- Permission gate: [pass | fail]
-- Mobile (360px): [pass | fail]
+- Empty state: **not applicable** — Phase 1 correctly scoped this as a non-issue (existing admin members table already renders correctly with any status mix); nothing new needed.
+- Failure microcopy: **pass** — the existing 409 duplicate-email inline error (`member-form.tsx`, `emailError` state) is untouched and still fires; the new `approve_prospective`/`approve` duplicate-email 409 on the applications route is new and correctly returns a human message ("A member with this email already exists"), not a stack trace. The one pre-existing, *known and accepted* gap is Google Group sync failures being silent to the admin — unchanged from today, not a regression.
+- Permission gate: **pass** — verified directly: `POST`/`PATCH /api/admin/members` both check `auth()` + `FEATURES.MEMBERS_EDIT`; `PATCH .../membership-applications/[id]` checks `auth()` + `FEATURES.MEMBERSHIP_MANAGE` including the new `approve_prospective` action (it's a third value of an already-gated field, not a new unguarded surface). No new `FEATURES.*` key, confirmed correctly per the architect/tech-lead ruling.
+- Mobile (360px): **pass, by static review only** — `application-action-buttons.tsx:64` uses `flex-col gap-2 sm:flex-row`, a standard Tailwind pattern that will stack the three buttons correctly below `sm`; not visually confirmed in an actual 360px viewport in this sandbox (no dev server available). Low risk given the pattern is standard and already used elsewhere in this codebase, but it's on the follow-up list below out of rigor, not real doubt.
 
-## Follow-Ups (if SHIP WITH NOTES)
+## Follow-Ups (SHIP WITH NOTES)
 
-- [Concrete, actionable. Each gets its own work-log entry.]
+1. **Run `pnpm db:migrate` against the live dev DB and spot-check the backfill** — confirm every pre-existing `is_active = false` row now reads `membership_status = 'ended'`, and every `is_active = true` row reads `'active'`. This is a simple, idempotent, previously-reviewed SQL statement (`ADD COLUMN IF NOT EXISTS` + guarded `UPDATE`) that runs automatically as part of this project's normal `pnpm build` (migrate → push → build) pipeline — it is not blocked on anything, it just hasn't been *observed* to run correctly yet because this sandbox has no `DATABASE_URL`. **Does not block SHIP IT**; treat as a required step in the next `/pre-push` run, not a separate ticket.
+2. **Run ux-developer's 6-item manual click-through** (Phase 4 UI section) against a real dev server before/at the next deploy: add-as-prospective form defaults and date-field greying, edit-form pre-population, approve-as-prospective toast + directory/dues cross-check, admin status-filter cycling (including the relabeled "Prospective + Ended" `?status=inactive` link), directory badge rendering for a real prospective member, and the 360px mobile button-stacking. **Does not block SHIP IT**; same reasoning — the code-level audit (this review + qa's) is strong evidence, but a human click-through is still owed before this is fully trusted in production.
+3. **Close Open Question 5 with Chuck** — confirm "Prospective" is the term the board wants, or swap it for club-specific language (e.g., "Provisional," "Pending Induction") before the next board meeting sees the admin UI. Purely cosmetic; a one-line copy change in `member-form.tsx`, `application-action-buttons.tsx`, `admin/members/page.tsx`, and `member-directory.tsx` if it changes.
+4. **(Low priority, pre-existing, not introduced here)** Consider a lightweight in-page signal when `syncClubMembersList` fails after an add/approve (currently only visible via `/admin/sync-log`) — flagged by Phase 1 as a gap the request didn't mention and confirmed by every later phase as deliberately out of scope. Worth a backlog entry, not a blocker.
+
+None of these rise to a `docs/backlog.md` B-nn entry on their own — items 1 and 2 are pre-push verification chores for this specific feature (belong in the next `/pre-push` run), item 3 is a one-message confirmation with Chuck, and item 4 is a pre-existing, previously-accepted gap that's better tracked as a standing note than a new backlog line. If Chuck's answer to item 3 changes the term, that's a same-day copy fix, not a new pipeline cycle.
 
 ## Red Flags (if NEEDS REWORK)
 
-- [Specific. What has to change before this ships.]
+None — no red flags. This does not need rework.
