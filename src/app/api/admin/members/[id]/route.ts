@@ -6,7 +6,15 @@ import { eq, sql, and, ne } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { syncClubMembersList } from "@/lib/google-groups";
-import { provisionUserForMember } from "@/lib/members";
+import {
+  provisionUserForMember,
+  isActiveForStatus,
+  shouldProvisionOnMemberUpdate,
+  resolveJoinDate,
+  type MembershipStatus,
+} from "@/lib/members";
+
+const VALID_MEMBERSHIP_STATUSES: MembershipStatus[] = ["prospective", "active", "ended"];
 
 /**
  * PATCH /api/admin/members/[id]
@@ -61,7 +69,25 @@ export async function PATCH(
       );
     }
 
-    const newIsActive = typeof data.isActive === "boolean" ? data.isActive : true;
+    const existingStatus = existing.membershipStatus as MembershipStatus;
+
+    // membershipStatus is client-submitted; isActive is always server-derived
+    // from it (never from client input) — see isActiveForStatus(). Fall back to
+    // the existing status if the client omits it or sends an invalid value,
+    // rather than silently defaulting to "active".
+    const newStatus: MembershipStatus = VALID_MEMBERSHIP_STATUSES.includes(
+      data.membershipStatus
+    )
+      ? data.membershipStatus
+      : existingStatus;
+    const newIsActive = isActiveForStatus(newStatus);
+    const becameActive = existingStatus !== "active" && newStatus === "active";
+
+    const resolvedJoinDate = resolveJoinDate({
+      becameActive,
+      existingJoinDate: existing.joinDate,
+      submittedJoinDate: data.joinDate ? new Date(data.joinDate) : null,
+    });
 
     const [updated] = await db
       .update(members)
@@ -77,9 +103,10 @@ export async function PATCH(
         zip: data.zip || null,
         branch: data.branch || null,
         dateOfBirth: data.dateOfBirth || null,
-        joinDate: data.joinDate ? new Date(data.joinDate) : null,
+        joinDate: resolvedJoinDate,
         membershipEndedDate: data.membershipEndedDate || null,
         isActive: newIsActive,
+        membershipStatus: newStatus,
         updatedAt: new Date(),
       })
       .where(eq(members.id, id))
@@ -98,29 +125,37 @@ export async function PATCH(
       await db.update(users).set(userUpdate).where(eq(users.memberId, existing.id));
     }
 
-    // Defensive: if email changed and member has no linked user, provision one now
-    if (emailChanged && data.email) {
-      const linkedUser = await db.query.users.findFirst({
-        where: eq(users.memberId, existing.id),
-      });
-      if (!linkedUser) {
-        try {
-          await provisionUserForMember({
-            email: data.email.trim(),
-            firstName: data.firstName,
-            lastName: data.lastName,
-            memberId: existing.id,
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.startsWith("EMAIL_CONFLICT")) {
-            return NextResponse.json(
-              { error: "A user account already linked to a different member exists for this email" },
-              { status: 409 }
-            );
-          }
-          throw err;
+    // Unified provisioning gate — replaces the old "email changed, no linked
+    // user" defensive block. Covers both the legacy case (restricted to
+    // landing-as-active) and the new induction case (prospective/ended → active
+    // with no email change).
+    const linkedUser = await db.query.users.findFirst({
+      where: eq(users.memberId, existing.id),
+    });
+    if (
+      shouldProvisionOnMemberUpdate({
+        previousStatus: existingStatus,
+        newStatus,
+        hasLinkedUser: Boolean(linkedUser),
+        emailChanged,
+      })
+    ) {
+      try {
+        await provisionUserForMember({
+          email: data.email.trim(),
+          firstName: data.firstName,
+          lastName: data.lastName,
+          memberId: existing.id,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.startsWith("EMAIL_CONFLICT")) {
+          return NextResponse.json(
+            { error: "A user account already linked to a different member exists for this email" },
+            { status: 409 }
+          );
         }
+        throw err;
       }
     }
 

@@ -8,9 +8,17 @@
 import { google } from "googleapis";
 import { db } from "@/lib/db";
 import { groups, groupMemberships, members, googleGroupSyncLog } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
+import type { MembershipStatus } from "@/lib/members";
 
 const CLUB_GROUP_EMAIL = "club@westervillelions.org";
+
+/** club@ list eligibility (decision: prospects ride the list, ended members don't). */
+export const CLUB_LIST_ELIGIBLE_STATUSES = ["active", "prospective"] as const;
+
+export function isEligibleForClubList(status: MembershipStatus): boolean {
+  return (CLUB_LIST_ELIGIBLE_STATUSES as readonly string[]).includes(status);
+}
 
 export type SyncTriggerSource = "manual" | "member_added" | "member_removed" | "member_updated";
 
@@ -137,14 +145,15 @@ export async function syncClubMembersList(ctx: SyncContext = {}): Promise<SyncRe
         .filter((e): e is string => Boolean(e))
     );
 
-    // Fetch all active portal members with email
-    const activeMembers = await db
+    // Fetch all club@-eligible portal members with email (active + prospective;
+    // ended members are excluded). See isEligibleForClubList() above.
+    const eligibleMembers = await db
       .select({ email: members.email })
       .from(members)
-      .where(and(eq(members.isActive, true)));
+      .where(inArray(members.membershipStatus, CLUB_LIST_ELIGIBLE_STATUSES));
 
     const portalMemberEmails = new Set<string>(
-      activeMembers
+      eligibleMembers
         .map((m) => m.email?.toLowerCase())
         .filter((e): e is string => Boolean(e))
     );

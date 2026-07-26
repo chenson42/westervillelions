@@ -14,7 +14,7 @@ export default async function MembersPage() {
   }
 
   const allMembers = await db.query.members.findMany({
-    where: eq(members.isActive, true),
+    where: inArray(members.membershipStatus, ["active", "prospective"]),
     orderBy: (members, { asc }) => [asc(members.lastName), asc(members.firstName)],
   });
 
@@ -76,6 +76,7 @@ export default async function MembersPage() {
     memberNumber: member.memberNumber,
     joinDate: member.joinDate,
     profilePicture: member.profilePicture,
+    membershipStatus: member.membershipStatus as "active" | "prospective" | "ended",
     groupTags: memberTagsMap.get(member.id) ?? [],
   }));
 

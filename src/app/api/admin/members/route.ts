@@ -5,8 +5,15 @@ import { members } from "@/lib/db/schema";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { syncClubMembersList } from "@/lib/google-groups";
-import { provisionUserForMember } from "@/lib/members";
+import {
+  provisionUserForMember,
+  isActiveForStatus,
+  shouldProvisionOnMemberCreate,
+  type MembershipStatus,
+} from "@/lib/members";
 import { sql } from "drizzle-orm";
+
+const VALID_MEMBERSHIP_STATUSES: MembershipStatus[] = ["prospective", "active", "ended"];
 
 /**
  * GET /api/admin/members
@@ -85,6 +92,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // membershipStatus is client-submitted; isActive is always server-derived
+    // from it (never from client input) — see isActiveForStatus().
+    const membershipStatus: MembershipStatus = VALID_MEMBERSHIP_STATUSES.includes(
+      data.membershipStatus
+    )
+      ? data.membershipStatus
+      : "active";
+
     // Create member
     const [newMember] = await db
       .insert(members)
@@ -100,33 +115,45 @@ export async function POST(request: NextRequest) {
         zip: data.zip || null,
         branch: data.branch || null,
         boardPosition: data.boardPosition || null,
-        joinDate: data.joinDate ? new Date(data.joinDate) : null,
-        isActive: data.isActive ?? true,
+        // Prospects never get a joinDate at create time — only set on the
+        // prospective/ended → active transition (resolveJoinDate at PATCH time).
+        joinDate:
+          membershipStatus === "active"
+            ? data.joinDate
+              ? new Date(data.joinDate)
+              : new Date()
+            : null,
+        isActive: isActiveForStatus(membershipStatus),
+        membershipStatus,
       })
       .returning();
 
-    // Provision user account, assign member role, send welcome email
-    let userLinked: "created" | "existing" = "created";
-    try {
-      const { wasExisting } = await provisionUserForMember({
-        email: data.email.trim(),
-        firstName: data.firstName,
-        lastName: data.lastName,
-        memberId: newMember.id,
-      });
-      userLinked = wasExisting ? "existing" : "created";
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.startsWith("EMAIL_CONFLICT")) {
-        return NextResponse.json(
-          { error: "A user account already linked to a different member exists for this email" },
-          { status: 409 }
-        );
+    // Provision user account, assign member role, send welcome email —
+    // skipped for prospective creates (shouldProvisionOnMemberCreate).
+    let userLinked: "created" | "existing" | undefined;
+    if (shouldProvisionOnMemberCreate(membershipStatus)) {
+      try {
+        const { wasExisting } = await provisionUserForMember({
+          email: data.email.trim(),
+          firstName: data.firstName,
+          lastName: data.lastName,
+          memberId: newMember.id,
+        });
+        userLinked = wasExisting ? "existing" : "created";
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.startsWith("EMAIL_CONFLICT")) {
+          return NextResponse.json(
+            { error: "A user account already linked to a different member exists for this email" },
+            { status: 409 }
+          );
+        }
+        throw err;
       }
-      throw err;
     }
 
-    // Fire-and-forget club list sync
+    // Fire-and-forget club list sync — fires for every create regardless of
+    // status; a prospect must land on club@ immediately.
     syncClubMembersList({ triggeredByUserId: session.user.id, triggerSource: "member_added" })
       .catch((e) => console.error("[sync] club list:", e));
 

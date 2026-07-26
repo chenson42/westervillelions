@@ -139,7 +139,9 @@ export default function MemberSearch({
               className="block w-full rounded-md border border-gray-300 py-2 pl-3 pr-10 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             >
               <option value="active">Active only</option>
-              <option value="inactive">Inactive only</option>
+              <option value="inactive">Prospective + Ended</option>
+              <option value="prospective">Prospective only</option>
+              <option value="ended">Ended only</option>
               <option value="all">All members</option>
             </select>
           </div>

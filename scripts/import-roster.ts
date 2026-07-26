@@ -106,7 +106,12 @@ async function importRoster(filePath: string) {
 
         userId = newUser.id;
 
-        // Create member record
+        // Create member record. membershipStatus mirrors isActive here — this
+        // roster has no "prospective" signal, so a not-active row maps to
+        // "ended" (matches the migration 0061 backfill rule). Keep both
+        // columns in sync per the isActive/membershipStatus invariant in
+        // src/lib/members.ts — see docs/work-log/2026-07-26-prospective-members.md.
+        const isActive = row.Status === "Active Member";
         await db.insert(members).values({
           userId,
           memberNumber: row["Member #"],
@@ -115,7 +120,8 @@ async function importRoster(filePath: string) {
           phone: row.telephone || null,
           branch: row.Branch || null,
           joinDate,
-          isActive: row.Status === "Active Member",
+          isActive,
+          membershipStatus: isActive ? "active" : "ended",
         });
 
         console.log(`✅ Imported: ${row.Name} (${email})`);

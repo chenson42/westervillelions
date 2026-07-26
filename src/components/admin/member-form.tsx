@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
+export type MembershipStatus = "prospective" | "active" | "ended";
+
 export interface MemberFormData {
   memberNumber?: number | null;
   firstName: string;
@@ -18,8 +20,14 @@ export interface MemberFormData {
   dateOfBirth?: string | null;
   joinDate?: string | null;
   membershipEndedDate?: string | null;
-  isActive: boolean;
+  membershipStatus: MembershipStatus;
 }
+
+const STATUS_OPTIONS: { value: MembershipStatus; label: string }[] = [
+  { value: "prospective", label: "Prospective" },
+  { value: "active", label: "Active" },
+  { value: "ended", label: "Ended" },
+];
 
 const MONTHS = [
   { value: "01", label: "January" },
@@ -66,7 +74,7 @@ export default function MemberForm({
       firstName: "",
       lastName: "",
       email: "",
-      isActive: true,
+      membershipStatus: "active",
     }
   );
 
@@ -267,7 +275,9 @@ export default function MemberForm({
           <div>
             <label
               htmlFor="membershipEndedDate"
-              className="block text-sm font-medium text-gray-700"
+              className={`block text-sm font-medium ${
+                formData.membershipStatus === "ended" ? "text-gray-700" : "text-gray-400"
+              }`}
             >
               Membership Ended
             </label>
@@ -277,8 +287,14 @@ export default function MemberForm({
               name="membershipEndedDate"
               value={formData.membershipEndedDate || ""}
               onChange={handleChange}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+              disabled={formData.membershipStatus !== "ended"}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:bg-gray-100 disabled:text-gray-400"
             />
+            {formData.membershipStatus !== "ended" && (
+              <p className="mt-1 text-xs text-gray-500">
+                Only applies when status is Ended.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -430,21 +446,31 @@ export default function MemberForm({
             <p className="mt-1 text-xs text-gray-500">Year is optional</p>
           </div>
 
-          <div className="flex items-center">
-            <input
-              type="checkbox"
-              id="isActive"
-              name="isActive"
-              checked={formData.isActive}
-              onChange={handleChange}
-              className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
-            />
+          <div>
             <label
-              htmlFor="isActive"
-              className="ml-2 block text-sm text-gray-700"
+              htmlFor="membershipStatus"
+              className="block text-sm font-medium text-gray-700"
             >
-              Active Member
+              Membership Status *
             </label>
+            <select
+              id="membershipStatus"
+              name="membershipStatus"
+              required
+              value={formData.membershipStatus}
+              onChange={handleChange}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              Prospective members receive club emails but aren&apos;t counted as active
+              members or given portal access until inducted.
+            </p>
           </div>
         </div>
       </div>

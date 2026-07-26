@@ -28,6 +28,25 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-041: Prospective members — no DB-level CHECK constraint for the `isActive`/`membershipStatus` invariant; application-level enforcement only
+
+**Status:** Resolved
+**Date:** 2026-07-26
+
+**Decision:**
+
+Adding `members.membershipStatus` (`prospective | active | ended`) per the prospective-members feature (`docs/work-log/2026-07-26-prospective-members.md`), the architect flagged a DB-level `CHECK` constraint enforcing `is_active = (membership_status = 'active')` as an optional hardening suggestion, noting no CHECK-constraint precedent existed in `drizzle/migrations/`. Declining it: this codebase already has an on-the-record decision *against* CHECK constraints on status-like text columns — `src/lib/db/schema.ts` lines 935, 958, and 1018 each carry `"No CHECK constraint on status — consistent with ledger_transactions.status pattern (inc1 precedent)"`. The invariant is enforced entirely in application code: every write path (`POST`/`PATCH /api/admin/members`, both membership-application approval branches, the roster-import scripts) derives `isActive` from `membershipStatus` via a single shared helper (`isActiveForStatus()` in `src/lib/members.ts`), never accepts a client-submitted `isActive`, and the invariant is regression-guarded by unit tests in `src/lib/members.test.ts`.
+
+**Rationale:**
+
+Adding a CHECK constraint here would introduce a new pattern this codebase has explicitly decided against elsewhere, not extend an existing one. It would also create an unrepresented-in-`schema.ts` database object to reason about on every future schema change — this project's Drizzle models have no first-class CHECK-constraint builder in use anywhere, and the invariant "`schema.ts` is the source of truth; anything in the live DB that isn't in `schema.ts` is dropped on the next `pnpm db:push`" makes an object Drizzle doesn't know about a standing risk, for a guarantee the application-level helper already provides. The partial unique index added in migration 0042 (`dues_settings`, similarly unrepresented in `schema.ts`) has run safely in production since — precedent that an unmanaged raw-SQL object is survivable, but that doesn't make adding a *second* undeclared kind of object (a CHECK constraint, a category this codebase has never used) the right default.
+
+**Impact:**
+
+`drizzle/migrations/0061_members_membership_status.sql` adds the column and backfill only, no CHECK constraint. `src/lib/members.ts` centralizes the invariant in `isActiveForStatus()`, `shouldProvisionOnMemberCreate()`, `shouldProvisionOnMemberUpdate()` — every write path must route through these, not reimplement the logic inline. If a future incident shows application-level enforcement was insufficient (e.g., a write path bypasses the helper), revisit this decision then, with that incident as the concrete justification a hypothetical one doesn't provide today.
+
+---
+
 ## DECISION-040: Receipt storage moves to Postgres — `DatabaseReceiptStorage` adapter, `NODE_ENV`-gated selection (no new required env var), `@vercel/blob` removed
 
 **Status:** Resolved
