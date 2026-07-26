@@ -20,6 +20,7 @@ interface Member {
   memberNumber: number | null;
   joinDate: Date | null;
   profilePicture: string | null;
+  membershipStatus: "active" | "prospective" | "ended";
   groupTags: GroupTag[];
 }
 
@@ -239,6 +240,11 @@ export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps)
                     {member.firstName} {member.lastName}
                   </h3>
                   <div className="flex gap-1 flex-wrap justify-end">
+                    {member.membershipStatus === "prospective" && (
+                      <span className="px-2 py-1 bg-lions-gold/20 text-lions-blue-dark text-xs font-semibold rounded-full whitespace-nowrap">
+                        Prospective
+                      </span>
+                    )}
                     {member.groupTags.map((g) => (
                       <span
                         key={g.groupId}

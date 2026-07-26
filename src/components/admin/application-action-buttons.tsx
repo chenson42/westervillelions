@@ -10,7 +10,7 @@ export default function ApplicationActionButtons({ id }: { id: string }) {
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [adminNotes, setAdminNotes] = useState("");
 
-  async function handleAction(action: "approve" | "reject") {
+  async function handleAction(action: "approve" | "approve_prospective" | "reject") {
     const res = await fetch(`/api/admin/membership-applications/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -23,7 +23,13 @@ export default function ApplicationActionButtons({ id }: { id: string }) {
       return;
     }
 
-    toast.success(action === "approve" ? "Application approved — member record created." : "Application rejected.");
+    if (action === "approve") {
+      toast.success("Application approved — member record created.");
+    } else if (action === "approve_prospective") {
+      toast.success("Application approved as prospective — added to club email list.");
+    } else {
+      toast.success("Application rejected.");
+    }
     startTransition(() => router.refresh());
   }
 
@@ -55,18 +61,26 @@ export default function ApplicationActionButtons({ id }: { id: string }) {
           </div>
         </div>
       ) : (
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <button
             onClick={() => handleAction("approve")}
             disabled={isPending}
-            className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition disabled:opacity-60"
+            className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
           >
             {isPending ? "Approving..." : "Approve"}
           </button>
           <button
+            onClick={() => handleAction("approve_prospective")}
+            disabled={isPending}
+            title="Adds them to the club email list without portal login or dues billing until inducted."
+            className="flex-1 border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-medium hover:bg-lions-blue/5 transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+          >
+            {isPending ? "Approving..." : "Approve as Prospective"}
+          </button>
+          <button
             onClick={() => setShowRejectForm(true)}
             disabled={isPending}
-            className="flex-1 bg-red-50 text-red-700 border border-red-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-100 transition disabled:opacity-60"
+            className="flex-1 bg-red-50 text-red-700 border border-red-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-100 transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
           >
             Reject
           </button>

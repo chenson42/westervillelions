@@ -61,6 +61,10 @@ export default async function MembersPage({
     conditions.push(eq(members.isActive, true));
   } else if (status === "inactive") {
     conditions.push(eq(members.isActive, false));
+  } else if (status === "prospective") {
+    conditions.push(eq(members.membershipStatus, "prospective"));
+  } else if (status === "ended") {
+    conditions.push(eq(members.membershipStatus, "ended"));
   }
 
   // Group filter: get member IDs in that group first
@@ -296,12 +300,18 @@ export default async function MembersPage({
                     <td className="whitespace-nowrap px-6 py-4">
                       <span
                         className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
-                          member.isActive
+                          member.membershipStatus === "active"
                             ? "bg-green-100 text-green-800"
+                            : member.membershipStatus === "prospective"
+                            ? "bg-lions-gold/20 text-lions-blue-dark"
                             : "bg-gray-100 text-gray-500"
                         }`}
                       >
-                        {member.isActive ? "Active" : "Inactive"}
+                        {member.membershipStatus === "active"
+                          ? "Active"
+                          : member.membershipStatus === "prospective"
+                          ? "Prospective"
+                          : "Ended"}
                       </span>
                     </td>
                     {canViewDues && (

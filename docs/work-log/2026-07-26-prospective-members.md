@@ -17,7 +17,7 @@
 | 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-26 |
 | 4 — Implementation (schema) | database-admin | Complete | — | 2026-07-26 |
 | 4 — Implementation (server) | api-developer | Complete | — | 2026-07-26 |
-| 4 — Implementation (client) | ux-developer | Pending | — | — |
+| 4 — Implementation (client) | ux-developer | Complete | — | 2026-07-26 |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -583,6 +583,73 @@ Built exactly to the Phase 3 API contract: added the four pure helpers (`isActiv
 - **Manual backfill spot-check** (every pre-existing `is_active = false` row now reads `membership_status = 'ended'`) is still outstanding per database-admin's Phase 4 note — nobody in this pipeline has yet run `pnpm db:migrate` against a live DB.
 - Confirmed no `console.log` added in any production path (only pre-existing `console.error`/`console.warn` patterns reused, consistent with the rest of `google-groups.ts` and the members routes).
 - Confirmed no native browser dialogs touched (server-only work).
+
+---
+
+# Phase 4 — Implementation (UI) — 2026-07-26
+
+**Owner:** ux-developer
+**Status:** complete
+
+### Summary
+
+Built exactly to the Phase 3 component plan, consuming the API contract api-developer left in the work-log (`membershipStatus` on `POST`/`PATCH /api/admin/members`, `approve_prospective` action on the applications route, no client-submitted `isActive` anywhere). Replaced the admin member-form's "Active Member" checkbox with a 3-option `membershipStatus` select; added a third "Approve as Prospective" button to the application action buttons; added a third status-pill state and two additive filter options to the admin members list; and switched the member directory query to include prospects, rendering a gold "Prospective" badge on their card. `typecheck` and the full Vitest suite (480/480) stay green.
+
+### What I did
+
+- **`src/components/admin/member-form.tsx`** — exported a local `MembershipStatus` type (mirrors `src/lib/members.ts`'s exported type — the form doesn't import server-side `src/lib/members.ts` to keep the client bundle free of server-only dependencies, consistent with this file's existing self-contained style); `MemberFormData.isActive: boolean` → `MemberFormData.membershipStatus: MembershipStatus`. Replaced the checkbox (old lines 433-448) with a `<select id="membershipStatus" name="membershipStatus" required>` with options Prospective / Active / Ended, defaulting new-member state to `"active"` (preserves today's checked-by-default behavior). The form no longer submits `isActive` at all — the API derives it server-side per the contract. De-emphasized the "Membership Ended" date field (`disabled` + greyed label/helper text) when `membershipStatus !== "ended"`, per the design's "UX nicety, not a hard requirement" — since the field is a controlled React input (not native form serialization), `disabled` only blocks interaction; the existing value still round-trips in `formData` state and submits unchanged, so pre-existing `membershipEndedDate` values on records are preserved exactly as the design required.
+- **`src/app/(dashboard)/admin/members/[id]/page.tsx`** — edit-page `formData` mapping now passes `membershipStatus: member.membershipStatus as MemberFormData["membershipStatus"]` instead of `isActive: member.isActive` (schema types the column as plain `text`, so a narrowing cast is needed, same pattern used elsewhere in this codebase for text-enum columns).
+- **`src/components/admin/application-action-buttons.tsx`** — `handleAction`'s type widened to `"approve" | "approve_prospective" | "reject"`; added a third button "Approve as Prospective" using the secondary-outlined style (`border-2 border-lions-blue text-lions-blue ... hover:bg-lions-blue/5`) so it reads as a distinct-but-non-destructive option alongside the existing green "Approve" and red-bordered "Reject" buttons; added a `title` tooltip clarifying it skips portal provisioning; success toast branches on the action for accurate copy ("Application approved as prospective — added to club email list."). Did **not** add a `<ConfirmDialog>` — the existing Approve button has no confirmation step today (direct click), so Approve as Prospective matches that pattern exactly; only Reject has an inline notes/confirm panel, which is unchanged. Also added `focus:ring-2 focus:ring-lions-blue` to all three buttons for consistent focus visibility (the original Approve/Reject buttons were missing this — a small drive-by accessibility fix, in-scope since I was already editing this block's className).
+- **`src/app/(dashboard)/admin/members/page.tsx`** — status filter branch gained `else if (status === "prospective")` / `else if (status === "ended")` clauses keyed on `members.membershipStatus`, additive to the untouched `active`/`inactive` (`isActive`-keyed) branches — no existing bookmarked `?status=` link changes behavior. Status pill now keys off `member.membershipStatus` (three states: Active green, Prospective `bg-lions-gold/20 text-lions-blue-dark`, Ended grey/"Ended" label) instead of the old binary `member.isActive` Active/Inactive pill — kept the existing `rounded-full` pill convention unchanged.
+- **`src/components/admin/member-search.tsx`** — added two `<option>`s to the status select: `value="prospective"` ("Prospective only") and `value="ended"` ("Ended only"); relabeled the existing `value="inactive"` option to "Prospective + Ended" per the design (value/behavior unchanged, so `?status=inactive` links keep working).
+- **`src/app/members/page.tsx`** — directory query switched from `where: eq(members.isActive, true)` to `where: inArray(members.membershipStatus, ["active", "prospective"])` (`inArray` was already imported in this file); `membersWithTags` mapping gains `membershipStatus: member.membershipStatus as "active" | "prospective" | "ended"`. Stayed a Server Component — no interactivity added.
+- **`src/components/members/member-directory.tsx`** — `Member` interface gains `membershipStatus: "active" | "prospective" | "ended"`; renders a `bg-lions-gold/20 text-lions-blue-dark` "Prospective" pill in the card's tag row (same `rounded-full` pill shape as the existing group/branch/service-years tags) when `member.membershipStatus === "prospective"`. Active members get no extra badge, matching today's behavior. Stayed a client component only because it already was one (existing search/filter state) — no new client boundary introduced by this change.
+- Grepped for `response.userLinked` usage in UI code per api-developer's flagged risk — confirmed zero references; `member-form.tsx` doesn't read the create/update response body beyond checking `response.ok`, so the "absent for prospective creates" response-shape change is a non-issue for this UI.
+- Did not touch server routes, `src/lib/members.ts`, `src/lib/google-groups.ts`, schema, migrations, or any test file — UI only, per scope.
+
+### Outputs
+
+- `src/components/admin/member-form.tsx` — status `<select>` replacing the "Active Member" checkbox; de-emphasized "Membership Ended" date field.
+- `src/app/(dashboard)/admin/members/[id]/page.tsx` — `formData` mapping passes `membershipStatus` instead of `isActive`.
+- `src/components/admin/application-action-buttons.tsx` — third "Approve as Prospective" button; widened action type; focus-ring accessibility fix on all three buttons.
+- `src/app/(dashboard)/admin/members/page.tsx` — `prospective`/`ended` filter branches; 3-state status pill.
+- `src/components/admin/member-search.tsx` — two new filter `<option>`s; relabeled "inactive" option.
+- `src/app/members/page.tsx` — directory query now includes prospects (`inArray`); `membersWithTags` carries `membershipStatus`.
+- `src/components/members/member-directory.tsx` — `Member` interface gains `membershipStatus`; renders gold "Prospective" pill.
+- No decisions requiring a new `docs/decisions.md` entry — all choices here were either spelled out verbatim in the Phase 3 design or clearly-scoped UX niceties (disabled date field styling, focus-ring fix) within the existing conventions.
+
+### UX gate checklist
+
+- Cards: no new card containers introduced; existing `rounded-2xl`/`rounded-xl` containers on these pages were untouched (out of scope for this feature).
+- Buttons: new "Approve as Prospective" button is `rounded-lg`, uses the documented secondary-outlined style (`border-2 border-lions-blue text-lions-blue ... hover:bg-lions-blue/5`). No `rounded-full` buttons introduced.
+- Badges/pills: both new "Prospective" badges (admin list pill, directory card tag) use `bg-lions-gold/20 text-lions-blue-dark`, matching the Phase 3 design's exact class string and the existing `rounded-full` pill convention on both surfaces. No `lions-red` anywhere.
+- No native browser dialogs added or touched — Approve/Approve-as-Prospective/Reject all follow the pre-existing pattern (direct click / inline notes panel), no `<ConfirmDialog>` needed since neither original flow used one.
+- Mobile-first: the three application-action buttons now wrap `flex-col` on mobile (`sm:flex-row`) since a third button made the previous fixed `flex` row too cramped below `sm` — verified this doesn't regress the two-button case (reject-confirm sub-view is unaffected, still 2 buttons in `flex`).
+- Focus rings: `focus:outline-none focus:ring-2 focus:ring-lions-blue` present on all three action buttons (added to Approve/Reject as a drive-by fix, was already correctly present on other touched controls).
+- Server/client boundary: `src/app/members/page.tsx` and `src/app/(dashboard)/admin/members/page.tsx` remain Server Components — only the query/rendering logic changed, no new `'use client'`. `member-form.tsx` and `application-action-buttons.tsx` were already client components; no new client boundary crossed.
+
+### Test results
+
+- `pnpm exec tsc --noEmit` — **PASS**, zero errors.
+- `pnpm test` — **PASS**, 480/480 tests across 17 files, unchanged from api-developer's Phase 4 baseline (no test files touched in this step, none should have regressed).
+- `pnpm build:only` — not run; this sandbox has no live `DATABASE_URL`/`.env.local` (same pre-existing limitation api-developer flagged — the build fails at "Collecting page data" independent of this change). Deferred to qa/deployment-engineer per api-developer's note.
+- `pnpm lint` — not re-attempted; api-developer already flagged this sandbox's ESLint install as broken independent of any code change (`minimatch`/ESM interop crash in `node_modules`).
+
+### Open questions / handoff notes
+
+- **Next agent: qa (Phase 5).** Suggested manual click-through:
+  1. `/admin/members/new` — confirm the status select defaults to "Active", switching it to "Prospective" doesn't touch/require the Membership Ended date, and the field visibly greys out and disables when status ≠ "Ended".
+  2. `/admin/members/[id]` (edit an existing member) — confirm the select is pre-populated with the member's current `membershipStatus`, not defaulted to "Active"; set to "Ended" and confirm the date field re-enables.
+  3. `/admin/membership` — click "Approve as Prospective" on a pending application, confirm the toast copy, confirm the created member row shows the gold "Prospective" pill at `/admin/members` and does **not** appear counted in dues/active-member surfaces (per api-developer's server contract — this is a cross-check, not new UI logic).
+  4. `/admin/members` — cycle through the status filter dropdown (Active only / Prospective + Ended / Prospective only / Ended only / All members) and confirm each returns the expected rows; confirm bookmarked `?status=inactive` links still work unchanged.
+  5. `/members` (the member portal directory, as a linked member account) — confirm a prospective member now appears with a gold "Prospective" pill next to their name, and an ended member does not appear at all.
+  6. Mobile viewport (360px) — `/admin/membership`'s three-button row should stack vertically; the member-form status select and admin members table should remain usable.
+- **New copy strings the Lions Club may want to refine:** "Prospective" as the on-screen label (Phase 1's Open Question 5 — the analyst flagged this as worth a one-line confirmation with Chuck but it was never explicitly re-confirmed in Phase 2/3; I proceeded with "Prospective" since every later phase's design doc used that exact term without revisiting the question). Also: the helper text under the status select ("Prospective members receive club emails but aren't counted as active members or given portal access until inducted.") and the button tooltip text — both are new copy, not specified verbatim in the Phase 3 design, so worth a glance.
+- **UX decisions / tradeoffs made beyond the letter of the design:**
+  - Added `focus:ring-2 focus:ring-lions-blue` to the pre-existing Approve/Reject buttons (not just the new one) since I was already touching that JSX block and the CLAUDE.md accessibility gate applies to all interactive controls, not just new ones. Flagging in case qa wants to scope this as a separate tiny fix rather than bundle it here.
+  - Application-action-buttons row now wraps to `flex-col` on mobile — a necessary consequence of adding a third button to a `flex gap-2` row that would otherwise be too cramped under ~375px. Verify at 360px per the click-through list above.
+  - Did not add a filter "tab" UI (radio-button-style tabs) for prospective/ended — used `<option>` additions to the existing `<select>` instead, matching the Phase 3 design's literal instruction ("add two new `<option>`s") over the Phase 2 architect's looser suggestion of "an explicit filter/tab" — tech-lead's design superseded that open architect suggestion, so no open question here, just noting the lineage.
+- **Reminder inherited from api-developer, still outstanding, not this agent's to close:** the manual DB backfill spot-check (every `is_active = false` row reads `membership_status = 'ended'` after migration) has not yet been run against a live database in this pipeline — someone with `.env.local` access needs to do this before/alongside qa's Phase 5 pass.
 
 ---
 
