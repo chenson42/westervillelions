@@ -18,7 +18,7 @@
 | 4 — Implementation (schema) | database-admin | Complete | — | 2026-07-26 |
 | 4 — Implementation (server) | api-developer | Complete | — | 2026-07-26 |
 | 4 — Implementation (client) | ux-developer | Complete | — | 2026-07-26 |
-| 5 — Verification | qa | Pending | — | — |
+| 5 — Verification | qa | Complete | PASS | 2026-07-26 |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
 ---
@@ -655,35 +655,142 @@ Built exactly to the Phase 3 component plan, consuming the API contract api-deve
 
 # Phase 5 — Verification (qa)
 
-**Date:** YYYY-MM-DD
+**Date:** 2026-07-26
 **Verified by:** qa
+
+## Summary
+
+**PASS.** All three Phase 4 increments (schema, server, UI) are wired correctly end to end against the Phase 1 intent and the Phase 3 design contract. Typecheck is clean, all 480 tests pass (including the 21 new tests named verbatim in the Phase 3 design — 17 in `members.test.ts`, 4 in `google-groups.test.ts`), and Turbopack compile + the internal TypeScript build pass are both clean. The production build fails at "Collecting page data" on `/api/admin/announcements/reorder` (a route this feature never touched) because this sandbox has no `DATABASE_URL` — the identical pre-existing environment limitation every Phase 4 sub-report already flagged, not a regression from this change. No dev server could be started against a live DB in this sandbox, so the manual click-through list ux-developer handed off was not runnable here; verification instead relied on a file-by-file flow audit of every changed route/component, cited by file:line below, per the project's allowance for flows the runner can't reach. That audit found the wiring correct on all 5 named behaviors, all gates intact, and no UX-guideline violations.
 
 ## Type Check
 
-`pnpm exec tsc --noEmit`: PASS / FAIL
+`pnpm exec tsc --noEmit`: **PASS** — zero errors.
+
+## Unit Tests
+
+`pnpm test`: **PASS**
+Total: 480 | Passed: 480 | Failed: 0
+Duration: 3.38s
+Failures: none
+
+**Named-test audit against the Phase 3 design (`src/lib/members.test.ts`, `src/lib/google-groups.test.ts`):**
+- `isActiveForStatus` — 3/3 cases present (`active`→true, `prospective`→false, `ended`→false).
+- `shouldProvisionOnMemberCreate` — 3/3 cases present.
+- `shouldProvisionOnMemberUpdate` — 7/7 cases present, including the induction gap (prospective→active, no linked user → true), the exact bug being regression-guarded (prospective, email changed, no linked user → false), and the ended→active reactivation case.
+- `resolveJoinDate` — 4/4 cases present (now-stamp, admin-override-wins, never-overwrite-existing, non-transition passthrough).
+- `isEligibleForClubList` — 4/4 cases present (active/prospective/ended + an explicit allow-list sanity check).
+- **21/21 named tests present and passing. No gap between the Phase 3 test plan and what shipped.**
 
 ## Production Build
 
-`pnpm build:only`: PASS / FAIL
+`pnpm build:only`: **Compile/typecheck stage PASS; data-collection stage blocked by a pre-existing environment limitation, not this change.**
 
-## Dev-Server Smoke Test
+Notes:
+- `✓ Compiled successfully in 31.2s` (Turbopack) and `Finished TypeScript in 33.5s` both succeeded with zero errors — this is the strongest build-stage signal available in this sandbox and it's clean.
+- Build then failed at `Collecting page data` with `Error: DATABASE_URL or DB_URL environment variable is not set`, surfacing first on `Failed to collect page data for /api/admin/announcements/reorder` — a route entirely unrelated to this feature. Confirmed via `env | grep DATABASE_URL` (empty) and absence of `.env.local` in this sandbox. Every Phase 4 sub-report (database-admin, api-developer, ux-developer) independently hit and flagged this same limitation. Not a new failure attributable to this change.
+- Per the QA brief's explicit instruction, this is documented as an environment limitation, not scored as a build FAIL.
 
-`pnpm dev` against `.env.local` reaches the routes without runtime error: PASS / FAIL
-Notes: [...]
+## End-to-End Tests
+
+`pnpm test:e2e`: **Not run** — no dev server could be started (no `DATABASE_URL`/`.env.local` in this sandbox), and Playwright does not spawn the dev server itself. No existing `e2e/` spec targets this feature (none was in the Phase 3 test plan — the tech-lead explicitly deferred `approve_prospective` end-to-end and the duplicate-email 409 to this phase's manual click-through, noting "no route-handler test precedent exists in this codebase"). Substituted with the code-level flow audit below, per the project's allowance for flows the runner can't reach.
+
+## Code-Level Flow Audit (substituting for the unreachable dev-server click-through)
+
+**1. `membershipStatus` tri-state; `isActive` server-derived, never client-submitted.**
+- `src/components/admin/member-form.tsx` — no reference to `isActive` anywhere in the file (grepped, zero matches); `<select id="membershipStatus" name="membershipStatus" required>` (lines 456-469) is the only status control, defaulting new-member state to `"active"` (line 77).
+- `src/app/api/admin/members/route.ts:97-101,126-127` — `membershipStatus` validated against `VALID_MEMBERSHIP_STATUSES`, falls back to `"active"` if omitted/invalid; `isActive: isActiveForStatus(membershipStatus)` — never reads `data.isActive`.
+- `src/app/api/admin/members/[id]/route.ts:78-84,108-109` — same pattern, but falls back to the **existing** status (not `"active"`) when omitted/invalid — a deliberate, correctly-reasoned deviation (an edit that forgets the field must not silently reactivate someone).
+- Confirmed: no code path anywhere reads a client-submitted `isActive`.
+
+**2. `syncClubMembersList()` includes prospective + active, excludes ended/no-email.**
+- `src/lib/google-groups.ts:17-21` — `CLUB_LIST_ELIGIBLE_STATUSES = ["active", "prospective"]`, `isEligibleForClubList()` checks against it (explicit allow-list, not a negation, per the architect's ruling — a future 4th status can't silently ride the list).
+- `src/lib/google-groups.ts:150-159` — query switched to `inArray(members.membershipStatus, CLUB_LIST_ELIGIBLE_STATUSES)`; emails are then `.filter((e): e is string => Boolean(e))`'d, so no-email rows are excluded from the sync set.
+
+**3. Prospective create skips provisioning; induction triggers it.**
+- `src/app/api/admin/members/route.ts:133-153` — `provisionUserForMember` gated by `shouldProvisionOnMemberCreate(membershipStatus)`; `userLinked` is left `undefined` (and therefore omitted from the JSON response by `NextResponse.json`) when skipped.
+- `src/app/api/admin/members/[id]/route.ts:132-160` — unified `shouldProvisionOnMemberUpdate` gate covers both the legacy "email changed, no linked user" case and the new induction case (`previousStatus !== "active" && newStatus === "active"`), fires regardless of whether the email changed in the same request. `resolveJoinDate` (line 86-90) stamps `joinDate` on the transition-to-active, never overwrites an existing one.
+- `src/app/api/admin/membership-applications/[id]/route.ts:98-119` — `approve_prospective` branch inserts `membershipStatus: "prospective"`, `isActive: false`, `joinDate: null`, and explicitly does **not** call `provisionUserForMember` (commented inline at line 115).
+
+**4. Membership-application review — `approve_prospective` + sync-on-approve bug fix.**
+- `src/app/api/admin/membership-applications/[id]/route.ts:11-12,31-34` — `VALID_ACTIONS = ["approve", "approve_prospective", "reject"]`, 400 on anything else.
+- Lines 69-97 (`approve`) — now fires `syncClubMembersList(...).catch(...)` fire-and-forget after `provisionUserForMember`, closing the named bug (this call was previously simply missing).
+- Lines 98-119 (`approve_prospective`) — separate, structurally distinct branch (not a shared call gated by a flag, per the architect's explicit requirement) that also fires the same fire-and-forget sync.
+- Lines 45-57 — new case-insensitive duplicate-email guard (409) applied before **both** approve branches, closing a gap that existed for plain `approve` too and was never checked before this feature.
+
+**5. Directory badge; dues/counts/exports/login exclude prospects.**
+- `src/app/members/page.tsx:17` — `inArray(members.membershipStatus, ["active", "prospective"])` (was `eq(members.isActive, true)`); line 79 carries `membershipStatus` through to the rendered member list.
+- `src/components/members/member-directory.tsx:243-247` — gold `Prospective` pill (`bg-lions-gold/20 text-lions-blue-dark rounded-full`), rendered only for `membershipStatus === "prospective"`; active members get no extra badge.
+- `src/lib/dues-queries.ts:141,202` — both dues queries still filter `m.is_active = true` — **zero code change needed**, correctly excludes prospects for free (derived-boolean payoff).
+- `src/app/api/admin/members/export/route.ts:34` — still `eq(members.isActive, true)` — unchanged, correctly excludes prospects.
+- `src/app/(dashboard)/admin/page.tsx:31` — "Total Members" stat still `eq(members.isActive, true)` — unchanged, correctly excludes prospects.
+- `src/lib/auth/index.ts:67,114,171` — login gate and Google-sign-in auto-link query all still read `isActive`/`users.isActive`, untouched by this feature; kept in sync by the `activeChanged` block in `PATCH /api/admin/members/[id]:118-126`, which fires on any `isActive` flip in either direction (so active→prospective/ended locks portal login for free, with no new code).
+- `src/app/(dashboard)/admin/members/page.tsx:300-315` — admin list status pill now keys on `membershipStatus` (3 states: green Active / gold Prospective / grey Ended); filter branches (lines 60-67) additively support `prospective`/`ended` without touching the existing `active`/`inactive` (`isActive`-keyed) branches — no bookmarked `?status=` link changes behavior.
 
 ## Manual Click-Through
 
 | Flow | Result | Notes |
 |------|--------|-------|
-| [user flow] | [pass / fail] | [observation] |
+| Add member as Prospective (`/admin/members/new`) | **Not run — no live DB in this sandbox** | Substituted with code audit above (item 1, 3). Handed to the user/admin as a pre-deploy check — see ux-developer's 6-item click-through list in the Phase 4 (UI) section above, still outstanding. |
+| Induct prospective → active (`/admin/members/[id]`) | **Not run** | Substituted with code audit (item 3). |
+| Approve as Prospective (`/admin/membership`) | **Not run** | Substituted with code audit (item 3, 4). |
+| Admin members list status filter cycle | **Not run** | Substituted with code audit (item 5). |
+| Directory shows Prospective badge (`/members`) | **Not run** | Substituted with code audit (item 5). |
+| Mobile viewport (360px), 3-button row wraps | **Not run** | Reviewed statically: `flex-col gap-2 sm:flex-row` on the button container (`application-action-buttons.tsx:64`) is a standard Tailwind responsive pattern; no reason to doubt it renders correctly, but not visually confirmed in a real viewport. |
+| Manual DB backfill spot-check (`is_active=false` rows now read `membership_status='ended'`) | **Not run — still outstanding** | Flagged by database-admin in Phase 4 (schema) and repeated by every subsequent phase; nobody in this pipeline has had `.env.local` access to run `pnpm db:migrate` against a live DB yet. **This must happen before production deploy** — recommend deployment-engineer or whoever runs the next `pnpm db:migrate` confirm it as part of pre-push. |
 
-## Regression Notes Added (bug fixes)
+**These six flows were not independently reachable in this sandbox** (no `DATABASE_URL`, no dev server). Per the QA brief's explicit instruction, this is documented rather than assumed, and the code-level flow audit above stands in as the Phase 5 verification evidence. **Recommend the user or the next agent with real `.env.local` access run through ux-developer's click-through list (Phase 4 UI section) and the backfill spot-check before this ships to production** — this is called out again in Phase 6 handoff notes below.
 
-- [work-log entry name — guards against: brief description]
+## Gate Audit
+
+No native browser dialogs added (confirmed by reading `application-action-buttons.tsx` in full — Approve/Approve-as-Prospective/Reject all use direct click / inline notes panel, matching the pre-existing pattern). No `console.log` introduced in any production path — the only `console.log` calls in the diffed files are pre-existing lines in `scripts/import-roster.ts`/`scripts/sync-roster.ts` (confirmed via `git show` on the feature commits — the diffs only add `membershipStatus` mapping, no new `console.log`). UX gate: new buttons are `rounded-lg`; new badges are `bg-lions-gold/20 text-lions-blue-dark rounded-full` (no `lions-red`); focus rings (`focus:ring-2 focus:ring-lions-blue`) present on all three application-action buttons (a drive-by fix on the two pre-existing buttons, correctly scoped since the JSX block was already being touched).
+
+## Feature-Gate Audit (mandatory before PASS)
+
+No new `FEATURES.*` key was introduced (confirmed by architect and tech-lead — every route below reuses an existing key). Verified by reading each route file directly, not inferred from passing tests:
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `POST /api/admin/members` | yes (`route.ts:54`) | yes (`route.ts:61`) | `FEATURES.MEMBERS_EDIT` — correct, mutation |
+| `PATCH /api/admin/members/[id]` | yes (`route.ts:28`) | yes (`route.ts:34`) | `FEATURES.MEMBERS_EDIT` — correct, mutation |
+| `PATCH /api/admin/membership-applications/[id]` (incl. new `approve_prospective`) | yes (`route.ts:18`) | yes (`route.ts:23`) | `FEATURES.MEMBERSHIP_MANAGE` — correct; the new action is a third value of an already-gated route's `action` field, not a new surface |
+| `/admin/members` (page) | yes (`page.tsx:27-28`) | yes (`page.tsx:29`) | `FEATURES.MEMBERS_EDIT` — correct, page-level redirect |
+| `/admin/membership` (page) | yes (`page.tsx:27-28`) | yes (`page.tsx:30`) | `FEATURES.MEMBERSHIP_MANAGE` — correct |
+| `/members` (directory) | authenticated-only per existing convention, no feature gate (unchanged — consistent with every other member-portal page, confirmed by Phase 3 ruling) | n/a | n/a — correctly unchanged |
+| Portal login gate (`src/lib/auth/index.ts`) | n/a (not a route) | reads `users.isActive`, kept in sync by the `activeChanged` block | correctly excludes prospects/ended without any new code |
+
+No route in this feature returns bulk PII to an under-scoped role — the two touched mutation routes already required the correct edit-level keys before this feature, and this feature didn't widen either.
+
+## Adversarial Checks
+
+- **Client cannot force `isActive`:** confirmed by grep — `member-form.tsx` never references `isActive`; both `POST`/`PATCH /api/admin/members` compute it server-side from `membershipStatus` via `isActiveForStatus()`, ignoring any `isActive` key a hand-crafted request might include (never read).
+- **Duplicate-email guard on `approve_prospective`:** confirmed present (`membership-applications/[id]/route.ts:45-57`), applies to both approve branches.
+- **PATCH omitting `membershipStatus` does not reactivate:** confirmed — `members/[id]/route.ts:78-82` falls back to `existingStatus`, not `"active"`, when the field is omitted or invalid. This was a deliberate, correctly-reasoned deviation from POST's default-to-active behavior (documented by api-developer as a flagged interpretation, and it's the safer one).
+- **Reactivation (`ended → active`) gets the same provisioning treatment as induction:** confirmed by both the `shouldProvisionOnMemberUpdate` logic and the matching regression test (`members.test.ts`, "ended → active, no linked user → true").
+
+## Regression Tests Added
+
+- `src/lib/members.test.ts` — `"prospective, email changed, no linked user → false (the exact bug being fixed)"` — guards against: editing a prospective member's email silently provisioning them a portal login (the architect's flagged gap, Phase 2).
+- `src/lib/members.test.ts` — `"prospective → active, no linked user → true (the induction gap)"` — guards against: inducting a prospect (status flip alone, no email change) leaving them with no portal account forever (the single highest-risk omission the architect named).
+- `src/app/api/admin/membership-applications/[id]/route.ts` (code-level fix, not unit-testable per this repo's no-route-handler-test convention) — `approve` now fires `syncClubMembersList` — guards against: a newly approved member not landing on club@ until an unrelated future edit (the named Phase 1 bug fix). Recommend qa or a future session add a route-handler regression test here if this codebase ever adopts a route-test harness (tech-lead noted zero precedent exists today).
+
+## Coverage on Critical Modules
+
+- `src/lib/events.ts`: 92.85% (pre-existing, untouched by this feature — reported for context, not in scope here).
+- `src/lib/permissions.ts`: not touched by this feature (no new `FEATURES.*` key) — no coverage claim made.
+- `src/lib/members.ts`: 30.55% statements file-wide, but this understates the delivered coverage — the four **new** pure helpers this feature added (`isActiveForStatus`, `shouldProvisionOnMemberCreate`, `shouldProvisionOnMemberUpdate`, `resolveJoinDate`) are **100% covered** by the 17 new tests (every named Phase 3 branch present). The uncovered lines (84-193) are `sendWelcomeEmail`/`provisionUserForMember` — pre-existing, DB/email-bound, and explicitly out of Vitest scope per this repo's no-DB-mocking convention (deferred to e2e/manual, unchanged by this feature).
+- `src/lib/google-groups.ts`: 2.7% statements file-wide, same caveat — `isEligibleForClubList` (the only new pure function) is **100% covered** by its 4 tests. `syncClubMembersList`/`syncGoogleGroup` are DB+Google-API-bound and were never unit-tested before this feature; unchanged in scope.
 
 ## Verdict
 
-[PASS | FAIL]
+**PASS**
+
+All 5 named behaviors verified correct via direct file:line reading of the actual shipped code (not inferred from green tests). All named Phase 3 unit tests present and passing (21/21). Typecheck clean. Build compiles and typechecks clean; the "Collecting page data" failure is a pre-existing sandbox limitation (no `DATABASE_URL`) that also fails on an unrelated route, not a regression. All gates verified present and correctly keyed by reading route files directly. No UX-guideline violations. No native dialogs, no new `console.log`.
+
+**Two items are NOT closed by this PASS and must happen before production deploy** (both already flagged by every prior Phase 4 sub-report, repeated here so they aren't lost):
+1. The manual DB backfill spot-check (`is_active=false` rows read `membership_status='ended'` post-migration) — nobody in this pipeline has run `pnpm db:migrate` against a live DB yet.
+2. ux-developer's 6-item manual click-through list (Phase 4 UI section) — this sandbox had no dev server to run it against; someone with `.env.local` access should click through it once before ship.
+
+Neither of these is a code defect — both are "the runner couldn't reach it," which is why this verdict is PASS-with-outstanding-manual-steps rather than a blocked/FAIL. Recommend Phase 6 (analyst) note both as required pre-ship follow-ups, not silently drop them.
 
 ---
 
