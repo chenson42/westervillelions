@@ -13,7 +13,7 @@
 | Phase | Owner | Status | Verdict | Date |
 |-------|-------|--------|---------|------|
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-27 |
-| 2 — Architectural review | architect | Pending | — | — |
+| 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-27 |
 | 3 — Technical design | tech-lead | Pending | — | — |
 | 4 — Implementation | TBD by tech-lead | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
@@ -117,11 +117,72 @@ Entry: same page, live as budget lines are entered/edited (post-seed or from-scr
 
 ---
 
-# Phase 2 — Architectural Review (architect)
+# Phase 2 — Architectural Review (architect) — 2026-07-27
 
 ## Verdict
 
-Pending
+**Approved with suggestions**
+
+Grounded in the actual code before ruling — read `src/app/api/admin/ledger/budgets/route.ts` (PATCH handler in full), `getFundReport()` in `src/lib/ledger-queries.ts:357-`, `budget-editor.tsx`, the `[fundSlug]/report/page.tsx` server page, the `ledgerBudgets`/`ledgerFunds`/`ledgerEntities` schema definitions, and the existing `admin/ledger/*` directory tree (`approvals/`, `compliance/`, `donors/`, `guide/`, `reconciliation/`, `reimbursements/`, `reports/`, `settings/`, plus the entity-level `admin/ledger/page.tsx` landing and per-fund `[fundSlug]/{page,report/page}.tsx`). Phase 1's grounding note checks out against the code as written.
+
+## Rulings
+
+### 1. Reuse vs. new write path (critical) — **new dedicated endpoint, but extract the shared upsert core**
+
+Rule: add `POST /api/admin/ledger/budgets/seed`, a new dedicated endpoint — **not** (a) the seed action calling the existing `PATCH /api/admin/ledger/budgets` in a loop, and **not** (c) overloading the existing route with a batch mode.
+
+- **Against (a) — loop over the existing PATCH:** seeding writes up to ~30-60 lines across all four funds in one action. Looping N individual HTTP round-trips from the seed UI is slow, has no natural transaction boundary (a mid-loop failure leaves a partially-seeded fund with no clean rollback), and the PATCH contract's response (`{action, id}` for one line) can't express what the seed flow needs to show the treasurer: "Administrative: 6 seeded, 2 skipped (already had a budget)."
+- **Against (c) — a batch/seed mode bolted onto the existing route:** `PATCH /api/admin/ledger/budgets` has one clean contract today (single fund+FY+category+flow, upsert-or-delete). A seed mode needs a materially different request shape (entityId, targetFY, sourceFY, per-fund overwrite flag) and a different response shape (per-fund/per-line counts). Cramming both into one handler makes the route harder to reason about and is how routes accumulate the kind of hidden branching this project's invariants exist to prevent.
+- **The actual risk the analyst is right to flag — two divergent write paths to `ledger_budgets`:** avoid this not by reusing the *route*, but by extracting the existing PATCH handler's validation-and-write core (fund lookup, category-matches-fund-kind-and-flow check, amount bounds check, the `insert().onConflictDoUpdate()` on the `(fundId, fiscalYear, categoryId, flow)` unique constraint) into a small shared internal function — e.g. `upsertBudgetLine()` co-located in `src/lib/ledger-queries.ts` or a new `src/lib/ledger-budgets.ts` if tech-lead wants it isolated. Both `PATCH /budgets` (one line at a time) and `POST /budgets/seed` (looping in-process over lines, inside one DB call sequence — not one call per fetch) call the same function. One source of truth for what a valid budget-line write looks like; two entry points with different ergonomics for their different callers.
+- Fill-empty/merge semantics (locked decision 3) belong in the seed endpoint's own logic (skip any `(fund,FY,category,flow)` with an existing row unless the caller explicitly requests overwrite for that fund), not in the shared upsert core — the upsert core doesn't need to know about "seed vs. manual edit," it just needs to write a validated line.
+
+### 2. Where the actuals-copy logic lives — `ledger-queries.ts`, reusing `getFundReport`
+
+`computeSeedFromPriorYear(entityId, fiscalYear)` (or per-fund `computeFundSeedFromPriorYear(fundId, priorFY)`, called once per fund of the entity) belongs in **`src/lib/ledger-queries.ts`**, not `ledger.ts`. `ledger.ts` is this codebase's home for pure, DB-free, unit-tested functions (`budgetVariance()` takes numbers in, returns numbers out). The seed computation is fundamentally a query — it must call `getFundReport(fund.id, priorFY)` per fund and read `actualCents` (and, per locked decision 1, fall back to `budgetCents` when actuals are empty) off the existing per-category lines that function already returns. Confirm explicitly: **no new transaction query** — this is composition on top of `getFundReport`, not a re-aggregation of `ledgerTransactions`. Keep the return shape close to what the UI needs to preview before writing (category, flow, proposed amount, source-was-actual-or-budget-or-neither) so the same helper can back both a "preview" read and the payload the seed endpoint writes.
+
+### 3. UI placement — new sibling page `admin/ledger/budgeting/`, not the per-fund report page
+
+Locked decision 2 (per-entity, all-funds-at-once, reviewed per-fund) rules out putting the entry point on `[fundSlug]/report` — that page is scoped to one fund and has no entity-level concept today. It also doesn't fit as a modal/wizard component tree bolted onto an existing page: every other cross-fund concern in this codebase (`reports/`, `compliance/`, `reconciliation/`, `donors/`) is its own top-level page under `admin/ledger/`, following the same `?entity=&fy=` search-param convention as the existing entity-level `admin/ledger/page.tsx`. Guided budgeting should follow that precedent:
+
+- **New page:** `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` — Server Component. Reads `session`/`hasFeature(LEDGER_MANAGE)` exactly like `[fundSlug]/report/page.tsx` (redirect to `/access-pending` if not `canManage`, since unlike the report page this whole surface is manage-only, not manage-or-view). Fetches entity, its funds, the seed preview per fund (via the Ruling-2 helper), and existing target-FY budget rows to know which lines already exist (for the "already set" vs. "would seed" distinction the fill-empty policy needs to show).
+- **Client island:** a new `src/components/admin/ledger/guided-budget-setup.tsx` (`'use client'`), receiving the server-computed seed preview as props. Owns: the per-fund "Seed this fund" action (posts to `/budgets/seed`), the `ConfirmDialog` gating an explicit overwrite when some target rows already exist (never a silent overwrite — matches locked decision 3 and the no-native-dialogs rule), and renders the **existing `BudgetEditor`** per fund for the adjustment step post-seed rather than forking a second editor. Reusing `BudgetEditor` as-is is correct — its props (`fundId`, `fiscalYear`, `lines`) already fit; don't duplicate its save-on-blur logic.
+- Optional, non-blocking nicety (not required for this increment): a one-line cross-link from `[fundSlug]/report` ("Set up next year's budget from FY{prior} →" pointing at `/admin/ledger/budgeting`) so treasurers landing on the familiar report page can discover the new flow. Suggestion, not a requirement.
+
+### 4. Advisory balance guidance — pure helper in `ledger.ts`, must stay DB-import-free
+
+`computeBudgetBalanceStatus(fundKind, budgetedIncomeCents, budgetedExpenseCents): { status: 'ok' | 'warn' | 'info'; message: string }` belongs in **`src/lib/ledger.ts`**, alongside `budgetVariance()` — same shape of function (pure, numbers in/out, unit-testable without a DB). Two placement constraints to hold tech-lead to:
+
+- It must apply the per-fund-kind rule from locked decision 4 (administrative: warn if income < expense; activity: warn if net drifts materially from zero; charitable/scholarship: informational net display only, never a warn state) — the fund `kind` string already on `ledgerFunds`/`ledgerCategories` is the discriminant, no new schema needed.
+- Per Phase 1 Flow 2 ("live as budget lines are entered/edited"), this needs to recompute **client-side, before blur/save** — as the treasurer types into `BudgetEditor`'s inputs, not just after each PATCH round-trip completes. That means this helper must have **zero imports from `@/lib/db`** so it can be imported directly into the client island (or into `BudgetEditor` itself) without pulling server-only code into the client bundle. `budgetVariance()` already respects this constraint; hold the new function to the same bar.
+- Confirmed presentation-layer only: no schema change, and per locked decision 4 it must never block a write — the `PATCH`/`seed` endpoints stay unaware of balance status entirely.
+
+### 5. Schema impact — confirmed none
+
+`ledger_budgets` (`schema.ts:772-797`) is reused as-is; no migration required for this increment. If board-adoption capture is picked up later (Phase 1's flagged follow-up, correctly deferred), that's a new column or table — a per-`(fund,FY)` or per-`(entity,FY)` adoption record (date + board-minute reference, mirroring `ledgerTransactions.boardMinute`) is the shape to reach for then, not now. Flagging for the future work-log, not deciding it here.
+
+### 6. Invariants
+
+- **No migration** — confirmed above.
+- **`LEDGER_MANAGE` gate** required on both the new page (`admin/ledger/budgeting/page.tsx`) and the new endpoint (`POST /api/admin/ledger/budgets/seed`), checked server-side in each (session + `hasFeature`), exactly mirroring the existing PATCH route's pattern (page-level gate is not sufficient alone — the existing code already gets this right and the new endpoint must match it, not relax it).
+- **Server/client boundary:** page.tsx does all data fetching server-side; the one client island (`guided-budget-setup.tsx`) owns interactivity (seed button, confirm dialog, fetch calls) and wraps the already-client `BudgetEditor`. No new client-side data fetching beyond what the seed action itself triggers.
+- **No native dialogs:** the overwrite confirmation is a `<ConfirmDialog>` (`destructive` prop, since overwriting can clobber a treasurer's prior manual edits), not `window.confirm()`.
+- **Two-fund/self-balancing invariant respected:** balance guidance is advisory-only per locked decision 4 — it must never auto-move money between funds or block a save. Nothing in this design introduces write-time enforcement; confirm tech-lead's design doc states this explicitly so it isn't silently tightened during implementation.
+
+### 7. Implementer split — specialist split, not full-stack
+
+**api-developer** first: the `computeSeedFromPriorYear` query helper (Ruling 2), the `computeBudgetBalanceStatus` pure helper (Ruling 4), the extracted shared `upsertBudgetLine` core, and the new `POST /budgets/seed` endpoint with its request/response contract (entity, targetFY, sourceFY, per-fund overwrite flags, per-fund seeded/skipped counts). **ux-developer** second: the new `admin/ledger/budgeting/page.tsx` and the `guided-budget-setup.tsx` client island wiring seed → confirm → `BudgetEditor` reuse.
+
+This is small enough per-file but touches enough surface (a new route with real contract design, a new page, a new client component, two new lib helpers) that the API contract benefits from being nailed down before UI work starts — matching the standing precedent that every other Ledger increment ran the specialist split cleanly. Not a full-stack candidate; this is comfortably over the ~150-line small/coupled threshold once the seed endpoint's batch logic and the per-fund review UI are both accounted for.
+
+## Decisions logged
+
+None required — this increment introduces no new dependency, no new top-level directory pattern (it follows the existing `admin/ledger/<feature>/page.tsx` sibling convention), and no change to the permission catalog (`LEDGER_MANAGE` already covers it, confirmed by Phase 1). Nothing rises to a `docs/decisions.md` entry. If board-adoption capture is picked up in a later increment and needs new schema, log it then.
+
+## Handoff to Phase 3 (tech-lead)
+
+- Design doc should nail down the exact request/response contract for `POST /api/admin/ledger/budgets/seed`, including how a "preview" (no-write, show-what-would-seed) is distinguished from the actual seed call — Phase 1's Flow 1 implies the treasurer sees pre-filled lines before anything is necessarily committed, so confirm whether seeding writes immediately (fill-empty rows go straight into `ledger_budgets`, editable after) or requires a separate "apply" step. My read of locked decision 3 (fill-empty/merge, not a staged draft) is that seeding writes immediately — tech-lead should make this explicit rather than leave it implied.
+- Confirm the exact shape of the "already has a value" check per fund before the overwrite `ConfirmDialog` fires — per-line (any line already set) vs. per-fund (any line in the fund already set) changes the confirm-dialog UX meaningfully; Phase 1's overwrite policy is at the row level (`(fund,FY,category,flow)`), so the dialog copy needs to communicate that clearly (e.g., "3 of 8 categories already have a budget for FY2027 — seed the other 5, or overwrite all 8?").
+- All five Phase 1 open questions are now locked per the brief this review was given; no outstanding functional gaps block Phase 3.
 
 ---
 
