@@ -90,6 +90,12 @@ const navigation: NavGroup[] = [
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
       {
+        name: "Budgeting",
+        href: "/admin/ledger/budgeting",
+        icon: "🧮",
+        requiredFeature: FEATURES.LEDGER_MANAGE,
+      },
+      {
         name: "Reconciliation",
         href: "/admin/ledger/reconciliation",
         icon: "🏦",
