@@ -28,6 +28,19 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-043: Budget approve/lock modeled as a single status-flip row per (entity, fiscalYear), not an event log
+
+**Status:** Resolved
+**Date:** 2026-07-27
+
+**Decision:** The new `ledger_budget_approvals` table (Phase 2 architectural review, `docs/work-log/2026-07-27-ledger-budget-approve.md`) is **one row per `(entityId, fiscalYear)`**, unique-constrained on that pair, carrying a `status` column (`'locked' | 'unlocked'`, default `'unlocked'`) plus current-state approval fields (`approvedByUserId`, `approvedAt`, `boardMinute`) and current-state unlock fields (`unlockedByUserId`, `unlockedAt`, `unlockReason`). Locking updates the approval trio and flips `status`; unlocking updates the unlock trio and flips `status` back — **neither action clears the other's fields**, so the most recent lock and the most recent unlock are both visible at once even after several lock/unlock cycles. This is **not** an append-only event log of every lock/unlock action.
+
+**Rationale:** This mirrors the codebase's existing convention exactly rather than inventing a new one: `ledgerTransactions` (approval) and `ledgerReimbursements` (submit/approve/reject/pay) both model approval state as nullable current-state columns on a single row, never as a separate audit-event table — and there is no generic audit-log table in this schema to reuse (`googleGroupSyncLog` is sync-specific, not a generic audit mechanism). Budget adoption is a once-a-year, low-cardinality board action; an event-log table would add a second table, a list query, and a list UI for an action that fires a handful of times a year at most, with no stated requirement for a full history beyond "the most recent unlock is visible" (Phase 1, analyst). If a future increment needs full multi-cycle audit history, that's a new, separately-scoped feature — not a reason to over-build this one.
+
+**Impact:** `src/lib/db/schema.ts` gets a new `ledgerBudgetApprovals` table; a matching idempotent migration (`drizzle/migrations/0062_ledger_budget_approvals.sql` or next available number) creates it and leaves existing `ledger_budgets` untouched. `assertBudgetUnlocked(entityId, fiscalYear)` (new shared guard) reads this table's `status` column. Follow-up: if the club later wants a full lock/unlock history (e.g., for 990 audit trail), add an event-log table then — don't retrofit this one to serve two shapes.
+
+---
+
 ## DECISION-042: Guided budgeting — Activity fund balance tolerance set to ±$100
 
 **Status:** Resolved
