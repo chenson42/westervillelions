@@ -197,6 +197,14 @@ function PageHeader({
         {entity.shortName ?? entity.name} &bull; Seed {fiscalYearLabel(targetFY)} from{" "}
         {fiscalYearLabel(priorFY)}
       </p>
+      <p className="mt-2 text-sm">
+        <Link
+          href="/admin/ledger/guide#budgeting"
+          className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+        >
+          How budgeting works &rarr;
+        </Link>
+      </p>
     </div>
   );
 }

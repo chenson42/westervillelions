@@ -51,6 +51,26 @@ function balanceMessage(fundKind: string, status: "ok" | "warn" | "info", netCen
   return `Net budgeted: ${netCents < 0 ? "-" : ""}${netAbs}.`;
 }
 
+/**
+ * Per-fund "why" one-liner, appended under balanceMessage() (Phase 1 work-log
+ * docs/work-log/2026-07-27-ledger-budgeting-guide.md). Copy must match
+ * computeBudgetBalanceStatus's actual rule per fund kind, not a generic
+ * restatement — see that function's JSDoc in src/lib/ledger.ts. Unrecognized
+ * fund kinds get no note (nothing meaningful to explain).
+ */
+function balanceWhyNote(fundKind: string): string | null {
+  if (fundKind === "administrative") {
+    return "This fund covers the club's own operations, so it's expected to hold a real reserve — budgeted income should never fall short of planned expense.";
+  }
+  if (fundKind === "activity") {
+    return "This fund is a pass-through for publicly-raised money on its way to the Foundation, so “balanced” means net income and expense land within about $100 of each other — not a surplus.";
+  }
+  if (fundKind === "charitable" || fundKind === "scholarship") {
+    return "This fund holds public and charitable money meant to be disbursed, not stockpiled — a planned drawdown is normal and won't trigger a warning.";
+  }
+  return null;
+}
+
 type SeedMode = "fill-empty" | "overwrite";
 
 interface SeedResponseFund {
@@ -321,6 +341,9 @@ export default function GuidedBudgetSetup({
                 <p className="mt-2 text-sm text-gray-600">
                   {balanceMessage(fund.fundKind, balance.status, balance.netCents)}
                 </p>
+                {balanceWhyNote(fund.fundKind) && (
+                  <p className="mt-1 text-xs text-gray-500">{balanceWhyNote(fund.fundKind)}</p>
+                )}
               </div>
 
               <div className="px-5 py-4 space-y-4">

@@ -15,7 +15,7 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-27 |
 | 2 — Architectural review | architect | Skipped (see rationale) | N/A | 2026-07-27 |
 | 3 — Technical design | tech-lead | Skipped (see rationale) | N/A | 2026-07-27 |
-| 4 — Implementation | ux-developer (recommended) | Pending | — | — |
+| 4 — Implementation | ux-developer | Complete | — | 2026-07-27 |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -143,26 +143,68 @@ Each "why" note may itself carry the same inline link ("How budgeting works →"
 
 ---
 
-# Phase 4 — Implementation
+# Phase 4 — Implementation (UI) — 2026-07-27
 
-*(Pending — implementer: ux-developer)*
+**Owner:** ux-developer
+**Status:** complete
 
-## Files Created
+### Summary
 
-- TBD: `src/components/admin/ledger/guide/budgeting-section.tsx`
+Added the new "Budgeting" section to the Treasury User's Guide (all seven locked subsections, no dollar figures baked into prose except principle-level language) and registered it in the guide's TOC/section list between Reports and Reconciliation. Added an inline "How budgeting works →" link near the top of the Budgeting page, and a per-fund "why" one-liner under each fund's `balanceMessage()` output in the guided-budget-setup client island, worded to match `computeBudgetBalanceStatus`'s actual per-fund-kind rule.
 
-## Files Modified
+### What I did
 
-- TBD: `src/app/(dashboard)/admin/ledger/guide/page.tsx` — import + TOC entry
-- TBD: `src/components/admin/ledger/guided-budget-setup.tsx` — inline link + per-fund "why" note
+- Read the Phase 1 locked outline and legal citations in this work-log, plus `guardrails-section.tsx`'s "point to live values, don't hardcode figures" precedent and `computeBudgetBalanceStatus`'s JSDoc in `src/lib/ledger.ts` (lines ~1005-1059) directly, per the Phase 1 gap notes — not re-derived from paraphrase.
+- Built `budgeting-section.tsx` following `dues-section.tsx` / `guardrails-section.tsx` markup conventions exactly: `<section id="budgeting" className="bg-white rounded-2xl shadow-sm overflow-hidden p-6">`, `<h2>` + `<h3>` per subsection, shared `linkClass` constant, `Link` cross-refs.
+- Registered the section in `guide/page.tsx`: import, TOC array entry (after "Reports", before "Bank Reconciliation"), and JSX placement in the same order — matching the recommended (not mandatory) position from the Phase 1 outline. Updated the page's header doc comment (section count eleven → twelve, added a pointer to this work-log).
+- Added the "How budgeting works →" inline link to the Budgeting page's `PageHeader` (server component, one shared link above the fund-card grid rather than repeating it per card — satisfies the "reachable without a TOC round-trip" requirement per the outline's either/or note).
+- Added `balanceWhyNote(fundKind)` to `guided-budget-setup.tsx`, rendered directly under the existing `balanceMessage()` paragraph inside each fund's review card. Copy is the exact locked wording from the work-log for `administrative` / `activity` / `charitable` / `scholarship`; unrecognized kinds render no note (`null`), matching the outline's explicit "omit for unrecognized kind" instruction.
+- Confirmed the anchor target for the compliance cross-link by reading `compliance-calendar-section.tsx` directly — it's `#compliance-990`, not `#compliance` as the tech-lead brief guessed; used the real id.
+- Kept the two legal citations verbatim (Standard Club Constitution Art. VII §3(g); LCI Board Policy Manual Ch. XV, "Use of Funds") with the "as of current LCI governing documents" soft framing called for in the brief, per the Phase 1 Open Question about citation currency.
+- Did not restate the $100 Activity tolerance or "3–6 months" reserve figure in the guide section prose — both stated as principles ("roughly zero," "a few months of operating costs"). The $100 figure appears once, in the `activity` why-note on the Budgeting page itself (reads directly off the value the note annotates, per the Phase 1 gap note's explicit carve-out).
 
-## Schema Changes
+### Outputs
 
-None.
+- **Created:** `/home/user/westervillelions/src/components/admin/ledger/guide/budgeting-section.tsx`
+- **Modified:** `/home/user/westervillelions/src/app/(dashboard)/admin/ledger/guide/page.tsx` — import, TOC entry, JSX placement, header comment update.
+- **Modified:** `/home/user/westervillelions/src/app/(dashboard)/admin/ledger/budgeting/page.tsx` — inline "How budgeting works →" link added inside `PageHeader`.
+- **Modified:** `/home/user/westervillelions/src/components/admin/ledger/guided-budget-setup.tsx` — new `balanceWhyNote()` helper + render call under each fund card's `balanceMessage()` paragraph.
+- No schema, API, or new permission changes — none were in scope.
 
-## Implementer Notes
+### UX-gate confirmations
 
-*(Pending)*
+- Cards stay `rounded-2xl` (new section container matches every sibling section); no `rounded-xl` introduced.
+- No new buttons; the one new link and the guide's existing cross-links use `rounded` (link/focus-ring), never `rounded-full` — links aren't buttons in this pattern, consistent with `dues-section.tsx` / `guardrails-section.tsx`.
+- Inline link on the Budgeting page styled per UX guidelines: `text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition` + `focus:outline-none focus:ring-2 focus:ring-lions-blue rounded`.
+- Guide-section cross-links use the shared `linkClass` (`text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded`), identical to every existing section.
+- `lions-gold` not used as a new accent here (none of the locked content called for a badge); no `lions-red` anywhere.
+- Per-fund why-note styled subtly: `text-xs text-gray-500`, exactly as directed.
+- New guide section is a plain Server Component (no `'use client'`, no hooks, no DB access) — presentational only, matching every sibling section.
+- The only `'use client'` file touched, `guided-budget-setup.tsx`, already had that directive; no new client boundary introduced.
+- No native browser dialogs added or touched. No `console.log` introduced.
+- Mobile-first: no new layout primitives — inherits the guide's existing `max-w-4xl` single-column flow and the Budgeting page's existing responsive grid.
+
+### Verification run
+
+- `pnpm exec tsc --noEmit` — clean, no errors.
+- `pnpm test` — 17 files, **516 passed**, 0 failed (unchanged count, no regressions).
+- `pnpm lint` — could not run; ESLint 9.39.2's own config loader fails with `SyntaxError: The requested module 'minimatch' does not provide an export named 'default'`, a pre-existing environment/tooling break unrelated to these changes (no source files under `src/` were touched that would trigger new lint rules; typecheck already covers syntax/type correctness). Flagging for qa/deployment-engineer as a pre-existing gap, not introduced here.
+
+### Open questions / handoff notes
+
+- **For qa's manual click-through:**
+  1. `/admin/ledger/guide` — confirm "Budgeting" appears in the Contents TOC between "Reports" and "Bank Reconciliation", and clicking it scrolls to the new `#budgeting` section (not page-bottom with no target).
+  2. Within the new section, confirm the "Compliance Calendar section above" link actually scrolls up to the Form 990 section (anchor `#compliance-990`) rather than 404ing or landing nowhere.
+  3. `/admin/ledger/budgeting` — confirm "How budgeting works →" appears near the page header and, when clicked, navigates to `/admin/ledger/guide#budgeting` and lands mid-page on the right section (same-tab, per the Phase 1 recommendation — no `target="_blank"` was added).
+  4. On the Budgeting page's fund cards, confirm each fund kind shows the correct why-note text under its balance message: Administrative/Activity/Charitable/Scholarship funds each get the locked one-liner; if any fund in the live data has an unrecognized `kind` string, confirm it shows no why-note (falls through cleanly, no blank paragraph artifact — note the conditional render skips the `<p>` entirely when `balanceWhyNote` returns `null`).
+  5. Resize to mobile width and confirm the new section and the inline link don't introduce any horizontal scroll or cramped touch targets.
+- **New copy strings the Lions Club may want to refine:** none of the locked outline's wording was changed from what was specified in this work-log — if the club wants to soften/adjust any of the seven-subsection prose, that's a content-only change with no component impact.
+- **UX decisions made without a design-doc round-trip (per Phase 1's explicit allowance):**
+  - Section placement: after Reports, before Reconciliation — matches the Phase 1 recommendation exactly.
+  - Inline link placement: one shared link in the Budgeting page's `PageHeader`, above the fund-card grid, rather than duplicating it inside every fund card's why-note. Chosen because the outline explicitly allows either approach ("implementer's call") and a single link avoids visual repetition across a grid that can have several fund cards.
+  - Same-tab navigation for both the Budgeting→Guide link and the Guide's internal Compliance cross-link, consistent with every existing guide cross-link in the codebase (no `target="_blank"` anywhere in this pattern).
+- **Next agent:** qa (Phase 5) — verify per the click-through list above, then hand to analyst for Phase 6 shipped-vs-intent.
+- **Known pre-existing gap (not introduced by this change):** `pnpm lint` is currently broken at the ESLint-config-loading level (`minimatch` ESM/CJS interop error under ESLint 9.39.2) — this predates this feature and blocks lint entirely for any change right now. Worth a deployment-engineer look independent of this feature.
 
 ---
 
