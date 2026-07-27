@@ -1,0 +1,177 @@
+# Ledger Budgeting — In-App Guidance (Guide section + inline links) — Work Log
+
+> **Slug:** `2026-07-27-ledger-budgeting-guide`
+> **Surface:** (dashboard) admin — Treasury User's Guide (`/admin/ledger/guide`) + Budgeting page (`/admin/ledger/budgeting`)
+> **Permission(s):** existing — `FEATURES.LEDGER_VIEW` / `LEDGER_RECORD` / `LEDGER_MANAGE` / `LEDGER_APPROVE` (guide, any-of) and existing `FEATURES.LEDGER_MANAGE` (budgeting page). No new key.
+> **Estimated complexity:** small (content + two components, no schema/API)
+> **Pipeline mode:** Accelerated — Phase 2 and Phase 3 both skipped (rationale below)
+
+---
+
+## Per-Phase Status
+
+| Phase | Owner | Status | Verdict | Date |
+|-------|-------|--------|---------|------|
+| 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-27 |
+| 2 — Architectural review | architect | Skipped (see rationale) | N/A | 2026-07-27 |
+| 3 — Technical design | tech-lead | Skipped (see rationale) | N/A | 2026-07-27 |
+| 4 — Implementation | ux-developer (recommended) | Pending | — | — |
+| 5 — Verification | qa | Pending | — | — |
+| 6 — Shipped vs intent | analyst | Pending | — | — |
+
+---
+
+# Phase 1 — Functional Refinement (analyst)
+
+## VERDICT
+
+**READY WITH NOTES**
+
+## ONE-LINE TAKE
+
+> Teach the treasurer *why* the app enforces different budget-balance rules per fund kind, in the same in-app guide they already read for everything else — no new mechanism, no schema, just a new guide section plus two small annotations on an existing page.
+
+## User Verbs
+
+| Surface | Verb | Cadence |
+|---------|------|---------|
+| Admin (treasurer/board, gated by existing ledger features) | Reads the new "Budgeting" section top-to-bottom or jumps to it from the TOC | Occasional — onboarding a new treasurer, or refreshing memory before annual budget-build |
+| Admin | Clicks "How budgeting works" inline link on `/admin/ledger/budgeting` | On demand, in-context, while looking at a specific fund's balance badge |
+| Admin | Reads the one-line "why" note under a fund's balance advisory on the Budgeting page | Every time they view that page, no click required |
+| Admin | Clicks from the new guide section to the existing Compliance Calendar section for 990/registration deadlines | On demand, cross-link, no duplicated content to read twice |
+
+No other surface touches this — anonymous visitors, access-pending members, and ordinary signed-in members never see the Ledger at all.
+
+## Flows
+
+**Flow 1 — Reading the guide section on its own:**
+`/admin/ledger/guide` (existing entry) → treasurer opens the "Contents" `<details>` (or scrolls) → clicks "Budgeting" in the TOC → lands on `#budgeting` → reads six subsections in order → optionally clicks through to `/admin/ledger/budgeting` (to *do* the budgeting) or to `#compliance-990` (for filing deadlines) → outcome: treasurer understands the two-fund rule, how funds map to entities, how to build the budget, why reserves differ by fund kind, and the deductibility distinction.
+- Failure: none really — this is a static read-only Server Component section. The only "failure" is the two live reads on the guide page (990 determination, settings recap) already fail soft to a one-line fallback per existing `try/catch` pattern (DECISION-037) — the new section doesn't add a live read, so it can't introduce a new failure mode. Confirmed no new empty/failure state is needed here.
+
+**Flow 2 — Landing on the guide from the Budgeting page's inline link:**
+`/admin/ledger/budgeting` (existing entry, requires `LEDGER_MANAGE`) → treasurer sees a fund card with a "Needs review" or "Informational" badge → reads the new one-line "why" note under the existing balance message → clicks "How budgeting works" → navigates to `/admin/ledger/guide#budgeting` (new tab or same tab, consistent with how other guide cross-links behave in this codebase) → outcome: treasurer lands directly on the new section instead of a blind link to an external PDF or nothing at all.
+- Failure: if the anchor target doesn't exist (component not registered in `page.tsx`'s section list / TOC), the link 404s to nowhere in particular — it just scrolls to page bottom with no visible target. This is a build-time-checkable failure (the implementer must add the import + TOC entry), not a runtime one — flagging so QA click-through checks the anchor actually lands mid-page, not just that the guide page loads.
+
+## Permissions
+
+- **Permission(s):** No new key. Guide section reuses the guide page's existing `hasAnyFeature` gate (`LEDGER_VIEW | LEDGER_RECORD | LEDGER_MANAGE | LEDGER_APPROVE`). The inline link + "why" note live on the Budgeting page, already gated to `LEDGER_MANAGE` only.
+- **Default roles:** Whatever already holds these keys (Treasurer, Admin roles per existing Ledger role bindings) — unchanged.
+- **Confirmed non-issue:** `LEDGER_MANAGE` is a member of the guide's any-of list, so anyone who can reach the Budgeting page (and therefore see the inline link) can always reach the guide section it points to. No permission-mismatch edge case where the link target 403s for a user who clicked it legitimately.
+
+## Gaps the Request Didn't Address
+
+- **Stale-content risk (figures, not principles).** Dues amounts, district per-capita rates, and any dollar thresholds (e.g., "3–6 months operating reserve," the Activity fund's $100 tolerance) drift over time and are easy to hardcode into prose that nobody remembers to update. `guardrails-section.tsx` already establishes the precedent for this exact problem — it deliberately keeps dollar/day-count thresholds out of prose and points to the live Settings page instead (see its header comment, lines 12-19). The new Budgeting section must follow the same rule: state reserve guidance and the near-zero tolerance as *principles* ("hold several months of operating reserve," "aim to disburse, not accumulate, on the public/charitable side"), not as numbers baked into copy. The one genuinely fixed, code-verifiable number ($100 Activity tolerance, from `ACTIVITY_BALANCE_TOLERANCE_CENTS` in `src/lib/ledger.ts`) may be stated once in the "why" note on the Budgeting page itself, since it's read directly off the constant it's currently accompanying — but the guide section should still describe it as "roughly $100" or defer to the live page rather than repeat the number a second time in a place nobody will update in sync.
+- **"Why" notes must match `computeBudgetBalanceStatus`'s actual thresholds, not a paraphrase of the source material.** The sourced content says "Administrative: income≥expense" — the actual function warns only on strict `<` (equal is OK), which matches. "Activity: net ~$0 ±$100" matches `ACTIVITY_BALANCE_TOLERANCE_CENTS = 10_000` exactly. "Charitable/Scholarship: always info" matches (never warns). Implementer should write the "why" note copy by reading `computeBudgetBalanceStatus`'s JSDoc (`src/lib/ledger.ts` lines ~1014-1040) directly, not by re-deriving from this work-log, to avoid a second layer of paraphrase drift.
+- **Not duplicating the Compliance Calendar section.** The sourced material's "990/registration deadlines" content must NOT be repeated in the new Budgeting section — it must be a single cross-link (`#compliance-990` anchor) per the feature request's explicit instruction. Locked in the outline below as a one-line pointer, no calendar content restated.
+- **Anchor-target verification.** Per Flow 2's failure path above — QA must confirm the inline link on the Budgeting page actually scrolls to the new section (not just that both pages independently load).
+- **Placement in the guide's linear order wasn't specified by the request.** I'm recommending a placement below (after Reports, before Reconciliation) but this is a layout call, not content — ux-developer can adjust without a design-doc round-trip since it doesn't change any content or invariant.
+
+## Out of Scope (confirm with user)
+
+- Any UI change to the budget-editor's data entry (line items, seeding logic) — this feature is purely explanatory content plus two link/annotation additions. No behavior change to `computeBudgetBalanceStatus`, seeding, or the editor.
+- A budgeting-specific compliance calendar or deadline list — explicitly deferred to the existing Compliance Calendar section via cross-link, not built here.
+- Printable/exportable version of the new section — the guide already supports `print:hidden` classing on nav-only elements; the new section should follow the same pattern others use (content prints, TOC/nav doesn't) with no new print styling work implied.
+
+## Open Questions
+
+- Confirm the two exact citations ("Standard Club Constitution Art. VII §3(g)"; "LCI Board Policy Manual Ch. XV — Use of Funds") are the versions currently in force before they're quoted verbatim in-app — the sourced material is described as already cite-backed and approved, but a citation embedded in a live app page has a longer shelf life than a one-off briefing document did. Recommend a one-time confirmation now, not a recurring review burden.
+- Should the inline "How budgeting works" link open in the same tab (losing the treasurer's place on the Budgeting page) or a new tab? Other guide cross-links in this codebase (e.g., `guardrails-section.tsx` → Compliance page) use same-tab `<Link>`. Recommend consistency: same tab, same-origin `<Link>`, no `target="_blank"` — but flagging since the request didn't specify.
+
+---
+
+## LOCKED CONTENT OUTLINE — `budgeting-section.tsx`
+
+Anchor id: `budgeting` · TOC label: **"Budgeting"** · Recommended TOC position: after `reports`, before `reconciliation` (budget-building naturally follows "what actually happened last year"; Reconciliation/Settings are end-of-cycle, budgeting is forward-looking). Not a hard requirement — ux-developer may place it wherever reads best; content below is unaffected by position.
+
+Follows the established section shape: `<section id="budgeting" className="bg-white rounded-2xl shadow-sm overflow-hidden p-6">`, `<h2>` title, `<h3>` per subsection, `Link` cross-refs styled with the shared `linkClass` constant used in `dues-section.tsx` / `guardrails-section.tsx`.
+
+1. **Intro (no heading, one paragraph).** One or two sentences framing why budgeting has its own guide section: the Budgeting page (`/admin/ledger/budgeting`) enforces different "balanced" rules depending on which fund you're looking at, and this section explains the policy reasoning behind that. Link out to `/admin/ledger/budgeting`.
+
+2. **"The Two-Fund Rule" (h3).** The keystone rule, stated plainly: money raised from the public may never fund club administration. Cite: Standard Club Constitution Art. VII §3(g); LCI Board Policy Manual Ch. XV, "Use of Funds." One sentence of rationale: the public gives on the understanding that net proceeds serve a community need, and diverting them is a breach of that trust. One line on the netting nuance: only a fundraiser's *direct* costs may be deducted from its proceeds — general overhead may not be netted against public donations.
+
+3. **"How Our Funds Map" (h3).** Club entity ((c)(4)) = Administrative + Activity funds. Foundation ((c)(3)) = Charitable + Scholarship funds. The Activity fund is a pass-through clearing account — it targets roughly zero balance and sweeps to the Foundation. This is the paragraph that sets up why the balance rule differs per fund kind (referenced again in subsection 5).
+
+4. **"Building the Budget" (h3).** Practical, principle-first, no dollar figures: start from prior-year actuals — this is what the "Seed from last year" button on the Budgeting page does (link to `/admin/ledger/budgeting`); project revenue conservatively and lean high on expected expenses; each fund's budget must balance on its own terms, not against another fund; enter dues and insurance first since they're the most predictable lines; plan a small intentional surplus on the Administrative side rather than budgeting to exactly zero.
+
+5. **"Reserves vs. Disbursement — Why the Rule Differs by Fund" (h3).** The direct payoff subsection: on the Administrative side, the goal is to hold a healthy operating reserve (several months of expenses) because that fund covers the club's own bills. On the Charitable/Scholarship side, the goal is the opposite — disburse, don't accumulate; a large idle public-donation balance can put exempt status at risk. This is explicitly stated as *the reason* the Budgeting page's balance badges ("Balanced" / "Needs review" / "Informational") behave differently per fund kind — one sentence explicitly bridging to the live page's behavior, so a treasurer reading this then looking at the Budgeting page recognizes the connection.
+
+6. **"Deductibility — Which Gifts Are Tax-Deductible" (h3).** Gifts to the Club (a 501(c)(4)) are not tax-deductible to the donor; gifts to the Foundation (a 501(c)(3)) are. One line of guidance: steer deduction-sensitive donors toward the Foundation / the campaigns that route there.
+
+7. **"Compliance Deadlines" (h3, short — cross-link only, no restated content).** One sentence: budgeting decisions feed the annual 990 and state-registration filings: see the Compliance Calendar section above for the current filing calendar — `<Link href="#compliance-990">`. No dates, forms, or thresholds repeated here.
+
+**Explicit "confirm before quoting" flags for the implementer:**
+- The two citations in subsection 2 (Art. VII §3(g); Board Policy Ch. XV) — quote verbatim, but see Open Questions above re: one-time currency check.
+- Do NOT state the Activity fund's $100 tolerance or the "3–6 months" reserve guidance as a precise, permanent-feeling number inside this guide section's prose — describe them as principles. (The $100 figure may appear once, on the Budgeting page's own "why" note, since it's read directly from the constant it annotates — see Gaps above.)
+- No specific dues dollar amounts, district per-capita rates, or LCI due dates anywhere in this section — those belong to the Dues section (existing) and Compliance Calendar section (existing, cross-linked, not duplicated).
+
+## LOCKED CONTENT — Budgeting page annotations
+
+**Inline link (new, on `/admin/ledger/budgeting`, page-level, near the top intro copy or the fund-cards heading — implementer's call on exact placement):**
+> "How budgeting works →" — `<Link href="/admin/ledger/guide#budgeting">`, same tab, styled with the page's existing link treatment.
+
+**Per-fund "why" one-liner (new, appended directly under the existing `balanceMessage()` paragraph inside each fund's review card in `guided-budget-setup.tsx`, right after line ~323 in the current file):** one sentence per fund kind, matching `computeBudgetBalanceStatus`'s actual rule, not a generic restatement:
+- `administrative`: "This fund covers the club's own operations, so it's expected to hold a real reserve — budgeted income should never fall short of planned expense."
+- `activity`: "This fund is a pass-through for publicly-raised money on its way to the Foundation, so 'balanced' means net income and expense land within about $100 of each other — not a surplus."
+- `charitable` / `scholarship`: "This fund holds public and charitable money meant to be disbursed, not stockpiled — a planned drawdown is normal and won't trigger a warning."
+- unrecognized kind: omit the "why" note entirely (falls through to the existing generic "Net budgeted" message with no added annotation — nothing meaningful to explain for a kind the app doesn't recognize).
+
+Each "why" note may itself carry the same inline link ("How budgeting works →") or a single shared link can sit once above the fund-card grid — implementer's call; either satisfies the request's "inline link on the Budgeting page" requirement as long as it's reachable from that page without a separate navigation step through the guide's TOC.
+
+---
+
+## Recommended Implementer
+
+**ux-developer.** This is pure content plus two small React component changes (one new guide section component + import/TOC registration in `page.tsx`; one small addition of a link and per-fund-kind string inside the existing client island `guided-budget-setup.tsx`). No schema, no API, no new permission key, no new directory pattern — the guide's section-component convention and the Budgeting page's client-island structure both already exist and are being extended, not invented.
+
+## Phase 2/3 Skip Rationale (documented per Workflow Rule — no silent skips)
+
+**Phase 2 (architect) skipped.** No new directory, no new npm dependency, no new server/client boundary decision (the guide section is a Server Component exactly like its ten siblings; the Budgeting page changes land inside the existing `"use client"` island), no invariant is touched or reinterpreted. The `guardrails-section.tsx` precedent this review leans on for the stale-figures gap is itself evidence the pattern is already architecturally settled.
+
+**Phase 3 (tech-lead) skipped.** No API contract, no data model, no new component *pattern* — only a new instance of an existing pattern (guide section) and two small edits to an existing component (`guided-budget-setup.tsx`) using a function (`computeBudgetBalanceStatus`) that already exists and is not being modified. The content outline locked above in this Phase 1 review *is* the design — there's no technical decision left for tech-lead to make that isn't a content decision already resolved here. If the implementer discovers a genuine structural question while building (e.g., the anchor-linking mechanism doesn't work the way `guardrails-section.tsx`'s cross-links imply), that reopens Phase 3, not this review.
+
+---
+
+# Phase 2 — Architectural Review (architect)
+
+**Skipped.** See Phase 2/3 Skip Rationale above.
+
+---
+
+# Phase 3 — Technical Design (tech-lead)
+
+**Skipped.** See Phase 2/3 Skip Rationale above. Content outline and component/file plan are locked in this Phase 1 entry above and stand in place of a design doc.
+
+---
+
+# Phase 4 — Implementation
+
+*(Pending — implementer: ux-developer)*
+
+## Files Created
+
+- TBD: `src/components/admin/ledger/guide/budgeting-section.tsx`
+
+## Files Modified
+
+- TBD: `src/app/(dashboard)/admin/ledger/guide/page.tsx` — import + TOC entry
+- TBD: `src/components/admin/ledger/guided-budget-setup.tsx` — inline link + per-fund "why" note
+
+## Schema Changes
+
+None.
+
+## Implementer Notes
+
+*(Pending)*
+
+---
+
+# Phase 5 — Verification (qa)
+
+*(Pending)*
+
+---
+
+# Phase 6 — Shipped vs Intent (analyst)
+
+*(Pending — trigger: QA's PASS)*
