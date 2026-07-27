@@ -17,7 +17,7 @@
 | 3 — Technical design | tech-lead | Complete | Design complete, implementers named | 2026-07-27 |
 | 4 — Implementation | api-developer → ux-developer | Complete | — | 2026-07-27 |
 | 5 — Verification | qa | Complete | PASS | 2026-07-27 |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 6 — Shipped vs intent | analyst | Complete | SHIP WITH NOTES | 2026-07-27 |
 
 ---
 
@@ -808,6 +808,95 @@ Typecheck clean, all 36 named unit tests present and passing with zero regressio
 
 ---
 
-# Phase 6 — Shipped vs Intent (analyst)
+# Phase 6 — Shipped vs Intent (analyst) — 2026-07-27
 
-Pending
+## VERDICT
+
+**SHIP WITH NOTES**
+
+## ONE-LINE TAKE
+
+> The shipped feature does exactly what the treasurer asked for — open one page, seed a whole entity's funds from last year's actuals with one click, review a live per-fund balance readout, adjust lines in the same `BudgetEditor` as always — and I traced every one of Phase 1's flows and Phase 3's guarantees to specific shipped file:line evidence, not just QA's word for it; the only thing standing between this and a clean SHIP IT is that nobody has clicked through it on a real database yet.
+
+## Verification method
+
+I re-read my own Phase 1 review, Phase 2 through Phase 5 in full, and then independently spot-checked the shipped code rather than taking QA's PASS at face value:
+
+- Read `src/app/api/admin/ledger/budgets/seed/route.ts` in full — gate order (401 → 403 → body validation), the fresh `computeSeedFromPriorYear` recompute inside the request, the single `db.transaction()`, and `decideSeedWriteAction` dispatch all match the Phase 3 contract and QA's citations exactly, line for line.
+- Read `computeBudgetBalanceStatus` and `deriveSeedLinesForFund` in `src/lib/ledger.ts` — the administrative strict `<`, the activity ±$100 band (`ACTIVITY_BALANCE_TOLERANCE_CENTS = 10_000`), the charitable/scholarship always-`info` rule, and the fund-wide actuals-vs-budget fallback all match the locked decisions and the design doc verbatim.
+- Read the gate block in `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` — `auth()` → `/signin`, `hasFeature(LEDGER_MANAGE)` → `/access-pending`, no view-only fallback, confirmed.
+- Grepped `guided-budget-setup.tsx` for `ConfirmDialog`/`window.confirm`/`window.alert`/`window.prompt` — one `ConfirmDialog` import and usage, zero native dialogs.
+- Grepped both new files for `rounded-full`/`rounded-xl` — zero hits.
+- Confirmed `getEntityReport()` (`src/lib/ledger-queries.ts:2096,2110`) still hardcodes `budgetCents: null` — the entity-level rollup gap I flagged in Phase 1 is genuinely untouched, exactly as scoped out, not silently forgotten and not silently fixed without a note.
+- Confirmed `DECISION-042` (Activity ±$100 tolerance) is logged in `docs/decisions.md`, matching tech-lead's own framing that it's a starting default.
+
+Nothing I found contradicts what api-developer, ux-developer, or qa reported. The shipped code is what the paper trail says it is.
+
+## Intent-vs-shipped diff
+
+| Phase 1 item | Shipped | Verdict |
+|---|---|---|
+| Flow 1: seed a fund's budget from last year, entry via a dedicated page/action | New `/admin/ledger/budgeting` page, entity + FY selectors, entity-wide "Seed all funds" + per-fund "Seed this fund" actions | matches |
+| Flow 1 failure path: target FY already has budget rows (merge vs overwrite) | `mode: "fill-empty"` (default, no dialog, non-destructive by construction) vs. a separate "Overwrite…" action gated by `<ConfirmDialog destructive>` naming the exact collision count | matches |
+| Flow 1 failure path: empty prior year (no actuals to copy) | Entity-wide and per-fund seed actions disabled with explanatory copy when `seedableCount === 0`; page shows the zero-funds/zero-entities empty states in `bg-gray-50 rounded-2xl p-10...` | matches |
+| Flow 2: live per-fund balance guidance while editing | `computeBudgetBalanceStatus` imported directly into the client island (confirmed zero `@/lib/db` imports in `ledger.ts`), recomputed via `BudgetEditor`'s new `onInputChange` prop on every keystroke, before any blur/save | matches |
+| Permissions: existing `LEDGER_MANAGE` covers both copy-forward and balance readout, no new `FEATURES` key | Confirmed — both the new page and the new `POST /budgets/seed` route gate on `FEATURES.LEDGER_MANAGE` exclusively, no view/record fallback | matches |
+| Copy source = prior actuals, fallback to prior budget only if fund-wide actuals are zero (locked decision 1) | `deriveSeedLinesForFund`: `fundHadPriorActuals` gates the fallback fund-wide, not per-category; a $0 actual still seeds; a category with neither actuals nor prior budget is skipped, left for manual entry | matches |
+| Per-entity seeding, all funds at once, per-fund review (locked decision 2) | Entity-wide primary action + per-fund cards each with their own preview, balance badge, and `BudgetEditor` | matches |
+| Fill-empty/merge only; destructive overwrite named-count `ConfirmDialog` (locked decision 3) | Shipped as designed, with one adaptation: the design doc sketched a single two-choice dialog ("seed empty ones" / "overwrite all"); shipped as a plain non-dialog "Seed" button (non-destructive, no confirm needed) plus a separate "Overwrite…" button that alone opens `ConfirmDialog`. Functionally equivalent — same guarantee (exact count named, cancel is inert), reached via two buttons instead of one dialog with two choices, because the shared `ConfirmDialog` primitive only supports one Cancel + one Confirm | acceptable drift — logged by ux-developer, verified in code, doesn't weaken the guarantee |
+| Advisory, non-blocking balance guidance per fund kind (locked decision 4) | Confirmed: neither `PATCH /budgets` nor `POST /budgets/seed` imports or calls `computeBudgetBalanceStatus`; it exists only in the client island and the server page's initial-render summary | matches |
+| Board-adoption capture out of scope, named follow-up (locked decision 5) | Not built — no draft/adopted state, no board-minute reference on `ledger_budgets`. Correctly absent, not silently dropped: named in Phase 1, Phase 3, and every subsequent phase's handoff notes | matches (as an intentional non-delivery) |
+| No gradient hero banner (design doc suggested one) | Plain eyebrow/h1/subtitle header, matching every sibling `admin/ledger/*` page | acceptable drift — ux-developer's brief to match sibling pages takes precedence over the design doc's generic suggestion; I checked the sibling pages myself and ux-developer's read is correct |
+| Optional cross-link from `[fundSlug]/report` to the new budgeting page | Not built | matches — explicitly non-blocking/optional in both Phase 2 and Phase 3, tracked below as a minor follow-up |
+| Consolidated entity-level (Club-wide/Foundation-wide) budget-vs-actual rollup, mid-year YTD pacing | Not built | matches — explicitly out of scope per the brief; confirmed `getEntityReport` untouched |
+
+## Two-fund discipline check
+
+This was my sharpest Phase 1 concern (locked decision 4's whole premise), so I traced it specifically rather than trusting the summary:
+
+- **No cross-fund money movement anywhere in the new code.** The seed endpoint and `upsertBudgetLine` only ever write to `ledger_budgets` — a target-setting table, not a ledger of actual cash. Nothing in this feature touches `ledgerTransactions` or creates transfers. A treasurer "seeding" a fund cannot accidentally move real money between the Administrative and Activity funds, or between the Club and Foundation entities, because the feature has no write path to actual balances at all.
+- **The Administrative-fund rule is the sharpest one, correctly.** `warn` on `income < expense` (strict), never on `charitable`/`scholarship` running a planned deficit — this is the load-bearing distinction Article VII §3(g) actually requires (public money must not subsidize operations), and it's the one rule Phase 1 flagged as needing to be right. It is.
+- **Advisory really means advisory.** I confirmed by reading the route files, not just the design doc's claim, that `computeBudgetBalanceStatus` is never imported into either API route. There is no code path — today or via a plausible near-future edit — where a `warn` status blocks a write, because the write paths don't know the function exists.
+
+No gap here. This is the part of the feature I was most worried about in Phase 1, and it shipped exactly as specified.
+
+## Edge cases
+
+| Edge case | Result |
+|---|---|
+| Empty state (first-year entity/fund, no prior actuals or budget) | pass — `bg-gray-50 rounded-2xl p-10 text-center text-gray-500` for zero-entities/zero-funds; per-fund seed actions disabled with explanatory copy when `seedableCount === 0`, no silent no-op POST |
+| Failure microcopy | pass — 400/403/404/500 responses carry human messages (`"Entity not found"`, `"mode must be 'fill-empty' or 'overwrite'"`, etc.), not stack traces; toast summaries on the client are plain English counts |
+| Permission gate | pass — traced in code, both the page and the seed route redirect/403 correctly for a `LEDGER_VIEW`/`LEDGER_RECORD`-only user; no view-only fallback, matching the design's "this whole surface is manage-only" call |
+| Brand consistency | pass — `rounded-2xl` cards, `rounded-lg` buttons, zero `lions-red`, `<ConfirmDialog>` for the one destructive action, focus rings present, grepped and independently confirmed, not just accepted from ux-developer's self-report |
+| Mobile (360px) | pass, on ux-developer's and QA's paper trail only — `grid-cols-1 lg:grid-cols-2`, internally-scrollable proposed-lines list, 44px touch targets. I did not independently re-verify at 360px (no live dev server in this environment either); flagging this as inherited confidence, not independently re-checked |
+| OAuth-vs-password paths | not applicable — this feature has no auth-path-specific behavior; `LEDGER_MANAGE` is a role/feature check independent of how the treasurer signed in |
+| Access-pending surface | pass — a signed-in user with no `LEDGER_MANAGE` hits `/access-pending` on this page, same as every other manage-only Ledger surface |
+| Email queue | not applicable — this feature sends no email, correctly (nothing in Phase 1's flows implied one) |
+| Google Group sync | not applicable — this feature never touches member↔committee membership |
+
+## Carried-forward follow-ups — decision on whether they block SHIP IT
+
+**1. Live-DB manual click-through (QA's flagged gap) — does NOT block ship, but is a required follow-up before the first live use.**
+QA substituted a code-level flow audit for the runtime click-through because this sandbox has no `DATABASE_URL`. I re-verified that audit independently (see above) rather than accepting it on faith, and it holds up: every claim traces to real file:line evidence, the transactional/server-recompute design closes the race QA worried about by construction, and `fill-empty`'s non-clobber guarantee is enforced twice (once in `decideSeedWriteAction`, unit-tested at all 4 branch combinations, and again as defense-in-depth via `upsertBudgetLine`'s `conflictMode: "skip"` path per the tech-lead's own note). This is an internal admin tool gated to `LEDGER_MANAGE`, not a public-facing flow — the blast radius of an unverified visual glitch is "the treasurer emails someone," not "a member's data leaks." I'm treating the code-level audit as sufficient to ship, on the condition that the live click-through actually happens before Chuck runs a real budgeting season on it, per QA's own item list (particularly items 4-6: idempotent re-seed, overwrite-confirm accuracy, first-year disabled state).
+
+**2. Board-adoption capture — correctly deferred, belongs in the backlog, not a ship blocker.**
+Named in Chuck's original ask, explicitly scoped out by me in Phase 1 pending user confirmation, and every subsequent phase reaffirmed the deferral without silently dropping it. This is real, undelivered scope — it should be trackable, not just a sentence buried in a work-log nobody rereads. Adding to `docs/backlog.md` below.
+
+**3. Consolidated entity-level budget-vs-actual rollup + mid-year YTD pacing — correctly deferred, belongs in the backlog.**
+Both named in the brief as out of scope for this increment; confirmed `getEntityReport` is untouched. Worth a backlog entry so the next person picking up Ledger budgeting work doesn't have to rediscover this gap by reading five work-logs.
+
+**4. The $100 Activity-fund tolerance — not a defect, but genuinely unvalidated against a real season. Tracking as a lightweight note, not a backlog feature.**
+
+**5. Optional `[fundSlug]/report` cross-link — minor, non-blocking, tracking as a lightweight note.**
+
+## Follow-ups (tracked)
+
+- Run the full 9-item manual click-through (`docs/work-log/2026-07-27-ledger-guided-budgeting.md`, ux-developer's Phase 4 handoff) against a real dev server + seeded DB before the first live budgeting season, with particular attention to items 4-6 (idempotent re-seed skip, overwrite-confirm accurate count + cancel-is-inert, first-year disabled state). Owner: whoever has DB access next (deployment-engineer or a developer with `.env.local`) — not a new work-log, just execute the existing list and note the outcome in this file.
+- After the first real budgeting season, ask Chuck whether the ±$100 Activity-fund tolerance (`DECISION-042`) feels right, too tight, or too loose, and adjust `ACTIVITY_BALANCE_TOLERANCE_CENTS` in `src/lib/ledger.ts` if needed.
+- Added to `docs/backlog.md`: **B-14** (board-adoption capture) and **B-15** (entity-level budget-vs-actual rollup + YTD pacing) — see below.
+- Optional cross-link from `[fundSlug]/report/page.tsx` to `/admin/ledger/budgeting` remains a nice-to-have, not tracked as a numbered backlog item (too small to warrant one) — pick up opportunistically if anyone is next in that file.
+
+## Open questions / handoff notes
+
+- This work-log is now closed at Phase 6. No further phase work is expected unless the live-DB click-through surfaces a real defect, in which case loop back to Phase 4 (implementer) per the pipeline rules, not back to Phase 1 — the functional intent is confirmed correct, only an implementation bug would be in question.
+- Whoever runs the live click-through should append its result directly to this file (a short "Live-DB verification — YYYY-MM-DD" addendum under this Phase 6 section) rather than opening a new work-log, since it's confirming already-shipped work, not new functional scope.

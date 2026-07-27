@@ -11,6 +11,35 @@ follow-ups may also land here when they don't warrant an immediate work-log.
 
 ---
 
+- [ ] **B-14 — Board-adoption capture for Ledger budgets (date + board-minute reference).**
+  (added 2026-07-27, priority: nice-to-have) Flagged in Phase 1 of
+  `docs/work-log/2026-07-27-ledger-guided-budgeting.md` as a real, named ask
+  from Chuck ("the board formally ADOPTS the budget") but explicitly deferred
+  out of the guided-budgeting increment — `ledger_budgets` today is
+  upsert-in-place with no draft/final state and no board-minute reference,
+  in contrast to `ledgerTransactions.boardMinute`, which already exists for
+  approved disbursements. Shape to reach for when picked up: a
+  per-`(fund,FY)` or per-`(entity,FY)` adoption record (adopted date +
+  board-minute reference string), mirroring the existing
+  `ledgerTransactions.boardMinute` column. Needs a schema change
+  (database-admin) plus UI to mark a budget adopted and lock/flag further
+  edits — full pipeline, not a trivial add-on.
+
+- [ ] **B-15 — Consolidated entity-level budget-vs-actual rollup + mid-year YTD pacing.**
+  (added 2026-07-27, priority: nice-to-have) Flagged in Phase 1 of
+  `docs/work-log/2026-07-27-ledger-guided-budgeting.md` and reconfirmed
+  untouched at Phase 6: `getEntityReport()` (`src/lib/ledger-queries.ts`,
+  currently hardcodes `budgetCents: null` at the per-category-rollup level)
+  has no budget story at the Club-wide or Foundation-wide level — a
+  treasurer can see per-fund budget-vs-actual today (`getFundReport()`) but
+  not "does the whole Club balance" or "does the whole Foundation balance,"
+  which is the actual Lions-Way self-balancing unit (Administrative+Activity
+  pair; Charitable+Scholarship pair). Also bundles the separately-deferred
+  mid-year YTD/prorated budget pacing (targets are annual-only today).
+  Recommend a small new aggregation on top of already-fetched fund reports
+  rather than a rebuild of `getEntityReport` (per architect's Phase 2 note
+  on the guided-budgeting increment).
+
 - [ ] **B-08 — Member reimbursement upload has no HEIC support at all.**
   (added 2026-07-21, priority: nice-to-have) Flagged during Phase 1 of
   `docs/work-log/2026-07-21-receipt-heic-wasm-fallback.md` and confirmed
