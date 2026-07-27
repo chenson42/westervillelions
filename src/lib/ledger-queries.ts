@@ -55,11 +55,15 @@ import {
   isFilingOverdue,
   bucketGivingByCause,
   isReceiptMissing,
+  validateBudgetLineInput,
+  deriveSeedLinesForFund,
   type GuardrailFlag,
   type BudgetVarianceResult,
   type AgedPublicFundFact,
   type GivingFoldRow,
   type CauseGivingRow,
+  type SeedSourceLine,
+  type SeedProposedLine,
 } from "@/lib/ledger";
 
 // ---------------------------------------------------------------------------
@@ -167,6 +171,25 @@ export async function getEntity(slug: string): Promise<LedgerEntity | null> {
     .select()
     .from(ledgerEntities)
     .where(eq(ledgerEntities.slug, slug.trim()))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// getEntityById — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a single entity by id, or null. Small sibling to getEntity(slug) —
+ * exists purely because POST /api/admin/ledger/budgets/seed receives an
+ * entityId, not a slug. Keep this a one-line lookup; do not let it grow scope.
+ */
+export async function getEntityById(id: string): Promise<LedgerEntity | null> {
+  if (!id || typeof id !== "string" || id.trim() === "") return null;
+  const rows = await db
+    .select()
+    .from(ledgerEntities)
+    .where(eq(ledgerEntities.id, id))
     .limit(1);
   return rows[0] ?? null;
 }
@@ -529,6 +552,280 @@ export async function getFundReport(
     totalExpenseCents,
     endingCents,
     pendingExpenseCents,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DrizzleTransaction — shared tx-client type (Guided Budgeting)
+// ---------------------------------------------------------------------------
+
+// Inferred from db.transaction's callback parameter — avoids importing Drizzle
+// internals. Same pattern as src/lib/dues-ledger-sync.ts.
+type DrizzleTransaction = Parameters<Parameters<(typeof db)["transaction"]>[0]>[0];
+
+// ---------------------------------------------------------------------------
+// upsertBudgetLine — Guided Budgeting (shared upsert core, architect Ruling 1)
+// ---------------------------------------------------------------------------
+
+export type UpsertBudgetLineParams = {
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  flow: "income" | "expense";
+  /** null = delete the row */
+  annualAmountCents: number | null;
+  /**
+   * "update" = today's PATCH behavior (onConflictDoUpdate). "skip" =
+   * onConflictDoNothing — exists on this shared function for correctness/
+   * defense-in-depth; the seed endpoint's own dispatch (decideSeedWriteAction)
+   * filters out known collisions before ever calling this function, so in
+   * practice "skip" is not exercised by either current caller.
+   */
+  conflictMode: "update" | "skip";
+};
+
+export type UpsertBudgetLineResult =
+  | { ok: true; action: "upserted" | "deleted"; id?: string }
+  | { ok: false; error: string; status: 400 | 404 };
+
+/**
+ * Shared upsert-or-delete core for a single `(fundId, fiscalYear, categoryId,
+ * flow)` budget line. Both PATCH /api/admin/ledger/budgets (one line at a
+ * time) and POST /api/admin/ledger/budgets/seed (looping in-process, inside
+ * one transaction) call this function — one source of truth for what a valid
+ * budget-line write looks like (architect Ruling 1).
+ *
+ * Fetches the fund and category rows, delegates the actual validation to the
+ * pure validateBudgetLineInput() in ledger.ts, and if invalid returns its
+ * error verbatim. If valid: `annualAmountCents === null` deletes the row
+ * (matching the original PATCH route's delete branch exactly); otherwise
+ * inserts with either onConflictDoUpdate (conflictMode: "update") or
+ * onConflictDoNothing (conflictMode: "skip").
+ *
+ * @param params  See UpsertBudgetLineParams.
+ * @param tx      Optional Drizzle transaction client — pass the `tx` from an
+ *                enclosing db.transaction() to write atomically alongside
+ *                other writes (the seed endpoint's usage). Defaults to the
+ *                module-level `db` for standalone callers (the PATCH route).
+ */
+export async function upsertBudgetLine(
+  params: UpsertBudgetLineParams,
+  tx: DrizzleTransaction | typeof db = db,
+): Promise<UpsertBudgetLineResult> {
+  const { fundId, fiscalYear, categoryId, flow, annualAmountCents, conflictMode } = params;
+
+  const fundRows = await tx
+    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId, kind: ledgerFunds.kind })
+    .from(ledgerFunds)
+    .where(eq(ledgerFunds.id, fundId))
+    .limit(1);
+  const fund = fundRows[0] ?? null;
+
+  const catRows = await tx
+    .select({
+      id: ledgerCategories.id,
+      fundKind: ledgerCategories.fundKind,
+      flow: ledgerCategories.flow,
+    })
+    .from(ledgerCategories)
+    .where(eq(ledgerCategories.id, categoryId))
+    .limit(1);
+  const category = catRows[0] ?? null;
+
+  const validation = validateBudgetLineInput({
+    fund: fund ? { id: fund.id, kind: fund.kind } : null,
+    category: category ? { id: category.id, fundKind: category.fundKind, flow: category.flow } : null,
+    flow,
+    fiscalYear,
+    annualAmountCents,
+  });
+  if (!validation.ok) {
+    return validation;
+  }
+  if (!fund || !category) {
+    // Unreachable: validateBudgetLineInput returns ok:false above when either
+    // is null. Guards TS narrowing for the entityId/insert below.
+    return { ok: false, error: "Fund or category not found", status: 404 };
+  }
+
+  if (annualAmountCents === null) {
+    await tx
+      .delete(ledgerBudgets)
+      .where(
+        and(
+          eq(ledgerBudgets.fundId, fundId),
+          eq(ledgerBudgets.fiscalYear, fiscalYear),
+          eq(ledgerBudgets.categoryId, categoryId),
+          eq(ledgerBudgets.flow, flow),
+        ),
+      );
+    return { ok: true, action: "deleted" };
+  }
+
+  const conflictTarget = [
+    ledgerBudgets.fundId,
+    ledgerBudgets.fiscalYear,
+    ledgerBudgets.categoryId,
+    ledgerBudgets.flow,
+  ];
+
+  if (conflictMode === "skip") {
+    const [row] = await tx
+      .insert(ledgerBudgets)
+      .values({
+        entityId: fund.entityId,
+        fundId,
+        fiscalYear,
+        categoryId,
+        flow,
+        annualAmountCents,
+      })
+      .onConflictDoNothing({ target: conflictTarget })
+      .returning({ id: ledgerBudgets.id });
+    return { ok: true, action: "upserted", id: row?.id };
+  }
+
+  const [upserted] = await tx
+    .insert(ledgerBudgets)
+    .values({
+      entityId: fund.entityId,
+      fundId,
+      fiscalYear,
+      categoryId,
+      flow,
+      annualAmountCents,
+    })
+    .onConflictDoUpdate({
+      target: conflictTarget,
+      set: {
+        annualAmountCents,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ id: ledgerBudgets.id });
+
+  return { ok: true, action: "upserted", id: upserted.id };
+}
+
+// ---------------------------------------------------------------------------
+// computeSeedFromPriorYear — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+export type FundSeedPreview = {
+  fund: LedgerFund;
+  /** "none"-source categories are excluded entirely — see deriveSeedLinesForFund. */
+  seedableLines: SeedProposedLine[];
+  seedableCount: number;
+  collisionCount: number;
+};
+
+export type EntitySeedPreview = {
+  entityId: string;
+  priorFiscalYear: number;
+  targetFiscalYear: number;
+  funds: FundSeedPreview[];
+};
+
+/**
+ * Computes the guided-budgeting seed preview for every active fund of an
+ * entity (or a scoped subset via `fundIds`), by composing on getFundReport()
+ * — no new transaction re-aggregation (architect Ruling 2).
+ *
+ * Prior FY is always `targetFiscalYear - 1` — no separate source-FY picker in
+ * v1 (locked decision, Phase 3 design doc).
+ *
+ * Per fund:
+ *   1. report = getFundReport(fund.id, priorFiscalYear)
+ *   2. fundHadPriorActuals = report.totalIncomeCents + report.totalExpenseCents > 0
+ *      — this is the fund-level fallback trigger (locked decision 1): fund-wide,
+ *      not per-category.
+ *   3. existingTargetBudgetMap — a plain ledgerBudgets select for
+ *      (fundId, targetFiscalYear), reduced to a Map<`${categoryId}_${flow}`, amountCents>.
+ *   4. priorLines = report.income + report.expense, flow-tagged, mapped to the
+ *      pure function's plain input shape.
+ *   5. seedableLines = deriveSeedLinesForFund(priorLines, fundHadPriorActuals, existingTargetBudgetMap).
+ *
+ * @param entityId            Entity to compute the preview for.
+ * @param targetFiscalYear    The FY being budgeted (prior FY is this minus 1).
+ * @param fundIds             Optional scope — a subset of the entity's active fund IDs.
+ *                            Omitted/empty means all active funds of entityId.
+ */
+export async function computeSeedFromPriorYear(
+  entityId: string,
+  targetFiscalYear: number,
+  fundIds?: string[],
+): Promise<EntitySeedPreview> {
+  const priorFiscalYear = targetFiscalYear - 1;
+
+  const allFunds = await getFunds(entityId);
+  const scopedFunds =
+    fundIds && fundIds.length > 0
+      ? allFunds.filter((f) => fundIds.includes(f.id))
+      : allFunds;
+
+  const funds: FundSeedPreview[] = [];
+
+  for (const fund of scopedFunds) {
+    const report = await getFundReport(fund.id, priorFiscalYear);
+    const fundHadPriorActuals = report
+      ? report.totalIncomeCents + report.totalExpenseCents > 0
+      : false;
+
+    const existingRows = await db
+      .select({
+        categoryId: ledgerBudgets.categoryId,
+        flow: ledgerBudgets.flow,
+        annualAmountCents: ledgerBudgets.annualAmountCents,
+      })
+      .from(ledgerBudgets)
+      .where(
+        and(eq(ledgerBudgets.fundId, fund.id), eq(ledgerBudgets.fiscalYear, targetFiscalYear)),
+      );
+    const existingTargetBudgetMap = new Map<string, number>();
+    for (const row of existingRows) {
+      if (row.categoryId) {
+        existingTargetBudgetMap.set(`${row.categoryId}_${row.flow}`, row.annualAmountCents);
+      }
+    }
+
+    const priorLines: SeedSourceLine[] = report
+      ? [
+          ...report.income.map((line) => ({
+            categoryId: line.categoryId,
+            categoryName: line.categoryName,
+            flow: "income" as const,
+            actualCents: line.actualCents,
+            budgetCents: line.budgetCents,
+          })),
+          ...report.expense.map((line) => ({
+            categoryId: line.categoryId,
+            categoryName: line.categoryName,
+            flow: "expense" as const,
+            actualCents: line.actualCents,
+            budgetCents: line.budgetCents,
+          })),
+        ]
+      : [];
+
+    const seedableLines = deriveSeedLinesForFund(
+      priorLines,
+      fundHadPriorActuals,
+      existingTargetBudgetMap,
+    );
+
+    funds.push({
+      fund,
+      seedableLines,
+      seedableCount: seedableLines.length,
+      collisionCount: seedableLines.filter((l) => l.collision).length,
+    });
+  }
+
+  return {
+    entityId,
+    priorFiscalYear,
+    targetFiscalYear,
+    funds,
   };
 }
 

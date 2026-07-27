@@ -15,7 +15,7 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-27 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-27 |
 | 3 — Technical design | tech-lead | Complete | Design complete, implementers named | 2026-07-27 |
-| 4 — Implementation | api-developer → ux-developer | Pending | — | — |
+| 4 — Implementation | api-developer → ux-developer | api-developer complete, ux-developer pending | — | 2026-07-27 |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -559,9 +559,56 @@ Item 1 gets a `docs/decisions.md` entry since it's a concrete, debatable numeric
 
 ---
 
-# Phase 4 — Implementation
+# Phase 4 — Implementation (API) — 2026-07-27
 
-Pending
+**Owner:** api-developer
+**Status:** complete
+
+### Summary
+
+Implemented the full server layer for guided budgeting exactly per the Phase 3 design: the four pure helpers in `ledger.ts`, the `getEntityById`/`upsertBudgetLine`/`computeSeedFromPriorYear` query layer in `ledger-queries.ts`, refactored `PATCH /api/admin/ledger/budgets` to call the shared `upsertBudgetLine` core (contract unchanged), and added the new `POST /api/admin/ledger/budgets/seed` endpoint. All 36 named unit tests were written and pass, and the full existing suite stays green. No schema change, no migration — `ledger_budgets` reused as-is.
+
+### What I did
+
+- Added `computeBudgetBalanceStatus`, `deriveSeedLinesForFund` (+ `SeedSourceLine`/`SeedProposedLine`), `validateBudgetLineInput` (+ `BudgetLineValidationInput`/`Result`), and `decideSeedWriteAction` to `src/lib/ledger.ts` — pure, zero `@/lib/db` imports, per architect Ruling 4 and tech-lead's spec.
+- Added `getEntityById(id)` (one-line sibling to `getEntity(slug)`), `upsertBudgetLine()` (the shared validation+upsert core, accepting an optional Drizzle transaction client so it can run standalone from PATCH or inside the seed route's `db.transaction()`), and `computeSeedFromPriorYear(entityId, targetFiscalYear, fundIds?)` (composes on `getFundReport()`, no new transaction re-aggregation) to `src/lib/ledger-queries.ts`.
+- Refactored `PATCH /api/admin/ledger/budgets` to do only shape checks inline, then delegate fund/category/amount/fiscalYear validation and the upsert-or-delete write to the shared `upsertBudgetLine()` core. Response shape (`{ action: 'upserted'|'deleted', id? }`) and all error messages are unchanged from the original handler — verified by reading the pre-refactor handler in full before touching it.
+- Added `POST /api/admin/ledger/budgets/seed`: validates `entityId`/`targetFiscalYear`/`mode`/`fundIds` (empty `fundIds` array treated as "omitted", matching the design's stated avoidance of a confusing no-op 200), recomputes the seed fresh via `computeSeedFromPriorYear` (never trusts any client-supplied amount), then writes every proposed line inside a single `db.transaction()` using `decideSeedWriteAction` to dispatch seed/skip/overwrite and `upsertBudgetLine(..., conflictMode: "update", tx)` for the actual write (per the design's explicit step 4 — both "seed" and "overwrite" actions use `conflictMode: "update"`; the response's per-line `action` label comes from the pre-write collision check, not from inspecting the upsert's return value).
+- Added all 36 named unit tests to `src/lib/ledger.test.ts` (13 `computeBudgetBalanceStatus`, 8 `deriveSeedLinesForFund`, 11 `validateBudgetLineInput`, 4 `decideSeedWriteAction`), matching the design doc's exact case list including the ±$100 Activity tolerance boundary (DECISION-042).
+- Did **not** add unit tests for `computeSeedFromPriorYear()` or `upsertBudgetLine()` themselves — matches the repo's existing convention (no function in `ledger-queries.ts` has ever had a mocked-query-builder unit test; every tested Ledger function is a pure sibling in `ledger.ts`), and matches the design doc's explicit "not unit-tested, and why" note.
+
+### Outputs
+
+**`PATCH /api/admin/ledger/budgets`** (contract unchanged, internals refactored)
+- Gate: `auth()` + `hasFeature(session.user.id, FEATURES.LEDGER_MANAGE)` → 401/403.
+- Request: `{ fundId: string; fiscalYear: number; categoryId: string; flow: 'income'|'expense'; annualAmountCents: number|null }`.
+- Response 200: `{ action: 'upserted', id: string }` or `{ action: 'deleted' }`. Errors: 400 (bad shape/validation), 404 (fund/category not found), 500.
+- File: `src/app/api/admin/ledger/budgets/route.ts`.
+
+**`POST /api/admin/ledger/budgets/seed`** (new)
+- Gate: `auth()` + `hasFeature(session.user.id, FEATURES.LEDGER_MANAGE)` → 401/403, identical pattern to PATCH.
+- Request: `{ entityId: string; targetFiscalYear: number; mode: 'fill-empty'|'overwrite'; fundIds?: string[] }`.
+- Response 200: `{ priorFiscalYear: number; targetFiscalYear: number; funds: Array<{ fundId, fundSlug, fundName, seededCount, skippedCount, overwrittenCount, lines: Array<{ categoryId, categoryName, flow, amountCents, source: 'actual'|'prior_budget', action: 'seeded'|'skipped_existing'|'overwritten' }> }> }`.
+- Errors: 400 (bad `entityId`/`targetFiscalYear`/`mode`/`fundIds`, or a `fundIds` entry not belonging to the entity), 404 (entity not found), 500.
+- File: `src/app/api/admin/ledger/budgets/seed/route.ts`.
+
+**Server-side lib additions (no new client-facing surface, but the contract the next agent builds on):**
+- `src/lib/ledger.ts`: `computeBudgetBalanceStatus(fundKind, budgetedIncomeCents, budgetedExpenseCents): { status: 'ok'|'warn'|'info', netCents: number }` — pure, importable client-side. `deriveSeedLinesForFund(priorLines, fundHadPriorActuals, existingTargetBudgetMap): SeedProposedLine[]`. `validateBudgetLineInput(input): { ok: true } | { ok: false, error, status: 400|404 }`. `decideSeedWriteAction(mode, collision): 'seed'|'skip'|'overwrite'`.
+- `src/lib/ledger-queries.ts`: `getEntityById(id): Promise<LedgerEntity|null>`. `upsertBudgetLine(params, tx?): Promise<UpsertBudgetLineResult>`. `computeSeedFromPriorYear(entityId, targetFiscalYear, fundIds?): Promise<EntitySeedPreview>` — return shape has `funds: Array<{ fund: LedgerFund, seedableLines: SeedProposedLine[], seedableCount, collisionCount }>`, `priorFiscalYear`, `targetFiscalYear`.
+- Schema changes: **none**. No migration filename to report — `ledger_budgets` reused as-is per architect Ruling 5.
+
+### Verification results
+
+- `pnpm exec tsc --noEmit` — clean, no errors.
+- `pnpm test` — **516 tests passed (17 test files)**, including all 36 newly-added guided-budgeting tests (verified count: 13 + 8 + 11 + 4 = 36) and the full pre-existing suite with zero regressions.
+- Did not run `pnpm db:push`/`db:migrate` (no schema change; no live `DATABASE_URL` in this sandbox) or `pnpm build:only` (known sandbox limitation — "Collecting page data" fails without `DATABASE_URL`, not a regression introduced here).
+
+### Open questions / handoff notes
+
+- **Next agent: ux-developer.** Build `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` (Server Component) and `src/components/admin/ledger/guided-budget-setup.tsx` (client island) per the Phase 3 UI/UX section, consuming `computeSeedFromPriorYear()` for the initial render and `POST /budgets/seed` for the seed action. Also: add the optional `onInputChange` prop to `budget-editor.tsx` (backward-compatible) for the live balance readout, and the "Budgeting" nav entry to `admin-sidebar.tsx`'s Treasury group.
+- The seed endpoint's `mode`/`fundIds` contract is locked as specified above — no changes needed on the server side to support the confirm-dialog overwrite flow described in Phase 3 (the client just chooses `mode` based on the user's dialog choice).
+- The $100 Activity tolerance (DECISION-042) is a starting default per the design doc — flag to the user after ship that it's adjustable if the first real budgeting season shows it's too tight or too loose.
+- qa (Phase 5): per the design doc, specifically exercise the `overwrite` `ConfirmDialog` path (collision count accurate, cancel truly leaves rows untouched) and the first-year/no-prior-data disabled-button state — neither has an automated test, by design (see "Explicitly not unit-tested" note in Phase 3).
 
 ---
 

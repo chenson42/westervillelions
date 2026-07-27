@@ -23,8 +23,13 @@ import {
   isFilingOverdue,
   deriveAckType,
   isReceiptMissing,
+  computeBudgetBalanceStatus,
+  deriveSeedLinesForFund,
+  validateBudgetLineInput,
+  decideSeedWriteAction,
   type GuardrailsInput,
   type AgedPublicFundFact,
+  type SeedSourceLine,
 } from "./ledger";
 
 // ---------------------------------------------------------------------------
@@ -1623,5 +1628,382 @@ describe("daysSinceTxnDate", () => {
     // T-02: the two Ohio Lions Foundation checks dated 2026-03-07, ~135 days
     // before this file's other NOW fixtures land at 2026-07-20.
     expect(daysSinceTxnDate("2026-03-07", NOW)).toBe(135);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeBudgetBalanceStatus — Guided Budgeting (DECISION-042)
+// ---------------------------------------------------------------------------
+
+describe("computeBudgetBalanceStatus", () => {
+  it("administrative: income > expense -> ok", () => {
+    const result = computeBudgetBalanceStatus("administrative", 100_000, 80_000);
+    expect(result.status).toBe("ok");
+    expect(result.netCents).toBe(20_000);
+  });
+
+  it("administrative: income === expense -> ok (boundary — equal is not a shortfall)", () => {
+    const result = computeBudgetBalanceStatus("administrative", 100_000, 100_000);
+    expect(result.status).toBe("ok");
+    expect(result.netCents).toBe(0);
+  });
+
+  it("administrative: income one cent less than expense -> warn (boundary just over)", () => {
+    const result = computeBudgetBalanceStatus("administrative", 99_999, 100_000);
+    expect(result.status).toBe("warn");
+    expect(result.netCents).toBe(-1);
+  });
+
+  it("administrative: income = 0, expense = 0 -> ok", () => {
+    const result = computeBudgetBalanceStatus("administrative", 0, 0);
+    expect(result.status).toBe("ok");
+    expect(result.netCents).toBe(0);
+  });
+
+  it("activity: net = 0 -> ok", () => {
+    const result = computeBudgetBalanceStatus("activity", 50_000, 50_000);
+    expect(result.status).toBe("ok");
+    expect(result.netCents).toBe(0);
+  });
+
+  it("activity: net = +10,000 cents ($100 exactly) -> ok (tolerance boundary, inclusive)", () => {
+    const result = computeBudgetBalanceStatus("activity", 110_000, 100_000);
+    expect(result.status).toBe("ok");
+    expect(result.netCents).toBe(10_000);
+  });
+
+  it("activity: net = +10,001 cents (one cent past tolerance) -> warn", () => {
+    const result = computeBudgetBalanceStatus("activity", 110_001, 100_000);
+    expect(result.status).toBe("warn");
+    expect(result.netCents).toBe(10_001);
+  });
+
+  it("activity: net = -10,000 cents -> ok (symmetric boundary on the deficit side)", () => {
+    const result = computeBudgetBalanceStatus("activity", 90_000, 100_000);
+    expect(result.status).toBe("ok");
+    expect(result.netCents).toBe(-10_000);
+  });
+
+  it("activity: net = -50,000 cents -> warn", () => {
+    const result = computeBudgetBalanceStatus("activity", 50_000, 100_000);
+    expect(result.status).toBe("warn");
+    expect(result.netCents).toBe(-50_000);
+  });
+
+  it("charitable: expense > income (planned drawdown) -> info (never warn)", () => {
+    const result = computeBudgetBalanceStatus("charitable", 50_000, 200_000);
+    expect(result.status).toBe("info");
+    expect(result.netCents).toBe(-150_000);
+  });
+
+  it("charitable: income > expense -> info", () => {
+    const result = computeBudgetBalanceStatus("charitable", 200_000, 50_000);
+    expect(result.status).toBe("info");
+    expect(result.netCents).toBe(150_000);
+  });
+
+  it("scholarship: expense > income -> info", () => {
+    const result = computeBudgetBalanceStatus("scholarship", 10_000, 90_000);
+    expect(result.status).toBe("info");
+    expect(result.netCents).toBe(-80_000);
+  });
+
+  it("unrecognized fundKind string -> info, does not throw", () => {
+    expect(() => computeBudgetBalanceStatus("mystery-fund", 10_000, 90_000)).not.toThrow();
+    const result = computeBudgetBalanceStatus("mystery-fund", 10_000, 90_000);
+    expect(result.status).toBe("info");
+    expect(result.netCents).toBe(-80_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deriveSeedLinesForFund — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+describe("deriveSeedLinesForFund", () => {
+  it("fund had prior actuals; category actual=$500, differing prior budget=$400 -> proposed=$500, source: actual (actuals win)", () => {
+    const priorLines: SeedSourceLine[] = [
+      {
+        categoryId: "cat-1",
+        categoryName: "Club dues",
+        flow: "income",
+        actualCents: 50_000,
+        budgetCents: 40_000,
+      },
+    ];
+    const result = deriveSeedLinesForFund(priorLines, true, new Map());
+    expect(result).toHaveLength(1);
+    expect(result[0].proposedAmountCents).toBe(50_000);
+    expect(result[0].source).toBe("actual");
+  });
+
+  it("fund had prior actuals; a specific category's own actual is $0 -> still emitted, proposed=$0, source: actual", () => {
+    const priorLines: SeedSourceLine[] = [
+      {
+        categoryId: "cat-2",
+        categoryName: "Fundraising",
+        flow: "income",
+        actualCents: 0,
+        budgetCents: 10_000,
+      },
+    ];
+    const result = deriveSeedLinesForFund(priorLines, true, new Map());
+    expect(result).toHaveLength(1);
+    expect(result[0].proposedAmountCents).toBe(0);
+    expect(result[0].source).toBe("actual");
+  });
+
+  it("fund had zero actuals fund-wide; category prior budget=$300 -> fallback triggers, proposed=$300, source: prior_budget", () => {
+    const priorLines: SeedSourceLine[] = [
+      {
+        categoryId: "cat-3",
+        categoryName: "Insurance",
+        flow: "expense",
+        actualCents: 0,
+        budgetCents: 30_000,
+      },
+    ];
+    const result = deriveSeedLinesForFund(priorLines, false, new Map());
+    expect(result).toHaveLength(1);
+    expect(result[0].proposedAmountCents).toBe(30_000);
+    expect(result[0].source).toBe("prior_budget");
+  });
+
+  it("fund had zero actuals fund-wide; category prior budget=null -> no line emitted (new-category case)", () => {
+    const priorLines: SeedSourceLine[] = [
+      {
+        categoryId: "cat-4",
+        categoryName: "New program",
+        flow: "expense",
+        actualCents: 0,
+        budgetCents: null,
+      },
+    ];
+    const result = deriveSeedLinesForFund(priorLines, false, new Map());
+    expect(result).toHaveLength(0);
+  });
+
+  it("fund had zero actuals fund-wide; category prior budget=$0 (explicit) -> emitted, proposed=$0, source: prior_budget", () => {
+    const priorLines: SeedSourceLine[] = [
+      {
+        categoryId: "cat-5",
+        categoryName: "Contingency",
+        flow: "expense",
+        actualCents: 0,
+        budgetCents: 0,
+      },
+    ];
+    const result = deriveSeedLinesForFund(priorLines, false, new Map());
+    expect(result).toHaveLength(1);
+    expect(result[0].proposedAmountCents).toBe(0);
+    expect(result[0].source).toBe("prior_budget");
+  });
+
+  it("collision: existingTargetBudgetMap has an entry for the category/flow key -> collision: true, existingTargetAmountCents equals that value", () => {
+    const priorLines: SeedSourceLine[] = [
+      {
+        categoryId: "cat-6",
+        categoryName: "Club dues",
+        flow: "income",
+        actualCents: 50_000,
+        budgetCents: null,
+      },
+    ];
+    const existingMap = new Map([["cat-6_income", 12_345]]);
+    const result = deriveSeedLinesForFund(priorLines, true, existingMap);
+    expect(result[0].collision).toBe(true);
+    expect(result[0].existingTargetAmountCents).toBe(12_345);
+  });
+
+  it("no collision: key absent from map -> collision: false, existingTargetAmountCents: null", () => {
+    const priorLines: SeedSourceLine[] = [
+      {
+        categoryId: "cat-7",
+        categoryName: "Club dues",
+        flow: "income",
+        actualCents: 50_000,
+        budgetCents: null,
+      },
+    ];
+    const result = deriveSeedLinesForFund(priorLines, true, new Map());
+    expect(result[0].collision).toBe(false);
+    expect(result[0].existingTargetAmountCents).toBeNull();
+  });
+
+  it("empty priorLines input -> returns []", () => {
+    expect(deriveSeedLinesForFund([], true, new Map())).toEqual([]);
+    expect(deriveSeedLinesForFund([], false, new Map())).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateBudgetLineInput — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+describe("validateBudgetLineInput", () => {
+  const validFund = { id: "fund-1", kind: "administrative" };
+  const validCategory = { id: "cat-1", fundKind: "administrative", flow: "income" };
+
+  it("fund: null -> { ok: false, status: 404 }", () => {
+    const result = validateBudgetLineInput({
+      fund: null,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: 10_000,
+    });
+    expect(result).toEqual({ ok: false, error: "Fund not found", status: 404 });
+  });
+
+  it("category: null -> { ok: false, status: 404 }", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: null,
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: 10_000,
+    });
+    expect(result).toEqual({ ok: false, error: "Category not found", status: 404 });
+  });
+
+  it("category.fundKind !== fund.kind -> { ok: false, status: 400 } (\"does not match fund type\")", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: { id: "cat-2", fundKind: "activity", flow: "income" },
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: 10_000,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(400);
+      expect(result.error).toContain("does not match fund type");
+    }
+  });
+
+  it("category.flow !== requested flow -> { ok: false, status: 400 }", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: { id: "cat-3", fundKind: "administrative", flow: "expense" },
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: 10_000,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(400);
+    }
+  });
+
+  it("fiscalYear out of bounds (1999 and 2101) -> { ok: false, status: 400 }", () => {
+    const tooEarly = validateBudgetLineInput({
+      fund: validFund,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 1999,
+      annualAmountCents: 10_000,
+    });
+    const tooLate = validateBudgetLineInput({
+      fund: validFund,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 2101,
+      annualAmountCents: 10_000,
+    });
+    expect(tooEarly.ok).toBe(false);
+    expect(tooLate.ok).toBe(false);
+    if (!tooEarly.ok) expect(tooEarly.status).toBe(400);
+    if (!tooLate.ok) expect(tooLate.status).toBe(400);
+  });
+
+  it("annualAmountCents: null (delete path) with valid fund/category/flow -> { ok: true }", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: null,
+    });
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("annualAmountCents: 0 -> { ok: true } (explicit $0 valid)", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: 0,
+    });
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("annualAmountCents negative -> { ok: false, status: 400 }", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: -100,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(400);
+  });
+
+  it("annualAmountCents non-integer (e.g. 100.5) -> { ok: false, status: 400 }", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: 100.5,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(400);
+  });
+
+  it("annualAmountCents exceeds INT4_MAX -> { ok: false, status: 400 }", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: 2_147_483_648,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(400);
+  });
+
+  it("all valid -> { ok: true }", () => {
+    const result = validateBudgetLineInput({
+      fund: validFund,
+      category: validCategory,
+      flow: "income",
+      fiscalYear: 2026,
+      annualAmountCents: 50_000,
+    });
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// decideSeedWriteAction — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+describe("decideSeedWriteAction", () => {
+  it('("fill-empty", collision: false) -> "seed"', () => {
+    expect(decideSeedWriteAction("fill-empty", false)).toBe("seed");
+  });
+
+  it('("fill-empty", collision: true) -> "skip"', () => {
+    expect(decideSeedWriteAction("fill-empty", true)).toBe("skip");
+  });
+
+  it('("overwrite", collision: false) -> "seed"', () => {
+    expect(decideSeedWriteAction("overwrite", false)).toBe("seed");
+  });
+
+  it('("overwrite", collision: true) -> "overwrite"', () => {
+    expect(decideSeedWriteAction("overwrite", true)).toBe("overwrite");
   });
 });

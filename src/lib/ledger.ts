@@ -31,6 +31,16 @@
  * via the new isReceiptMissing() pure predicate, and gains a `linkHref` deep
  * link to the filtered transaction list. GuardrailsInput gains entitySlug and
  * fiscalYear to build that link; GuardrailFlag gains an optional linkHref.
+ *
+ * Guided Budgeting — Copy-Forward + Balance Check (2026-07-27): four new pure
+ * helpers back the guided-budgeting flow: computeBudgetBalanceStatus() (advisory
+ * income-vs-expense readout per fund kind, DECISION-042 sets the Activity fund's
+ * ±$100 near-zero tolerance), deriveSeedLinesForFund() (maps a fund's prior-FY
+ * report lines into proposed seed lines, with the fund-wide actuals→budget
+ * fallback), validateBudgetLineInput() (the single validation source of truth
+ * shared by PATCH /budgets and POST /budgets/seed via upsertBudgetLine() in
+ * ledger-queries.ts), and decideSeedWriteAction() (fill-empty vs. overwrite
+ * dispatch). See docs/work-log/2026-07-27-ledger-guided-budgeting.md Phase 3.
  */
 
 // ---------------------------------------------------------------------------
@@ -980,4 +990,274 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
  */
 export function daysSinceTxnDate(txnDate: string, now: Date = new Date()): number {
   return Math.floor((now.getTime() - new Date(txnDate).getTime()) / (1000 * 60 * 60 * 24));
+}
+
+// ---------------------------------------------------------------------------
+// computeBudgetBalanceStatus — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+export type BudgetBalanceStatus = {
+  status: "ok" | "warn" | "info";
+  /** budgetedIncomeCents - budgetedExpenseCents, always returned regardless of fund kind. */
+  netCents: number;
+};
+
+/**
+ * Activity fund near-zero tolerance (DECISION-042): a treasurer hand-entering
+ * roughly a dozen category lines, each realistically rounded to the nearest
+ * $25-$50, will rarely land on an exact $0 net by design. A flat $100 band
+ * absorbs that entry-level rounding noise without masking a genuine planning
+ * gap of hundreds or thousands of dollars.
+ */
+const ACTIVITY_BALANCE_TOLERANCE_CENTS = 10_000; // $100
+
+/**
+ * Advisory-only budget balance readout: does this fund's budgeted income
+ * cover its budgeted expense, per the rule for its fund kind?
+ *
+ * Pure, no `@/lib/db` import — must be importable directly by the client
+ * island so it recomputes live as the treasurer types, before any blur/save
+ * round-trip (architect Ruling 4).
+ *
+ * Per-fund-kind rules:
+ *   - administrative: warn if income < expense (strict `<` — equal is ok).
+ *     The Club's operating fund should not plan a deficit.
+ *   - activity: warn if |net| > $100 (DECISION-042); else ok. A pass-through
+ *     clearing account for publicly-raised charitable money — "balanced"
+ *     means planned receipts ~= planned disbursements, not exact zero.
+ *   - charitable / scholarship: always info, never warn. A planned drawdown
+ *     from an existing reserve/endowment is legitimate.
+ *   - unrecognized fundKind: falls through to info, never throws, never warns
+ *     — defensive, since `kind` is a plain string column, not a DB-enforced
+ *     literal union.
+ *
+ * Presentation-only: no write path is gated by this function's output, now or
+ * via any implicit future tightening (see Phase 3 design doc).
+ *
+ * @param fundKind                'administrative' | 'activity' | 'charitable' | 'scholarship' (or any string)
+ * @param budgetedIncomeCents     Sum of this fund's budgeted income lines for the FY
+ * @param budgetedExpenseCents    Sum of this fund's budgeted expense lines for the FY
+ */
+export function computeBudgetBalanceStatus(
+  fundKind: string,
+  budgetedIncomeCents: number,
+  budgetedExpenseCents: number,
+): BudgetBalanceStatus {
+  const netCents = budgetedIncomeCents - budgetedExpenseCents;
+
+  if (fundKind === "administrative") {
+    return { status: budgetedIncomeCents < budgetedExpenseCents ? "warn" : "ok", netCents };
+  }
+  if (fundKind === "activity") {
+    return {
+      status: Math.abs(netCents) > ACTIVITY_BALANCE_TOLERANCE_CENTS ? "warn" : "ok",
+      netCents,
+    };
+  }
+  // charitable, scholarship, and any unrecognized fundKind: informational only.
+  return { status: "info", netCents };
+}
+
+// ---------------------------------------------------------------------------
+// deriveSeedLinesForFund — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+export type SeedSourceLine = {
+  categoryId: string;
+  categoryName: string;
+  flow: "income" | "expense";
+  actualCents: number;
+  /** Prior-year budget, for the fund-level actuals→budget fallback. */
+  budgetCents: number | null;
+};
+
+export type SeedProposedLine = {
+  categoryId: string;
+  categoryName: string;
+  flow: "income" | "expense";
+  proposedAmountCents: number;
+  source: "actual" | "prior_budget";
+  /** Current target-FY value, or null if no row exists yet. */
+  existingTargetAmountCents: number | null;
+  /** existingTargetAmountCents !== null */
+  collision: boolean;
+};
+
+/**
+ * Maps a fund's prior-FY report lines into proposed seed lines for the target
+ * FY. Pure — the DB-touching caller (computeSeedFromPriorYear in
+ * ledger-queries.ts) does the fetching; this function only decides what to
+ * propose from the data it's given, exactly the split budgetVariance() /
+ * getFundReport() already establish.
+ *
+ * Fund-wide fallback (locked decision 1): if the fund had ANY posted actuals
+ * last year (`fundHadPriorActuals`), every category is seeded from its own
+ * `actualCents` — even an explicit $0 actual, which is still emitted (real
+ * information: "you spent nothing on this last year"). Only when the WHOLE
+ * fund shows zero actuals does the fallback flip to prior-year budgets,
+ * category by category — and a category with neither actuals nor a prior
+ * budget (`budgetCents === null`) is skipped entirely (a genuinely new line,
+ * left blank for the treasurer to fill manually).
+ *
+ * Collision detection mirrors the `(fund, targetFY, category, flow)` unique
+ * constraint the write path upserts against: a row already exists iff
+ * `existingTargetBudgetMap` has the `${categoryId}_${flow}` key.
+ *
+ * @param priorLines                 Prior-FY report lines (income + expense), flow-tagged
+ * @param fundHadPriorActuals         True if the fund had ANY posted income+expense last year
+ * @param existingTargetBudgetMap     Map of `${categoryId}_${flow}` -> annualAmountCents already set for the target FY
+ */
+export function deriveSeedLinesForFund(
+  priorLines: SeedSourceLine[],
+  fundHadPriorActuals: boolean,
+  existingTargetBudgetMap: Map<string, number>,
+): SeedProposedLine[] {
+  const result: SeedProposedLine[] = [];
+
+  for (const line of priorLines) {
+    const key = `${line.categoryId}_${line.flow}`;
+    const existingTargetAmountCents = existingTargetBudgetMap.get(key) ?? null;
+    const collision = existingTargetAmountCents !== null;
+
+    if (fundHadPriorActuals) {
+      result.push({
+        categoryId: line.categoryId,
+        categoryName: line.categoryName,
+        flow: line.flow,
+        proposedAmountCents: line.actualCents,
+        source: "actual",
+        existingTargetAmountCents,
+        collision,
+      });
+      continue;
+    }
+
+    if (line.budgetCents === null) {
+      // No prior actuals fund-wide AND no prior budget for this category —
+      // a genuinely new line. Leave it out entirely; the treasurer fills it
+      // manually via the existing BudgetEditor, same as today's blank editor.
+      continue;
+    }
+
+    result.push({
+      categoryId: line.categoryId,
+      categoryName: line.categoryName,
+      flow: line.flow,
+      proposedAmountCents: line.budgetCents,
+      source: "prior_budget",
+      existingTargetAmountCents,
+      collision,
+    });
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// validateBudgetLineInput — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+const BUDGET_LINE_INT4_MAX = 2_147_483_647;
+
+export type BudgetLineValidationInput = {
+  /** null = fund not found */
+  fund: { id: string; kind: string } | null;
+  /** null = category not found */
+  category: { id: string; fundKind: string; flow: string } | null;
+  flow: "income" | "expense";
+  fiscalYear: number;
+  /** null = delete the row */
+  annualAmountCents: number | null;
+};
+
+export type BudgetLineValidationResult =
+  | { ok: true }
+  | { ok: false; error: string; status: 400 | 404 };
+
+/**
+ * The single validation source of truth for a budget-line write, shared by
+ * both PATCH /api/admin/ledger/budgets and POST /api/admin/ledger/budgets/seed
+ * via the shared upsertBudgetLine() core in ledger-queries.ts (architect
+ * Ruling 1). Carries every check the original PATCH route inlined: fund
+ * exists, category exists, category.fundKind matches fund.kind,
+ * category.flow matches the requested flow, fiscalYear bounds, and amount
+ * bounds (non-negative integer <= INT4_MAX when not null).
+ *
+ * Pure — takes plain pre-fetched fund/category objects instead of doing its
+ * own DB reads, so it's fully unit-testable without a mocked query builder
+ * (matching this repo's established pattern: budgetVariance, isGiving, etc.).
+ */
+export function validateBudgetLineInput(
+  input: BudgetLineValidationInput,
+): BudgetLineValidationResult {
+  const { fund, category, flow, fiscalYear, annualAmountCents } = input;
+
+  if (!fund) {
+    return { ok: false, error: "Fund not found", status: 404 };
+  }
+  if (!category) {
+    return { ok: false, error: "Category not found", status: 404 };
+  }
+  if (category.fundKind !== fund.kind) {
+    return { ok: false, error: "Category does not match fund type", status: 400 };
+  }
+  if (category.flow !== flow) {
+    return { ok: false, error: "Category flow does not match the requested flow", status: 400 };
+  }
+  if (
+    !Number.isInteger(fiscalYear) ||
+    fiscalYear < 2000 ||
+    fiscalYear > 2100
+  ) {
+    return {
+      ok: false,
+      error: "fiscalYear must be an integer between 2000 and 2100",
+      status: 400,
+    };
+  }
+
+  // null annualAmountCents = delete the row; no amount bounds to check.
+  if (annualAmountCents === null) {
+    return { ok: true };
+  }
+
+  if (!Number.isInteger(annualAmountCents) || annualAmountCents < 0) {
+    return {
+      ok: false,
+      error: "annualAmountCents must be a non-negative integer, or null to remove the budget",
+      status: 400,
+    };
+  }
+  if (annualAmountCents > BUDGET_LINE_INT4_MAX) {
+    return {
+      ok: false,
+      error: `annualAmountCents must not exceed ${BUDGET_LINE_INT4_MAX}`,
+      status: 400,
+    };
+  }
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// decideSeedWriteAction — Guided Budgeting
+// ---------------------------------------------------------------------------
+
+/**
+ * The one piece of "fill-empty vs. overwrite" branching logic, isolated and
+ * named so it's tested directly rather than inlined into the route handler.
+ *
+ *   fill-empty + no collision -> seed
+ *   fill-empty + collision    -> skip
+ *   overwrite  + no collision -> seed
+ *   overwrite  + collision    -> overwrite
+ */
+export function decideSeedWriteAction(
+  mode: "fill-empty" | "overwrite",
+  collision: boolean,
+): "seed" | "skip" | "overwrite" {
+  if (mode === "fill-empty") {
+    return collision ? "skip" : "seed";
+  }
+  return collision ? "overwrite" : "seed";
 }
