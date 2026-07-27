@@ -17,7 +17,7 @@
 | 3 — Technical design | tech-lead | Skipped (see rationale) | N/A | 2026-07-27 |
 | 4 — Implementation | ux-developer | Complete | — | 2026-07-27 |
 | 5 — Verification | qa | Complete | PASS | 2026-07-27 |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 6 — Shipped vs intent | analyst | Complete | SHIP WITH NOTES | 2026-07-27 |
 
 ---
 
@@ -311,6 +311,53 @@ No new or changed protected routes/server actions. This feature added zero route
 
 ---
 
-# Phase 6 — Shipped vs Intent (analyst)
+# Phase 6 — Shipped vs Intent (analyst) — 2026-07-27
 
-*(Pending — trigger: QA's PASS)*
+**Owner:** analyst
+**Status:** complete
+
+## VERDICT
+
+**SHIP WITH NOTES**
+
+## ONE-LINE TAKE
+
+> The treasurer now gets the "why" where they budget — a faithful, citation-accurate Budgeting section in the Guide, reachable in one click from the Budgeting page, with per-fund why-notes that match the actual balance-check code exactly; the only thing standing between this and a clean SHIP IT is a live click-through that the sandbox genuinely cannot run, which is a low-risk, trackable follow-up, not a blocker.
+
+## What's Working
+
+- **The two-fund rule lands as the keystone it's supposed to be.** `budgeting-section.tsx` states it before anything else, cites both sources verbatim ("Standard Club Constitution, Art. VII §3(g)" and "LCI Board Policy Manual, Ch. XV"), and includes the direct-cost-netting nuance the sourced material called out. A treasurer reading top to bottom gets the rule, the citation, and the one exception, in that order — no rediscovery needed later.
+- **The bridge sentence in "Reserves vs. Disbursement" does exactly the connective job Phase 1 asked for.** It explicitly ties the abstract policy (hold reserve vs. disburse) to the concrete UI behavior ("this is exactly why the Budgeting page's balance badges behave differently per fund"). That's the single most important sentence in the section for making the Guide and the Budgeting page feel like one coherent explanation instead of two disconnected documents, and it's there, worded plainly.
+- **The stale-content guardrail held.** I flagged in Phase 1 that dollar/day-count figures rot in prose. Spot-checking `budgeting-section.tsx` directly: the reserve guidance reads "a few months of operating costs" (no number), the Activity tolerance reads "roughly a zero balance" / "roughly $100" is not restated at all in the guide section — it appears exactly once, in the Budgeting page's own why-note, read live off `ACTIVITY_BALANCE_TOLERANCE_CENTS`. That's the precedent from `guardrails-section.tsx` applied correctly, not just claimed.
+- **The why-note copy is not a paraphrase — it's a correct restatement of the actual function.** I read `computeBudgetBalanceStatus` in `src/lib/ledger.ts` (lines ~1000-1059) directly rather than trust the work-log chain: `administrative` warns only on strict income `<` expense (equal is fine) — the why-note says "should never fall short," which is the strict-less-than case worded for a human. `activity` warns when `|net| > 10_000` cents — the why-note says "within about $100 of each other," matching the band framing exactly (not a one-sided surplus check, which would be wrong). `charitable`/`scholarship` always return `info` — the why-note says a drawdown "won't trigger a warning," accurate. Unrecognized kind returns `null` from `balanceWhyNote()`, and the render site (`guided-budget-setup.tsx` line 344) skips the `<p>` entirely rather than rendering an empty one. All four cases check out against the source, independent of qa's audit.
+
+## Intent-vs-Shipped Diff
+
+| Phase 1 said | Shipped | Verdict |
+|---|---|---|
+| New "Budgeting" guide section, 7 locked subsections, placed after Reports / before Reconciliation | All 7 subsections present verbatim in content and order; `guide/page.tsx` TOC array and JSX render list both show `reports → budgeting → reconciliation` | Matches |
+| Inline "How budgeting works →" link on the Budgeting page, same-tab, reachable without a TOC round-trip | One shared link in `PageHeader`, `href="/admin/ledger/guide#budgeting"`, same-tab `<Link>`, no `target="_blank"` | Matches (implementer chose "one shared link" over "per fund-card," both were explicitly allowed as either/or in the Phase 1 outline) |
+| Per-fund "why" one-liner under each fund's `balanceMessage()`, matching `computeBudgetBalanceStatus`'s real rule, omitted for unrecognized kind | `balanceWhyNote()` renders under the message for admin/activity/charitable/scholarship with the locked copy verbatim; returns `null` and renders nothing for any other kind | Matches |
+| Compliance-deadline content: one cross-link only, no restated dates/forms | Section 7 is a single sentence + `<Link href="#compliance-990">`; anchor confirmed real by direct read of `compliance-calendar-section.tsx` line 28 | Matches |
+| No new dollar figures baked into permanent-feeling prose (Gap note) | Confirmed by direct read: no `$100` in rendered prose, no "3-6"/"3–6" anywhere; "a few months" and "roughly a zero balance" used instead | Matches |
+| Citations quoted verbatim, framed as "current as of" rather than permanently fixed (Open Question) | Both citations present verbatim with "citations as of current LCI governing documents" framing | Matches — but the *content* of that confirmation (are these still the operative citations right now) was never answered by a human; see Follow-ups |
+| Same-tab navigation both directions (Open Question, recommended) | Both links (`Budgeting → Guide`, `Guide → Compliance`) are same-tab, no `target="_blank"` | Matches |
+| Anchor-target verification flagged as the one build-time-checkable failure mode in Flow 2 | `id="budgeting"` in `budgeting-section.tsx` line 23 matches `href="#budgeting"` in `guide/page.tsx`; `id="compliance-990"` matches the guide-section's internal link | Matches — verified independently by me, not just re-trusting qa |
+| Manual click-through owed (qa carried forward) | Not performed — sandbox has no `DATABASE_URL`, `pnpm dev` cannot come up | Acceptable drift — see Follow-ups |
+
+## Edge Cases
+
+- **Empty state:** not applicable. This is static content plus a link/annotation on an existing page with its own established empty states (unaffected by this change).
+- **Failure microcopy:** pass. The guide section is a plain Server Component with no data fetch of its own, so it cannot introduce a new failure mode; the two pre-existing live reads on the guide page keep their existing fail-soft fallback (DECISION-037), untouched by this change.
+- **Permission gate:** pass. Confirmed directly (not just via qa's report): `guide/page.tsx` still gates on `hasAnyFeature(..., [LEDGER_VIEW, LEDGER_RECORD, LEDGER_MANAGE, LEDGER_APPROVE])`; `budgeting/page.tsx` still gates on `hasFeature(..., FEATURES.LEDGER_MANAGE)`. Neither gate was touched. Since `LEDGER_MANAGE` is a member of the guide's any-of list, anyone who can see the inline link can always reach its target — the Phase 1 "confirmed non-issue" holds.
+- **Mobile:** pass, by inheritance. No new layout primitives were introduced; the guide section reuses the existing `max-w-4xl` single-column flow and the Budgeting page reuses its existing responsive grid. Not independently re-verified at 360px in this review (no dev server available), but the change is additive prose/links inside containers that are already mobile-tested elsewhere in the guide, so risk is low.
+- **Brand consistency:** pass. `rounded-2xl` on the new section container, no `rounded-xl`; no new buttons (links only, correctly not `rounded-full`); no `lions-red`; `lions-gold` usage unchanged. `ConfirmDialog` not implicated — no destructive action was added by this feature.
+
+## Follow-ups (SHIP WITH NOTES)
+
+1. **Live click-through of the two navigation paths and the four fund why-notes, on a real dev server with `DATABASE_URL` set.** Every static check (matching `id`/`href` pairs, matching rule logic) lines up, and I independently re-verified the two anchor pairs and the four why-note cases myself rather than trusting the chain — so I judge this a low-risk, non-blocking follow-up rather than a ship blocker. This is presentational content with no write path, no schema, and no new permission logic; the failure mode a live click-through would catch (a scroll landing short, a CSS `scroll-margin-top` offset hiding the section under a sticky header) is a polish bug, not a correctness bug. Recommend the user or the next session with a working `.env.local` runs the 5-item list already written in Phase 4/5 before the next deploy, but it should not hold this work-log open.
+2. **One-time confirmation that the two citations (Art. VII §3(g); Board Policy Ch. XV) are still the current, operative versions.** This was flagged as an open question in Phase 1 and never actually answered by a human — the shipped page states them with "as of current governing documents" framing, which is good defensive wording, but framing isn't the same as confirming. Low urgency (citations don't change often) but worth a one-time check by whoever holds the current LCI governing documents, logged back to this work-log or `docs/decisions.md` once done.
+
+## Rationale for SHIP WITH NOTES (not SHIP IT, not NEEDS REWORK)
+
+Every content and wiring claim I could verify by reading the shipped files directly — the two anchor-id/href pairs, all seven subsections against the locked outline, the four why-note strings against `computeBudgetBalanceStatus`'s actual branching, the unrecognized-kind fallthrough, the absence of hardcoded volatile figures, the unchanged permission gates — checks out with zero discrepancies. There is no regression, no invented content, no weakened gate, and no brand violation. The only gap is procedural, not substantive: nobody has clicked through it in a running browser, and one open question about citation currency was never closed out with a human answer. Both are exactly the kind of carry-forward that should become a tracked note rather than block a low-risk, static-content feature from shipping — reopening Phase 3/4 here would be pure overhead with no design or code to actually change.
