@@ -17,7 +17,7 @@
 | 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-27 |
 | 4 — Implementation (schema) | database-admin | Complete | — | 2026-07-27 |
 | 4 — Implementation (server) | api-developer | Complete | — | 2026-07-27 |
-| 4 — Implementation (client) | ux-developer | Pending | — | — |
+| 4 — Implementation (client) | ux-developer | Complete | — | 2026-07-27 |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -691,6 +691,80 @@ No schema changes, no new `FEATURES` key (design confirmed none needed) — noth
 - The seed-route bug fix changes only the *behavior* on a locked FY (409 instead of a fake 200) — its success-path response shape (`priorFiscalYear`, `targetFiscalYear`, `funds[]`) is unchanged, so no UI relying on that shape needs updating.
 - Reminder for qa (Phase 5, already noted in Phase 3): manual click-through must include locking a partial budget (allowed, warning-only), a stale-tab `PATCH /budgets` against a locked FY (confirm 409), unlock, re-edit, re-lock, and a seed-against-locked-FY attempt (confirm 409 with zero rows written, not a partial seed) — the last case is new coverage this bug fix makes meaningful to test.
 - The `pnpm lint` failure noted above is environment-level (ESLint/minimatch ESM mismatch), not caused by this change — worth a heads-up to whichever agent runs `/pre-push` next so it isn't mistaken for a regression introduced here.
+
+---
+
+## Phase 4 — ux-developer (client) — 2026-07-27
+
+**Owner:** ux-developer
+**Status:** complete
+
+### Summary
+
+Reworked `budgeting/page.tsx` to the two-tier gate (`hasAnyFeature([LEDGER_MANAGE, LEDGER_APPROVE])` for admission, `canManage`/`canApprove` computed separately) and extended `GuidedBudgetSetup` with everything Phase 3's Component Plan named: the locked-state banner + read-only rendering, an "+ Add category" affordance per fund (fixing the empty-fund gap), an explicit remove-line control on `BudgetEditor`, and the Approve/Lock + Unlock panels. All three new API contracts (`POST /categories`, `POST /budget-approvals`, `POST /budget-approvals/unlock`) are consumed exactly as api-developer shipped them — no server code touched. Typecheck is clean and the full suite stays at 532/532.
+
+### What I did
+
+- **`src/app/(dashboard)/admin/ledger/budgeting/page.tsx`** (reworked):
+  - Replaced the manage-only gate with the two-tier pattern from `reimbursements/page.tsx` L56-73: `hasAnyFeature([LEDGER_MANAGE, LEDGER_APPROVE])` gates admission (redirect `/access-pending` otherwise); `canManage`/`canApprove` computed via separate `hasFeature()` calls and passed down as props. Rewrote the stale "manage-only, no view-or-manage fallback" doc comment to describe the new two-audience reality.
+  - Added `approval = await getBudgetApproval(entity.id, targetFY)` and `locked = isBudgetLocked(approval)` — read directly (Server Component, no new GET route, per DECISION-044). Dates (`approvedAt`/`unlockedAt`) are formatted to display strings server-side (`formatApprovalDate`) before crossing into the client component, rather than passing raw `Date` objects — simpler and avoids any RSC-serialization ambiguity.
+  - Converted the `fundItems` build from a sync `.map` to an async `Promise.all(...map(async ...))` so each fund can fetch its `unbudgetedCategories` (active categories per flow not already present in `budgetEditorLines`) — only fetched when `canManage && !locked`, since it's only consumed by the add-category UI which is hidden otherwise (avoids pointless DB calls for approve-only viewers and locked FYs).
+  - Passes `canManage`, `canApprove`, `locked`, and the formatted `approval` summary down to `GuidedBudgetSetup`.
+
+- **`src/components/admin/ledger/budget-editor.tsx`** (extended):
+  - Refactored the PATCH-commit logic into a `commitValue(categoryId, flow, rawValue)` core that takes the raw string explicitly, plus a thin `handleCommit` wrapper for the existing blur/Enter path. This avoids a stale-closure bug the explicit remove control would otherwise hit (calling the old `handleCommit` synchronously right after `setInputs("")` would have read the pre-update `inputs` state).
+  - Added `disabled?: boolean` — when true, every input renders disabled, `commitValue` is a no-op, and the footer hint changes to "This budget is locked for editing." The 409 a stale tab can still trigger (someone locks the budget in another tab) is unchanged — surfaced verbatim via the existing `catch`/toast path, since `commitValue`'s error handling doesn't special-case any status code.
+  - Added `showRemoveControl?: boolean` — renders a trash-icon button per row (same SVG/class precedent as `delete-filing-button.tsx`), `44px` min touch target. Clicking it removes immediately (no confirm) if the line is currently empty or `$0`; otherwise opens `<ConfirmDialog destructive>` naming the category and the amount about to be discarded, then commits an empty value on confirm (reuses the existing PATCH `annualAmountCents: null` delete path — no new endpoint).
+
+- **`src/components/admin/ledger/guided-budget-setup.tsx`** (extended):
+  - New props: `canManage`, `canApprove`, `locked`, `approval` (`BudgetApprovalSummary`, exported). `FundSetupItem` gained `unbudgetedCategories: { income: {id,name}[]; expense: {id,name}[] }`.
+  - **Locked banner**: `bg-lions-gold/10` informational card (never `lions-red`) reading "FY{year} budget is locked — Approved by {name} on {date} — board minute: {ref}." with a lock icon.
+  - **Read-only enforcement**: entity-wide seed card, per-fund seed/overwrite controls, and the "+ Add category" affordance are all wrapped in `canManage && !locked`. `BudgetEditor` gets `disabled={locked || !canManage}` (so an approve-only viewer sees the budget read-only too, per spec) and `showRemoveControl={canManage && !locked}`.
+  - **Empty-fund fix**: the line-level section now renders whenever `fund.budgetEditorLines.length > 0 OR (canManage && !locked)` — previously it rendered nothing at all for a zero-category fund. A brand-new fund now shows a "No categories yet" empty state (`bg-gray-50 rounded-2xl`) plus the "+ Add income/expense category" controls immediately below it.
+  - **"+ Add category"**: two per-fund links ("+ Add income category" / "+ Add expense category") open an inline form scoped to that flow — an "existing unbudgeted category" `<select>` + Add button (calls `PATCH /budgets` with `annualAmountCents: 0`, Flow 2's existing path) when any exist, plus a "create new" mini-form (name, counts-as-giving checkbox default-checked, optional 990 line) that POSTs to `/api/admin/ledger/categories` and `router.refresh()`s on success so the new bare category appears as a fresh editor row.
+  - **Approve/Lock panel** (`canApprove`, independent of `canManage`): board-minute input + "Approve & lock for FY{year}" button behind `<ConfirmDialog>` (non-destructive — locking isn't irreversible, unlock exists) calling `POST /budget-approvals`. Shows every fund's live balance badge as a pre-lock summary — advisory only, never disables the button (warn-not-block, matches the locked decision that an unbalanced fund can still be approved).
+  - **Unlock panel** (`canApprove && locked`): required reason textarea + "Unlock to amend" button behind `<ConfirmDialog destructive>` calling `POST /budget-approvals/unlock`. When unlocked and a prior unlock record exists, a small muted note shows who last unlocked it and why (DECISION-043's "most recent unlock stays visible" — free to surface since `getBudgetApproval` already returns it).
+  - All new toasts/errors surface the server's exact message (`data.error || "Could not … Try again."`), so a locked-FY 409 racing any of these calls (add category, add existing, approve, unlock) shows the real reason, not a generic failure.
+
+- Ran `pnpm exec tsc --noEmit` (clean) and `pnpm test` (532/532 passed, 17 test files — unchanged from api-developer's handoff; no new tests were assigned to this phase per Phase 3's Unit Tests section, which scoped all four pure-helper `describe` blocks to api-developer). Re-ran `pnpm lint` to confirm the ESLint/`minimatch` ESM-mismatch failure api-developer flagged is unrelated to this change — reproduces identically with none of these files touched (pre-existing environment issue, not a regression).
+
+### Outputs
+
+- `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` — two-tier gate, `getBudgetApproval`/`isBudgetLocked` wiring, async `fundItems` build with `unbudgetedCategories`, new props passed to `GuidedBudgetSetup`.
+- `src/components/admin/ledger/guided-budget-setup.tsx` — locked banner, read-only enforcement, "+ Add category" (existing + new), Approve/Lock panel, Unlock panel. Exports `BudgetApprovalSummary` alongside the existing `FundSetupItem` (now with `unbudgetedCategories`).
+- `src/components/admin/ledger/budget-editor.tsx` — `disabled`/`showRemoveControl` props, refactored `commitValue` core, explicit remove control with `ConfirmDialog`.
+- No server files touched — routes, schema, and `lib/` helpers are exactly as api-developer/database-admin shipped them.
+
+### UX-gate confirmations
+
+- Cards `rounded-2xl` throughout (locked banner, approve/unlock panel, fund cards, empty states) — no `rounded-xl` introduced.
+- Buttons `rounded-lg` only, never `rounded-full`: primary `bg-lions-blue text-white hover:bg-lions-blue-dark` (seed, create category, approve), secondary outlined `border-2 border-lions-blue text-lions-blue` (seed-this-fund, unlock, add-existing-category).
+- No native dialogs anywhere in the new code — `ConfirmDialog` gates the remove-line control, the Approve action, and the Unlock action. Overwrite-seed's existing `ConfirmDialog` is unchanged.
+- Locked banner uses `bg-lions-gold/10` (informational), never `lions-red`. Balance-status badges stay semantic (`amber`/`green`/gold-info), no brand-red introduced.
+- Empty states use `bg-gray-50 rounded-2xl p-10 text-center text-gray-500` (top-level "no entities"/"no funds") or the smaller `p-4`/`bg-gray-50 rounded-2xl` variant already established in this file for the "no categories yet" and "no seed data" cases — consistent with the file's existing convention.
+- Focus rings (`focus:outline-none focus:ring-2 focus:ring-lions-blue`) on every new interactive element: inputs, selects, checkboxes, buttons, the trash icon.
+- 44px minimum touch targets on every new button/icon-button (`min-h-[44px]`, plus `min-w-[44px]` on the icon-only trash button).
+- Money continues to run through the file's existing `formatDollars`; the trash-icon confirm description and the seed-overwrite confirm both use it. `tabular-nums` added to `BudgetEditor`'s dollar input (it was missing before) so digits align during editing.
+- Mobile-first: new forms stack in a single column by default (`flex flex-wrap`/block layout), no fixed-width elements that would overflow a phone viewport.
+- No `console.log` added.
+- Server Component boundary respected — only `guided-budget-setup.tsx` and `budget-editor.tsx` carry `'use client'`; `page.tsx` stays a Server Component computing everything server-side.
+
+### Open questions / handoff notes
+
+**For qa (Phase 5) — manual click-through list:**
+- **Locked read-only enforcement**: lock a budget, confirm every `canManage` control (seed buttons, "+ Add category", remove-line trash icons) disappears and `BudgetEditor` inputs render disabled with the "locked for editing" footer note. Open a second tab pre-lock, lock in the first tab, then try to blur an amount in the second tab — confirm the toast shows the server's exact 409 message ("This budget is locked. Unlock it to make changes.") rather than a generic failure.
+- **Add-category on an empty fund**: pick a fund with zero categories (or temporarily deactivate all of one fund's categories in a test entity) and confirm the "No categories yet" empty state plus both "+ Add income/expense category" links render — this is the gap fix, so it's worth deliberately exercising rather than assuming.
+- **Remove-line**: confirm a line with a non-zero saved amount prompts `ConfirmDialog` naming the exact dollar amount and category before removing; confirm a blank/`$0` line removes immediately with no dialog. Confirm removing a line whose category has recorded actuals leaves the category and its transactions untouched (only the `ledger_budgets` target row disappears) — check the fund's report page afterward.
+- **Approve-then-locked**: approve a partial/unbalanced budget (a fund flagged "Needs review") and confirm it's allowed with only the advisory badge, never a blocking error. Confirm the locked banner appears immediately after `router.refresh()` with the correct approver name/date/board-minute.
+- **Unlock-with-reason**: attempt to unlock with a blank reason (blocked client-side by the disabled button, and should also 400 if forced via API); unlock with a reason, confirm the budget becomes editable again and a "Last unlocked by … on …" note appears once it's re-approved.
+- **Two-tier gate**: a test account with only `LEDGER_APPROVE` should reach `/admin/ledger/budgeting`, see the fund cards (read-only `BudgetEditor`, no seed/add/remove controls) and the Approve/Unlock panel. A test account with only `LEDGER_MANAGE` should see every edit control but no Approve/Unlock panel. An account with neither should still redirect to `/access-pending`.
+
+**UX decisions made (flagging for the Lions Club to weigh in on copy, not blocking):**
+- The "+ Add category" existing-category picker will almost always render empty in practice — `getFundReport` (which builds `budgetEditorLines`) already returns every active category for a fund's kind regardless of budget-line presence, so "unbudgeted but active" is structurally rare (only reachable via a stale unrefreshed client state). Built it anyway per the Component Plan's literal spec, since it's cheap and correct, but qa/analyst should not expect to see it exercised in the common path — the "create new" form is the real workhorse.
+- Two separate "+ Add income category" / "+ Add expense category" links instead of one control with a flow toggle — the Component Plan's phrase "flow already fixed to the section it's rendered under" implied visual income/expense sectioning that `BudgetEditor` doesn't actually have (it's one flat list tagged per-row), so I split the entry points by flow instead of retrofitting sections into `BudgetEditor`.
+- New copy strings introduced (Lions Club may want to refine): the locked-banner sentence, "Approve & lock {FY}" panel intro paragraph, "Unlock {FY} to amend" intro paragraph, and the remove-line `ConfirmDialog` description ("This removes the {$amount} target for "{category}" ({flow}). The category and any recorded activity are not affected.").
+
+**Next agent: qa**, per Implementation Order step 3 → Phase 5.
 
 ---
 
