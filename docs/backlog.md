@@ -11,19 +11,36 @@ follow-ups may also land here when they don't warrant an immediate work-log.
 
 ---
 
-- [ ] **B-14 — Board-adoption capture for Ledger budgets (date + board-minute reference).**
+- [x] **B-14 — Board-adoption capture for Ledger budgets (date + board-minute reference).**
+  (delivered 2026-07-27 → `docs/work-log/2026-07-27-ledger-budget-approve.md`; SHIP WITH NOTES —
+  see that work-log's Phase 6 for the live-click-through and migration-apply follow-ups.)
   (added 2026-07-27, priority: nice-to-have) Flagged in Phase 1 of
   `docs/work-log/2026-07-27-ledger-guided-budgeting.md` as a real, named ask
   from Chuck ("the board formally ADOPTS the budget") but explicitly deferred
   out of the guided-budgeting increment — `ledger_budgets` today is
   upsert-in-place with no draft/final state and no board-minute reference,
   in contrast to `ledgerTransactions.boardMinute`, which already exists for
-  approved disbursements. Shape to reach for when picked up: a
-  per-`(fund,FY)` or per-`(entity,FY)` adoption record (adopted date +
-  board-minute reference string), mirroring the existing
-  `ledgerTransactions.boardMinute` column. Needs a schema change
-  (database-admin) plus UI to mark a budget adopted and lock/flag further
-  edits — full pipeline, not a trivial add-on.
+  approved disbursements. Shape reached for when picked up: a new
+  `ledger_budget_approvals` table, one row per `(entityId, fiscalYear)`,
+  carrying an adopted date + board-minute reference string (plus a logged
+  unlock reason/date/user), mirroring the existing `ledgerTransactions.boardMinute`
+  column. Enforced server-side (`assertBudgetUnlocked()`, called from inside
+  `upsertBudgetLine` and explicitly from `POST /categories`) — a locked
+  `(entity, fiscalYear)` cannot be edited via any write path, not just a
+  UI-disabled control.
+
+- [ ] **B-16 — Standalone ledger-category management surface (edit, deactivate, reorder).**
+  (added 2026-07-27, priority: nice-to-have) Flagged in Phase 1/2 of
+  `docs/work-log/2026-07-27-ledger-budget-approve.md` and deliberately deferred:
+  that increment shipped the *first-ever runtime category-creation path*
+  (`POST /api/admin/ledger/categories`), but only the minimal inline
+  "name + flow, everything else defaulted" form, scoped to the fund card
+  being budgeted. There is still no surface anywhere in the app to edit a
+  category's name, `form990Line`, `sortOrder`, or `countsAsGiving` after
+  creation, or to deactivate one — those remain SQL-migration-only edits.
+  Architect Ruling 4 (same work-log) explicitly recommended not over-building
+  this speculatively; pick it up once real usage of the inline create shows
+  what full category CRUD actually needs.
 
 - [ ] **B-15 — Consolidated entity-level budget-vs-actual rollup + mid-year YTD pacing.**
   (added 2026-07-27, priority: nice-to-have) Flagged in Phase 1 of

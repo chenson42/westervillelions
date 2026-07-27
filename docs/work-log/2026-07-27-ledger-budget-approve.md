@@ -19,7 +19,7 @@
 | 4 — Implementation (server) | api-developer | Complete | — | 2026-07-27 |
 | 4 — Implementation (client) | ux-developer | Complete | — | 2026-07-27 |
 | 5 — Verification | qa | Complete | PASS | 2026-07-27 |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 6 — Shipped vs intent | analyst | Complete | SHIP WITH NOTES | 2026-07-27 |
 
 ---
 
@@ -901,4 +901,67 @@ No route in this feature returns bulk PII — `ledgerBudgetApprovals` rows carry
 
 # Phase 6 — Shipped vs Intent (analyst)
 
-Pending.
+## VERDICT
+
+**SHIP WITH NOTES**
+
+## ONE-LINE TAKE
+
+Chuck's two-sentence ask is fully delivered and the enforcement is real, not cosmetic: a treasurer can add a line against an existing or brand-new category, remove one explicitly, and an approver can lock a year's budget with a board-minute reference and later unlock it with a logged reason — every write path is rejected server-side while locked, not just hidden in the UI — with the only open items being procedural (run the migration, do a live click-through) rather than defects.
+
+## Files Read / Spot-Checked (beyond the work-log narrative)
+
+- `src/lib/ledger-queries.ts` L680-757 (`upsertBudgetLine`) — confirmed `assertBudgetUnlocked` fires after shape validation, before the delete/insert branch, on the real `fund.entityId`.
+- `src/app/api/admin/ledger/categories/route.ts` (full file) — confirmed validation order, the `fundKind`-matches-a-real-fund guard, the explicit `assertBudgetUnlocked` call, the case-insensitive duplicate check, and that the insert targets `ledgerCategories` (not a shadow table) with no amount field accepted.
+- `src/app/api/admin/ledger/budgets/seed/route.ts` L180-260 — confirmed `SeedLockedError` is thrown inside the `db.transaction()` callback on a locked FY and the outer `catch` returns the real status/message, not a generic 500 or a fake 200.
+- `src/app/api/admin/ledger/budget-approvals/route.ts` and `.../unlock/route.ts` (full files) — confirmed both gate on `FEATURES.LEDGER_APPROVE`, confirmed **no self-approval check exists in either file** (no comparison against any "recorded/created by" field), confirmed the docblock states plainly "never touches ledgerTransactions, never moves money, never crosses fund boundaries."
+- `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` L30-53 — confirmed the two-tier gate (`hasAnyFeature([LEDGER_MANAGE, LEDGER_APPROVE])` for admission, `canManage`/`canApprove` computed independently).
+- `src/lib/db/schema.ts` L804-833 (`ledgerBudgetApprovals`) and `drizzle/migrations/0062_ledger_budget_approvals.sql` (full file) — schema and migration match the Phase 3 design verbatim; every migration statement is idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `DO $$` block on the named unique constraint, `CREATE INDEX IF NOT EXISTS`).
+- `src/components/admin/ledger/guided-budget-setup.tsx` — grepped for `ConfirmDialog`/`rounded-2xl`/`rounded-full`/`window.confirm`/`window.alert`: three `ConfirmDialog` usages (remove-line, approve, unlock), consistent `rounded-2xl` on every card, zero `rounded-full`, zero native dialogs.
+- `docs/decisions.md` DECISION-043, DECISION-044 — both present and both accurately describe the shipped behavior.
+- `docs/backlog.md` — confirmed B-14's originally-drafted shape ("per-`(entity,FY)` adoption record, adopted date + board-minute reference, schema change + lock UI") is exactly what shipped; confirmed `.env.local` does not exist in this environment, consistent with every Phase 4/5 owner's note about the live-DB gap.
+
+None of this contradicts a single claim in the Phase 4 or Phase 5 write-ups — this is a well-executed increment where the reports match the code.
+
+## Intent-vs-Shipped Diff
+
+| Phase 1 item | Shipped | Verdict |
+|---|---|---|
+| Add a line (new category) — "no category-creation surface exists anywhere" | `POST /api/admin/ledger/categories`, minimal inline form (name + flow, fund/kind implied by context, optional `countsAsGiving`/`form990Line`), inserts a real `ledgerCategories` row | matches |
+| Add a line (existing category) | Unchanged `PATCH /budgets` path, plus a new "existing unbudgeted category" picker in the UI | matches |
+| Remove a line — flagged as having "no visible affordance" in Phase 1 | Explicit trash-icon control, `ConfirmDialog`-gated when the line has a saved non-zero amount, removes immediately when already blank/$0 | matches (resolves the Phase 1 open question in the user's favor — no silent blank-and-blur only) |
+| Approve/lock per `(entity, fiscalYear)`, board-minute required, self-approval allowed | `POST /budget-approvals`, `boardMinute` required via shared validator, no self-approval block anywhere in the route | matches |
+| Unlock with logged reason | `POST /budget-approvals/unlock`, `unlockReason` required, both approval and unlock trios visible simultaneously (DECISION-043) | matches |
+| Balance advisory warns, does not block lock | Approve button has no `disabled` tied to the balance badge; badge shown purely as a pre-lock summary | matches |
+| Page gate must admit `LEDGER_APPROVE`-only board members (Phase 1 gap) | Two-tier gate: `hasAnyFeature([LEDGER_MANAGE, LEDGER_APPROVE])` for admission, `canManage`/`canApprove` independently gate controls | matches |
+| Empty-fund gap: a zero-category fund had no way to ever get a first line | Render condition widened to `budgetEditorLines.length > 0 || (canManage && !locked)`; "No categories yet" empty state plus persistent "+ Add category" controls | matches |
+| Lock enforcement must live in one place, not be duplicated | Single guard (`assertBudgetUnlocked`) called from inside `upsertBudgetLine` (covers PATCH + seed + add-line) plus one explicit call in `POST /categories` — verified by direct code read, not just trusting the report | matches |
+| Invariant: budget buckets ARE ledger buckets | `POST /categories` never accepts an amount, always inserts into the real `ledgerCategories` table; no budget-only bucket type exists anywhere in the new code | matches |
+| Two-fund discipline: lock/approve never moves money | Confirmed by direct read of both new routes — metadata-only writes to `ledgerBudgetApprovals`, no touch of `ledgerTransactions` or any fund balance | matches |
+| Duplicate category names (Phase 1 gap) | Case-insensitive 409 scoped to `(entityId, fundKind, flow)` | matches |
+| Seed-route silent-fake-success risk this feature's lock check introduced | Found and fixed by api-developer mid-implementation (`SeedLockedError` + transaction rollback) — a real regression that was caught before shipping, not after | matches (and a good sign of the pipeline working as intended — database-admin flagged it, api-developer fixed it, qa verified the fix) |
+| Live manual click-through of the full lock/unlock/gate cycle | Not run — qa substituted a line-by-line code trace, explicitly flagged as a gap, not a pass | acceptable drift, tracked below |
+| Migration `0062` applied to a live database | Not run — no `DATABASE_URL` existed anywhere in this environment through Phases 3-6 | acceptable drift, tracked below |
+| New user-facing copy (locked banner, approve/unlock intro paragraphs, remove-line confirm text) | Shipped as ux-developer's own draft copy, explicitly flagged for club review | acceptable drift, tracked below |
+
+## Edge Cases
+
+| Case | Result |
+|---|---|
+| Empty state (zero-category fund) | pass — "No categories yet" plus persistent add-category controls, not a blank panel |
+| Failure microcopy (locked-budget write, forced via stale tab or API) | pass — `"This budget is locked. Unlock it to make changes."`, surfaced verbatim by the client's existing catch/toast path, not a stack trace |
+| Permission gate (page admission, three new routes) | pass — verified in code: `LEDGER_MANAGE` on categories/PATCH/seed, `LEDGER_APPROVE` on both approval routes, `hasAnyFeature` two-tier gate on the page itself |
+| Brand consistency (`rounded-2xl` cards, `rounded-lg` buttons, `ConfirmDialog`) | pass — verified by direct grep of the changed component; zero `rounded-full`, zero native dialogs, gold (not red) informational banner |
+| Mobile (360px) | not verified — no live dev server available in this environment to render at a real viewport; ux-developer's handoff notes describe mobile-first single-column stacking and qa's UX-gate spot check corroborates class names, but neither is a substitute for an actual narrow-viewport render |
+
+## Follow-ups (tracked)
+
+1. **Run the live verification pass before this ships to Chuck for real use.** Whoever has `.env.local` access must run `pnpm db:migrate && pnpm db:push` (idempotent — safe on every deploy going forward regardless) and then walk qa's Phase 5 manual-click-through table by hand: lock a partial budget (confirm warn-not-block), trigger the stale-tab 409, seed against a locked FY (confirm zero rows written), a full unlock→re-edit→re-lock cycle, and — most important for internal controls — confirm a `LEDGER_APPROVE`-only test account (no `LEDGER_MANAGE`) actually reaches the page and the Approve panel in the live seed data. This is not treated as a blocker here because the enforcement itself is server-side and unit-tested (not UI-only), and this project's deploy pipeline runs migrations automatically on every deploy — but it must happen before Chuck relies on the lock for a real board vote.
+2. **Club/Chuck sign-off on new copy**: the locked-banner sentence, "Approve & lock {FY}" panel intro, "Unlock {FY} to amend" intro, and the remove-line `ConfirmDialog` description are all ux-developer's first draft, not reviewed by the club yet.
+3. **B-16 (new, this review)** — standalone category-management surface (edit name/`form990Line`/`sortOrder`/`countsAsGiving`, deactivate) remains out of scope by design; added to `docs/backlog.md`.
+4. **B-15** — consolidated entity-level budget-vs-actual rollup + mid-year YTD pacing — still pending, unaffected by this increment, reconfirmed still open in `docs/backlog.md`.
+5. **B-14 marked delivered** in `docs/backlog.md` — this increment is exactly the shape that item described (per-`(entity, fiscalYear)` adoption record with board-minute + lock enforcement).
+
+## Why SHIP WITH NOTES and not SHIP IT
+
+Everything I can verify without a live database and browser checks out cleanly, and I independently re-read the actual route/schema/component code rather than trusting the Phase 4/5 narratives — they match. The two carried-forward items (migration not yet applied anywhere, manual click-through not yet run by a human) are real gaps in *verification*, not evidence of a defect, and qa was explicit and honest that they're outstanding rather than quietly waiving them. That honesty, plus the fact the write-path enforcement doesn't depend on the UI at all, is why this ships now with the follow-ups tracked rather than blocking the whole feature on a sandbox limitation that has applied to every phase of this increment. If the live click-through turns up a real defect (e.g., a `board_member`-seeded account that unexpectedly also holds `LEDGER_MANAGE`, muddying the two-tier gate test), that reopens this work-log at Phase 4, not Phase 1 or 2 — the design and the enforcement mechanism are sound.
