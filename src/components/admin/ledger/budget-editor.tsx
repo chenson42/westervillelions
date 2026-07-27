@@ -15,6 +15,17 @@ interface BudgetEditorProps {
   fundId: string;
   fiscalYear: number;
   lines: BudgetLine[];
+  /**
+   * Optional callback fired on every keystroke (before blur/save), keyed the
+   * same way as internal state: `${categoryId}_${flow}`, value is the raw
+   * dollar-string input. Added for guided budgeting's live balance readout
+   * (src/components/admin/ledger/guided-budget-setup.tsx), which needs to
+   * recompute income/expense totals as the treasurer types, not just after
+   * each PATCH round-trip completes. Optional and backward-compatible —
+   * existing callers (e.g. [fundSlug]/report/page.tsx) that don't pass it are
+   * unaffected.
+   */
+  onInputChange?: (key: string, value: string) => void;
 }
 
 /**
@@ -24,7 +35,7 @@ interface BudgetEditorProps {
  * Each category row has a dollar input that submits on blur or Enter (spreadsheet UX).
  * Setting a value to empty or "0" removes the budget line (API: annualAmountCents: null).
  */
-export default function BudgetEditor({ fundId, fiscalYear, lines }: BudgetEditorProps) {
+export default function BudgetEditor({ fundId, fiscalYear, lines, onInputChange }: BudgetEditorProps) {
   const router = useRouter();
   // Track per-line editing state: input value (dollars), saving flag
   const [inputs, setInputs] = useState<Record<string, string>>(() => {
@@ -41,6 +52,7 @@ export default function BudgetEditor({ fundId, fiscalYear, lines }: BudgetEditor
   function handleChange(key: string, value: string) {
     setInputs((prev) => ({ ...prev, [key]: value }));
     dirtyRef.current[key] = true;
+    onInputChange?.(key, value);
   }
 
   async function handleCommit(categoryId: string, flow: "income" | "expense") {

@@ -15,7 +15,7 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-27 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-27 |
 | 3 — Technical design | tech-lead | Complete | Design complete, implementers named | 2026-07-27 |
-| 4 — Implementation | api-developer → ux-developer | api-developer complete, ux-developer pending | — | 2026-07-27 |
+| 4 — Implementation | api-developer → ux-developer | Complete | — | 2026-07-27 |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -609,6 +609,75 @@ Implemented the full server layer for guided budgeting exactly per the Phase 3 d
 - The seed endpoint's `mode`/`fundIds` contract is locked as specified above — no changes needed on the server side to support the confirm-dialog overwrite flow described in Phase 3 (the client just chooses `mode` based on the user's dialog choice).
 - The $100 Activity tolerance (DECISION-042) is a starting default per the design doc — flag to the user after ship that it's adjustable if the first real budgeting season shows it's too tight or too loose.
 - qa (Phase 5): per the design doc, specifically exercise the `overwrite` `ConfirmDialog` path (collision count accurate, cancel truly leaves rows untouched) and the first-year/no-prior-data disabled-button state — neither has an automated test, by design (see "Explicitly not unit-tested" note in Phase 3).
+
+---
+
+# Phase 4 — Implementation (UI) — 2026-07-27
+
+**Owner:** ux-developer
+**Status:** complete
+
+### Summary
+
+Built the client-facing guided-budgeting surface on top of api-developer's contract exactly per the Phase 3 design: a new `admin/ledger/budgeting` page (entity + target-FY selection, per-fund seed preview, live balance readout, reused `BudgetEditor` for line adjustment), the `guided-budget-setup.tsx` client island that drives the seed action and the overwrite `ConfirmDialog`, a backward-compatible `onInputChange` prop on `BudgetEditor`, and the "Budgeting" nav entry. No server code, schema, or tests were touched. Typecheck and the full test suite (516 tests) stay green.
+
+### What I did
+
+- Added an optional `onInputChange?: (key: string, value: string) => void` prop to `BudgetEditor` — called from the existing `handleChange` alongside the existing `setInputs`/`dirtyRef` bookkeeping, with no change to any other behavior. Verified the only other caller (`[fundSlug]/report/page.tsx`) doesn't pass it, so it's unaffected.
+- Built `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` (Server Component): `auth()` + `hasFeature(LEDGER_MANAGE)` gate with redirect to `/access-pending` (manage-only, no view-or-manage fallback, per architect Ruling 3 — this page has no read-only mode). Resolves `?entity=` (defaults to the first entity on a missing/invalid slug, per the design doc — deliberately *not* `notFound()` like `reports/page.tsx`, since this is a setup tool, not a permalink) and `?fy=` (defaults to `currentFiscalYear + 1`, since guided setup is inherently next year's budget). Fetches `getFunds`, `computeSeedFromPriorYear` (the entity-wide preview), and per-fund `getFundReport(fund.id, targetFY)` (for `BudgetEditor`'s pre-fill and the pre-interaction balance numbers — same source `[fundSlug]/report/page.tsx` already uses). Builds a `FundSetupItem[]` view-model per fund and hands it to the client island. Empty states: zero entities, zero funds for the entity, and (inside the island) zero seedable lines entity-wide.
+- Built `src/components/admin/ledger/guided-budget-setup.tsx` (new client island): entity-wide "Seed all funds from FY{prior}" primary action (`mode: "fill-empty"`, no `fundIds` — omitted means all active funds per the API contract) and, only when any collision exists, an "Overwrite all funds…" secondary action; per-fund "Seed this fund" / "Overwrite this fund…" actions (`fundIds: [fund.id]`); a per-fund scrollable read-only preview list of every proposed line (category, flow, proposed amount, and — when it collides — the current FY{target} value it would replace); a live balance badge + fund-kind-specific message computed via `computeBudgetBalanceStatus` (imported directly from `@/lib/ledger`, zero DB imports, so it recomputes on every keystroke); and the reused `BudgetEditor` per fund wired through the new `onInputChange` prop into a local `lineValues` reducer (keyed `${categoryId}_${flow}`, summed by trailing `_income`/`_expense` suffix) that feeds the balance readout.
+- **Overwrite-confirm design adaptation (logging since it deviates slightly from the design doc's literal wording):** `ConfirmDialog` (`src/components/ui/confirm-dialog.tsx`) has exactly one Cancel + one Confirm action, not the two-choice "seed the empty ones / overwrite all" dialog the design doc sketched. Since `fill-empty` is non-destructive by construction (it only ever fills categories with no existing row — Phase 3's own framing), it doesn't need a confirm at all; only `overwrite` is destructive and needs gating. So: the plain "Seed" buttons (entity-wide and per-fund) call `fill-empty` directly, no dialog. A separate, explicitly-labeled "Overwrite…" action (entity-wide, shown only when `totalCollisions > 0`; per-fund, shown only when that fund's `collisionCount > 0`) opens the single `ConfirmDialog` with `destructive`, naming the exact collision count and total (e.g. "3 of 8 categories already have a budget for FY2027…"). Cancel leaves every row untouched, same guarantee the design doc asked for, without forking or extending the shared `ConfirmDialog` primitive.
+- Added the "Budgeting" nav entry to `admin-sidebar.tsx`'s Treasury group, positioned directly after "Ledger" and before "Reconciliation" per the design doc, gated on `FEATURES.LEDGER_MANAGE`, icon `🧮`.
+- **Hero banner deviation from the Phase 3 UI sketch (logging, not silent):** the design doc suggested a `py-12` blue-gradient hero. I checked every sibling `admin/ledger/*` page (`reports/page.tsx`, `compliance/page.tsx`, `[fundSlug]/report/page.tsx`, the top-level `admin/ledger/page.tsx`) and none of them use the gradient hero — they all use the plain gold-eyebrow + `<h1>` + gray subtitle header block, and grepping the whole `(dashboard)` tree found only one unrelated page (`admin/dues/[memberId]`) using the gradient. My explicit brief said to match the look of `reports`/`compliance`, which takes precedence over the design doc's hero suggestion — I used the same eyebrow/h1/subtitle header as those pages instead, for visual consistency with every other ledger sub-page. Flagging this so qa and the next reviewer aren't surprised it's not a gradient banner.
+- Did **not** add the optional cross-link from `[fundSlug]/report/page.tsx` (explicitly non-blocking/optional per both the architect and tech-lead) — left for a follow-up if the Lions Club wants it.
+
+### Outputs
+
+- `src/components/admin/ledger/budget-editor.tsx` — added optional `onInputChange` prop (backward-compatible).
+- `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` — new Server Component page.
+- `src/components/admin/ledger/guided-budget-setup.tsx` — new client island (`'use client'`).
+- `src/components/admin/admin-sidebar.tsx` — added "Budgeting" nav entry to the Treasury group.
+- No schema, route, or lib changes — server layer untouched per the brief.
+
+### UX-gate confirmations (for qa)
+
+- Cards: `rounded-2xl` throughout — entity-wide action panel and per-fund review cards use the non-interactive style (`shadow-sm`, no hover/translate) since they aren't navigational. No `rounded-xl` anywhere in the new files.
+- Buttons: all `rounded-lg`, never `rounded-full`. Primary ("Seed all funds", "Seed this fund") = `bg-lions-blue text-white ... hover:bg-lions-blue-dark`. Secondary/overwrite ("Overwrite all funds…", "Overwrite this fund…" is a text-link style per CLAUDE.md's "inline see-all link" pattern since it's a secondary, less-prominent action) both use `text-lions-blue` variants. All interactive elements are `min-h-[44px]` or otherwise meet the 44px touch-target minimum.
+- Empty states: `bg-gray-50 rounded-2xl p-10 text-center text-gray-500` for zero-entities/zero-funds; a lighter-weight `bg-gray-50 rounded-2xl p-4` inline variant for a single fund with nothing to seed (same background/radius, smaller padding to fit inside the per-fund card without dominating it).
+- Colors: `lions-gold` used for the eyebrow label and as the "info" balance badge's accent background (`bg-lions-gold/10`); **no `lions-red` anywhere**. `warn` uses `bg-amber-50 text-amber-800` (matches the existing over-budget variance styling in `[fundSlug]/report/page.tsx`), never a red brand color.
+- No native dialogs: the overwrite confirm uses `<ConfirmDialog destructive>` exclusively; `fill-empty` needs no dialog since it's non-destructive by construction (see adaptation note above). No `window.confirm()`/`alert()`/`prompt()` anywhere in the new files.
+- Focus rings: every button/link in the new files carries `focus:outline-none focus:ring-2 focus:ring-lions-blue` (or `rounded-lg` variants of the same).
+- Mobile-first: per-fund cards are a `grid-cols-1 lg:grid-cols-2` layout (matches `reports/page.tsx`'s `FundCard` grid); the proposed-lines list is independently scrollable (`max-h-56 overflow-y-auto`) so it never forces the page to scroll horizontally; action buttons wrap (`flex-wrap`) on narrow screens.
+- Money formatting: reused the exact `formatDollars(cents)` local-helper pattern already duplicated across ~15 ledger components (`dashboard-entity-card.tsx`, `reports/page.tsx`, etc. — confirmed this codebase's real convention is a repeated local helper, not a shared import) rather than inventing a new one. Tabular alignment (`tabular-nums`) on every dollar figure.
+- Server/client boundary: `page.tsx` is a plain Server Component doing all data fetching; `guided-budget-setup.tsx` is the one `'use client'` island, matching architect Ruling 3.
+- No `console.log` in any new/edited file.
+
+### Verification results
+
+- `pnpm exec tsc --noEmit` — clean, no errors.
+- `pnpm test` — 516 tests passed (17 test files), unchanged from api-developer's handoff — ux-developer added no new tests (none were assigned; all 36 named tests are api-developer's pure-logic tests, already written and passing).
+- `pnpm build:only` — compiled successfully, and the build's own TypeScript pass (`Finished TypeScript in 40s`) also came back clean across the whole app including the new files. The build then fails at "Collecting page data" with `DATABASE_URL or DB_URL environment variable is not set` — this is the same pre-existing sandbox limitation api-developer already flagged (no live `DATABASE_URL` in this environment); it fails on an unrelated route (`/api/admin/announcements/reorder`) before ever reaching anything in this feature, so it is not a regression introduced here.
+- `pnpm lint` — could not run; ESLint 9.39.2 fails to load in this sandbox with `SyntaxError: The requested module 'minimatch' does not provide an export named 'default'`, a pre-existing tooling/dependency issue unrelated to this change (reproduces on a clean tree with no edits). Flagging for deployment-engineer's dependency review rather than attempting to fix a broken lint toolchain as part of this UI task.
+
+### Manual click-through list for qa
+
+1. Sign in as a user with `LEDGER_MANAGE` (treasurer/admin role) and visit `/admin/ledger/budgeting` — confirm the page loads, entity switcher shows Club/Foundation, FY selector defaults to next FY.
+2. Sign in as a user with only `LEDGER_VIEW`/`LEDGER_RECORD` (no `LEDGER_MANAGE`) and visit `/admin/ledger/budgeting` directly — confirm redirect to `/access-pending` (this page has no view-only mode, unlike the fund report page).
+3. With a fund that has prior-FY posted actuals and no existing target-FY budget rows: click "Seed this fund" — confirm the toast summary, `BudgetEditor` pre-fills with the copied amounts, and re-visiting the page shows `collisionCount` now equal to the seeded count (so the button is now disabled or shows 0 remaining seedable, per idempotency).
+4. Manually edit one budget line via `BudgetEditor`, then click "Seed this fund" again — confirm the manually-edited line is **not** clobbered (fill-empty only fills genuinely-empty rows) and the toast reflects the skip.
+5. **Overwrite path (flagged by tech-lead as untested by automation):** with at least one collision present, click "Overwrite this fund…" — confirm the `ConfirmDialog` names the exact collision count (e.g. "3 of 8 categories…"), Cancel leaves all rows untouched (re-check via reload), and Confirm actually replaces the previously-set values with the FY{prior} figures.
+6. **First-year/no-prior-data path (also flagged as untested by automation):** pick a fund/FY combination with zero prior-FY actuals and zero prior-FY budget rows — confirm the entity-wide button and the per-fund button both show the "No FY{prior} activity or budget found" disabled/explanatory state rather than a silent no-op POST.
+7. Type into a budget input without blurring — confirm the balance badge/message on that fund's card updates live (before any network round-trip), and confirms it never blocks saving (advisory only) even when it reads "warn".
+8. Confirm the "Budgeting" entry appears in the sidebar's Treasury group between "Ledger" and "Reconciliation", and is hidden entirely for a user without `LEDGER_MANAGE`.
+9. Resize to a narrow mobile viewport — confirm the per-fund cards stack to one column, the proposed-lines list scrolls internally instead of widening the page, and all buttons remain tappable (44px min height).
+
+### Open questions / handoff notes
+
+- New copy strings the Lions Club may want to refine: "Seed all funds from FY{prior}", the fund-kind balance messages (administrative/activity/charitable/scholarship phrasing in `balanceMessage()` in `guided-budget-setup.tsx`), and the overwrite confirm copy. None are load-bearing — pure microcopy, easy to tweak later without touching logic.
+- UX decision logged above: the design doc's two-choice ("seed empty / overwrite all") single dialog was adapted into "plain non-destructive seed button + separate destructive overwrite button gated by `ConfirmDialog`" because the shared `ConfirmDialog` primitive only supports one Cancel + one Confirm action. This preserves every guarantee in the design doc (exact collision count named, cancel-is-truly-inert) without forking a shared UI primitive.
+- UX decision logged above: no gradient hero banner, matching the actual sibling `admin/ledger/*` pages (none of which use one) rather than the design doc's suggestion — flagged in case the Lions Club wants the gradient treatment introduced site-wide later.
+- Did not add the optional `[fundSlug]/report/page.tsx` cross-link (explicitly non-blocking in both Phase 2 and Phase 3) — a clean follow-up if wanted.
+- **Next agent: qa (Phase 5).** In addition to the standard typecheck/build/click-through, please specifically exercise items 4–6 in the click-through list above (idempotent re-seed, overwrite-confirm accuracy/cancel-is-inert, and the first-year disabled-state) — none of these have automated coverage by design (see Phase 3's "Explicitly not unit-tested" note), so they rely on qa's manual pass. Also please confirm `pnpm lint`'s failure in this sandbox is pre-existing and not something my changes introduced (I reproduced it and believe it is, but a second pass is warranted before assuming it away).
 
 ---
 
