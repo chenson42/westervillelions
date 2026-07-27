@@ -16,7 +16,7 @@
 | 2 — Architectural review | architect | Skipped (see rationale) | N/A | 2026-07-27 |
 | 3 — Technical design | tech-lead | Skipped (see rationale) | N/A | 2026-07-27 |
 | 4 — Implementation | ux-developer | Complete | — | 2026-07-27 |
-| 5 — Verification | qa | Pending | — | — |
+| 5 — Verification | qa | Complete | PASS | 2026-07-27 |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
 ---
@@ -208,9 +208,106 @@ Added the new "Budgeting" section to the Treasury User's Guide (all seven locked
 
 ---
 
-# Phase 5 — Verification (qa)
+# Phase 5 — Verification (qa) — 2026-07-27
 
-*(Pending)*
+**Owner:** qa
+**Status:** complete
+
+### Summary
+
+**Verdict: PASS.** Typecheck, unit tests, and the build's compile/TypeScript stages are clean; the production-build failure that does occur is the documented pre-existing sandbox limitation (no `DATABASE_URL`), not a regression. Content audit confirms all seven locked subsections are present and accurate, no invented figures, the compliance cross-link anchor is real, the inline link href is exact, and the per-fund "why" notes match `computeBudgetBalanceStatus`'s actual per-fund-kind rule word-for-word against the source. No protected route or gate was touched or weakened.
+
+### What I did
+
+- Read the Phase 1 locked content outline and the Phase 4 ux-developer report (files changed, click-through list) in full before touching anything.
+- Read all four changed/added files: `budgeting-section.tsx`, `guide/page.tsx`, `budgeting/page.tsx`, `guided-budget-setup.tsx`.
+- Read `compliance-calendar-section.tsx` directly to verify the `#compliance-990` anchor id actually exists (it does, line 28) rather than trusting the Phase 4 self-report.
+- Read `computeBudgetBalanceStatus` and its JSDoc in `src/lib/ledger.ts` (lines 996-1059+) directly and diffed its stated per-fund-kind rule against each `balanceWhyNote()` string in `guided-budget-setup.tsx`.
+- Ran the verification stack: `pnpm exec tsc --noEmit`, `pnpm test`, `pnpm build:only`, `pnpm lint`.
+- Grepped the four changed files for volatile hardcoded figures (`$100`, "3-6"/"3–6", "months"), native dialogs, `console.log`, `rounded-full`, `lions-red`.
+- Checked `e2e/` for any existing spec touching `/admin/ledger/guide` or `/admin/ledger/budgeting` — none exist, so no e2e regression surface and none to add for a content-only change per the Phase 1/4 scope.
+- Confirmed `.env.local` / `DATABASE_URL` are absent in this sandbox, so the dev server and Playwright cannot run here — flagged as the known limitation and deferred to manual click-through per the task's explicit allowance.
+
+### Outputs
+
+#### Type Check
+`pnpm exec tsc --noEmit`: **PASS** — no output, clean exit.
+
+#### Unit Tests
+`pnpm test`: **PASS**
+Total: 516 | Passed: 516 | Failed: 0
+Duration: 4.02s
+Failures: none. Count matches Phase 4's reported 516/516 exactly — no regression. No new unit tests expected or added (content/UI-only change, no pure-TS logic added).
+
+#### Production Build
+`pnpm build:only`: **PASS (with documented pre-existing environment limitation)**
+- `✓ Compiled successfully in 29.2s` (Turbopack)
+- `Running TypeScript ... Finished TypeScript in 42s` — clean, no errors from any of the four changed files.
+- Fails afterward at "Collecting page data" with `Error: DATABASE_URL or DB_URL environment variable is not set`, surfaced via `/api/admin/announcements/[id]` (a route this feature never touched). This is exactly the KNOWN sandbox limitation called out in the task brief — no `.env.local` / `DATABASE_URL` exists in this environment. Not a regression: the compile and TypeScript passes (the stages this feature could actually break) both succeeded.
+- `pnpm lint`: still broken with the pre-existing `minimatch`/ESLint 9.39.2 ESM interop error, independent of this change (same failure signature Phase 4 already flagged).
+
+#### End-to-End Tests
+`pnpm test:e2e`: **NOT RUN** — no `.env.local`/`DATABASE_URL` in this sandbox, so `pnpm dev` cannot come up and Playwright has no server to test against. Substitution: code/content audit below plus a nomination for manual click-through (Phase 1's own click-through list, unchanged). No existing spec under `e2e/` targets `/admin/ledger/guide` or `/admin/ledger/budgeting`, so there is no existing e2e coverage this change could have regressed.
+
+#### Code / Content Audit (dev server unavailable — static-read substitution, stated per task allowance)
+
+- **TOC registration + anchor:** `guide/page.tsx` imports `BudgetingSection` (line 21), lists `{ id: "budgeting", label: "Budgeting" }` in `TOC` between `reports` and `reconciliation` (line 37), and renders `<BudgetingSection />` in the same position in the JSX section list (line 167). `budgeting-section.tsx` line 23: `<section id="budgeting" ...>`. IDs match exactly — the TOC anchor link (`href="#budgeting"`, page.tsx line 145) targets a real element.
+- **Content accuracy — all seven locked subsections present and faithful to the outline, verified line-by-line against `budgeting-section.tsx`:**
+  1. Intro paragraph, links to `/admin/ledger/budgeting` (lines 26-34).
+  2. "The Two-Fund Rule" — states the rule, cites "Standard Club Constitution, Art. VII §3(g)" and "LCI Board Policy Manual, Ch. XV" verbatim, includes the direct-cost netting nuance (lines 36-50).
+  3. "How Our Funds Map" — Club (c)(4) = Administrative + Activity; Foundation (c)(3) = Charitable + Scholarship; Activity is pass-through targeting "roughly a zero balance" (lines 52-61).
+  4. "Building the Budget" — prior-year actuals / Seed link, conservative revenue, per-fund independent balance, dues/insurance first, small admin-side surplus (lines 63-85).
+  5. "Reserves vs. Disbursement" — admin holds reserve, charitable/scholarship disburse not accumulate, explicit bridge sentence to the Budgeting page's balance-badge behavior (lines 87-100).
+  6. "Deductibility" — (c)(4) gifts not deductible, (c)(3) gifts deductible, steer donors to Foundation (lines 102-108).
+  7. "Compliance Deadlines" — one-sentence cross-link only, no dates/forms restated (lines 110-118).
+- **No invented or inaccurate claims found.** Fund-kind → entity mapping, deductibility direction, and the two-fund citation match the locked outline exactly; nothing added beyond it.
+- **No volatile hardcoded figures in the guide section prose:** grepped `budgeting-section.tsx` for `$100` / "3-6" / "3–6" / "months" — the only `$100` hit is in the header *comment* (not rendered), and the one prose "months" usage reads "a few months of operating costs" (principle-level, no number), matching the Phase 1 gap note's explicit instruction.
+- **Compliance cross-link anchor verified real, not assumed:** read `compliance-calendar-section.tsx` directly — `<section id="compliance-990" ...>` at line 28. `budgeting-section.tsx` line 114 links to `href="#compliance-990"`. Match confirmed independently (Phase 4's self-report of having verified this is corroborated, not just trusted).
+- **Budgeting-page inline link href exact:** `budgeting/page.tsx` line 202: `href="/admin/ledger/guide#budgeting"` — matches the spec exactly (same-tab `<Link>`, no `target="_blank"`).
+- **`balanceWhyNote` vs. `computeBudgetBalanceStatus` — verified word-for-word against the source function, not the work-log's paraphrase:**
+  - `administrative`: function warns only on strict `budgetedIncomeCents < budgetedExpenseCents` (equal is ok, `ledger.ts` line 1049). Why-note: "budgeted income should never fall short of planned expense" — matches (fall short = strict less-than).
+  - `activity`: function warns when `Math.abs(netCents) > ACTIVITY_BALANCE_TOLERANCE_CENTS` (10,000 cents = $100, line 1012, 1053). Why-note: "within about $100 of each other — not a surplus" — matches the tolerance and correctly frames it as a band around zero, not a one-sided surplus check.
+  - `charitable` / `scholarship`: function always returns `info`, never warns (per JSDoc lines 1028-1029). Why-note: "a planned drawdown is normal and won't trigger a warning" — matches.
+  - Unrecognized kind: `balanceWhyNote()` returns `null` (line 71), and the render site (`guided-budget-setup.tsx` line 344) only renders the `<p>` when the note is truthy — no blank paragraph artifact. Matches the outline's explicit "omit entirely" instruction.
+  - **No mismatch found — this was the highest-risk item per the task brief, and it checks out.**
+
+#### UX / Gate Audit
+
+- **No auth or permission change.** `guide/page.tsx` still gates on `hasAnyFeature(..., [LEDGER_VIEW, LEDGER_RECORD, LEDGER_MANAGE, LEDGER_APPROVE])` (lines 70-76, unchanged). `budgeting/page.tsx` still gates on `hasFeature(..., FEATURES.LEDGER_MANAGE)` only (lines 33-34, unchanged). Neither gate was touched, widened, or weakened by this change.
+- Cards: new section container is `rounded-2xl shadow-sm overflow-hidden` (line 23), matching every sibling guide section — no `rounded-xl` introduced.
+- Links: inline "How budgeting works →" uses `text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition` + focus ring (`budgeting/page.tsx` lines 202-206); guide cross-links use the shared `linkClass` with `hover:underline` + focus ring (`budgeting-section.tsx` lines 3-4). No `rounded-full` anywhere in the four files (grep confirmed).
+- Colors: no `lions-red` in any of the four files (grep confirmed). `lions-gold` unchanged usage elsewhere (eyebrow labels), nothing new introduced by this feature.
+- `budgeting-section.tsx` is a plain Server Component — no `"use client"`, no hooks, no DB import. Matches every sibling section.
+- `guided-budget-setup.tsx` already had `"use client"` before this change; no new client boundary introduced.
+- No `console.log`, no `window.confirm`/`alert`/`prompt` in any of the four files (grep confirmed).
+- Mobile: no new layout primitives; inherits existing `max-w-4xl` (guide) and existing responsive grid (budgeting page).
+
+### Regression Tests Added
+
+- None. This is a content/UI-only change with no pure-TS logic modified (`computeBudgetBalanceStatus` itself was read, not touched) and no bug being fixed — no regression-test obligation per the Regression Test Discipline section.
+
+### Coverage on Critical Modules
+
+- `src/lib/events.ts`, `src/lib/permissions.ts`, `src/lib/members.ts`: unaffected by this feature; not re-measured here (no changes touch these modules). Existing coverage stands from prior reviews.
+- `src/lib/ledger.ts` (`computeBudgetBalanceStatus`): unmodified by this feature — its existing unit tests (already part of the 516 green) continue to cover it; no new branches were introduced.
+
+### Feature-Gate Audit (mandatory before PASS)
+
+No new or changed protected routes/server actions. This feature added zero routes, zero server actions, and zero new permission keys — it only added a static content component and two annotations to two pages whose gates were already correct and are unchanged.
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `GET /admin/ledger/guide` (page) | yes (unchanged, line 67-68) | yes — `hasAnyFeature` (unchanged, line 70-76) | `LEDGER_VIEW \| LEDGER_RECORD \| LEDGER_MANAGE \| LEDGER_APPROVE` (any-of, correct for a read-only guide) |
+| `GET /admin/ledger/budgeting` (page) | yes (unchanged, line 31) | yes — `hasFeature` (unchanged, line 33-34) | `LEDGER_MANAGE` (correct — guided budget setup is a write-capable tool, not view-only) |
+
+### Verdict: PASS
+
+### Open questions / handoff notes
+
+- **For analyst (Phase 6):** shipped content matches the Phase 1 locked outline subsection-for-subsection; recommend confirming the "why" note wording reads naturally to a non-technical treasurer (a judgment call outside QA's remit) and that this satisfies the Phase 1 user verbs.
+- **Manual click-through still owed before full confidence (dev server unavailable in this sandbox — no `DATABASE_URL`/`.env.local`):** the 5-item list Phase 4 already wrote (TOC → `#budgeting` scroll; in-section compliance link → `#compliance-990` scroll; Budgeting page inline link → lands mid-page on `/admin/ledger/guide#budgeting`; per-fund why-notes render correctly for each live fund kind, including graceful omission for any unrecognized kind; mobile width has no horizontal scroll). Structural/static checks above all line up (matching ids, matching hrefs, matching rule logic), so risk is low, but a live click-through has not yet been performed by a human. **Recommend the user (chenson42) or the next session with a working `.env.local` perform this before Phase 6 closes, or accept it as a SHIP WITH NOTES follow-up.**
+- **Pre-existing, out-of-scope gaps carried forward (not blocking this PASS):** `pnpm lint` still broken (`minimatch`/ESLint 9.39.2 ESM interop) — flagged again for deployment-engineer, unrelated to this feature. Build's DB-dependent "Collecting page data" stage cannot be exercised in this sandbox at all — environment gap, not a code defect.
+- **Next agent:** analyst, for Phase 6 shipped-vs-intent review.
 
 ---
 
