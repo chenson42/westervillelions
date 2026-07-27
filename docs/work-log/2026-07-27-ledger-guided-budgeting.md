@@ -14,8 +14,8 @@
 |-------|-------|--------|---------|------|
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-27 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-27 |
-| 3 — Technical design | tech-lead | Pending | — | — |
-| 4 — Implementation | TBD by tech-lead | Pending | — | — |
+| 3 — Technical design | tech-lead | Complete | Design complete, implementers named | 2026-07-27 |
+| 4 — Implementation | api-developer → ux-developer | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -186,9 +186,376 @@ None required — this increment introduces no new dependency, no new top-level 
 
 ---
 
-# Phase 3 — Technical Design (tech-lead)
+# Phase 3 — Technical Design (tech-lead) — 2026-07-27
 
-Pending
+Grounded in the actual code before designing: `src/app/api/admin/ledger/budgets/route.ts` (full PATCH handler), `getFundReport()` and `getFunds()`/`getEntity()`/`getEntities()` in `src/lib/ledger-queries.ts`, `budgetVariance()` in `src/lib/ledger.ts`, `budget-editor.tsx`, `[fundSlug]/report/page.tsx` (how `BudgetEditor` is invoked and gated), `admin/ledger/page.tsx` (entity/FY search-param convention), `fiscal-year-selector.tsx`, the `ledgerBudgets`/`ledgerFunds`/`ledgerEntities`/`ledgerCategories` schema, `admin-sidebar.tsx` (Treasury nav group), and the existing test-suite conventions (`ledger.test.ts`, `ledger-impact.test.ts`, `permissions-server.test.ts`, `members.test.ts` — confirmed the repo's actual pattern: DB-touching functions in `*-queries.ts` are **never** directly unit-tested with a mocked query builder; every existing unit-tested function is a pure, DB-import-free sibling in `ledger.ts` that the DB-touching function calls, exactly like `getFundReport()` already calls `budgetVariance()`).
+
+## Summary
+
+Ship a "seed next year's budget from prior-year actuals, then review each fund's balance" flow layered on top of the existing `ledger_budgets` primitive — no schema change. A new `admin/ledger/budgeting` page lets the treasurer pick an entity (Club/Foundation) and a target fiscal year, click one action to propose seed lines for every active fund of that entity (computed live from `getFundReport(fund, targetFY − 1)`), review a per-fund preview with an advisory balance indicator, and either accept (fill-empty write) or explicitly overwrite (confirm-gated). The existing `BudgetEditor` is reused unchanged for line-level adjustment after seeding. All amount math is recomputed server-side at write time — the client never gets to dictate what gets written, only which mode (`fill-empty` | `overwrite`) and which funds are in scope.
+
+## Permissions
+
+No new permission key. `FEATURES.LEDGER_MANAGE` (`ledger.manage`) gates the new page and the new endpoint, exactly matching today's `BudgetEditor`/`PATCH /budgets` gate — checked in the page's Server Component (redirect to `/access-pending`) **and** again inside the route handler (defense in depth, matching the existing PATCH route's pattern).
+
+## API Contract
+
+### `POST /api/admin/ledger/budgets/seed`
+
+Gate: `auth()` + `hasFeature(session.user.id, FEATURES.LEDGER_MANAGE)` → 401/403, identical to the PATCH route.
+
+**Request body:**
+```ts
+{
+  entityId: string;             // must resolve to an existing ledgerEntities row
+  targetFiscalYear: number;     // integer, 2000–2100 (same bounds as PATCH's fiscalYear check)
+  mode: "fill-empty" | "overwrite";  // required — no default; forces explicit client intent
+  fundIds?: string[];           // optional subset of this entity's ACTIVE fund IDs.
+                                // Omitted/empty → all active funds of entityId.
+                                // Lets the same endpoint back both "seed all funds"
+                                // (decision 2's primary action) and a per-fund
+                                // "re-seed just this fund" affordance (edge case:
+                                // re-running after partial manual entry on one fund).
+}
+```
+
+**Validation (in the route, before calling any shared logic):**
+- `entityId` — string, must resolve via `getEntity`-style lookup (404 `"Entity not found"` if not — actually a direct `db.select().from(ledgerEntities).where(eq(id, entityId))` since `getEntity` takes a slug, not an id; add a small `entityId` lookup inline in the route, or extend `ledger-queries.ts` with a one-line `getEntityById(id)` next to `getEntity(slug)` — pick the latter for symmetry).
+- `targetFiscalYear` — integer, 2000–2100 (400 otherwise, same message shape as PATCH).
+- `mode` — must be exactly `"fill-empty"` or `"overwrite"` (400 otherwise).
+- `fundIds`, if present — array of strings; each must belong to `entityId` and be active (400 `"Fund {id} does not belong to this entity"` otherwise). Empty array is treated as "omitted" (all funds), not "zero funds" — avoids a confusing 200-with-nothing-seeded response from an accidental `[]`.
+
+**Server-side flow (never trusts client-supplied amounts):**
+1. Look up entity, then resolve the fund scope (`getFunds(entityId)` filtered to `fundIds` if given).
+2. For **each fund in scope**, call `computeSeedFromPriorYear`'s per-fund logic (see below) to get the authoritative, freshly-computed proposed lines **and** current collision state — recomputed now, inside this request, not reused from whatever the page rendered a moment ago (closes the race: someone else could have added a budget row between page load and this click).
+3. Wrap the whole entity-scoped write in a single `db.transaction(...)` — one atomic unit per seed action, matching locked decision 2's framing of "one action seeds all funds of an entity." A mid-loop failure rolls back every fund's writes for this call, not just the one that failed.
+4. For each proposed line (`source !== "none"`, i.e. there's something to seed): call `decideSeedWriteAction(mode, line.collision)` → `"seed" | "skip" | "overwrite"`.
+   - `"skip"` → no DB call at all; count it, don't touch the row.
+   - `"seed"` or `"overwrite"` → call the shared `upsertBudgetLine({ fundId, fiscalYear: targetFiscalYear, categoryId, flow, annualAmountCents: proposedAmountCents, conflictMode: "update" })` (overwrite and first-time-seed both resolve to the same DB upsert; the *label* in the response comes from `decideSeedWriteAction`'s pre-write collision check, not from inspecting what the upsert returned).
+5. Build and return the response.
+
+**Response 200:**
+```ts
+{
+  priorFiscalYear: number;      // targetFiscalYear - 1, echoed for the UI
+  targetFiscalYear: number;
+  funds: Array<{
+    fundId: string;
+    fundSlug: string;
+    fundName: string;
+    seededCount: number;        // lines written for the first time
+    skippedCount: number;       // fill-empty mode only — existing rows left untouched
+    overwrittenCount: number;   // overwrite mode only — existing rows replaced
+    lines: Array<{
+      categoryId: string;
+      categoryName: string;
+      flow: "income" | "expense";
+      amountCents: number;
+      source: "actual" | "prior_budget";
+      action: "seeded" | "skipped_existing" | "overwritten";
+    }>;
+  }>;
+}
+```
+
+**Errors:** 401 (no session), 403 (no `LEDGER_MANAGE`), 400 (bad `entityId`/`targetFiscalYear`/`mode`/`fundIds`), 404 (`entityId` doesn't resolve), 500 (unexpected — same `console.error` + generic-message pattern as the PATCH route).
+
+### `PATCH /api/admin/ledger/budgets` (unchanged contract, refactored internals)
+
+Request/response shape is **unchanged** — this is a pure internal refactor. The handler becomes: auth + feature check → parse body → shape checks (`fundId`/`categoryId`/`flow`/`fiscalYear` presence and type, same as today) → call the shared `upsertBudgetLine({ ...params, conflictMode: "update" })` → map its result to the existing `{ action: "upserted"|"deleted", id? }` / error responses. No behavior change for existing callers (`BudgetEditor`).
+
+### Shared upsert core — `upsertBudgetLine()` in `src/lib/ledger-queries.ts`
+
+```ts
+export type UpsertBudgetLineParams = {
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  flow: "income" | "expense";
+  annualAmountCents: number | null;   // null = delete the row
+  conflictMode: "update" | "skip";    // "update" = today's PATCH behavior (onConflictDoUpdate);
+                                       // "skip" = onConflictDoNothing (only reached via the
+                                       // seed endpoint's "seed"/"overwrite" dispatch — see note below)
+};
+
+export type UpsertBudgetLineResult =
+  | { ok: true; action: "upserted" | "deleted"; id?: string }
+  | { ok: false; error: string; status: 400 | 404 };
+
+export async function upsertBudgetLine(params: UpsertBudgetLineParams): Promise<UpsertBudgetLineResult>
+```
+
+Body: fetch the fund row (id, entityId, kind), fetch the category row (id, fundKind, flow), call the **pure** `validateBudgetLineInput()` (see below) with those two plain objects plus the request fields, and if invalid return its error verbatim. If valid: `annualAmountCents === null` → delete (matching today's PATCH delete branch exactly); otherwise `insert(...).onConflictDoUpdate(...)` when `conflictMode === "update"`, or `insert(...).onConflictDoNothing({ target: [...] })` when `conflictMode === "skip"`.
+
+Note on `conflictMode: "skip"`: in practice the seed endpoint never calls `upsertBudgetLine` with `conflictMode: "skip"` for a line it already knows is a collision — `decideSeedWriteAction` filters those out before the call (step 4 above), so no DB round-trip is wasted on a line we already know will no-op. `conflictMode: "skip"` exists on the shared function for correctness/defense-in-depth (a genuine collision that appeared between the fresh recompute and the write, inside the same transaction, still gets skipped rather than silently overwritten) — this is the belt to `decideSeedWriteAction`'s suspenders, not redundant with it.
+
+### Pure validator — `validateBudgetLineInput()` in `src/lib/ledger.ts`
+
+```ts
+export type BudgetLineValidationInput = {
+  fund: { id: string; kind: string } | null;       // null = fund not found
+  category: { id: string; fundKind: string; flow: string } | null; // null = category not found
+  flow: "income" | "expense";
+  fiscalYear: number;
+  annualAmountCents: number | null;
+};
+
+export type BudgetLineValidationResult =
+  | { ok: true }
+  | { ok: false; error: string; status: 400 | 404 };
+
+export function validateBudgetLineInput(input: BudgetLineValidationInput): BudgetLineValidationResult
+```
+
+This is the **one validation source of truth** the architect's Ruling 1 asks for — it carries every check the current PATCH route inlines (fiscalYear bounds, fund exists, category exists, `category.fundKind === fund.kind`, `category.flow === flow`, amount is a non-negative integer ≤ `INT4_MAX` when not null). Because it takes plain pre-fetched objects instead of doing its own DB reads, it's fully unit-testable — matching this repo's established pattern (`budgetVariance`, `isGiving`, etc.) instead of introducing this codebase's first mocked-query-builder test.
+
+### Small addition — `decideSeedWriteAction()` in `src/lib/ledger.ts`
+
+```ts
+export function decideSeedWriteAction(
+  mode: "fill-empty" | "overwrite",
+  collision: boolean,
+): "seed" | "skip" | "overwrite"
+```
+`fill-empty` + no collision → `"seed"`. `fill-empty` + collision → `"skip"`. `overwrite` + no collision → `"seed"`. `overwrite` + collision → `"overwrite"`. Trivial, but it's the one piece of "fill-empty vs. overwrite" branching logic and belongs isolated and named so it's tested directly rather than inlined into the route handler.
+
+## `computeSeedFromPriorYear` — exact shape
+
+Lives in `src/lib/ledger-queries.ts` per architect Ruling 2 (it's a query — composes `getFundReport`, does one extra plain `ledgerBudgets` select for collision state, does **no** transaction re-aggregation of its own). It delegates the actual mapping algorithm to the pure `deriveSeedLinesForFund()` sibling in `ledger.ts`, exactly the way `getFundReport` already delegates its per-line variance math to `budgetVariance()` — same established split, not a new pattern.
+
+```ts
+export type SeedProposedLine = {
+  categoryId: string;
+  categoryName: string;
+  flow: "income" | "expense";
+  proposedAmountCents: number;
+  source: "actual" | "prior_budget";
+  existingTargetAmountCents: number | null;  // current target-FY value, or null
+  collision: boolean;                         // existingTargetAmountCents !== null
+};
+
+export type FundSeedPreview = {
+  fund: LedgerFund;
+  seedableLines: SeedProposedLine[];   // "none"-source categories are excluded entirely (see below)
+  seedableCount: number;
+  collisionCount: number;
+};
+
+export type EntitySeedPreview = {
+  entityId: string;
+  priorFiscalYear: number;
+  targetFiscalYear: number;
+  funds: FundSeedPreview[];
+};
+
+export async function computeSeedFromPriorYear(
+  entityId: string,
+  targetFiscalYear: number,
+  fundIds?: string[],   // optional scope, mirrors the seed endpoint's param
+): Promise<EntitySeedPreview>
+```
+
+**Prior FY derivation:** `priorFiscalYear = targetFiscalYear - 1`. Always. No separate "source FY" picker in v1 — the brief locks copy source to *the immediately preceding* year's actuals; a source-FY picker is out of scope (see Edge Cases).
+
+**Per fund:**
+1. `report = await getFundReport(fund.id, priorFiscalYear)`.
+2. `fundHadPriorActuals = report.totalIncomeCents + report.totalExpenseCents > 0`. **This is the fund-level fallback trigger from locked decision 1** — it is fund-wide, not per-category: if the fund had *any* posted activity last year, every category in that fund is seeded from its own `actualCents` (even a specific category's own actual of `$0`, which still gets seeded — "you spent nothing on this last year" is real information). Only when the **whole fund** shows zero actuals does the fallback flip to prior-year budgets, category by category.
+3. `existingTargetBudgetMap` — one plain `db.select().from(ledgerBudgets).where(and(eq(fundId), eq(fiscalYear, targetFiscalYear)))`, reduced to a `Map<string, number>` keyed `` `${categoryId}_${flow}` ``.
+4. `priorLines = [...report.income, ...report.expense]` mapped to the pure function's plain input shape (`categoryId`, `categoryName`, `flow`, `actualCents`, `budgetCents`).
+5. `seedableLines = deriveSeedLinesForFund(priorLines, fundHadPriorActuals, existingTargetBudgetMap)`.
+
+**The pure mapping (`deriveSeedLinesForFund` in `ledger.ts`):**
+```ts
+export type SeedSourceLine = {
+  categoryId: string;
+  categoryName: string;
+  flow: "income" | "expense";
+  actualCents: number;
+  budgetCents: number | null;   // prior-year budget, for the fund-level fallback
+};
+
+export function deriveSeedLinesForFund(
+  priorLines: SeedSourceLine[],
+  fundHadPriorActuals: boolean,
+  existingTargetBudgetMap: Map<string, number>,
+): SeedProposedLine[]
+```
+For each `priorLines` entry:
+- `key = \`${categoryId}_${flow}\``; `existing = existingTargetBudgetMap.get(key) ?? null`; `collision = existing !== null`.
+- If `fundHadPriorActuals`: `proposedAmountCents = line.actualCents`; `source = "actual"`. **Always emitted**, even when `actualCents === 0`.
+- Else (fund-wide fallback): if `line.budgetCents === null` → **emit nothing** for this category+flow (matches Phase 1's gap note: a category with no prior actuals and no prior budget is a genuinely new line — leave it blank for the treasurer to fill manually, don't invent a seed value). If `line.budgetCents` is a number (including `0`): `proposedAmountCents = line.budgetCents`; `source = "prior_budget"` — an explicit `$0` budget from last year is still a real prior decision, worth carrying forward.
+
+**Collision detection** is exactly the `existingTargetBudgetMap` lookup above — a row already exists for `(fund, targetFY, category, flow)` iff the map has that key, which mirrors the exact unique constraint (`ledger_budgets_fund_year_cat_flow_key`) the write path upserts against.
+
+## `computeBudgetBalanceStatus` spec
+
+Pure, `src/lib/ledger.ts`, zero `@/lib/db` imports (architect Ruling 4) — must be importable directly by the client island so it recomputes **as the treasurer types**, before any blur/save round-trip.
+
+```ts
+export type BudgetBalanceStatus = {
+  status: "ok" | "warn" | "info";
+  netCents: number;   // budgetedIncomeCents - budgetedExpenseCents, always returned regardless of fund kind
+};
+
+export function computeBudgetBalanceStatus(
+  fundKind: "administrative" | "activity" | "charitable" | "scholarship",
+  budgetedIncomeCents: number,
+  budgetedExpenseCents: number,
+): BudgetBalanceStatus
+```
+
+Returns `{ status, netCents }` only — no baked-in message string, matching this codebase's existing precedent (`budgetVariance` returns raw numbers; the *caller* formats dollars and composes sentences, same as the report page already does with `formatDollars()`). The client island owns four fixed message templates keyed by `(fundKind, status)` — named in the UI plan below.
+
+**Per-fund-kind rules:**
+- **`administrative`:** `warn` if `budgetedIncomeCents < budgetedExpenseCents` (a strict `<` — equal is `ok`, this is the sharpest invariant per Phase 1: the Club's operating fund should not plan a deficit). Else `ok`.
+- **`activity`:** near-zero tolerance. `warn` if `Math.abs(netCents) > 10_000` (**$100**); else `ok`. **Tolerance justification (tech-lead judgment call, not a locked product number):** the Activity fund is a pass-through clearing account for publicly-raised charitable money — Phase 1 read "balanced" here as *planned receipts ≈ planned disbursements*, not an exact-zero requirement. A treasurer building an annual budget is estimating a dozen-ish hand-entered category lines, each realistically rounded to the nearest $25–$50; a $100 band absorbs that rounding noise across the whole fund without masking a genuine planning gap of hundreds or thousands of dollars. This is a numeric default the treasurer can push back on once they see it in practice — **logging as an implementation decision** (below) rather than folding it in silently, since it's a concrete threshold with real UI behavior and wasn't in the locked decisions.
+- **`charitable` / `scholarship`:** always `info`, never `warn` — a planned drawdown from an existing reserve/endowment is legitimate (Phase 1's explicit point). `netCents` is still returned so the UI can say "planned draw of $X" or "planned addition of $X" or "net $0 planned."
+- **Unknown/unexpected `fundKind`** (defensive — shouldn't happen given the schema's `kind` values, but the parameter is a plain string, not a literal union enforced at the DB layer): falls through to `info`, never throws, never `warn`. Never let an unrecognized kind silently produce a false "shortfall" warning.
+
+**Presentation-only, confirmed explicitly:** neither `PATCH /budgets` nor `POST /budgets/seed` calls this function or is aware of its output. It runs only in the client island (recomputed on every keystroke from the in-progress `BudgetEditor` input state) and, redundantly, in the server page at initial render (for the pre-interaction summary). No write path is gated by it, now or via any implicit future tightening — this design doc states that explicitly so a later change can't quietly turn it into a block without a new design pass.
+
+## UI/UX — `admin/ledger/budgeting`
+
+### Page: `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` (Server Component)
+
+- `auth()` → redirect `/signin` if no session (outside try, matching `admin/ledger/page.tsx`'s pattern).
+- `hasFeature(session.user.id, FEATURES.LEDGER_MANAGE)` → redirect `/access-pending` if false. **Manage-only, no `LEDGER_VIEW`/`LEDGER_RECORD` fallback** — unlike the per-fund report page (view-or-manage), this whole surface only makes sense for someone who can write budgets, per architect Ruling 3.
+- Reads `?entity=` and `?fy=` search params, same convention as `admin/ledger/page.tsx` and `[fundSlug]/report/page.tsx`.
+  - `entity` defaults to the first entity (alphabetical, i.e. `getEntities()[0]`) if missing/invalid.
+  - `fy` (target FY) defaults to `currentFiscalYear(new Date()) + 1` — guided setup is inherently *next* year's budget, not the current one. Selector options: `[currentFY, currentFY + 1, currentFY + 2]` (a synthetic list passed to the existing `FiscalYearSelector` component — that component only needs `number[]` + a `currentFY`, no DB dependency, so this reuses it as-is without modification).
+- Fetches `entities = getEntities()`, the target entity's `funds = getFunds(entity.id)`, and `preview = computeSeedFromPriorYear(entity.id, targetFY)`.
+- Renders:
+  - Page hero: `bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-12` (member-portal-style secondary hero, matching other `admin/ledger/*` sub-pages), gold eyebrow label "Treasury · Guided Budgeting".
+  - Entity switcher (Club / Foundation) — two links, same tab-style pattern as the existing entity dashboard's entity cards/links, preserving `?fy=` when switching `?entity=`.
+  - `FiscalYearSelector` for the target FY, `basePath="/admin/ledger/budgeting"`, preserving `?entity=`.
+  - One top-level "Seed all funds from FY{priorFY}" primary button (`bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition`) — disabled with explanatory copy ("No FY{priorFY} activity or budget found — enter amounts directly below") when `preview.funds.every(f => f.seedableCount === 0)` (first-year-entity edge case, Phase 1 Flow 1's failure path, handled without a wasted network round-trip).
+  - Per-fund review cards (`bg-white rounded-2xl shadow-sm overflow-hidden`, non-interactive-card style since these are informational panels, not navigational), one per fund:
+    - Fund name + kind badge.
+    - `seedableCount` / `collisionCount` summary line ("8 categories would be seeded from FY{priorFY} actuals — 3 already have a value for FY{targetFY}.") — when a fund's lines are sourced from `prior_budget` rather than `actual` (i.e. `fundHadPriorActuals` was false), an explicit note: "FY{priorFY} had no posted activity for this fund — seeding from last year's *budget* instead."
+    - Balance indicator: `computeBudgetBalanceStatus(fund.kind, sum of budgeted income, sum of budgeted expense)` computed **from whatever is currently in `ledger_budgets` for this fund+targetFY right now** (i.e. reflects live edits, not the seed preview) — colored badge, gold/green for `ok`/`info` (never a red state anywhere per brand guidelines — `warn` renders in amber, e.g. `bg-amber-50 text-amber-800`, not `lions-red`), with the fund-kind-specific message text.
+    - "Seed this fund" secondary button (per-fund scope via `fundIds: [fund.id]`) alongside the entity-wide primary action, covering the "re-run for one fund after partial manual entry" edge case.
+    - The existing `BudgetEditor` rendered inline per fund (unchanged component, unchanged props — `fundId`, `fiscalYear`, `lines` built the same way `[fundSlug]/report/page.tsx` already builds `budgetEditorLines`) for line-level adjustment, exactly like today's report page.
+
+### Client island: `src/components/admin/ledger/guided-budget-setup.tsx` (`'use client'`)
+
+Receives the server-computed `preview` (per fund) as props. Owns:
+- The "Seed all funds" / "Seed this fund" click handlers — `POST /budgets/seed` with `{ entityId, targetFiscalYear, mode: "fill-empty", fundIds? }` by default.
+- **Overwrite path:** if the click would touch any fund with `collisionCount > 0`, show `<ConfirmDialog>` (`destructive` prop — this can clobber a treasurer's prior manual edits) **before** firing — copy states the exact count: *"3 of 8 categories already have a budget for FY{targetFY}. Seed only the other 5, or overwrite all 8 with FY{priorFY} figures?"* with two explicit actions ("Seed the 5 empty ones" → `mode: "fill-empty"`, "Overwrite all 8" → `mode: "overwrite"`, destructive). **Never `window.confirm()`** — this is exactly the destructive-confirm case CLAUDE.md calls out `<ConfirmDialog>` for.
+- On response: `router.refresh()` (Server Component re-fetches `computeSeedFromPriorYear` + the funds' current budget rows, same pattern `BudgetEditor` already uses after its own PATCH) plus a `toast.success`/`toast.error` summarizing counts ("Administrative: 6 seeded, 2 already set.").
+- Live balance readout while editing: since `BudgetEditor` already owns its own input state and posts on blur (not on every keystroke), and this design doesn't want to fork `BudgetEditor`, the pragmatic per-Phase-1-Flow-2 approach is: the client island tracks the *displayed* per-fund income/expense totals via a lightweight local reducer that mirrors `BudgetEditor`'s `inputs` state shape at the same key convention (`` `${categoryId}_${flow}` ``) — recomputed on every keystroke by summing the current input values, feeding `computeBudgetBalanceStatus` live, no additional network round-trip per keystroke. This requires threading an `onInputChange` callback into `BudgetEditor` (one new optional prop, backward compatible — existing callers on `[fundSlug]/report/page.tsx` that don't pass it are unaffected) rather than duplicating `BudgetEditor`'s save-on-blur logic. **Named as a small, explicit `BudgetEditor` prop addition** so ux-developer doesn't feel license to fork the component instead.
+
+### Navigation
+
+Add to `admin-sidebar.tsx`'s `"Treasury"` group (`src/components/admin/admin-sidebar.tsx`, alongside `Reports`/`Compliance`), positioned right after "Ledger" and before "Reconciliation" since it's a seasonal-but-`LEDGER_MANAGE`-only entry point, not a monthly-review one:
+```ts
+{
+  name: "Budgeting",
+  href: "/admin/ledger/budgeting",
+  icon: "🧮",
+  requiredFeature: FEATURES.LEDGER_MANAGE,
+},
+```
+Optional, non-blocking (per architect's suggestion): a one-line cross-link from `[fundSlug]/report/page.tsx` ("Set up next year's budget from FY{priorFY} →" → `/admin/ledger/budgeting?entity=...`) for discoverability. Nice-to-have, not required for Phase 4 completion.
+
+### Brand/UX compliance checklist for ux-developer
+- Cards: `rounded-2xl` only (never mix with `rounded-xl`), non-interactive style since fund review panels aren't clickable.
+- Buttons: `rounded-lg`, primary/secondary classes exactly as documented in CLAUDE.md — no `rounded-full`.
+- `lions-gold` for the eyebrow label and any "info" accents; **no `lions-red`** anywhere — `warn` state uses amber (`amber-50`/`amber-800`), matching the existing over-budget variance styling pattern already in `[fundSlug]/report/page.tsx`.
+- `<ConfirmDialog>` for the overwrite path — never `window.confirm()`.
+- All links/buttons carry `focus:outline-none focus:ring-2 focus:ring-lions-blue rounded` (or `rounded-lg` where already the button radius).
+
+## Edge Cases & Risks
+
+- **First-year entity, no prior actuals at all:** `getFundReport(fund, priorFY)` returns a report with `totalIncomeCents + totalExpenseCents === 0` and (typically) no budget rows either → every category resolves to `source` omitted entirely (`deriveSeedLinesForFund` emits nothing when both actual and prior budget are absent). `seedableCount === 0` for that fund; the page pre-disables the seed button with explanatory copy instead of allowing a no-op POST that would look like a silent failure.
+- **A fund whose prior actuals are all zero, but a prior budget existed:** `fundHadPriorActuals = false` triggers the fund-wide fallback to `budgetCents` per category — UI shows the "seeded from last year's budget, not actuals" note per fund so the treasurer isn't confused when the numbers don't match a report they might separately pull up.
+- **Re-running seed after partial manual entry:** `fill-empty` mode is idempotent by construction — every rerun only ever fills categories that are *still* empty; anything the treasurer already touched (or a prior seed already wrote) is untouched, forever, unless they explicitly choose `overwrite` through the `ConfirmDialog`. No silent clobbering, matching locked decision 3.
+- **Activity Fund "$0-target" policy:** there is no special-cased default for the Activity fund anywhere in seeding or upserting — it's an ordinary `ledger_budgets` row like any other fund/category/flow. The "what does balanced mean for Activity" question is fully answered by `computeBudgetBalanceStatus`'s ±$100 near-zero tolerance, not by a schema or write-path special case.
+- **FY rollover mid-edit:** confirmed safe, unchanged from Phase 1's finding — `fiscalYear` is an explicit integer chosen via the selector, never an implicit "current FY," so a session spanning a July 1 rollover doesn't corrupt anything.
+- **Transfers excluded from actuals:** confirmed — `computeSeedFromPriorYear` composes on `getFundReport`, whose `actualMap` only buckets `if (txn.categoryId)`, and transfers are written with `categoryId = null` (DECISION-016/017). No additional exclusion logic needed; this holds automatically because nothing here re-touches `ledgerTransactions` directly.
+- **No source-FY picker in v1:** target FY − 1 is hardcoded as the source; if a treasurer wants to copy from two years back (skipping an anomalous year), that's not supported and not requested — noted so it isn't assumed later.
+- **Concurrent seed calls / stale preview:** the seed endpoint recomputes `computeSeedFromPriorYear` fresh, inside its own transaction, rather than trusting whatever the page rendered — closes the race between page load and button click without needing optimistic-locking machinery.
+
+## Unit Tests To Write (Phase 4, delivered by the implementer — api-developer)
+
+All in `src/lib/ledger.test.ts` (extend the existing file; do not create a new pure-logic test file — this project's existing pure-logic pure tests all live in `ledger.test.ts`/`ledger-impact.test.ts` and don't need a new home for four more functions in the same source file).
+
+**`describe("computeBudgetBalanceStatus")`**
+1. `administrative`, income > expense → `ok`
+2. `administrative`, income === expense → `ok` (boundary — equal is not a shortfall)
+3. `administrative`, income one cent less than expense → `warn` (boundary just over)
+4. `administrative`, income = 0, expense = 0 → `ok`
+5. `activity`, net = 0 → `ok`
+6. `activity`, net = +10,000 cents ($100 exactly — tolerance boundary, inclusive) → `ok`
+7. `activity`, net = +10,001 cents (one cent past tolerance) → `warn`
+8. `activity`, net = −10,000 cents (symmetric boundary on the deficit side) → `ok`
+9. `activity`, net = −50,000 cents → `warn`
+10. `charitable`, expense > income (planned drawdown) → `info` (never `warn`)
+11. `charitable`, income > expense → `info`
+12. `scholarship`, expense > income → `info`
+13. Unrecognized `fundKind` string → `info`, does not throw
+
+**`describe("deriveSeedLinesForFund")`**
+14. Fund had prior actuals; category actual=$500, differing prior budget=$400 → proposed=$500, `source: "actual"` (actuals win over a differing prior budget)
+15. Fund had prior actuals; a specific category's own actual is $0 → still emitted, proposed=$0, `source: "actual"` (zero is seeded, not dropped, once the fund-level fallback isn't triggered)
+16. Fund had **zero** actuals fund-wide; category prior budget=$300 → fallback triggers, proposed=$300, `source: "prior_budget"`
+17. Fund had zero actuals fund-wide; category prior budget=`null` → no line emitted for that category (new-category case)
+18. Fund had zero actuals fund-wide; category prior budget=$0 (explicit) → emitted, proposed=$0, `source: "prior_budget"`
+19. Collision: `existingTargetBudgetMap` has an entry for the category/flow key → `collision: true`, `existingTargetAmountCents` equals that value
+20. No collision: key absent from map → `collision: false`, `existingTargetAmountCents: null`
+21. Empty `priorLines` input → returns `[]`
+
+**`describe("validateBudgetLineInput")`**
+22. `fund: null` → `{ ok: false, status: 404 }`
+23. `category: null` → `{ ok: false, status: 404 }`
+24. `category.fundKind !== fund.kind` → `{ ok: false, status: 400 }` ("does not match fund type")
+25. `category.flow !== requested flow` → `{ ok: false, status: 400 }`
+26. `fiscalYear` out of bounds (e.g. 1999 and 2101) → `{ ok: false, status: 400 }`
+27. `annualAmountCents: null` (delete path) with valid fund/category/flow → `{ ok: true }`
+28. `annualAmountCents: 0` → `{ ok: true }` (explicit $0 valid)
+29. `annualAmountCents` negative → `{ ok: false, status: 400 }`
+30. `annualAmountCents` non-integer (e.g. `100.5`) → `{ ok: false, status: 400 }`
+31. `annualAmountCents` exceeds `INT4_MAX` → `{ ok: false, status: 400 }`
+32. All valid → `{ ok: true }`
+
+**`describe("decideSeedWriteAction")`**
+33. `("fill-empty", collision: false)` → `"seed"`
+34. `("fill-empty", collision: true)` → `"skip"`
+35. `("overwrite", collision: false)` → `"seed"`
+36. `("overwrite", collision: true)` → `"overwrite"`
+
+**Explicitly not unit-tested, and why:** `computeSeedFromPriorYear()` and `upsertBudgetLine()` themselves (the DB-touching wrappers in `ledger-queries.ts`) are **not** given mocked-query-builder unit tests — this matches the repo's existing, consistent convention (verified: no function in `ledger-queries.ts` has a unit test today; every tested Ledger function is a pure sibling in `ledger.ts`). Their correctness is covered by (a) the pure-mapping/validation tests above, which exercise every branch of the actual decision logic, and (b) qa's Phase 5 manual click-through — seed a real fund/FY through the running app and confirm the written rows match the preview and the report page. Naming this explicitly per CLAUDE.md's no-silent-skip standard, not leaving it implied.
+
+## Implementation Order
+
+1. **api-developer:**
+   - `src/lib/ledger.ts`: add `computeBudgetBalanceStatus`, `deriveSeedLinesForFund` (+ `SeedSourceLine`/`SeedProposedLine` types), `validateBudgetLineInput` (+ `BudgetLineValidationInput`/`Result` types), `decideSeedWriteAction`. Write all 36 named tests in `src/lib/ledger.test.ts`.
+   - `src/lib/ledger-queries.ts`: add `getEntityById(id)` (small sibling to existing `getEntity(slug)`), `upsertBudgetLine()`, `computeSeedFromPriorYear()`.
+   - Refactor `src/app/api/admin/ledger/budgets/route.ts`'s `PATCH` to call `upsertBudgetLine()` — contract unchanged, confirm no regression by hand against the current manual test steps for that route (no existing automated test to extend).
+   - New `src/app/api/admin/ledger/budgets/seed/route.ts` — `POST` handler per the contract above.
+   - Typecheck + `pnpm build:only` must pass before handoff.
+2. **ux-developer:**
+   - Add the optional `onInputChange` prop to `src/components/admin/ledger/budget-editor.tsx` (backward-compatible — existing callers unaffected).
+   - New `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` (Server Component).
+   - New `src/components/admin/ledger/guided-budget-setup.tsx` (client island).
+   - `src/components/admin/admin-sidebar.tsx` — add the "Budgeting" nav entry to the Treasury group.
+   - Optional cross-link from `[fundSlug]/report/page.tsx` if time allows (non-blocking).
+
+## Design calls made beyond the locked decisions (logging per CLAUDE.md)
+
+1. **Activity fund near-zero tolerance = ±$100 (10,000 cents).** Not specified in locked decisions or Phase 1/2 — a concrete numeric threshold with real UI behavior. Logged as `DECISION-XXX` in `docs/decisions.md` below (implementation decision, tech-lead-owned).
+2. **Per-fund `fundIds` scoping on the seed endpoint**, enabling a "re-seed just this fund" secondary action alongside the entity-wide primary action. Fills a Phase 1 edge case (partial manual entry) without a second endpoint. Minor API-surface choice, not logged separately — covered by this design doc.
+3. **`validateBudgetLineInput` / `deriveSeedLinesForFund` extracted as pure siblings** rather than testing the DB-touching wrappers directly. Matches existing repo convention (`budgetVariance` next to `getFundReport`); not a new pattern, not logged separately.
+
+Item 1 gets a `docs/decisions.md` entry since it's a concrete, debatable numeric constant that changes what the UI tells the treasurer — worth being able to find and revisit later without re-reading this whole work-log.
+
+## Open questions / handoff notes for Phase 4
+
+- **Implementer:** **api-developer** first (lib helpers, both routes, all 36 unit tests, typecheck + build green) — then **ux-developer** (page, client island, `BudgetEditor` prop addition, nav entry). Specialist split per architect Ruling 7; not a full-stack candidate (comfortably over the ~150-line small/coupled threshold once the seed endpoint's transaction logic and the per-fund review UI are both counted).
+- Confirm during implementation: `getEntityById()` is a one-line addition next to `getEntity(slug)` — don't let it grow scope; it exists purely because the seed endpoint receives an `entityId`, not a `slug`.
+- The $100 Activity tolerance is a starting default, not a number Chuck has seen in practice yet — flag to the user after ship that it's adjustable if the first real budgeting season shows it's too tight or too loose.
+- qa (Phase 5): in addition to the standard typecheck/build/click-through, specifically exercise the `overwrite` `ConfirmDialog` path (collision count is accurate, cancel truly leaves rows untouched) and the first-year/no-prior-data disabled-button state, since neither has an automated test per the "not unit-tested" note above.
+
+---
 
 ---
 

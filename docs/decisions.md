@@ -28,6 +28,19 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-042: Guided budgeting — Activity fund balance tolerance set to ±$100
+
+**Status:** Resolved
+**Date:** 2026-07-27
+
+**Decision:** `computeBudgetBalanceStatus()` (`src/lib/ledger.ts`, guided-budgeting increment) treats the Activity fund as balanced (`status: "ok"`) whenever `|budgetedIncomeCents - budgetedExpenseCents| <= 10_000` (±$100), and `warn` outside that band. Administrative uses a strict `income < expense` rule (no tolerance); Charitable/Scholarship are always `info` (planned drawdown is legitimate, never `warn`).
+
+**Rationale:** Locked product decision 4 (Phase 1/2 of `docs/work-log/2026-07-27-ledger-guided-budgeting.md`) specified "Activity warns if net ≠ ~$0 (tolerance TBD — tech-lead specifies)" — the numeric value itself was left to Phase 3. The Activity fund is a pass-through clearing account for publicly-raised charitable money; "balanced" means planned receipts ≈ planned disbursements, not an exact-zero requirement. A treasurer hand-entering roughly a dozen category lines, each realistically rounded to the nearest $25–$50, will rarely land on an exact $0 net by design — a flat-dollar band absorbs that entry-level rounding noise without masking a genuine four-figure planning gap. Chosen as an absolute-dollar threshold (not a percentage of budget size) because the Activity fund's "near zero" target doesn't scale with fund size the way an operating-budget ratio would.
+
+**Impact:** `src/lib/ledger.ts` — `computeBudgetBalanceStatus()`. Unit-tested at the boundary (net = exactly $100 → `ok`; net = $100.01 → `warn`; symmetric on the deficit side) in `src/lib/ledger.test.ts`. This is a starting default, not a number validated against a real budgeting season yet — flagged to the treasurer as adjustable after first use if it proves too tight or too loose. Presentation-only: never blocks a save, never stored.
+
+---
+
 ## DECISION-041: Prospective members — no DB-level CHECK constraint for the `isActive`/`membershipStatus` invariant; application-level enforcement only
 
 **Status:** Resolved
