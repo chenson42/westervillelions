@@ -27,6 +27,10 @@ import {
   deriveSeedLinesForFund,
   validateBudgetLineInput,
   decideSeedWriteAction,
+  isBudgetLocked,
+  validateCategoryCreateInput,
+  nextCategorySortOrder,
+  validateRequiredTrimmedText,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
@@ -2005,5 +2009,133 @@ describe("decideSeedWriteAction", () => {
 
   it('("overwrite", collision: true) -> "overwrite"', () => {
     expect(decideSeedWriteAction("overwrite", true)).toBe("overwrite");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isBudgetLocked — Budget Approve/Lock
+// ---------------------------------------------------------------------------
+
+describe("isBudgetLocked", () => {
+  it("returns false when no approval row exists (null)", () => {
+    expect(isBudgetLocked(null)).toBe(false);
+  });
+
+  it("returns false when status is 'unlocked'", () => {
+    expect(isBudgetLocked({ status: "unlocked" })).toBe(false);
+  });
+
+  it("returns true when status is 'locked'", () => {
+    expect(isBudgetLocked({ status: "locked" })).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateCategoryCreateInput — Budget Approve/Lock (inline category create)
+// ---------------------------------------------------------------------------
+
+describe("validateCategoryCreateInput", () => {
+  it("rejects an empty name", () => {
+    const result = validateCategoryCreateInput({
+      name: "",
+      flow: "income",
+      existingNames: [],
+    });
+    expect(result).toEqual({ ok: false, error: "Category name is required.", status: 400 });
+  });
+
+  it("rejects a whitespace-only name", () => {
+    const result = validateCategoryCreateInput({
+      name: "   ",
+      flow: "income",
+      existingNames: [],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(400);
+  });
+
+  it("rejects flow values other than income/expense", () => {
+    const result = validateCategoryCreateInput({
+      name: "Club Dues",
+      flow: "transfer",
+      existingNames: [],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(400);
+  });
+
+  it("rejects a case-insensitive duplicate name against existingNames", () => {
+    const result = validateCategoryCreateInput({
+      name: "Club Dues",
+      flow: "income",
+      existingNames: ["club dues"],
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: "A category named 'Club Dues' already exists for this fund.",
+      status: 409,
+    });
+  });
+
+  it("accepts a valid, unique name", () => {
+    const result = validateCategoryCreateInput({
+      name: "New Initiative Fund",
+      flow: "expense",
+      existingNames: ["Club Dues", "Fundraising Event Costs"],
+    });
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextCategorySortOrder — Budget Approve/Lock (inline category create)
+// ---------------------------------------------------------------------------
+
+describe("nextCategorySortOrder", () => {
+  it("returns 0 for an empty fund+flow (first category)", () => {
+    expect(nextCategorySortOrder([])).toBe(0);
+  });
+
+  it("returns max + 1 for existing sortOrders", () => {
+    expect(nextCategorySortOrder([0, 2, 5])).toBe(6);
+  });
+
+  it("handles a single existing category", () => {
+    expect(nextCategorySortOrder([3])).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateRequiredTrimmedText — Budget Approve/Lock (shared with approve/unlock routes)
+// ---------------------------------------------------------------------------
+
+describe("validateRequiredTrimmedText", () => {
+  it("rejects undefined", () => {
+    expect(validateRequiredTrimmedText(undefined)).toEqual({ ok: false });
+  });
+
+  it("rejects an empty string", () => {
+    expect(validateRequiredTrimmedText("")).toEqual({ ok: false });
+  });
+
+  it("rejects a whitespace-only string", () => {
+    expect(validateRequiredTrimmedText("   ")).toEqual({ ok: false });
+  });
+
+  it("trims and accepts a valid string", () => {
+    expect(validateRequiredTrimmedText("  Board voted 5-0  ")).toEqual({
+      ok: true,
+      value: "Board voted 5-0",
+    });
+  });
+
+  it("truncates (does not reject) a string longer than maxLen", () => {
+    const longValue = "a".repeat(510);
+    const result = validateRequiredTrimmedText(longValue, 500);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toHaveLength(500);
+      expect(result.value).toBe("a".repeat(500));
+    }
   });
 });

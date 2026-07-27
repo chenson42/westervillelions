@@ -16,7 +16,7 @@
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-27 |
 | 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-27 |
 | 4 — Implementation (schema) | database-admin | Complete | — | 2026-07-27 |
-| 4 — Implementation (server) | api-developer | Pending | — | — |
+| 4 — Implementation (server) | api-developer | Complete | — | 2026-07-27 |
 | 4 — Implementation (client) | ux-developer | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
@@ -626,9 +626,71 @@ Added `ledgerBudgetApprovals` exactly per the Phase 3 Data Model / DECISION-043 
 
 ---
 
-# Phase 5 — Verification (qa)
+## Phase 4 — api-developer (server) — 2026-07-27
 
-Pending.
+**Owner:** api-developer
+**Status:** complete
+
+### Summary
+
+Built the three new route handlers named in the Phase 3 design exactly per the API Contracts section — `POST /categories`, `POST /budget-approvals` (approve/lock), `POST /budget-approvals/unlock` — all consuming database-admin's `assertBudgetUnlocked`/`getBudgetApproval` and the four pure helpers without modification. Fixed the flagged critical bug in the seed route (discarded `upsertBudgetLine` result masking a locked-FY 409 as a fake 200). Delivered all four named `describe` blocks in `src/lib/ledger.test.ts` (16 new tests). Typecheck and full test suite are green.
+
+### What I did
+
+- **`src/app/api/admin/ledger/categories/route.ts`** (new) — `POST`, gate `LEDGER_MANAGE`. Validation order matches the design exactly: session → `hasFeature(LEDGER_MANAGE)` → shape checks (entityId/fiscalYear/fundKind/flow/countsAsGiving/form990Line) → `getEntityById` (404) → `fundKind` must match an active fund of that kind for the entity via `getFunds(entityId)` (400 if not) → `assertBudgetUnlocked(entityId, fiscalYear)` (409 if locked) → `getCategories(entityId, {fundKind, flow})` feeds both the case-insensitive duplicate check and `nextCategorySortOrder` → insert a real `ledgerCategories` row (`isActive: true`, `countsAsGiving` defaults `true`, `form990Line` optional). Per DECISION-044, never accepts or writes an amount — this is the only new category-creation path in the app, preserving "budget buckets ARE ledger buckets."
+- **`src/app/api/admin/ledger/budget-approvals/route.ts`** (new) — `POST`, gate `LEDGER_APPROVE`. Validates `entityId`/`fiscalYear`/`boardMinute` (via the shared `validateRequiredTrimmedText`), 404s on unknown entity, then reads current state via `getBudgetApproval` — if already `locked` (via `isBudgetLocked`), returns 409 "This budget is already locked. Unlock it to make changes and re-approve." per DECISION-044 (no silent overwrite). Otherwise `insert(...).onConflictDoUpdate({ target: [entityId, fiscalYear], set: {...} })` sets `status: 'locked'` + the approval trio (`approvedByUserId` = current session user, `approvedAt`, `boardMinute`); the unlock trio is untouched. **No self-approval block**, per the locked decision (budget adoption is a board vote, not a disbursement one person moves — Chuck plausibly holds both `LEDGER_MANAGE` and `LEDGER_APPROVE`).
+- **`src/app/api/admin/ledger/budget-approvals/unlock/route.ts`** (new) — `POST`, gate `LEDGER_APPROVE`. Validates `entityId`/`fiscalYear`/`unlockReason` (required, via `validateRequiredTrimmedText`), 404s on unknown entity, then reads current state — if not currently locked (`!isBudgetLocked(current)`, which also covers "no row exists yet"), returns 409 "This budget is not currently locked." Otherwise upserts `status: 'unlocked'` + the unlock trio (`unlockedByUserId`, `unlockedAt`, `unlockReason`); approval trio untouched.
+- **Fixed the flagged bug** in `src/app/api/admin/ledger/budgets/seed/route.ts`: the per-line loop now checks `upsertBudgetLine`'s return value. On `!writeResult.ok` (currently only the lock-check 409, but written generically for any future non-ok result), it throws a new `SeedLockedError(message, status)` from inside the `db.transaction()` callback, which rolls back every write from that seed request — no partial-seed-then-reject state. The outer `catch` block special-cases `SeedLockedError` and returns its `status`/`message` verbatim instead of falling through to the generic 500. Verified by reasoning through the transaction semantics (Postgres transaction + Drizzle: an uncaught throw inside the callback rolls back), not by a live DB run (no `DATABASE_URL` in this environment — same constraint database-admin noted).
+- Added the four named `describe` blocks to `src/lib/ledger.test.ts`, matching the Phase 3 spec's exact case list verbatim: `isBudgetLocked` (null/unlocked/locked → 3 tests), `validateCategoryCreateInput` (empty name/whitespace name/bad flow/case-insensitive duplicate/valid → 5 tests), `nextCategorySortOrder` (empty→0/[0,2,5]→6/[3]→4 → 3 tests), `validateRequiredTrimmedText` (undefined/empty/whitespace/trim+accept/truncate-not-reject over maxLen → 5 tests). 16 new tests total.
+- Ran `pnpm exec tsc --noEmit` (clean) and `pnpm test` (532/532 passed, 17 test files — 516 prior + 16 new).
+- Ran `pnpm lint` — pre-existing, unrelated environment failure: ESLint 9.39.2's flat-config loader throws `SyntaxError: The requested module 'minimatch' does not provide an export named 'default'` while loading `eslint.config`'s `@eslint/eslintrc` compat layer, before linting any file. Reproduces on a clean checkout with none of this change's files touched — a dependency-version mismatch (`minimatch`'s ESM/CJS export shape vs. what `@eslint/eslintrc` expects), not something introduced here. Flagging for deployment-engineer's 30-day dependency review rather than fixing in scope, since it's an environment/tooling issue, not an application bug.
+
+### Outputs
+
+**New routes:**
+
+1. `POST /api/admin/ledger/categories` — gate `LEDGER_MANAGE`
+   - Body: `{ entityId: string; fiscalYear: number; fundKind: 'administrative'|'activity'|'charitable'|'scholarship'; flow: 'income'|'expense'; name: string; countsAsGiving?: boolean; form990Line?: string }`
+   - 200: `{ id, name, fundKind, flow, sortOrder, countsAsGiving, form990Line, isActive: true }`
+   - 400: bad shape, unmatched `fundKind` for the entity, or `validateCategoryCreateInput` rejects name/flow
+   - 401/403: auth/feature
+   - 404: entity not found
+   - 409: locked FY, or case-insensitive duplicate name — `"A category named '…' already exists for this fund."`
+
+2. `POST /api/admin/ledger/budget-approvals` — gate `LEDGER_APPROVE` (approve/lock)
+   - Body: `{ entityId: string; fiscalYear: number; boardMinute: string }`
+   - 200: `{ entityId, fiscalYear, status: 'locked', approvedByUserId, approvedAt, boardMinute }`
+   - 400: bad `fiscalYear`, missing/blank `boardMinute`
+   - 401/403/404 as above
+   - 409: already locked — `"This budget is already locked. Unlock it to make changes and re-approve."`
+
+3. `POST /api/admin/ledger/budget-approvals/unlock` — gate `LEDGER_APPROVE`
+   - Body: `{ entityId: string; fiscalYear: number; unlockReason: string }`
+   - 200: `{ entityId, fiscalYear, status: 'unlocked', unlockedByUserId, unlockedAt, unlockReason }`
+   - 400: bad `fiscalYear`, missing/blank `unlockReason`
+   - 401/403/404 as above
+   - 409: not currently locked (includes never-approved) — `"This budget is not currently locked."`
+
+**Unchanged contracts (inherit the 409 automatically, no shape change):** `PATCH /api/admin/ledger/budgets`, `POST /api/admin/ledger/budgets/seed` (seed also gets the bug fix above).
+
+**Files touched:**
+- `src/app/api/admin/ledger/categories/route.ts` (new)
+- `src/app/api/admin/ledger/budget-approvals/route.ts` (new)
+- `src/app/api/admin/ledger/budget-approvals/unlock/route.ts` (new)
+- `src/app/api/admin/ledger/budgets/seed/route.ts` (bug fix — result-check + rollback + `SeedLockedError`)
+- `src/lib/ledger.test.ts` (16 new tests across 4 `describe` blocks)
+
+No schema changes, no new `FEATURES` key (design confirmed none needed) — nothing further for database-admin.
+
+### Open questions / handoff notes
+
+- **Next agent: ux-developer**, per Phase 3 Implementation Order step 3.
+- All three new routes are ready to consume as-is; no deviation from the Phase 3 API Contracts section.
+- `budgeting/page.tsx` still needs the two-tier gate rework (`hasAnyFeature([LEDGER_MANAGE, LEDGER_APPROVE])` for admission, `canManage`/`canApprove` computed separately) and to call `getBudgetApproval(entity.id, targetFY)` + `isBudgetLocked(approval)` directly (Server Component, no new GET route — DECISION-044) — none of that is built yet, only the API surface it depends on.
+- `GuidedBudgetSetup` needs: the locked-state banner, read-only rendering when locked, the "+ Add category" affordance (fixing the empty-fund gap, rendered outside the `budgetEditorLines.length > 0` conditional), the explicit remove-line control (`ConfirmDialog`, calls existing `PATCH /budgets` with `annualAmountCents: null` — no new endpoint), the Approve panel (calls `POST /budget-approvals`), and the Unlock control (calls `POST /budget-approvals/unlock`) — all per Phase 3's Component Plan.
+- The seed-route bug fix changes only the *behavior* on a locked FY (409 instead of a fake 200) — its success-path response shape (`priorFiscalYear`, `targetFiscalYear`, `funds[]`) is unchanged, so no UI relying on that shape needs updating.
+- Reminder for qa (Phase 5, already noted in Phase 3): manual click-through must include locking a partial budget (allowed, warning-only), a stale-tab `PATCH /budgets` against a locked FY (confirm 409), unlock, re-edit, re-lock, and a seed-against-locked-FY attempt (confirm 409 with zero rows written, not a partial seed) — the last case is new coverage this bug fix makes meaningful to test.
+- The `pnpm lint` failure noted above is environment-level (ESLint/minimatch ESM mismatch), not caused by this change — worth a heads-up to whichever agent runs `/pre-push` next so it isn't mistaken for a regression introduced here.
 
 ---
 
