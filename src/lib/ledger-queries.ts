@@ -21,6 +21,7 @@ import {
   ledgerCategories,
   ledgerTransactions,
   ledgerBudgets,
+  ledgerBudgetApprovals,
   ledgerSettings,
   ledgerReimbursements,
   ledgerFilings,
@@ -33,13 +34,15 @@ import {
   type LedgerFund,
   type LedgerCategory,
   type LedgerTransaction,
+  type LedgerBudgetApproval,
   type LedgerSettings,
   type LedgerReimbursement,
   type LedgerFiling,
   type LedgerDonor,
   type LedgerAcknowledgment,
 } from "@/lib/db/schema";
-import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, sql, count } from "drizzle-orm";
+import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, sql, count, getTableColumns } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { getFiscalYear, currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import {
   fundBalanceCents,
@@ -57,6 +60,7 @@ import {
   isReceiptMissing,
   validateBudgetLineInput,
   deriveSeedLinesForFund,
+  isBudgetLocked,
   type GuardrailFlag,
   type BudgetVarianceResult,
   type AgedPublicFundFact,
@@ -564,6 +568,86 @@ export async function getFundReport(
 type DrizzleTransaction = Parameters<Parameters<(typeof db)["transaction"]>[0]>[0];
 
 // ---------------------------------------------------------------------------
+// assertBudgetUnlocked / getBudgetApproval — Budget Approve/Lock
+// ---------------------------------------------------------------------------
+
+export type LockCheckResult = { ok: true } | { ok: false; error: string; status: 409 };
+
+/**
+ * Every write touching ledger_budgets or ledger_categories for a given
+ * (entityId, fiscalYear) must reject when that pair is locked. Called from
+ * inside upsertBudgetLine (covers PATCH /budgets, POST /budgets/seed, and the
+ * add-line path for free) and explicitly from POST /categories (category
+ * creation doesn't go through upsertBudgetLine — architect Ruling 2).
+ *
+ * @param tx  Optional Drizzle transaction client — pass the enclosing `tx`
+ *            so the lock check reads inside the same transaction as the
+ *            write it's guarding. Defaults to the module-level `db`.
+ */
+export async function assertBudgetUnlocked(
+  entityId: string,
+  fiscalYear: number,
+  tx: DrizzleTransaction | typeof db = db,
+): Promise<LockCheckResult> {
+  const rows = await tx
+    .select({ status: ledgerBudgetApprovals.status })
+    .from(ledgerBudgetApprovals)
+    .where(
+      and(
+        eq(ledgerBudgetApprovals.entityId, entityId),
+        eq(ledgerBudgetApprovals.fiscalYear, fiscalYear),
+      ),
+    )
+    .limit(1);
+  if (isBudgetLocked(rows[0] ?? null)) {
+    return {
+      ok: false,
+      error: "This budget is locked. Unlock it to make changes.",
+      status: 409,
+    };
+  }
+  return { ok: true };
+}
+
+export type BudgetApprovalWithNames = LedgerBudgetApproval & {
+  approvedByName: string | null;
+  unlockedByName: string | null;
+};
+
+/**
+ * Current approve/lock state for a given (entityId, fiscalYear), or null if
+ * no row exists yet (unlocked by default — isBudgetLocked(null) === false).
+ * No corresponding GET route — budgeting/page.tsx (a Server Component) calls
+ * this directly, matching how it already fetches every other piece of page
+ * data (getFunds, getFundReport, computeSeedFromPriorYear) without an
+ * internal API round-trip (DECISION-044).
+ */
+export async function getBudgetApproval(
+  entityId: string,
+  fiscalYear: number,
+): Promise<BudgetApprovalWithNames | null> {
+  const approvedByUser = alias(users, "approvedByUser");
+  const unlockedByUser = alias(users, "unlockedByUser");
+  const rows = await db
+    .select({
+      ...getTableColumns(ledgerBudgetApprovals),
+      approvedByName: approvedByUser.name,
+      unlockedByName: unlockedByUser.name,
+    })
+    .from(ledgerBudgetApprovals)
+    .leftJoin(approvedByUser, eq(ledgerBudgetApprovals.approvedByUserId, approvedByUser.id))
+    .leftJoin(unlockedByUser, eq(ledgerBudgetApprovals.unlockedByUserId, unlockedByUser.id))
+    .where(
+      and(
+        eq(ledgerBudgetApprovals.entityId, entityId),
+        eq(ledgerBudgetApprovals.fiscalYear, fiscalYear),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // upsertBudgetLine — Guided Budgeting (shared upsert core, architect Ruling 1)
 // ---------------------------------------------------------------------------
 
@@ -586,7 +670,7 @@ export type UpsertBudgetLineParams = {
 
 export type UpsertBudgetLineResult =
   | { ok: true; action: "upserted" | "deleted"; id?: string }
-  | { ok: false; error: string; status: 400 | 404 };
+  | { ok: false; error: string; status: 400 | 404 | 409 };
 
 /**
  * Shared upsert-or-delete core for a single `(fundId, fiscalYear, categoryId,
@@ -646,6 +730,16 @@ export async function upsertBudgetLine(
     // Unreachable: validateBudgetLineInput returns ok:false above when either
     // is null. Guards TS narrowing for the entityId/insert below.
     return { ok: false, error: "Fund or category not found", status: 404 };
+  }
+
+  // Lock check runs after shape validation (so a bad fundId/categoryId/amount
+  // still returns its existing 400/404 first) and before the delete/insert
+  // branch — covers PATCH /budgets, POST /budgets/seed, and the add-line
+  // path for free, since all three funnel through this function (Phase 3
+  // design, architect Ruling 2).
+  const lock = await assertBudgetUnlocked(fund.entityId, fiscalYear, tx);
+  if (!lock.ok) {
+    return lock;
   }
 
   if (annualAmountCents === null) {

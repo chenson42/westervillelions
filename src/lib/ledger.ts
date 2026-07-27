@@ -1261,3 +1261,118 @@ export function decideSeedWriteAction(
   }
   return collision ? "overwrite" : "seed";
 }
+
+// ---------------------------------------------------------------------------
+// isBudgetLocked — Budget Approve/Lock
+// ---------------------------------------------------------------------------
+
+/**
+ * The single source of truth for "is this (entity, fiscalYear) budget
+ * locked" — used both by assertBudgetUnlocked() (server-side write
+ * enforcement, ledger-queries.ts) and by budgeting/page.tsx (read-only
+ * rendering decision), so the page can never disagree with the write-side
+ * guard about lock state. `null`/`undefined` (no approval row exists yet)
+ * is unlocked by default — a fresh (entity, fiscalYear) pair with no row
+ * starts editable, no backfill/migration needed on FY rollover.
+ */
+export function isBudgetLocked(
+  approval: { status: string } | null | undefined,
+): boolean {
+  return approval?.status === "locked";
+}
+
+// ---------------------------------------------------------------------------
+// nextCategorySortOrder — Budget Approve/Lock (inline category create)
+// ---------------------------------------------------------------------------
+
+/**
+ * A brand-new category is appended to the end of its fund+flow's existing
+ * sort order. Pure — the caller (POST /api/admin/ledger/categories) fetches
+ * the existing active categories' sortOrder values and passes them in.
+ */
+export function nextCategorySortOrder(existingSortOrders: number[]): number {
+  if (existingSortOrders.length === 0) {
+    return 0;
+  }
+  return Math.max(...existingSortOrders) + 1;
+}
+
+// ---------------------------------------------------------------------------
+// validateCategoryCreateInput — Budget Approve/Lock (inline category create)
+// ---------------------------------------------------------------------------
+
+export type CategoryCreateValidationInput = {
+  name: string;
+  flow: string;
+  /** Active category names already in scope for this (entityId, fundKind, flow) — for the case-insensitive duplicate check. */
+  existingNames: string[];
+};
+
+export type CategoryCreateValidationResult =
+  | { ok: true }
+  | { ok: false; error: string; status: 400 | 409 };
+
+/**
+ * Pure validation core for POST /api/admin/ledger/categories, factored out
+ * so the shape/uniqueness checks are unit-testable without a DB (matching
+ * validateBudgetLineInput's established split). Checks, in order: name
+ * required (trimmed non-empty), flow is 'income' | 'expense', and a
+ * case-insensitive duplicate-name check scoped to the caller-supplied
+ * existingNames list (already scoped to entityId+fundKind+flow by the
+ * caller via getCategories()).
+ */
+export function validateCategoryCreateInput(
+  input: CategoryCreateValidationInput,
+): CategoryCreateValidationResult {
+  const { name, flow, existingNames } = input;
+
+  const trimmedName = typeof name === "string" ? name.trim() : "";
+  if (!trimmedName) {
+    return { ok: false, error: "Category name is required.", status: 400 };
+  }
+  if (flow !== "income" && flow !== "expense") {
+    return { ok: false, error: "flow must be 'income' or 'expense'", status: 400 };
+  }
+
+  const lowerName = trimmedName.toLowerCase();
+  if (existingNames.some((existing) => existing.toLowerCase() === lowerName)) {
+    return {
+      ok: false,
+      error: `A category named '${trimmedName}' already exists for this fund.`,
+      status: 409,
+    };
+  }
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// validateRequiredTrimmedText — Budget Approve/Lock (shared with approve/unlock routes)
+// ---------------------------------------------------------------------------
+
+export type RequiredTrimmedTextResult =
+  | { ok: true; value: string }
+  | { ok: false };
+
+/**
+ * Small shared pure helper replacing the inline trim/length checks the
+ * transactions-approve route already duplicates ad hoc
+ * (transactions/[id]/approve/route.ts's boardMinute check). Reused by the
+ * new budget approve route's `boardMinute` and the new unlock route's
+ * `unlockReason`. Truncates (does not reject) text longer than `maxLen`,
+ * matching that route's existing `slice(0, BOARD_MINUTE_MAX_LEN)` convention
+ * rather than rejecting an over-length value.
+ */
+export function validateRequiredTrimmedText(
+  value: string | null | undefined,
+  maxLen: number = 500,
+): RequiredTrimmedTextResult {
+  if (!value || typeof value !== "string") {
+    return { ok: false };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { ok: false };
+  }
+  return { ok: true, value: trimmed.slice(0, maxLen) };
+}

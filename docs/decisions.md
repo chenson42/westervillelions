@@ -28,6 +28,37 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-044: Budget approve/lock API surface — route names, no chained category+amount write, lock state read via query function not a GET route, re-lock requires explicit unlock first
+
+**Status:** Resolved
+**Date:** 2026-07-27
+
+**Decision:** Four implementation calls closing the Phase 3 design for `docs/work-log/2026-07-27-ledger-budget-approve.md`, all left open by the architect (Phase 2, Suggestions 1 and 3):
+
+1. **Route names:** `POST /api/admin/ledger/budget-approvals` (approve/lock) and `POST /api/admin/ledger/budget-approvals/unlock` (unlock) — not nested under `/budgets/`, since `ledgerBudgetApprovals` is its own resource keyed by `(entityId, fiscalYear)`, not a budget line.
+2. **`POST /api/admin/ledger/categories` does not accept an inline `annualAmountCents`.** Creating a category and setting its first dollar amount stay two separate calls (`POST /categories` then the client's existing `PATCH /budgets` on blur, unchanged) rather than one endpoint doing both. A brand-new category is created with no budget line at all — it appears in `BudgetEditor` as an empty-amount row ready to type into, matching Phase 1 Flow 1's stated outcome exactly. Chaining would mean the categories route re-implements amount validation that already lives in `validateBudgetLineInput`/`upsertBudgetLine`, for a save-two-round-trips optimization on an occasional, low-cardinality action (a few new categories per year, per Phase 1's own cadence estimate).
+3. **No new `GET` route for lock state.** `budgeting/page.tsx` is a Server Component that already fetches every other piece of page data (`getFunds`, `getFundReport`, `computeSeedFromPriorYear`) by calling `ledger-queries.ts` functions directly, never through an internal API round-trip. The new `getBudgetApproval(entityId, fiscalYear)` query function follows that existing convention rather than introducing the first internal-fetch GET route on this page.
+4. **Re-approving an already-locked `(entityId, fiscalYear)` returns `409`, not a silent overwrite.** Locking a second time without first calling unlock is rejected with `"This budget is already locked. Unlock it to make changes and re-approve."` — this forces the explicit unlock-then-relock sequence Phase 1's Flow 5 describes (reason captured, then re-approve) rather than letting a second `POST /budget-approvals` quietly replace the first approval's trio and erase which board vote is actually on record.
+
+**Rationale:** All four choices favor matching an existing convention already established elsewhere in this file/module over inventing a new one for a feature that fires a handful of times per year. See Impact for the specific files each affects.
+
+**Impact:** `src/app/api/admin/ledger/budget-approvals/route.ts` (approve), `src/app/api/admin/ledger/budget-approvals/unlock/route.ts` (unlock), `src/app/api/admin/ledger/categories/route.ts` (create, no amount param), `src/lib/ledger-queries.ts` (`getBudgetApproval`, no corresponding route), `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` (calls `getBudgetApproval` directly). Full contracts in Phase 3 of the work-log.
+
+---
+
+## DECISION-043: Budget approve/lock modeled as a single status-flip row per (entity, fiscalYear), not an event log
+
+**Status:** Resolved
+**Date:** 2026-07-27
+
+**Decision:** The new `ledger_budget_approvals` table (Phase 2 architectural review, `docs/work-log/2026-07-27-ledger-budget-approve.md`) is **one row per `(entityId, fiscalYear)`**, unique-constrained on that pair, carrying a `status` column (`'locked' | 'unlocked'`, default `'unlocked'`) plus current-state approval fields (`approvedByUserId`, `approvedAt`, `boardMinute`) and current-state unlock fields (`unlockedByUserId`, `unlockedAt`, `unlockReason`). Locking updates the approval trio and flips `status`; unlocking updates the unlock trio and flips `status` back — **neither action clears the other's fields**, so the most recent lock and the most recent unlock are both visible at once even after several lock/unlock cycles. This is **not** an append-only event log of every lock/unlock action.
+
+**Rationale:** This mirrors the codebase's existing convention exactly rather than inventing a new one: `ledgerTransactions` (approval) and `ledgerReimbursements` (submit/approve/reject/pay) both model approval state as nullable current-state columns on a single row, never as a separate audit-event table — and there is no generic audit-log table in this schema to reuse (`googleGroupSyncLog` is sync-specific, not a generic audit mechanism). Budget adoption is a once-a-year, low-cardinality board action; an event-log table would add a second table, a list query, and a list UI for an action that fires a handful of times a year at most, with no stated requirement for a full history beyond "the most recent unlock is visible" (Phase 1, analyst). If a future increment needs full multi-cycle audit history, that's a new, separately-scoped feature — not a reason to over-build this one.
+
+**Impact:** `src/lib/db/schema.ts` gets a new `ledgerBudgetApprovals` table; a matching idempotent migration (`drizzle/migrations/0062_ledger_budget_approvals.sql` or next available number) creates it and leaves existing `ledger_budgets` untouched. `assertBudgetUnlocked(entityId, fiscalYear)` (new shared guard) reads this table's `status` column. Follow-up: if the club later wants a full lock/unlock history (e.g., for 990 audit trail), add an event-log table then — don't retrofit this one to serve two shapes.
+
+---
+
 ## DECISION-042: Guided budgeting — Activity fund balance tolerance set to ±$100
 
 **Status:** Resolved

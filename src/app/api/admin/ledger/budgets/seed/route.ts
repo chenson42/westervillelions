@@ -57,6 +57,20 @@ import { decideSeedWriteAction } from "@/lib/ledger";
 
 const VALID_MODES = ["fill-empty", "overwrite"] as const;
 
+// Thrown inside the db.transaction() below to force a rollback when
+// upsertBudgetLine rejects a line (currently only the lock check, but any
+// future non-ok result from upsertBudgetLine is handled the same way) — see
+// the try/catch around the transaction call for how this maps back to an
+// HTTP response.
+class SeedLockedError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "SeedLockedError";
+    this.status = status;
+  }
+}
+
 type ResponseLine = {
   categoryId: string;
   categoryName: string;
@@ -175,7 +189,7 @@ export async function POST(request: NextRequest) {
           // "seed" and "overwrite" both resolve to the same DB upsert — the
           // label in the response comes from decideSeedWriteAction's pre-write
           // collision check, not from inspecting what the upsert returned.
-          await upsertBudgetLine(
+          const writeResult = await upsertBudgetLine(
             {
               fundId: fundPreview.fund.id,
               fiscalYear: targetFiscalYear,
@@ -186,6 +200,18 @@ export async function POST(request: NextRequest) {
             },
             tx,
           );
+
+          // upsertBudgetLine now returns { ok: false, status: 409 } when the
+          // target (entityId, fiscalYear) is locked (assertBudgetUnlocked,
+          // called from inside upsertBudgetLine). Discarding this result
+          // would silently report a fake 200 with seededCount/overwrittenCount
+          // numbers while zero rows were actually written for a locked FY.
+          // Throw so db.transaction() rolls back the whole seed atomically —
+          // no partial-seed-then-reject state — and surface the 409 to the
+          // caller via the outer catch block below.
+          if (!writeResult.ok) {
+            throw new SeedLockedError(writeResult.error, writeResult.status);
+          }
 
           if (writeAction === "seed") {
             seededCount++;
@@ -220,6 +246,12 @@ export async function POST(request: NextRequest) {
       funds: responseFunds,
     });
   } catch (error) {
+    if (error instanceof SeedLockedError) {
+      // db.transaction() has already rolled back — no rows from this seed
+      // request were written, even for lines processed before the locked
+      // one was hit.
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error("Error seeding ledger budgets:", error);
     return NextResponse.json({ error: "Failed to seed budgets" }, { status: 500 });
   }

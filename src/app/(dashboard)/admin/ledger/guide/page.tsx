@@ -18,6 +18,7 @@ import ComplianceCalendarSection, {
 } from "@/components/admin/ledger/guide/compliance-calendar-section";
 import GuardrailsSection from "@/components/admin/ledger/guide/guardrails-section";
 import ReportsSection from "@/components/admin/ledger/guide/reports-section";
+import BudgetingSection from "@/components/admin/ledger/guide/budgeting-section";
 import ReconciliationSection from "@/components/admin/ledger/guide/reconciliation-section";
 import SettingsSection from "@/components/admin/ledger/guide/settings-section";
 
@@ -33,6 +34,7 @@ const TOC: { id: string; label: string }[] = [
   { id: "compliance-990", label: "Compliance Calendar — Form 990" },
   { id: "guardrails", label: "Compliance Guardrails" },
   { id: "reports", label: "Reports" },
+  { id: "budgeting", label: "Budgeting" },
   { id: "reconciliation", label: "Bank Reconciliation" },
   { id: "settings", label: "Ledger Settings & Annual Review" },
 ];
@@ -42,9 +44,11 @@ const TOC: { id: string; label: string }[] = [
  *
  * A single, linear, in-app guide to The Ledger for the treasurer and a
  * future successor (Phase 1/3 design). Pure Server Component, hardcoded
- * content composed from eleven section files under
+ * content composed from twelve section files under
  * src/components/admin/ledger/guide/ — see the Phase 3 design doc
- * (docs/work-log/2026-07-21-treasury-users-guide.md) for the full rationale.
+ * (docs/work-log/2026-07-21-treasury-users-guide.md) for the full rationale,
+ * and docs/work-log/2026-07-27-ledger-budgeting-guide.md for the Budgeting
+ * section added after that design shipped.
  *
  * Exactly two live reads happen here (page.tsx stays the single place that
  * loads data, per architect Ruling 2): the current 990 determination per
@@ -160,6 +164,7 @@ export default async function TreasuryUsersGuidePage() {
         <ComplianceCalendarSection entity990s={entity990s} />
         <GuardrailsSection />
         <ReportsSection />
+        <BudgetingSection />
         <ReconciliationSection />
         <SettingsSection settings={settings} />
       </div>
