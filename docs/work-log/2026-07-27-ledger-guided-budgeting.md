@@ -16,7 +16,7 @@
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-27 |
 | 3 — Technical design | tech-lead | Complete | Design complete, implementers named | 2026-07-27 |
 | 4 — Implementation | api-developer → ux-developer | Complete | — | 2026-07-27 |
-| 5 — Verification | qa | Pending | — | — |
+| 5 — Verification | qa | Complete | PASS | 2026-07-27 |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
 ---
@@ -681,9 +681,130 @@ Built the client-facing guided-budgeting surface on top of api-developer's contr
 
 ---
 
-# Phase 5 — Verification (qa)
+# Phase 5 — Verification (qa) — 2026-07-27
 
-Pending
+**Owner:** qa
+**Status:** complete
+
+### Summary
+
+**Verdict: PASS.** Typecheck is clean, all 36 Phase-3-named unit tests exist in `src/lib/ledger.test.ts` and pass exactly as specified (including every boundary case), the full 516-test suite is green with no regressions, and the production build's TypeScript/Turbopack compile step succeeds — it fails only afterward at "Collecting page data" on an unrelated route (`/api/admin/announcements/[id]`) due to this sandbox's missing `DATABASE_URL`, a pre-existing environment limitation, not a regression from this feature. A live-DB dev server was unavailable, so I substituted a full code-level flow audit (file:line citations below) for the 9-item manual click-through — this substitution is permitted under the project's "flows the runner can't reach" rule and is stated explicitly, not silently skipped. Every one of the 5 target behaviors traces cleanly through the shipped files to the Phase 3 design with no deviation that changes behavior; the two logged UX deviations (no two-choice single dialog, no gradient hero) are cosmetic/interaction-shape only and don't change any guarantee.
+
+### What I did
+
+**Type Check**
+`pnpm exec tsc --noEmit`: **PASS** — zero errors.
+
+**Unit Tests**
+`pnpm test`: **PASS**
+Total: 516 | Passed: 516 | Failed: 0
+Duration: ~3.8s
+Failures: none.
+
+Verified the 36 named tests exist verbatim in `src/lib/ledger.test.ts` and match the Phase 3 design doc's case list exactly:
+- `describe("computeBudgetBalanceStatus")` at `src/lib/ledger.test.ts:1638` — 13 tests, all present: administrative income>expense/==/one-cent-under/0-0, activity net=0/+$100 boundary(ok)/+$100.01(warn)/-$100 boundary(ok)/-$500(warn), charitable both directions, scholarship, unrecognized fundKind → info + no throw.
+- `describe("deriveSeedLinesForFund")` at `:1723` — 8 tests: actuals-win-over-differing-budget, zero-actual-still-emitted, fund-wide-fallback-to-budget, null-budget-skipped (new category), explicit-$0-budget-emitted, collision-true, collision-false, empty-input.
+- `describe("validateBudgetLineInput")` at `:1843` — 11 tests: fund null (404), category null (404), fundKind mismatch (400), flow mismatch (400), fiscalYear bounds both directions (400), null-amount delete path (ok), explicit $0 (ok), negative (400), non-integer (400), exceeds INT4_MAX (400), all-valid (ok).
+- `describe("decideSeedWriteAction")` at `:1993` — 4 tests: all 4 (mode × collision) combinations.
+- Total: 13+8+11+4 = 36, matching api-developer's claimed count exactly. No named test case from Phase 3 is missing.
+- Ran `npx vitest run --coverage`: `src/lib/ledger.ts` = **100% statements, 95.91% branch, 100% functions, 100% lines**. `src/lib/ledger-queries.ts` (which houses `computeSeedFromPriorYear`/`upsertBudgetLine`/`getEntityById`) shows 0% — this is by explicit design-doc convention, not a gap: no function in `ledger-queries.ts` has ever had a mocked-query-builder unit test in this repo, and Phase 3's "Explicitly not unit-tested, and why" section names this choice and defers correctness to the pure-function tests (above) plus this Phase 5 manual/code audit.
+
+**Production Build**
+`pnpm build:only`: **PASS (with known environment limitation)**
+- `✓ Compiled successfully in 34.9s` (Turbopack) and `Finished TypeScript in 36.6s` both succeeded — this is the part the feature controls and it is clean.
+- Build then fails at "Collecting page data" with `Error: DATABASE_URL or DB_URL environment variable is not set`, first surfacing on `/api/admin/announcements/[id]` — an unrelated pre-existing route, not a file this feature touched. This sandbox has no `.env.local` / live `DATABASE_URL`, matching both api-developer's and ux-developer's prior flags. Not counted as a FAIL.
+- `pnpm lint`: reproduced the pre-existing `minimatch` ESLint-loader crash independent of this change (confirmed by ux-developer and re-confirmed by me it is unrelated to any file in this feature) — flagged for deployment-engineer's dependency review, not a Phase 5 blocker.
+
+**End-to-End Tests**
+`pnpm test:e2e`: **not run** — no live `DATABASE_URL`/`.env.local` in this sandbox, so `pnpm dev` cannot serve authenticated admin routes (same root cause as the build's page-data failure). Substituted with the code-level flow audit below, per the project's explicit allowance for flows the runner can't reach. Flagging for a live-environment manual pass before this ships (see Open Questions).
+
+### Code-level flow audit (file:line citations)
+
+1. **`POST /api/admin/ledger/budgets/seed` never trusts client amounts, is transactional, and is gated** — `src/app/api/admin/ledger/budgets/seed/route.ts`:
+   - Gate: `auth()` (line 82-84, 401) then `hasFeature(session.user.id, FEATURES.LEDGER_MANAGE)` (line 85-87, 403) — before any body parsing.
+   - Client body only supplies `entityId`/`targetFiscalYear`/`mode`/`fundIds` — never an amount. Amounts come exclusively from `computeSeedFromPriorYear(...)` called fresh at line 150, inside the request, after all validation — closing the page-load-vs-click race as designed.
+   - The write loop (lines 152-198) runs entirely inside `await db.transaction(async (tx) => {...})` (line 152) — one atomic unit per seed call, matching the design's "one action seeds all funds of an entity" framing.
+   - `decideSeedWriteAction(mode, line.collision)` (line 159) dispatches skip/seed/overwrite; skipped lines never touch the DB (line 161-171, `continue`); seed/overwrite both call the shared `upsertBudgetLine(..., conflictMode: "update", tx)` (line 175-184) — response label comes from the pre-write dispatch, not from inspecting the upsert result, exactly as designed.
+
+2. **`computeSeedFromPriorYear` composes on `getFundReport` with no re-aggregation, and does the empty-prior fallback** — `src/lib/ledger-queries.ts:753-830`:
+   - Line 769: `const report = await getFundReport(fund.id, priorFiscalYear)` — the only per-fund query beyond one plain `ledgerBudgets` select for collision state (lines 774-789). No direct `ledgerTransactions` touch.
+   - Line 770-772: `fundHadPriorActuals = report.totalIncomeCents + report.totalExpenseCents > 0` — fund-wide, matching locked decision 1.
+   - Line 810-814: delegates the actual mapping to the pure `deriveSeedLinesForFund` (`src/lib/ledger.ts:1110`), which correctly falls back to `budgetCents` per category when `fundHadPriorActuals` is false, and skips categories with neither (line 1135-1140).
+
+3. **`PATCH /api/admin/ledger/budgets` refactor keeps the same external contract** — `src/app/api/admin/ledger/budgets/route.ts`: request shape (`fundId`/`fiscalYear`/`categoryId`/`flow`/`annualAmountCents`, lines 8-16 doc comment) and response shape (`{action:'upserted',id}` / `{action:'deleted'}`, lines 78-82) are byte-identical to the pre-refactor handler description in the Phase 3 design doc. The handler now does only shape checks (lines 40-70) then delegates to `upsertBudgetLine({...conflictMode:'update'})` (line 72-79) — confirmed by reading the diff logic against the documented pre-refactor behavior; no existing caller (`BudgetEditor`) needs to change.
+
+4. **The budgeting page gates on `LEDGER_MANAGE` and renders the required empty states** — `src/app/(dashboard)/admin/ledger/budgeting/page.tsx`:
+   - Line 30-33: `auth()` → redirect `/signin`; `hasFeature(..., FEATURES.LEDGER_MANAGE)` → redirect `/access-pending`. No view-only fallback, matching architect Ruling 3 (this page is manage-only, unlike the fund report page).
+   - Line 42-48: zero-entities empty state (`bg-gray-50 rounded-2xl p-10...`).
+   - Line 74-88: zero-funds-for-entity empty state, same styling, with a link to Ledger Settings.
+   - Client island receives `allEmpty` (all funds have zero seedable lines) and disables/annotates the entity-wide button accordingly (`guided-budget-setup.tsx:251,272,290-295`) — the first-year/no-prior-data path from the click-through list.
+
+5. **The client island wires `computeBudgetBalanceStatus` live and uses `<ConfirmDialog>` (not `window.confirm`) for overwrite only** — `src/components/admin/ledger/guided-budget-setup.tsx`:
+   - Line 8: `import { computeBudgetBalanceStatus, ... } from "@/lib/ledger"` — the pure, zero-DB-import module, safe for the client bundle (confirmed `src/lib/ledger.ts` has zero top-level imports at all).
+   - Line 181-192 (`handleInputChange`) + line 302 (`computeBudgetBalanceStatus(fund.fundKind, sums.incomeCents, sums.expenseCents)` inside the render, recomputed every render from local state) — recomputes on every keystroke via `BudgetEditor`'s new `onInputChange` prop (`src/components/admin/ledger/budget-editor.tsx:52-56`, backward-compatible, confirmed the only other caller `[fundSlug]/report/page.tsx` doesn't pass it).
+   - Line 407-421: a single `<ConfirmDialog destructive>` used exclusively for the overwrite path, `title`/`description` naming the exact collision count and total (`"${collisionCount} of ${seedableCount} categories already have a budget..."`) — confirmed no `window.confirm`/`alert`/`prompt` anywhere in the new files (grepped).
+   - Confirmed `fill-empty` never requires a dialog (non-destructive by construction — server-side `decideSeedWriteAction` skips every collision in that mode regardless of what the client requests), matching the logged UX adaptation from the two-choice dialog sketch to "plain seed button + separate gated overwrite button."
+
+### Gate audit
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `POST /api/admin/ledger/budgets/seed` (new) | yes (`route.ts:82`) | yes (`route.ts:85`) | `FEATURES.LEDGER_MANAGE` — correct: this is a bulk write across every category/fund of an entity, appropriately gated to the same manage-level permission as the existing `PATCH /budgets`, not a lower view/record tier. |
+| `PATCH /api/admin/ledger/budgets` (refactored, contract unchanged) | yes (unchanged) | yes (unchanged) | `FEATURES.LEDGER_MANAGE` — unchanged from pre-existing behavior. |
+| `admin/ledger/budgeting/page.tsx` (new Server Component) | yes (`page.tsx:30`, redirect `/signin`) | yes (`page.tsx:33`, redirect `/access-pending`) | `FEATURES.LEDGER_MANAGE` — correct, and deliberately no `LEDGER_VIEW`/`LEDGER_RECORD` fallback, since this whole surface is a write tool, matching architect Ruling 3. |
+
+No other protected route or server action was added or changed by this feature (`upsertBudgetLine`/`computeSeedFromPriorYear`/the four `ledger.ts` pure helpers are internal library functions, not routes/actions — they're covered by the two routes' gates above, both confirmed present).
+
+### UX-gate spot-check (against CLAUDE.md, independent of ux-developer's self-report)
+
+- Cards: `rounded-2xl` throughout the new page/component, no `rounded-xl` (grepped both new files — none found).
+- Buttons: `rounded-lg` only; no `rounded-full` (grepped, none found).
+- Colors: `lions-gold` used for the eyebrow label (`page.tsx:180`) and the "info" balance badge (`guided-budget-setup.tsx:25`); grepped both new files for `lions-red` — zero hits. `warn` uses `bg-amber-50 text-amber-800` (`guided-budget-setup.tsx:23`), not a red state.
+- Focus rings: spot-checked every button/link in `guided-budget-setup.tsx` and `page.tsx` — all carry `focus:outline-none focus:ring-2 focus:ring-lions-blue`.
+- Empty states: `bg-gray-50 rounded-2xl p-10 text-center text-gray-500` (entity/fund-level) and a smaller `p-4` inline variant (per-fund nothing-to-seed) — both match the CLAUDE.md empty-state spec.
+- Money formatting: reused the same repeated-local-helper `formatDollars(cents)` convention already used across ~15 other ledger components — consistent with the codebase's actual pattern, confirmed by ux-developer's note and spot-checked in the file.
+- No `console.log` in any new/edited file (grepped `guided-budget-setup.tsx`, `budget-editor.tsx`, `page.tsx`, both routes, `ledger.ts`, `ledger-queries.ts` — zero hits).
+- No native dialogs anywhere in the new files (grepped — zero hits for `window.confirm`/`window.alert`/`window.prompt`).
+
+### Adversarial checks
+
+- **Client cannot force an overwrite in fill-empty mode:** confirmed by reading the route — the server recomputes `computeSeedFromPriorYear` fresh and dispatches every line through `decideSeedWriteAction(mode, line.collision)` using server-computed collision state; the client's request body carries no amounts and no per-line action, only `mode` (a fixed enum) and optional `fundIds`. A malicious client resending the seed request with `mode: "fill-empty"` cannot touch a colliding row no matter what it sends.
+- **Fund with zero prior actuals falls back correctly / shows empty state:** `deriveSeedLinesForFund` (line 1122-1140) falls back to `budgetCents` fund-wide when `fundHadPriorActuals` is false, and skips a category entirely when both `actualCents` context and `budgetCents` are absent — verified by unit tests 16-18 in `ledger.test.ts`. The page/island correctly disables the seed action and shows explanatory copy when `seedableCount === 0` for a fund or `allEmpty` entity-wide (`guided-budget-setup.tsx:251,290-295,328-332`).
+- **Category-fund-kind mismatch rejected:** `validateBudgetLineInput` returns `{ok:false, status:400}` when `category.fundKind !== fund.kind` (`ledger.ts:1201-1203`) — unit-tested (test 24) and reachable from both `PATCH` and the seed endpoint's `upsertBudgetLine` call, since both funnel through the same shared core (architect Ruling 1's stated goal — one source of truth, verified in code, not just asserted).
+- **Amount bounds enforced:** negative, non-integer, and `>INT4_MAX` all rejected (`ledger.ts:1224-1237`), unit-tested (tests 29-31).
+- **Re-running seed after partial manual entry doesn't clobber:** `fill-empty` + `collision:true` → `"skip"` (`decideSeedWriteAction`, unit-tested test 34) — the route never calls `upsertBudgetLine` for a skipped line (route.ts:161-171 `continue`s before reaching the upsert call at line 175), so a manually-edited row is provably never touched by a re-run in fill-empty mode. This exact guarantee needs a **live-DB confirmation** too (click-through item 4/5) since the unit test proves the decision function is correct but not that the route wiring is bug-free end-to-end — flagging as the primary open item below.
+
+### Regression Tests Added
+
+None — this is a net-new feature increment, not a bug fix; no pre-existing behavior regressed. (All 36 new tests are net-new coverage for net-new pure functions, not regression tests for a prior defect.)
+
+### Coverage on Critical Modules
+
+- `src/lib/ledger.ts` (this feature's pure-logic surface): **100% statements, 95.91% branch, 100% functions, 100% lines** — exceeds this project's 90%+ bar for `events.ts`-tier modules; no equivalent named target exists for `ledger.ts` in CLAUDE.md but this clears every reasonable bar.
+- `src/lib/ledger-queries.ts` (DB-touching wrappers `computeSeedFromPriorYear`/`upsertBudgetLine`/`getEntityById`): 0% via Vitest, by explicit, documented repo convention (no `ledger-queries.ts` function has ever had a mocked-query-builder unit test) — correctness instead relies on the code-level audit above and the (still-pending) live-DB manual click-through.
+- `src/lib/permissions.ts` / `src/lib/members.ts` / `src/lib/events.ts`: unchanged by this feature; not re-audited here (out of scope for this feature's Phase 5 pass — covered by the standing 7-day coverage sweep).
+
+### Feature-Gate Audit
+
+See "Gate audit" table above — reproduced here per the template: **no protected route or server action beyond the two listed was added or changed.** Both the new `POST /budgets/seed` route and the new `admin/ledger/budgeting` page carry `auth()` + `hasFeature(FEATURES.LEDGER_MANAGE)`, verified by reading the files (not inferred from tests passing), and the refactored `PATCH /budgets` route's gate is unchanged from before this feature.
+
+### Manual Click-Through
+
+| Flow | Result | Notes |
+|------|--------|-------|
+| Full 9-item click-through list (ux-developer's handoff) | **not run** | No live `DATABASE_URL`/`.env.local` in this sandbox — `pnpm dev` cannot serve authenticated admin routes. Substituted with the code-level flow audit above, which traces every one of the 9 items to specific file:line evidence except the two that are inherently runtime-only: (a) actually seeing the toast/BudgetEditor pre-fill re-render after a real POST round-trip, and (b) the ConfirmDialog's live on-screen collision count against real seeded rows. Both are logically guaranteed by the code (traced above) but not empirically observed running. **Requires a live-environment confirmation before this ships to production treasurers** — see Open Questions. |
+
+### Verdict: PASS
+
+Typecheck clean, all 36 named unit tests present and passing with zero regressions across the full 516-test suite, production build's compile/typecheck stage clean (the "Collecting page data" failure is a pre-existing, unrelated, documented sandbox limitation), every one of the 5 target behaviors traced to specific shipped code with file:line citations, both gates present and correctly scoped to `LEDGER_MANAGE`, no native dialogs, no console.log, brand/UX conventions followed. The one gap — the live-DB manual click-through — is explicitly called out as still needed, not silently waived, per the project's "manual smoke when the runner can't run" principle; it does not block PASS because the code-level audit closes the same risk surface with equivalent confidence for a server-recomputed, transactional write path, but it should happen before the first real budgeting season.
+
+### Open questions / handoff notes
+
+- **Next agent: analyst for Phase 6 (shipped vs. intent).**
+- **Carry-forward for Chuck (treasurer) / next agent with DB access:** run the 9-item manual click-through list from ux-developer's Phase 4 handoff against a real dev server + seeded DB before the first live use, with particular attention to items 4-6 (idempotent re-seed skip, overwrite-confirm accurate count + cancel-is-inert, first-year disabled state) since none of these have automated coverage by design.
+- `pnpm lint`'s `minimatch` failure is confirmed pre-existing and unrelated to this feature (reproduces on a clean tree) — already flagged to deployment-engineer's dependency review by ux-developer; re-confirmed here, no new action needed from this feature.
+- The $100 Activity-fund tolerance (DECISION-042) remains a starting default per tech-lead's own framing — flag to Chuck after the first real season that it's adjustable.
+- The optional `[fundSlug]/report/page.tsx` cross-link and board-adoption capture (both explicitly deferred, non-blocking) remain open backlog items, not defects.
 
 ---
 
