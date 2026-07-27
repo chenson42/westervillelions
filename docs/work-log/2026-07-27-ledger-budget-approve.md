@@ -15,7 +15,9 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-27 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-27 |
 | 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-27 |
-| 4 — Implementation | database-admin → api-developer → ux-developer | Pending | — | — |
+| 4 — Implementation (schema) | database-admin | Complete | — | 2026-07-27 |
+| 4 — Implementation (server) | api-developer | Pending | — | — |
+| 4 — Implementation (client) | ux-developer | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -577,7 +579,50 @@ The approve/unlock routes' actual DB writes (the `onConflictDoUpdate` upsert, th
 
 # Phase 4 — Implementation
 
-Pending.
+## Phase 4 — database-admin (schema) — 2026-07-27
+
+**Owner:** database-admin
+**Status:** complete
+
+### Summary
+
+Added `ledgerBudgetApprovals` exactly per the Phase 3 Data Model / DECISION-043 / DECISION-044, wrote the idempotent migration, added `assertBudgetUnlocked()` + `getBudgetApproval()` to `ledger-queries.ts`, wired the lock guard into `upsertBudgetLine` (covering PATCH /budgets, POST /budgets/seed, and the future add-line path for free), and added the four pure helpers the design assigned to this step in `ledger.ts`. Typecheck is clean and all 516 existing Vitest tests stay green (no new tests written here — Phase 3 assigns the four new `describe` blocks to api-developer).
+
+### What I did
+
+- Added `ledgerBudgetApprovals` table to `src/lib/db/schema.ts`, placed directly after `ledgerBudgets` (matching the Data Model section verbatim): `id`, `entityId` (FK → `ledgerEntities`, cascade), `fiscalYear`, `status` (text, default `'unlocked'`, no CHECK constraint per DECISION-041), approval trio (`approvedByUserId` FK → `users` set-null, `approvedAt`, `boardMinute`), unlock trio (`unlockedByUserId` FK → `users` set-null, `unlockedAt`, `unlockReason`), `createdAt`/`updatedAt`. Unique constraint on `(entityId, fiscalYear)` named `ledger_budget_approvals_entity_year_key`, plus `ix_ledger_budget_approvals_entity` index on `entityId`. Exported `LedgerBudgetApproval` / `NewLedgerBudgetApproval` types.
+- Wrote `drizzle/migrations/0062_ledger_budget_approvals.sql` — confirmed `0062` was still the next free number (`0061_members_membership_status.sql` was latest on disk). `CREATE TABLE IF NOT EXISTS`, a guarded `DO $$ ... END $$` block checking `pg_constraint` before `ADD CONSTRAINT` for the named unique constraint, and `CREATE INDEX IF NOT EXISTS`. Every statement is safe to re-run on every deploy.
+- Added to `src/lib/ledger-queries.ts`:
+  - `assertBudgetUnlocked(entityId: string, fiscalYear: number, tx: DrizzleTransaction | typeof db = db): Promise<LockCheckResult>` where `LockCheckResult = { ok: true } | { ok: false; error: string; status: 409 }`. Accepts the same optional tx handle convention as `upsertBudgetLine`.
+  - `getBudgetApproval(entityId: string, fiscalYear: number): Promise<BudgetApprovalWithNames | null>` — left-joins `users` twice (aliased `approvedByUser`/`unlockedByUser`) for `approvedByName`/`unlockedByName`, returns `null` when no row exists.
+  - Wired `assertBudgetUnlocked` into `upsertBudgetLine`: the call happens after `validateBudgetLineInput` passes (so a bad fundId/categoryId/amount still returns its existing 400/404 first) and before the delete/insert branch. Widened `UpsertBudgetLineResult`'s status union from `400 | 404` to `400 | 404 | 409`.
+  - Added imports: `ledgerBudgetApprovals`/`LedgerBudgetApproval` from `@/lib/db/schema`, `getTableColumns` from `drizzle-orm`, `alias` from `drizzle-orm/pg-core`, `isBudgetLocked` from `@/lib/ledger`.
+- Added four pure helpers to `src/lib/ledger.ts` (after `decideSeedWriteAction`, matching the file's section-header convention):
+  - `isBudgetLocked(approval: { status: string } | null | undefined): boolean` — `approval?.status === "locked"`.
+  - `nextCategorySortOrder(existingSortOrders: number[]): number` — `0` for empty, else `max + 1`.
+  - `validateCategoryCreateInput(input: { name: string; flow: string; existingNames: string[] }): { ok: true } | { ok: false; error: string; status: 400 | 409 }` — empty/whitespace name → 400 "Category name is required."; `flow` not `income`/`expense` → 400; case-insensitive duplicate against `existingNames` → 409 "A category named '…' already exists for this fund."
+  - `validateRequiredTrimmedText(value: string | null | undefined, maxLen: number = 500): { ok: true; value: string } | { ok: false }` — rejects null/undefined/empty/whitespace-only; trims and truncates (does not reject) text longer than `maxLen`, matching `transactions/[id]/approve/route.ts`'s existing `slice(0, BOARD_MINUTE_MAX_LEN)` convention.
+- Confirmed by reading `src/app/api/admin/ledger/budgets/seed/route.ts` that its per-line loop (`upsertBudgetLine(..., tx)` inside `db.transaction()`) already funnels through the guarded function.
+- Ran `pnpm exec tsc --noEmit` (clean) and `pnpm test` (516/516 passed, 17 test files) after all changes.
+
+### Outputs
+
+- `src/lib/db/schema.ts` — new `ledgerBudgetApprovals` table + `LedgerBudgetApproval`/`NewLedgerBudgetApproval` types, placed after `ledgerBudgets`.
+- `drizzle/migrations/0062_ledger_budget_approvals.sql` — new migration, every statement idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `DO $$` block for the named unique constraint via `pg_constraint` lookup, `CREATE INDEX IF NOT EXISTS`).
+- `src/lib/ledger-queries.ts` — `assertBudgetUnlocked()`, `getBudgetApproval()` (+ `LockCheckResult`, `BudgetApprovalWithNames` types), `upsertBudgetLine` now calls the lock guard and its result type includes `409`.
+- `src/lib/ledger.ts` — `isBudgetLocked()`, `nextCategorySortOrder()`, `validateCategoryCreateInput()` (+ `CategoryCreateValidationInput`/`Result` types), `validateRequiredTrimmedText()` (+ `RequiredTrimmedTextResult` type).
+- No new role bindings/seed rows needed — `LEDGER_MANAGE`/`LEDGER_APPROVE` already exist and are already bound (migration `0047`); this migration only creates the new table.
+- Local apply command (not run here — no `DATABASE_URL` in this environment): `export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate && pnpm db:push`.
+
+### Open questions / handoff notes
+
+- **Next agent: api-developer**, per Phase 3 Implementation Order step 2.
+- **New table available:** `ledgerBudgetApprovals` (`ledger_budget_approvals`) — one row per `(entityId, fiscalYear)`, unique on that pair. FK `entityId → ledgerEntities.id` (cascade delete). No FK/column changes to `ledgerBudgets` or `ledgerCategories` — the "budget buckets ARE ledger buckets" invariant is untouched; category creation still must go through a real `ledgerCategories` row (api-developer's `POST /categories` route).
+- **Helpers ready to consume:** `assertBudgetUnlocked(entityId, fiscalYear, tx?)` and `getBudgetApproval(entityId, fiscalYear)` in `ledger-queries.ts`; `isBudgetLocked`, `nextCategorySortOrder`, `validateCategoryCreateInput`, `validateRequiredTrimmedText` in `ledger.ts`. `upsertBudgetLine` already enforces the lock — PATCH /budgets inherits the 409 automatically since it already does generic `if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })`.
+- **Gap found, not mine to fix — flagging for api-developer:** `src/app/api/admin/ledger/budgets/seed/route.ts`'s per-line loop (~L178-188) calls `await upsertBudgetLine(..., tx)` and **discards the return value entirely** — no `.ok` check anywhere in that file today (confirmed by grep). Now that `upsertBudgetLine` can return `{ ok: false, status: 409 }` when the FY is locked, seeding a locked budget will silently "succeed" with a 200 response and fake `seededCount`/`overwrittenCount` numbers, while zero rows are actually written. The transaction itself stays consistent (no partial writes — Phase 3's atomicity claim holds), but the response lies to the caller. api-developer should add a `result.ok` check inside the loop that aborts the transaction (throw, so `db.transaction()` rolls back) and returns 409 with the shared error string, mirroring the PATCH route's existing pattern.
+- **Explicit lock call site still needed:** `POST /api/admin/ledger/categories` (new route, api-developer's to build) must call `assertBudgetUnlocked(entityId, fiscalYear)` explicitly before the uniqueness check/insert — category creation doesn't route through `upsertBudgetLine`, so it isn't covered by the wiring above (Phase 3 Data Model / Ruling 2).
+- **`validateRequiredTrimmedText` maxLen:** left as a parameter (default 500, matching `BOARD_MINUTE_MAX_LEN`) rather than hardcoded, so the unlock route can pass a different cap for `unlockReason` if api-developer/tech-lead wants one; otherwise the default applies to both call sites.
+- Did not run `pnpm db:migrate` / `pnpm db:push` against a live DB — no `DATABASE_URL` available in this environment. api-developer (or whoever has `.env.local`) should run the local apply command above before/while building the routes, so `getBudgetApproval`/`assertBudgetUnlocked` have a real table to query against during manual testing.
 
 ---
 

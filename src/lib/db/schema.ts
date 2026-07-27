@@ -796,6 +796,42 @@ export const ledgerBudgets = pgTable(
 export type LedgerBudget = typeof ledgerBudgets.$inferSelect;
 export type NewLedgerBudget = typeof ledgerBudgets.$inferInsert;
 
+// Budget approve/lock state — one row per (entityId, fiscalYear), unique-
+// constrained on that pair. Single status-flip row (DECISION-043), NOT an
+// event log: locking sets the approval trio + status='locked'; unlocking
+// sets the unlock trio + status='unlocked'. Neither clears the other, so
+// the most recent lock and most recent unlock are both visible at once.
+export const ledgerBudgetApprovals = pgTable(
+  "ledger_budget_approvals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    fiscalYear: integer("fiscal_year").notNull(), // start year, e.g. 2026 = FY2026 — same convention as ledgerBudgets.fiscalYear
+    // App-layer valid values: 'locked' | 'unlocked'. No DB CHECK constraint —
+    // consistent with ledger_transactions.status / ledger_reimbursements.status
+    // (DECISION-041 precedent: enforce in application code, not a DB object
+    // schema.ts has no builder for).
+    status: text("status").notNull().default("unlocked"),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at"),
+    boardMinute: text("board_minute"),
+    unlockedByUserId: uuid("unlocked_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    unlockedAt: timestamp("unlocked_at"),
+    unlockReason: text("unlock_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ledger_budget_approvals_entity_year_key").on(t.entityId, t.fiscalYear),
+    index("ix_ledger_budget_approvals_entity").on(t.entityId),
+  ],
+);
+
+export type LedgerBudgetApproval = typeof ledgerBudgetApprovals.$inferSelect;
+export type NewLedgerBudgetApproval = typeof ledgerBudgetApprovals.$inferInsert;
+
 // Settings — singleton row; guards inc1 guardrail checks (reserves threshold, bonded flag)
 export const ledgerSettings = pgTable("ledger_settings", {
   id: uuid("id").primaryKey().defaultRandom(),
