@@ -14,8 +14,8 @@
 |-------|-------|--------|---------|------|
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-27 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-07-27 |
-| 3 — Technical design | tech-lead | Pending | — | — |
-| 4 — Implementation | TBD by tech-lead | Pending | — | — |
+| 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-07-27 |
+| 4 — Implementation | database-admin → api-developer → ux-developer | Pending | — | — |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -254,7 +254,324 @@ This is a schema-touching feature per the work-log header's own pipeline-mode no
 
 # Phase 3 — Technical Design (tech-lead)
 
-Pending.
+## Files Read
+
+- `docs/work-log/2026-07-27-ledger-budget-approve.md` (Phases 1–2, full)
+- `docs/decisions.md` DECISION-043 (approvals-table shape ruling)
+- `src/lib/db/schema.ts` L501-797 (`ledgerEntities`, `ledgerFunds`, `ledgerCategories`, `ledgerBudgets`) and L960-981 (`ledgerReimbursements` current-state approval-trio precedent)
+- `src/lib/ledger-queries.ts` L558-720 (`upsertBudgetLine`, `DrizzleTransaction` type), L237-253 (`getCategories`), L1436-1495 (`getPendingApprovals` — `leftJoin(users)` display-name pattern)
+- `src/lib/ledger.ts` L996-1230 (`computeBudgetBalanceStatus`, `validateBudgetLineInput`, `decideSeedWriteAction` — the established "extract a pure, DB-free function so it's unit-testable" convention)
+- `src/lib/ledger.test.ts` (test file conventions — flat `describe`/`it` per pure function, no DB mocking)
+- `src/app/api/admin/ledger/budgets/route.ts` (PATCH — existing add/remove-line contract, unchanged)
+- `src/app/api/admin/ledger/budgets/seed/route.ts` (confirms every write loops through `upsertBudgetLine` inside one `db.transaction()`)
+- `src/app/api/admin/ledger/transactions/[id]/approve/route.ts` (approve-route structure to mirror, minus the self-approval block)
+- `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` (current single-gate Server Component)
+- `src/components/admin/ledger/guided-budget-setup.tsx` L413-423 (confirmed: `BudgetEditor` — and therefore the only place a category row can currently appear — is gated on `fund.budgetEditorLines.length > 0`; a zero-category fund renders no editor and today has no other affordance)
+- `src/components/admin/ledger/budget-editor.tsx` (blank-to-delete UX, `onInputChange` callback)
+- `src/app/(dashboard)/admin/ledger/reimbursements/page.tsx` L56-73 (two-tier gate precedent to copy: `hasAnyFeature` for admission, separate `canApprove`/`canRecord` booleans)
+- `drizzle/migrations/` listing — latest on disk is `0061_members_membership_status.sql`; `0062` confirmed free
+
+## Summary
+
+Two additions to the existing Guided Budgeting surface (`/admin/ledger/budgeting`), both scoped exactly per the locked decisions and architect rulings: (A) creating a genuinely new budget category inline, plus an explicit remove-line control, both funneling through the existing `upsertBudgetLine` core; and (B) a new `ledgerBudgetApprovals` table recording lock/unlock state per `(entityId, fiscalYear)`, enforced by a single `assertBudgetUnlocked()` guard called from inside `upsertBudgetLine` and explicitly from the new category-create route. No new `FEATURES` key — `LEDGER_MANAGE` gates add/remove/create-category, `LEDGER_APPROVE` gates approve/lock/unlock, exactly as scoped in Phase 1/2.
+
+### Key invariant — budget buckets ARE ledger buckets
+
+"Add a line" creates or reuses a real `ledgerCategories` row via `POST /categories`; there is deliberately **no budget-only bucket type**. This is load-bearing: budget-vs-actual measurement (`getFundReport`) matches actual transactions to budget targets by `categoryId`, so a budget bucket that did not exist as a ledger category could never be compared against actuals. Any future change must preserve this — a budget line must always resolve to a category the ledger also records transactions against. A category created here becomes available for transaction entry everywhere (intended: you budget for a new initiative, then spending lands in the same bucket and the report lines up).
+
+## Data Model
+
+New table, `src/lib/db/schema.ts`, placed directly after `ledgerBudgets` (L797):
+
+```typescript
+// Budget approve/lock state — one row per (entityId, fiscalYear), unique-
+// constrained on that pair. Single status-flip row (DECISION-043), NOT an
+// event log: locking sets the approval trio + status='locked'; unlocking
+// sets the unlock trio + status='unlocked'. Neither clears the other, so
+// the most recent lock and most recent unlock are both visible at once.
+export const ledgerBudgetApprovals = pgTable(
+  "ledger_budget_approvals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    fiscalYear: integer("fiscal_year").notNull(), // start year, e.g. 2026 = FY2026 — same convention as ledgerBudgets.fiscalYear (L782)
+    // App-layer valid values: 'locked' | 'unlocked'. No DB CHECK constraint —
+    // consistent with ledger_transactions.status / ledger_reimbursements.status
+    // (DECISION-041 precedent: enforce in application code, not a DB object
+    // schema.ts has no builder for).
+    status: text("status").notNull().default("unlocked"),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at"),
+    boardMinute: text("board_minute"),
+    unlockedByUserId: uuid("unlocked_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    unlockedAt: timestamp("unlocked_at"),
+    unlockReason: text("unlock_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ledger_budget_approvals_entity_year_key").on(t.entityId, t.fiscalYear),
+    index("ix_ledger_budget_approvals_entity").on(t.entityId),
+  ],
+);
+
+export type LedgerBudgetApproval = typeof ledgerBudgetApprovals.$inferSelect;
+export type NewLedgerBudgetApproval = typeof ledgerBudgetApprovals.$inferInsert;
+```
+
+No changes to `ledgerBudgets` or `ledgerCategories` — both already carry every column this feature needs (`ledgerCategories` already has `countsAsGiving`, `form990Line`, `sortOrder`, `isActive`; `ledgerBudgets` already supports delete-by-null-amount).
+
+### Migration `drizzle/migrations/0062_ledger_budget_approvals.sql`
+
+```sql
+-- Budget approve/lock state (DECISION-043). One row per (entity_id, fiscal_year).
+CREATE TABLE IF NOT EXISTS ledger_budget_approvals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_id UUID NOT NULL REFERENCES ledger_entities(id) ON DELETE CASCADE,
+  fiscal_year INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unlocked',
+  approved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  approved_at TIMESTAMP,
+  board_minute TEXT,
+  unlocked_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  unlocked_at TIMESTAMP,
+  unlock_reason TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'ledger_budget_approvals_entity_year_key'
+  ) THEN
+    ALTER TABLE ledger_budget_approvals
+      ADD CONSTRAINT ledger_budget_approvals_entity_year_key UNIQUE (entity_id, fiscal_year);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS ix_ledger_budget_approvals_entity ON ledger_budget_approvals (entity_id);
+```
+
+Every statement is idempotent (`IF NOT EXISTS` on the table and index; guarded `DO $$` block for the named unique constraint — `CREATE TABLE ... UNIQUE(...)` inline isn't idempotent-safe across re-runs the way a guarded `ADD CONSTRAINT` is, matching the pattern other migrations already use for named constraints). No CHECK constraint on `status`, matching DECISION-041's precedent.
+
+## Lock Helper + Enforcement
+
+`src/lib/ledger-queries.ts` (database-admin owns this alongside the table):
+
+```typescript
+export type LockCheckResult = { ok: true } | { ok: false; error: string; status: 409 };
+
+/**
+ * Every write touching ledger_budgets or ledger_categories for a given
+ * (entityId, fiscalYear) must reject when that pair is locked. Called from
+ * inside upsertBudgetLine (covers PATCH /budgets, POST /budgets/seed, and the
+ * add-line path for free) and explicitly from POST /categories (category
+ * creation doesn't go through upsertBudgetLine — architect Ruling 2).
+ */
+export async function assertBudgetUnlocked(
+  entityId: string,
+  fiscalYear: number,
+  tx: DrizzleTransaction | typeof db = db,
+): Promise<LockCheckResult> {
+  const rows = await tx
+    .select({ status: ledgerBudgetApprovals.status })
+    .from(ledgerBudgetApprovals)
+    .where(
+      and(
+        eq(ledgerBudgetApprovals.entityId, entityId),
+        eq(ledgerBudgetApprovals.fiscalYear, fiscalYear),
+      ),
+    )
+    .limit(1);
+  if (isBudgetLocked(rows[0] ?? null)) {
+    return {
+      ok: false,
+      error: "This budget is locked. Unlock it to make changes.",
+      status: 409,
+    };
+  }
+  return { ok: true };
+}
+
+export async function getBudgetApproval(
+  entityId: string,
+  fiscalYear: number,
+): Promise<
+  (LedgerBudgetApproval & { approvedByName: string | null; unlockedByName: string | null }) | null
+> {
+  const approvedByUser = alias(users, "approvedByUser");
+  const unlockedByUser = alias(users, "unlockedByUser");
+  const rows = await db
+    .select({
+      ...getTableColumns(ledgerBudgetApprovals),
+      approvedByName: approvedByUser.name,
+      unlockedByName: unlockedByUser.name,
+    })
+    .from(ledgerBudgetApprovals)
+    .leftJoin(approvedByUser, eq(ledgerBudgetApprovals.approvedByUserId, approvedByUser.id))
+    .leftJoin(unlockedByUser, eq(ledgerBudgetApprovals.unlockedByUserId, unlockedByUser.id))
+    .where(
+      and(
+        eq(ledgerBudgetApprovals.entityId, entityId),
+        eq(ledgerBudgetApprovals.fiscalYear, fiscalYear),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+```
+
+`isBudgetLocked()` (new pure helper, `src/lib/ledger.ts`, next to `validateBudgetLineInput`):
+
+```typescript
+export function isBudgetLocked(approval: { status: string } | null | undefined): boolean {
+  return approval?.status === "locked";
+}
+```
+
+This is the single source of truth for "is this budget locked" — used by `assertBudgetUnlocked` (server enforcement) **and** by `budgeting/page.tsx` (deciding read-only rendering), so the page can never disagree with the write-side guard about lock state.
+
+**Call sites:**
+1. `upsertBudgetLine` (`ledger-queries.ts` L611) — after `validateBudgetLineInput` passes (so a bad fundId/categoryId/amount still returns its existing 400/404 first) and *before* the delete/insert branch, call `const lock = await assertBudgetUnlocked(fund.entityId, fiscalYear, tx); if (!lock.ok) return lock;`. This one call site covers `PATCH /budgets` (existing add-existing-category + remove-line), `POST /budgets/seed` (loops calls to `upsertBudgetLine` inside its own `db.transaction()` — confirmed by reading the route, no changes needed there), and the add-line-after-create-category client flow, since all three already funnel through this function. `UpsertBudgetLineResult`'s type gains `status: 400 | 404 | 409` to accommodate the new branch.
+2. `POST /api/admin/ledger/categories` — explicit call to `assertBudgetUnlocked(entityId, fiscalYear, undefined)` after basic shape validation, before the uniqueness check and insert. `fiscalYear` travels in the request body purely to drive this check (not persisted on `ledgerCategories`, which has no FY column).
+
+**Error/HTTP shape:** `409 { error: "This budget is locked. Unlock it to make changes." }` — identical string both call sites use, matching the copy Phase 1 already specified for this exact failure.
+
+**Read side:** `budgeting/page.tsx` calls `getBudgetApproval(entity.id, targetFY)` directly (Server Component, no new GET route — DECISION-044) and passes `locked = isBudgetLocked(approval)` plus the full `approval` row (for the "Locked — approved by {name} on {date}, board minute {ref}" banner) down to `GuidedBudgetSetup`.
+
+## API Contracts
+
+### `POST /api/admin/ledger/categories` (new; gate: `LEDGER_MANAGE`)
+
+```
+Body:
+{
+  entityId: string;
+  fiscalYear: number;       // 2000-2100; used only for the lock check, not persisted
+  fundKind: 'administrative' | 'activity' | 'charitable' | 'scholarship';
+  flow: 'income' | 'expense';
+  name: string;             // required, trimmed, non-empty
+  countsAsGiving?: boolean; // default true (matches schema default)
+  form990Line?: string;     // optional, trimmed
+}
+
+Response 200: { id, name, fundKind, flow, sortOrder, countsAsGiving, form990Line, isActive: true }
+```
+
+Validation order: session → `hasFeature(LEDGER_MANAGE)` → shape checks (entityId/fiscalYear/fundKind/flow present and well-typed; `fundKind` must match an existing active fund of that kind for the entity, via `getFunds(entityId)` — rejects a `fundKind` string that doesn't correspond to any real fund, since the UI only ever offers the kind of the fund card the treasurer is looking at) → `assertBudgetUnlocked(entityId, fiscalYear)` (409 if locked) → fetch `getCategories(entityId, { fundKind, flow })` for (a) the case-insensitive duplicate-name check and (b) `sortOrder` assignment → insert.
+
+- **Duplicate name:** 409 `{ error: "A category named '…' already exists for this fund." }` — case-insensitive compare against the fetched active categories, matching Phase 1 Flow 1's specified microcopy exactly.
+- **`sortOrder`:** `nextCategorySortOrder(existing.map(c => c.sortOrder))` = `max + 1`, or `0` if the fund+flow has no categories yet.
+- Per DECISION-044, this endpoint never accepts an amount — the category is created bare and appears as an empty-amount row in `BudgetEditor`; the treasurer's next keystroke goes through the existing `PATCH /budgets` unchanged.
+
+### `POST /api/admin/ledger/budget-approvals` (new; gate: `LEDGER_APPROVE`) — approve/lock
+
+```
+Body: { entityId: string; fiscalYear: number; boardMinute: string; }
+Response 200: { entityId, fiscalYear, status: 'locked', approvedByUserId, approvedAt, boardMinute }
+```
+
+Mirrors `transactions/[id]/approve/route.ts`'s structure (session → feature check → fetch current state → status guard → validate body → write) **without** the self-approval block (locked decision — budget adoption is a board vote about a plan, not a disbursement one person moves).
+
+- 400 — `fiscalYear` out of `[2000, 2100]`, or `boardMinute` missing/blank after trim (reuses the shared `validateRequiredTrimmedText` helper below; matches existing "boardMinute is required" 400 microcopy).
+- 404 — `entityId` doesn't resolve via `getEntityById`.
+- 409 — current row (via `getBudgetApproval`) already has `status: 'locked'` → `{ error: "This budget is already locked. Unlock it to make changes and re-approve." }` (DECISION-044 — forces the explicit unlock step rather than silently overwriting the approval trio).
+- Write: `insert(ledgerBudgetApprovals).values({ entityId, fiscalYear, status: 'locked', approvedByUserId: session.user.id, approvedAt: new Date(), boardMinute, updatedAt: new Date() }).onConflictDoUpdate({ target: [entityId, fiscalYear], set: { status: 'locked', approvedByUserId, approvedAt, boardMinute, updatedAt } })` — the unlock trio is left untouched by this write (DECISION-043: neither action clears the other).
+
+### `POST /api/admin/ledger/budget-approvals/unlock` (new; gate: `LEDGER_APPROVE`)
+
+```
+Body: { entityId: string; fiscalYear: number; unlockReason: string; }
+Response 200: { entityId, fiscalYear, status: 'unlocked', unlockedByUserId, unlockedAt, unlockReason }
+```
+
+- 400 — `unlockReason` missing/blank after trim.
+- 404 — `entityId` not found.
+- 409 — no `ledgerBudgetApprovals` row exists yet, or existing `status !== 'locked'` → `{ error: "This budget is not currently locked." }` (can't unlock something never approved).
+- Write: `onConflictDoUpdate` setting `status: 'unlocked', unlockedByUserId: session.user.id, unlockedAt: new Date(), unlockReason, updatedAt: new Date()` — approval trio untouched.
+
+### `PATCH /api/admin/ledger/budgets` and `POST /api/admin/ledger/budgets/seed` — unchanged contracts
+
+Both already funnel every write through `upsertBudgetLine`, so both inherit `assertBudgetUnlocked` for free with **no request/response shape change** — only a new possible `409` in the existing error-handling branch (`if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })`, PATCH route L82-84, already generic over `result.status`). Verified: the seed route's per-line loop (L178-188) calls `upsertBudgetLine(..., tx)` inside its `db.transaction()`, so a lock check that fires mid-loop rolls back the whole seed atomically — no partial-seed-then-reject state is possible.
+
+## Component Plan
+
+**`src/app/(dashboard)/admin/ledger/budgeting/page.tsx`** (rework, Ruling 3):
+- Gate: `hasAnyFeature([LEDGER_MANAGE, LEDGER_APPROVE])` for admission (redirect `/access-pending` otherwise); `canManage = hasFeature(LEDGER_MANAGE)`, `canApprove = hasFeature(LEDGER_APPROVE)` computed separately and passed as props.
+- Replace the stale "manage-only, no view-or-manage fallback" doc comment (L27-29) — its premise is exactly what this feature invalidates.
+- Fetch `approval = await getBudgetApproval(entity.id, targetFY)`; pass `locked = isBudgetLocked(approval)` and `approval` down.
+
+**`GuidedBudgetSetup`** (`src/components/admin/ledger/guided-budget-setup.tsx`, extend):
+- New props: `canManage: boolean`, `canApprove: boolean`, `locked: boolean`, `approval: { approvedByName, approvedAt, boardMinute, unlockedByName, unlockedAt, unlockReason } | null`.
+- **Locked-state banner:** shown whenever `locked` — "Locked — approved by {approvedByName ?? 'Unknown'} on {approvedAt formatted}, board minute: {boardMinute}." Uses the existing `bg-lions-gold/10` informational tone already used elsewhere on this page (`balanceBadgeClass("info")`), not a warning color.
+- **Read-only rendering when `locked`:** hide "Seed all funds" / "Seed this fund" / "Overwrite…" buttons, hide the new "+ Add category" affordance and the new remove-line control, and pass a `disabled` prop through to `BudgetEditor` (new optional prop — when true, every input renders `disabled` and the component skips its `PATCH` call entirely; this is UI-only defense-in-depth, the 409 from the server is the actual enforcement per architect Ruling 2).
+- **"+ Add category" control**, rendered per fund card whenever `canManage && !locked`, **outside** the `fund.budgetEditorLines.length > 0` conditional (fixes the empty-fund gap — a fund with zero categories today renders no `BudgetEditor` at all and therefore has no way to ever get a first line). Two-step UI: a `<select>` of the fund's *unbudgeted* active categories (categories from `getCategories(entityId, { fundKind, flow })` not already present in `budgetEditorLines`, computed server-side and passed down per fund/flow) with an "Add" button that calls `PATCH /budgets` directly (Flow 2 — already works, zero new backend), plus a "+ New category…" link that expands an inline form (name input, flow already fixed to the section it's rendered under, submit → `POST /categories` → on success, `router.refresh()` so the new bare category appears as a fresh `BudgetEditor` row).
+- **Explicit remove control:** a trash-icon button per `BudgetEditor` row (income and expense sections), shown whenever `canManage && !locked`. Opens `<ConfirmDialog title="Remove this budget line?" description="This removes the {$amount} target for {category name}. The category and any recorded activity are not affected." confirmLabel="Remove" destructive onConfirm={...} />`, confirming calls the existing `PATCH /budgets` with `annualAmountCents: null` (no new endpoint — Ruling 5). This requires `BudgetEditor` to accept an optional `onRemove?: (categoryId, flow) => void` prop (or the remove button lives in the parent, next to each rendered line, reusing `BudgetEditor`'s existing `lines` prop to know what to render) — ux-developer's call on exact prop wiring, but must not duplicate `BudgetEditor`'s own commit logic.
+- **Approve panel**, shown whenever `canApprove` (independent of `canManage`, satisfying the Phase 1 gap about `LEDGER_APPROVE`-only board members): a board-minute text input + "Approve & Lock" button opening `<ConfirmDialog destructive={false} title="Lock FY{targetFY} budget?" description="..." onConfirm={...} />` calling `POST /budget-approvals`. Displays every fund's current `computeBudgetBalanceStatus` badge (already computed per-fund in this component) as a pre-lock summary, purely advisory — never disables the Approve button (locked decision: warn-not-block).
+- **Unlock control**, shown whenever `canApprove && locked`: a reason textarea + `<ConfirmDialog destructive title="Unlock FY{targetFY} budget?" ... onConfirm={...} />` calling `POST /budget-approvals/unlock`.
+- Reuses the existing `formatDollars`, `computeBudgetBalanceStatus`, `ConfirmDialog`, `BudgetEditor` — no new formatting helper needed.
+
+**Brand/UX compliance:** all new cards `bg-white rounded-2xl shadow-sm overflow-hidden` (informational, non-interactive shells) matching the existing fund cards on this page; buttons `rounded-lg` (primary `bg-lions-blue` / secondary outlined) per the existing seed buttons already on this component; no `window.confirm`/`alert`/`prompt` anywhere — every destructive or hard-to-undo action (remove line, lock, unlock) goes through `ConfirmDialog`; locked-state banner uses `lions-gold`-tinted informational styling, never `lions-red` (undefined in theme).
+
+## Edge Cases & Risks
+
+- **Locking an empty or partial budget:** allowed. No minimum-line-count check anywhere in the approve route — matches the locked "warns, does not block" decision and Phase 1's confirmed reading of `computeBudgetBalanceStatus` as presentation-only.
+- **Duplicate category name:** rejected 409 at `POST /categories`, case-insensitive, scoped to `(entityId, fundKind, flow)` — matches Phase 1 Flow 1 microcopy.
+- **Removing a line whose category has recorded actuals:** allowed unchanged — the remove only deletes the `ledgerBudgets` row; `ledgerCategories` and every `ledgerTransactions` row referencing that `categoryId` are untouched and still appear on reports (report queries read actuals from `ledgerTransactions`, budget targets from `ledgerBudgets` — independent tables, confirmed by `getFundReport`'s existing separate joins).
+- **Empty-fund case:** fixed per Component Plan above — "+ Add category" now renders unconditionally (when `canManage && !locked`), not nested inside `budgetEditorLines.length > 0`. A brand-new fund with zero categories can get its first line.
+- **Locking then attempting any write:** every write path returns `409` from `assertBudgetUnlocked` — verified covered for `PATCH /budgets`, `POST /budgets/seed` (via `upsertBudgetLine`), and `POST /categories` (explicit call). No path bypasses this.
+- **Unlock without reason:** 400, rejected by `validateRequiredTrimmedText`.
+- **FY rollover:** no special handling needed — `getBudgetApproval` returns `null` for a `(entityId, fiscalYear)` pair with no row, and `isBudgetLocked(null)` is `false`, so next year's budget starts unlocked by default with zero migration/backfill needed.
+- **Concurrent lock + edit (race):** a `PATCH /budgets` and a `POST /budget-approvals` landing in the same instant could both read "unlocked" before either commits, since `assertBudgetUnlocked`'s read and the eventual write aren't wrapped in a single serializable transaction across the two separate requests. Accepted risk given this action's cadence (Phase 1: "once per fiscal year per entity, normally") — matches the existing seed endpoint's precedent of using `db.transaction()` only to make *its own* multi-line write atomic, not to serialize against every other endpoint. If this becomes a real incident, the fix is a `SELECT ... FOR UPDATE` on the approval row inside a transaction — not something to build speculatively now.
+
+## Unit Tests (implementer delivers in Phase 4, `src/lib/ledger.test.ts`)
+
+Every piece of new logic worth testing is DB-free per the established convention (`validateBudgetLineInput`, `decideSeedWriteAction`) — three new pure helpers extracted specifically for testability, plus one existing pattern reused:
+
+1. **`isBudgetLocked`** — new `describe("isBudgetLocked")`:
+   - `it("returns false when no approval row exists (null)")` — `isBudgetLocked(null)` → `false`.
+   - `it("returns false when status is 'unlocked'")` → `isBudgetLocked({ status: "unlocked" })` → `false`.
+   - `it("returns true when status is 'locked'")` → `isBudgetLocked({ status: "locked" })` → `true`.
+
+2. **`validateCategoryCreateInput`** (new pure helper, `src/lib/ledger.ts`, factoring the shape/uniqueness checks the `POST /categories` route needs so they're testable without a DB) — `describe("validateCategoryCreateInput")`:
+   - `it("rejects an empty name")` — `name: ""` → `{ ok: false, status: 400 }`.
+   - `it("rejects a whitespace-only name")` — `name: "   "` → `{ ok: false, status: 400 }`.
+   - `it("rejects flow values other than income/expense")` → `{ ok: false, status: 400 }`.
+   - `it("rejects a case-insensitive duplicate name against existingNames")` — `name: "Club Dues"`, `existingNames: ["club dues"]` → `{ ok: false, status: 409 }`.
+   - `it("accepts a valid, unique name")` → `{ ok: true }`.
+
+3. **`nextCategorySortOrder`** (new pure helper) — `describe("nextCategorySortOrder")`:
+   - `it("returns 0 for an empty fund+flow (first category)")` — `nextCategorySortOrder([])` → `0`.
+   - `it("returns max + 1 for existing sortOrders")` — `nextCategorySortOrder([0, 2, 5])` → `6`.
+   - `it("handles a single existing category")` — `nextCategorySortOrder([3])` → `4`.
+
+4. **`validateRequiredTrimmedText`** (new small shared pure helper replacing the inline trim/length checks the transactions-approve route already duplicates ad hoc — reused by both the new approve route's `boardMinute` and the new unlock route's `unlockReason`) — `describe("validateRequiredTrimmedText")`:
+   - `it("rejects undefined")` → `{ ok: false }`.
+   - `it("rejects an empty string")` → `{ ok: false }`.
+   - `it("rejects a whitespace-only string")` → `{ ok: false }`.
+   - `it("trims and accepts a valid string")` — `"  Board voted 5-0  "` → `{ ok: true, value: "Board voted 5-0" }`.
+   - `it("truncates (does not reject) a string longer than maxLen")` — matches the existing `transactions/[id]/approve` convention of `slice(0, BOARD_MINUTE_MAX_LEN)` rather than rejecting an over-length board minute.
+
+The approve/unlock routes' actual DB writes (the `onConflictDoUpdate` upsert, the 404/409 status-lookup branches) are integration-shaped, not unit-tested here — consistent with this codebase's standing convention that Vitest covers pure functions only; qa's Phase 5 manual click-through covers the end-to-end approve/unlock/re-lock flow.
+
+## Implementation Order
+
+1. **database-admin:** Add `ledgerBudgetApprovals` to `src/lib/db/schema.ts` (placed after `ledgerBudgets`, per Data Model above); write `drizzle/migrations/0062_ledger_budget_approvals.sql`; add `assertBudgetUnlocked()` and `getBudgetApproval()` to `src/lib/ledger-queries.ts`; add `isBudgetLocked()`, `validateCategoryCreateInput()`, `nextCategorySortOrder()`, `validateRequiredTrimmedText()` to `src/lib/ledger.ts`. Run `pnpm db:migrate` locally against `.env.local` and confirm the table exists.
+2. **api-developer:** Wire `assertBudgetUnlocked` into `upsertBudgetLine` (the one call site covering PATCH + seed + add-line); build `POST /api/admin/ledger/categories/route.ts`; build `POST /api/admin/ledger/budget-approvals/route.ts` (approve) and `POST /api/admin/ledger/budget-approvals/unlock/route.ts` (unlock), both per the API Contracts section, both without a self-approval block. Write the four unit-test groups named above.
+3. **ux-developer:** Rework `budgeting/page.tsx`'s gate to two-tier (`canManage`/`canApprove`) and wire `getBudgetApproval`/`isBudgetLocked`; extend `GuidedBudgetSetup` with the locked-state banner, read-only rendering, "+ Add category" (fixing the empty-fund case), the explicit remove-line control, the Approve panel, and the Unlock control — all per Component Plan above, all `ConfirmDialog`-gated where destructive/hard-to-undo.
+
+## Notable Design Calls Logged
+
+- **DECISION-044** (`docs/decisions.md`): route names (`/budget-approvals`, `/budget-approvals/unlock`), no chained category+amount write on `POST /categories`, lock state read via `getBudgetApproval()` direct query rather than a new GET route, and re-approving an already-locked FY returns 409 instead of silently overwriting the prior approval.
+
+## Open questions / handoff notes
+
+- **Implementer: database-admin first**, then **api-developer**, then **ux-developer** — per Implementation Order above. This is schema-touching (new table) with a real new API surface and a page-gate rework, so the specialist split applies, not full-stack-developer.
+- `BudgetEditor`'s exact prop shape for the new remove control is left to ux-developer's judgment (Component Plan flags the tradeoff: extend `BudgetEditor` itself vs. render the trash button in the parent alongside it) — either is fine as long as it doesn't duplicate `BudgetEditor`'s existing commit-on-blur logic.
+- qa (Phase 5): the manual click-through must cover the full lock/unlock cycle — lock with a partial budget (confirm it's allowed with only a warning badge), attempt a `PATCH /budgets` against a locked FY via a stale tab (confirm 409, not a silent no-op), unlock, re-edit, re-lock — plus a `LEDGER_APPROVE`-only test account confirming they can reach the page and see the Approve panel without holding `LEDGER_MANAGE`.
 
 ---
 
