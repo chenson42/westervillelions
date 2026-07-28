@@ -568,6 +568,36 @@ export default function GuidedBudgetSetup({
                 {balanceWhyNote(fund.fundKind) && (
                   <p className="mt-1 text-xs text-gray-500">{balanceWhyNote(fund.fundKind)}</p>
                 )}
+                {/* Live running totals behind the balance verdict — recompute
+                    from fundSums on every keystroke. "Banked used" = drawdown
+                    from the fund balance when expenses outrun income; a surplus
+                    reads as "To balance". */}
+                <dl className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-gray-50 px-3 py-2 text-center">
+                  <div>
+                    <dt className="text-[10px] uppercase tracking-wide text-gray-400">Income</dt>
+                    <dd className="text-sm font-semibold tabular-nums text-gray-900">
+                      {formatDollars(sums.incomeCents)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] uppercase tracking-wide text-gray-400">Expenses</dt>
+                    <dd className="text-sm font-semibold tabular-nums text-gray-900">
+                      {formatDollars(sums.expenseCents)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] uppercase tracking-wide text-gray-400">
+                      {balance.netCents < 0 ? "Banked used" : balance.netCents > 0 ? "To balance" : "Net"}
+                    </dt>
+                    <dd
+                      className={`text-sm font-semibold tabular-nums ${
+                        balance.netCents < 0 ? "text-amber-700" : "text-gray-900"
+                      }`}
+                    >
+                      {formatDollars(Math.abs(balance.netCents))}
+                    </dd>
+                  </div>
+                </dl>
               </div>
 
               <div className="px-5 py-4 space-y-4">
