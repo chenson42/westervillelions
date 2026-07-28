@@ -13,11 +13,14 @@ const linkClass =
  * schema. inc2 has since shipped a full manual workbench at
  * /admin/ledger/reconciliation — sessions, CSV upload, a matching grid, a
  * tie-out summary with a hard close gate, and reopen. This section documents
- * that real, shipped workflow instead of describing it as unbuilt. Only
- * auto-match suggestions and bulk Zeffy-payout-batch matching (summing a
- * week of Zeffy rows against one Monday deposit automatically) remain
- * "coming soon" — today, matching a bank line to a ledger transaction is a
- * manual, one-at-a-time action in the matching grid.
+ * that real, shipped workflow instead of describing it as unbuilt.
+ *
+ * DECISION-051 (batch reconciliation): general many-to-one matching — select
+ * several ledger transactions, income or expense alike, whose amounts sum
+ * exactly to one bank-statement line, and commit them together — shipped and
+ * is documented below as live, not Zeffy-specific (Zeffy's weekly dues
+ * deposit is simply the most common real-world example). Only automatic
+ * match suggestions remain "coming soon."
  */
 export default function ReconciliationSection() {
   return (
@@ -40,10 +43,18 @@ export default function ReconciliationSection() {
           that period, once per session.
         </li>
         <li>
-          <span className="font-semibold">Match</span> — for each bank-statement line, either pick
-          the matching ledger transaction from the candidate list or create a new transaction
-          directly from that line if none exists yet. Matching today is manual, one line at a
-          time.
+          <span className="font-semibold">Match</span> — for each bank-statement line, select one
+          or more ledger transactions from the candidate list whose amounts sum exactly to that
+          line, then commit them together as one match — a single pick is just a batch of one.
+          This handles a lump-sum deposit that bundles several recorded rows (a week of Zeffy dues,
+          a bundled fundraiser deposit) or a split expense (one card charge recorded as several
+          category rows) exactly the same way. A running total shows the selected sum against the
+          bank line&rsquo;s amount as you check rows; committing is disabled until they match to
+          the penny. If nothing in the books matches yet, create a new transaction directly from
+          that line instead. A matched line shows &ldquo;Matched &middot; N&rdquo; and expands to
+          list its matched transactions, each with its own Unmatch action — correcting a wrong
+          pick means unmatching the affected rows and re-selecting the corrected set, since a bank
+          line is matched once, as a complete set.
         </li>
         <li>
           <span className="font-semibold">Tie out</span> — a running summary compares opening
@@ -63,9 +74,8 @@ export default function ReconciliationSection() {
 
       <div className="mt-4 rounded-2xl bg-blue-50 border border-blue-100 p-4">
         <p className="text-sm text-blue-800">
-          <span className="font-semibold">Coming soon:</span> automatic match suggestions, and a
-          batch mode for Zeffy&rsquo;s Monday lump-sum deposits (matching a whole week of
-          Zeffy-method rows against one bank line at once instead of one at a time).
+          <span className="font-semibold">Coming soon:</span> automatic match suggestions that
+          propose a likely batch instead of you selecting it row by row.
         </p>
       </div>
 

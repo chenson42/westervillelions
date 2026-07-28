@@ -54,6 +54,7 @@ import {
   isMonthGatedForEntity,
   computeOneMonthCashActuals,
   getMonthlyStatement,
+  getLatestOpenMonthForEntity,
   MEMBER_EXPOSED_FUND_KINDS,
   type MonthlyStatementCategoryLine,
 } from "./financial-report-queries";
@@ -267,6 +268,128 @@ describe("isMonthGatedForEntity", () => {
       },
     ]);
     expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // In-transit Zeffy deposit carve-out (2026-07-28 batch reconciliation —
+  // docs/work-log/2026-07-28-zeffy-batch-reconciliation.md, DECISION-051).
+  // Anchored to `asOf` ("today"), NOT `monthEnd` — a recent unremitted batch
+  // doesn't block the month, but a genuinely stale, forgotten batch still
+  // flags it as real time passes. Both scenarios below use the SAME
+  // txnDate ("2026-06-25", inside the June report month) and vary only how
+  // much real time (`asOf`, via fake system time) has passed since then —
+  // this isolates the anchor-to-asOf behavior from the txnDate<=monthEnd
+  // check, which both scenarios already satisfy identically (Phase 3 test 8).
+  // -------------------------------------------------------------------------
+
+  it("does NOT gate on a recent in-transit Zeffy deposit (payment_method='zeffy', flow='income') dated within the 12-day window of `asOf`", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T12:00:00Z")); // 6 days after the row's txnDate
+
+    mockDbState.queue.push([
+      {
+        txnDate: "2026-06-25",
+        fundKind: "administrative",
+        paymentMethod: "zeffy",
+        flow: "income",
+      },
+    ]);
+
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it("STILL gates on the SAME Zeffy deposit once it's stale — more than 12 days have passed since `asOf` moved on (a genuinely neglected/broken sync must still flag)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T12:00:00Z")); // 51 days after the row's txnDate
+
+    mockDbState.queue.push([
+      {
+        txnDate: "2026-06-25",
+        fundKind: "administrative",
+        paymentMethod: "zeffy",
+        flow: "income",
+      },
+    ]);
+
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
+
+    vi.useRealTimers();
+  });
+
+  it("STILL gates on an unreconciled zeffy EXPENSE row (not income) — the in-transit carve-out is income-deposits only", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T12:00:00Z"));
+
+    mockDbState.queue.push([
+      {
+        txnDate: "2026-06-25",
+        fundKind: "administrative",
+        paymentMethod: "zeffy",
+        flow: "expense",
+      },
+    ]);
+
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
+
+    vi.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getLatestOpenMonthForEntity — in-transit Zeffy carve-out (Phase 3 test 9)
+// ---------------------------------------------------------------------------
+
+describe("getLatestOpenMonthForEntity — in-transit Zeffy carve-out", () => {
+  it("does not truncate the candidate month solely due to a recent in-transit Zeffy row — mirrors the outstanding-check regression fix, confirms the carve-out is applied in the blockingDates filter too, not just isMonthGatedForEntity", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-05T12:00:00Z"));
+
+    const rows = [
+      {
+        txnDate: "2026-06-25",
+        fundKind: "administrative",
+        paymentMethod: "zeffy",
+        flow: "income",
+      },
+    ];
+    // getLatestOpenMonthForEntity's own candidate-computation select, then its
+    // final isMonthGatedForEntity() re-check's select — same underlying
+    // unreconciled row set answers both queries.
+    mockDbState.queue.push(rows, rows);
+
+    const result = await getLatestOpenMonthForEntity("entity-1");
+
+    // Without the carve-out applied to blockingDates, this row would push the
+    // candidate back to "2026-05" (the month before the row's own month) —
+    // the exact truncation bug already fixed once for outstanding checks.
+    expect(result).toBe("2026-06");
+
+    vi.useRealTimers();
+  });
+
+  it("DOES truncate the candidate when the same-shaped row is genuinely stale (not in-transit)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T12:00:00Z"));
+
+    const rows = [
+      {
+        txnDate: "2026-06-25",
+        fundKind: "administrative",
+        paymentMethod: "zeffy",
+        flow: "income",
+      },
+    ];
+    mockDbState.queue.push(rows, rows);
+
+    const result = await getLatestOpenMonthForEntity("entity-1");
+
+    // Stale batch still blocks: candidate falls back to the month before the
+    // row's own month.
+    expect(result).toBe("2026-05");
+
+    vi.useRealTimers();
   });
 });
 

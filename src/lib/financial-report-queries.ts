@@ -301,6 +301,42 @@ function isOutstandingCheckRow(r: { paymentMethod: string | null; flow: string }
   return r.paymentMethod === "check" && r.flow === "expense";
 }
 
+/** ~one Zeffy weekly-remittance cycle (7 days) plus observed ACH/bank
+ *  posting lag (the verified 2026-07-28 case: rows dated 6/24-6/25 cleared
+ *  the bank 6/29, a 4-5 day lag) with margin. Long enough that a normal
+ *  in-transit batch is never falsely gated; short enough that a batch still
+ *  sitting unremitted after ~1.5-2 cycles reliably re-flags as stale
+ *  (DECISION-051). */
+const IN_TRANSIT_ZEFFY_DEPOSIT_WINDOW_DAYS = 12;
+
+/** DST-safe day-count between two 'YYYY-MM-DD' calendar-date strings. Both
+ *  sides are pinned via Date.UTC() on their own Y/M/D components purely as
+ *  an internal arithmetic trick — this is NOT reconciledAtToYMD()'s bug
+ *  class (there is no stored wall-clock timestamp being reinterpreted here;
+ *  both inputs are already date-only strings, exactly like hasMonthElapsed()'s
+ *  local-getter comparisons above). */
+function daysBetween(laterYMD: string, earlierYMD: string): number {
+  const [ly, lm, ld] = laterYMD.split("-").map(Number);
+  const [ey, em, ed] = earlierYMD.split("-").map(Number);
+  return Math.round((Date.UTC(ly, lm - 1, ld) - Date.UTC(ey, em - 1, ed)) / 86_400_000);
+}
+
+/** True iff `r` is a not-yet-remitted Zeffy deposit recent enough to treat
+ *  as legitimately in transit rather than "books aren't done." Anchored to
+ *  `asOf` (today), NOT to the report's `monthEnd` — a fixed monthEnd-relative
+ *  window would exclude a stale, forgotten batch FOREVER as real time moves
+ *  forward past it, which fails the treasurer's explicit requirement that a
+ *  long-stale un-deposited batch must still flag the month (architect §5,
+ *  DECISION-051). */
+function isInTransitZeffyDepositRow(
+  r: { paymentMethod: string | null; flow: string; txnDate: string },
+  asOf: Date = new Date(),
+): boolean {
+  if (r.paymentMethod !== "zeffy" || r.flow !== "income") return false;
+  const asOfYMD = `${asOf.getFullYear()}-${pad2(asOf.getMonth() + 1)}-${pad2(asOf.getDate())}`;
+  return daysBetween(asOfYMD, r.txnDate) <= IN_TRANSIT_ZEFFY_DEPOSIT_WINDOW_DAYS;
+}
+
 /**
  * Per-entity reconciliation gate, scoped to member-exposed funds only
  * (locked Q1 answer): a month gates (is NOT ready) when EITHER:
@@ -323,20 +359,30 @@ function isOutstandingCheckRow(r: { paymentMethod: string | null; flow: string }
  * from "before this calendar month" to an arbitrary boundary, scoped to
  * member-exposed funds so a stale unreconciled Activity/Scholarship
  * transaction never blocks the Administrative/Charitable statement from
- * publishing, and now also excluding true outstanding checks so they no
- * longer gate either. A check+income row (dues paid by paper check) is NOT
- * excluded — it's a genuinely-unreconciled deposit and must still gate.
+ * publishing, and now also excluding true outstanding checks and legitimately
+ * in-transit Zeffy deposits (isInTransitZeffyDepositRow(), DECISION-051) so
+ * neither gates either. A check+income row (dues paid by paper check) is NOT
+ * excluded — it's a genuinely-unreconciled deposit and must still gate; nor
+ * is a Zeffy deposit older than the in-transit window — a genuinely stale,
+ * forgotten batch must still flag the month.
+ *
+ * `asOf` (optional, defaults to real "now") is injectable so the in-transit
+ * window can be pinned in tests — mirrors hasMonthElapsed()'s own pattern in
+ * this file, and is threaded through purely so isInTransitZeffyDepositRow()
+ * anchors to "today," never to `monthEnd` (see that function's doc comment
+ * for why the anchor choice matters).
  *
  * The entity/status/reconciled narrowing happens in SQL; the fund-kind,
- * date-threshold, and outstanding-check check happen in JS (mirroring
- * getOverview()'s own unreconciledPriorMonth, which filters its date
- * threshold in JS over an already-fetched row set) — kept this way
+ * date-threshold, and outstanding-check/in-transit checks happen in JS
+ * (mirroring getOverview()'s own unreconciledPriorMonth, which filters its
+ * date threshold in JS over an already-fetched row set) — kept this way
  * deliberately so the predicate is directly unit-testable against canned
  * rows without needing to introspect generated SQL.
  */
 export async function isMonthGatedForEntity(
   entityId: string,
   monthEnd: string,
+  asOf: Date = new Date(),
 ): Promise<boolean> {
   if (!hasMonthElapsed(monthEnd)) {
     return true;
@@ -361,7 +407,10 @@ export async function isMonthGatedForEntity(
 
   return rows.some(
     (r) =>
-      isMemberExposedKind(r.fundKind) && r.txnDate <= monthEnd && !isOutstandingCheckRow(r),
+      isMemberExposedKind(r.fundKind) &&
+      r.txnDate <= monthEnd &&
+      !isOutstandingCheckRow(r) &&
+      !isInTransitZeffyDepositRow(r, asOf),
   );
 }
 
@@ -525,17 +574,28 @@ export async function computeUncashedCheckCategoryIds(
  * candidate turns out not to be genuinely open.
  *
  * blockingDates below excludes outstanding (uncashed) checks via
- * isOutstandingCheckRow() — same carve-out as isMonthGatedForEntity() — so
- * this candidate computation doesn't independently reintroduce the
- * cascading-block bug. Without this, the final re-check against
- * isMonthGatedForEntity() would correctly clear later months, but the
+ * isOutstandingCheckRow() AND legitimately in-transit Zeffy deposits via
+ * isInTransitZeffyDepositRow() — the same two carve-outs isMonthGatedForEntity()
+ * applies — so this candidate computation doesn't independently reintroduce
+ * the cascading-block bug for either one. Without this, the final re-check
+ * against isMonthGatedForEntity() would correctly clear later months, but the
  * CANDIDATE itself would never be computed past "the month before the
- * earliest outstanding check," permanently truncating the picker (the prod
+ * earliest blocking date," permanently truncating the picker (the prod
  * repro: Foundation/Charitable stuck offering only through Feb 2026 because
  * of two outstanding checks dated 2026-03-07, even though isMonthGatedForEntity()
- * alone would clear every month through June).
+ * alone would clear every month through June — DECISION-051 §5 flags this as
+ * the exact bug class a recent in-transit Zeffy row would reintroduce if only
+ * one of the two functions were updated).
+ *
+ * `asOf` (optional, defaults to real "now") is threaded to BOTH the
+ * blockingDates filter above and the final re-check call below — omitting
+ * either one would reopen this same truncation bug for the in-transit-Zeffy
+ * case specifically.
  */
-export async function getLatestOpenMonthForEntity(entityId: string): Promise<string | null> {
+export async function getLatestOpenMonthForEntity(
+  entityId: string,
+  asOf: Date = new Date(),
+): Promise<string | null> {
   const rows = await db
     .select({
       txnDate: ledgerTransactions.txnDate,
@@ -553,12 +613,16 @@ export async function getLatestOpenMonthForEntity(entityId: string): Promise<str
       ),
     );
 
-  const now = new Date();
-  const currentMonthKey = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+  const currentMonthKey = `${asOf.getFullYear()}-${pad2(asOf.getMonth() + 1)}`;
   const ceilingMonth = priorMonthKey(currentMonthKey);
 
   const blockingDates = rows
-    .filter((r) => isMemberExposedKind(r.fundKind) && !isOutstandingCheckRow(r))
+    .filter(
+      (r) =>
+        isMemberExposedKind(r.fundKind) &&
+        !isOutstandingCheckRow(r) &&
+        !isInTransitZeffyDepositRow(r, asOf),
+    )
     .map((r) => r.txnDate);
 
   let candidate: string;
@@ -571,7 +635,7 @@ export async function getLatestOpenMonthForEntity(entityId: string): Promise<str
     candidate = latestOpen < ceilingMonth ? latestOpen : ceilingMonth;
   }
 
-  const stillGated = await isMonthGatedForEntity(entityId, monthBounds(candidate).monthEnd);
+  const stillGated = await isMonthGatedForEntity(entityId, monthBounds(candidate).monthEnd, asOf);
   return stillGated ? null : candidate;
 }
 

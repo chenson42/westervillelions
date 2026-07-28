@@ -422,3 +422,48 @@ export function computePeriodGapWarning(
     `leaving a ${gapDays}-day gap. Continue if that's expected.`
   );
 }
+
+// ---------------------------------------------------------------------------
+// computeSelectionSummary (batch match picker — DECISION-051)
+// ---------------------------------------------------------------------------
+
+export type SelectionCandidate = { flow: string; amountCents: number };
+
+export type SelectionSummary = {
+  selectedSumCents: number;
+  bankLineAmountCents: number;
+  /** bankLineAmountCents - selectedSumCents. Positive = selection is short;
+   *  negative = selection is over. Zero = balanced. Mirrors the sign
+   *  convention of the server's own exact-sum re-check (match/route.ts). */
+  deltaCents: number;
+  balanced: boolean;
+};
+
+/**
+ * The match picker's running "selected sum vs. bank-line amount" indicator
+ * (Phase 1 Flow 1 / DECISION-051): sums a set of candidate transactions using
+ * the same signed convention the picker displays with (expense contributes
+ * negative, income positive — `signedAmount()` in
+ * reconciliation-match-picker.tsx), so a debit bank line's negative
+ * `amountCents` only balances against a set of expense rows and a credit
+ * line against income rows. Pure/no I/O so this exact math is unit-testable
+ * hermetically and mirrors — but does not replace — the server's own
+ * step-8 re-check in match/route.ts, which never trusts this client-side
+ * value.
+ */
+export function computeSelectionSummary(
+  selected: SelectionCandidate[],
+  bankLineAmountCents: number,
+): SelectionSummary {
+  const selectedSumCents = selected.reduce(
+    (sum, t) => sum + (t.flow === "expense" ? -t.amountCents : t.amountCents),
+    0,
+  );
+  const deltaCents = bankLineAmountCents - selectedSumCents;
+  return {
+    selectedSumCents,
+    bankLineAmountCents,
+    deltaCents,
+    balanced: deltaCents === 0,
+  };
+}

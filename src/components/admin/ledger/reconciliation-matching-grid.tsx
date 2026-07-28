@@ -1,10 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import type { BankLineWithMatch, CandidateTransactionRow } from "@/lib/reconciliation-queries";
+import type {
+  BankLineWithMatch,
+  CandidateTransactionRow,
+  MatchedTransactionRow,
+} from "@/lib/reconciliation-queries";
 import type { LedgerFund, LedgerCategory } from "@/lib/db/schema";
 import ReconciliationMatchPicker from "./reconciliation-match-picker";
 import ReconciliationCreateFromBankLineDialog from "./reconciliation-create-from-bank-line-dialog";
@@ -23,10 +27,22 @@ function formatDate(dateStr: string): string {
   });
 }
 
+/** Same signed convention as the match picker's own `signedAmount()` and the
+ *  server's exact-sum re-check — expense negative, income positive. */
+function signedAmount(txn: { flow: string; amountCents: number }): number {
+  return txn.flow === "expense" ? -txn.amountCents : txn.amountCents;
+}
+
 interface ReconciliationMatchingGridProps {
   sessionId: string;
   bankLines: BankLineWithMatch[];
   candidateTransactions: CandidateTransactionRow[];
+  /** Every matched transaction across the session, one row per match —
+   *  grouped below by bankLineId to render each matched line's expandable
+   *  "Matched · N" list and to source each row's own matchId for its
+   *  per-row Unmatch action (DECISION-051). A legacy 1:1 match is simply a
+   *  group of length 1 — no special-casing needed. */
+  matchedTransactions: MatchedTransactionRow[];
   funds: LedgerFund[];
   categories: LedgerCategory[];
   isOpen: boolean;
@@ -40,6 +56,14 @@ interface ReconciliationMatchingGridProps {
  * out-of-period rows are flagged, never silently dropped or silently
  * included in this session's tie-out/close gate).
  *
+ * A matched line — whether a single 1:1 pick or a batch of N — renders as
+ * "Matched · N", expandable to the underlying transaction list with a
+ * per-row Unmatch action. v1 is per-row unmatch only: correcting a wrong
+ * pick inside a batch means unmatching every row down to zero, then
+ * re-opening the picker to select the corrected full set fresh (architect
+ * §4 / DECISION-051) — a bank line with any match at all is "claimed" and
+ * won't reopen the picker until it has zero matches again.
+ *
  * Read-only (no action column) once the session is closed or the viewer
  * lacks LEDGER_RECORD.
  */
@@ -47,6 +71,7 @@ export default function ReconciliationMatchingGrid({
   sessionId,
   bankLines,
   candidateTransactions,
+  matchedTransactions,
   funds,
   categories,
   isOpen,
@@ -55,37 +80,57 @@ export default function ReconciliationMatchingGrid({
   const router = useRouter();
   const [matchPickerLine, setMatchPickerLine] = useState<BankLineWithMatch | null>(null);
   const [createLine, setCreateLine] = useState<BankLineWithMatch | null>(null);
-  const [unmatchLine, setUnmatchLine] = useState<BankLineWithMatch | null>(null);
+  const [unmatchTarget, setUnmatchTarget] = useState<{ matchId: string; label: string } | null>(
+    null,
+  );
   const [showOutOfPeriod, setShowOutOfPeriod] = useState(false);
+  const [expandedLineIds, setExpandedLineIds] = useState<Set<string>>(new Set());
 
   const inPeriod = bankLines.filter((l) => l.inStatementPeriod);
   const outOfPeriod = bankLines.filter((l) => !l.inStatementPeriod);
 
+  const matchesByBankLineId = new Map<string, MatchedTransactionRow[]>();
+  for (const m of matchedTransactions) {
+    const arr = matchesByBankLineId.get(m.bankLineId) ?? [];
+    arr.push(m);
+    matchesByBankLineId.set(m.bankLineId, arr);
+  }
+
   const canAct = isOpen && canRecord;
 
+  function toggleExpanded(lineId: string) {
+    setExpandedLineIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  }
+
   async function handleUnmatch() {
-    if (!unmatchLine?.matchId) return;
+    if (!unmatchTarget) return;
     try {
       const res = await fetch(
-        `/api/admin/ledger/reconciliation/sessions/${sessionId}/match/${unmatchLine.matchId}`,
+        `/api/admin/ledger/reconciliation/sessions/${sessionId}/match/${unmatchTarget.matchId}`,
         { method: "DELETE" },
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error || "Failed to unmatch this line.");
+        throw new Error(data.error || "Failed to unmatch this transaction.");
       }
       toast.success("Unmatched.");
       router.refresh();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Could not unmatch this line. Try again."
+        err instanceof Error ? err.message : "Could not unmatch this transaction. Try again."
       );
     } finally {
-      setUnmatchLine(null);
+      setUnmatchTarget(null);
     }
   }
 
   function renderTable(lines: BankLineWithMatch[]) {
+    const colSpan = canAct ? 6 : 5;
     return (
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
@@ -116,63 +161,109 @@ export default function ReconciliationMatchingGrid({
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
               {lines.map((line) => {
-                const matched = Boolean(line.matchedTransactionId);
+                const matched = line.matchedTransactionIds.length > 0;
+                const lineMatches = matchesByBankLineId.get(line.id) ?? [];
+                const expanded = expandedLineIds.has(line.id);
                 return (
-                  <tr key={line.id}>
-                    <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                      {formatDate(line.postingDate)}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-700 max-w-[20rem] truncate">
-                      {line.description}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-700 tabular-nums whitespace-nowrap">
-                      {line.checkOrSlipNumber ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-semibold tabular-nums text-right whitespace-nowrap">
-                      {formatDollars(line.amountCents)}
-                    </td>
-                    <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      {matched ? (
-                        <span className="inline-flex items-center rounded-lg bg-green-50 border border-green-200 text-green-800 text-xs font-semibold px-2 py-0.5">
-                          Matched
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold px-2 py-0.5">
-                          Unmatched
-                        </span>
-                      )}
-                    </td>
-                    {canAct && (
-                      <td className="px-4 py-3 text-right whitespace-nowrap space-x-3">
+                  <Fragment key={line.id}>
+                    <tr>
+                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                        {formatDate(line.postingDate)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700 max-w-[20rem] truncate">
+                        {line.description}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700 tabular-nums whitespace-nowrap">
+                        {line.checkOrSlipNumber ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-semibold tabular-nums text-right whitespace-nowrap">
+                        {formatDollars(line.amountCents)}
+                      </td>
+                      <td className="px-4 py-3 text-sm whitespace-nowrap">
                         {matched ? (
                           <button
                             type="button"
-                            onClick={() => setUnmatchLine(line)}
-                            className="text-sm font-semibold text-gray-600 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-0.5"
+                            onClick={() => toggleExpanded(line.id)}
+                            aria-expanded={expanded}
+                            className="inline-flex items-center gap-1 rounded-lg bg-green-50 border border-green-200 text-green-800 text-xs font-semibold px-2 py-0.5 hover:bg-green-100 transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
                           >
-                            Unmatch
+                            <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+                            Matched &middot; {line.matchedTransactionIds.length}
                           </button>
                         ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => setMatchPickerLine(line)}
-                              className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-0.5"
-                            >
-                              Match
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setCreateLine(line)}
-                              className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-0.5"
-                            >
-                              Create transaction
-                            </button>
-                          </>
+                          <span className="inline-flex items-center rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold px-2 py-0.5">
+                            Unmatched
+                          </span>
                         )}
                       </td>
+                      {canAct && (
+                        <td className="px-4 py-3 text-right whitespace-nowrap space-x-3">
+                          {!matched && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setMatchPickerLine(line)}
+                                className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-0.5"
+                              >
+                                Match
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCreateLine(line)}
+                                className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-0.5"
+                              >
+                                Create transaction
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                    {matched && expanded && (
+                      <tr>
+                        <td colSpan={colSpan} className="bg-gray-50 px-4 py-3">
+                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+                            Matched transactions
+                          </p>
+                          <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+                            {lineMatches.map((m) => (
+                              <li
+                                key={m.matchId}
+                                className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                              >
+                                <div className="text-sm text-gray-700">
+                                  <span className="tabular-nums">{formatDate(m.txnDate)}</span>
+                                  {" · "}
+                                  {m.party || m.memo || <span className="text-gray-400">&mdash;</span>}
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <span className="text-sm font-semibold tabular-nums">
+                                    {formatDollars(signedAmount(m))}
+                                  </span>
+                                  {canAct && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setUnmatchTarget({
+                                          matchId: m.matchId,
+                                          label: `${formatDate(m.txnDate)} · ${
+                                            m.party || m.memo || "this transaction"
+                                          } (${formatDollars(signedAmount(m))})`,
+                                        })
+                                      }
+                                      className="text-sm font-semibold text-gray-600 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-0.5"
+                                    >
+                                      Unmatch
+                                    </button>
+                                  )}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        </td>
+                      </tr>
                     )}
-                  </tr>
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -243,10 +334,14 @@ export default function ReconciliationMatchingGrid({
       )}
 
       <ConfirmDialog
-        open={Boolean(unmatchLine)}
-        onOpenChange={(o) => !o && setUnmatchLine(null)}
-        title="Unmatch this bank line?"
-        description="This removes the link between the bank line and the transaction. Both return to unmatched — you can re-match at any time."
+        open={Boolean(unmatchTarget)}
+        onOpenChange={(o) => !o && setUnmatchTarget(null)}
+        title="Unmatch this transaction?"
+        description={
+          unmatchTarget
+            ? `Removes ${unmatchTarget.label} from this batch. It returns to unmatched — you can re-match at any time. Any other transactions matched to this bank line are unaffected.`
+            : "This removes the link between the bank line and the transaction. It returns to unmatched — you can re-match at any time."
+        }
         confirmLabel="Unmatch"
         destructive
         onConfirm={handleUnmatch}

@@ -8,6 +8,7 @@ import {
   getBankLinesForSession,
   getCandidateTransactionsForMatching,
   getTieOutAssembly,
+  getMatchedTransactionsForSession,
 } from "@/lib/reconciliation-queries";
 import { computeTieOut } from "@/lib/reconciliation";
 import { getFunds, getCategories } from "@/lib/ledger-queries";
@@ -60,13 +61,14 @@ export default async function ReconciliationSessionDetailPage({
   const reconSession = await getReconciliationSessionById(sessionId);
   if (!reconSession) notFound();
 
-  const [bankLines, candidateTransactions, tieOutAssembly, funds, categories] =
+  const [bankLines, candidateTransactions, tieOutAssembly, funds, categories, matchedTransactions] =
     await Promise.all([
       getBankLinesForSession(sessionId),
       getCandidateTransactionsForMatching(reconSession.bankAccountId),
       getTieOutAssembly(sessionId),
       getFunds(reconSession.entityId),
       getCategories(reconSession.entityId),
+      getMatchedTransactionsForSession(sessionId),
     ]);
 
   const tieOut = computeTieOut({
@@ -131,6 +133,7 @@ export default async function ReconciliationSessionDetailPage({
         sessionId={sessionId}
         bankLines={bankLines}
         candidateTransactions={candidateTransactions}
+        matchedTransactions={matchedTransactions}
         funds={funds}
         categories={categories}
         isOpen={isOpen}

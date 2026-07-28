@@ -28,6 +28,24 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-051: Batch reconciliation — array-only match body (no back-compat shim), new session-scoped match-detail query, `asOf`-anchored 12-day in-transit-deposit window
+
+**Status:** Resolved
+**Date:** 2026-07-28
+
+**Decision:** Four implementation calls closing Phase 3 for `docs/work-log/2026-07-28-zeffy-batch-reconciliation.md`, on top of DECISION-036's schema ruling and the architect's Phase 2 seams:
+
+1. **`POST .../match`'s request body drops the singular `transactionId` entirely in favor of `transactionIds: string[]` (array-only, min length 1) — no back-compat alias.** This route has exactly one caller in the codebase (`reconciliation-match-picker.tsx`), rewritten in this same feature; there is no external consumer to break. A 1-element array is the degenerate single-match case, so there is only ever one code path to maintain, per the architect's Phase 2 recommendation.
+2. **A new read helper, `getMatchedTransactionsForSession()`, joins `ledger_reconciliation_matches` → `ledger_transactions` (one query, whole session, no N+1)** rather than trying to make `getBankLinesForSession()`'s `matchedTransactionIds: string[]` carry enough information to render Flow 2's expandable per-transaction list. `candidateTransactions` deliberately excludes already-matched rows, so nothing else in the existing data already supplied date/party/amount for a matched transaction plus the specific `matchId` its Unmatch button needs — inventing that shape as a second query, grouped client-side by `bankLineId`, keeps `BankLineWithMatch` itself simple (just the id array named in the binding decision) rather than overloading one type with two different UI needs.
+3. **The month-gate carve-out window is 12 days, anchored to `asOf` (today), not `monthEnd`.** Justified from the verified 2026-07-28 case (rows dated 6/24-6/25 cleared the bank 6/29, a 4-5 day lag) plus Zeffy's ~7-day remittance cycle, rounded up with margin. Anchoring to `asOf` (mirroring `hasMonthElapsed()`'s existing injectable-`asOf`, local-getter pattern in the same file) is not a preference but a correctness requirement the architect flagged explicitly (§5): a `monthEnd`-relative window would exclude a forgotten, never-remitted batch forever as real time passes, which fails the treasurer's stated requirement that a long-stale batch must still flag. The carve-out is threaded through **both** `isMonthGatedForEntity()` and `getLatestOpenMonthForEntity()`'s own `blockingDates` filter — omitting the second would reintroduce the exact candidate-picker-truncation bug already fixed once for outstanding checks.
+4. **Correcting a wrong pick inside a committed batch is "unmatch every row down to zero, then re-pick the full corrected set," not "add the missing row back in isolation."** The existing "bank line already has a match → 409" gate in `match/route.ts` stays unchanged (architect §4: a line is matched once, as a complete set) — a partial per-row unmatch leaves the line "claimed" and unable to accept a new POST until every remaining match on it is also removed. Accepted as bounded v1 friction per the binding decision (per-row-only unmatch); a fast-follow that relaxes the gate to "reject only when the line is already balanced" is named as a reversible follow-up if real usage makes this painful.
+
+**Rationale:** All four favor the shape that keeps exactly one code path per concern (one match-body shape, one query per new UI need, one gate-relaxation rule) over a shape that would require either a second request format, an overloaded read type, or an unbounded month-gate exclusion that could hide a broken sync indefinitely.
+
+**Impact:** `src/lib/reconciliation-queries.ts` (`getTieOutAssembly`/`getBankLinesForSession` fan-out fix + `BankLineWithMatch.matchedTransactionIds: string[]`, new `getMatchedTransactionsForSession`/`MatchedTransactionRow`), `src/app/api/admin/ledger/reconciliation/sessions/[sessionId]/match/route.ts` (batch body + 9-step validation + atomic insert), `src/lib/financial-report-queries.ts` (`isInTransitZeffyDepositRow`, `daysBetween`, `asOf` threaded through `isMonthGatedForEntity`/`getLatestOpenMonthForEntity`), `src/components/admin/ledger/reconciliation-match-picker.tsx` (multi-select + running-sum + Zeffy filter chip), `src/components/admin/ledger/reconciliation-matching-grid.tsx` (expandable "Matched · N" + per-row unmatch), `src/components/admin/ledger/guide/reconciliation-section.tsx` §10. Full API contract, query rewrites, and the nine named unit tests are in the Phase 3 section of the work-log.
+
+---
+
 ## DECISION-050: Monthly Financial Statement — exclude Quicken-imported rows from One-Month cash bucketing; no fund-picker route segment; Annual-Budget-column balance rows cut from v1
 
 **Status:** Resolved

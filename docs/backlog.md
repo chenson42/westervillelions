@@ -200,8 +200,16 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   by reading the route source, not by driving a live request from a
   restricted session. Same root gap as above.
 
-- [ ] **B-05 — Reconciliation matching grid shows no preview of what a bank
-  line is matched to.** (added 2026-07-21, priority: nice-to-have) Surfaced
+- [x] **B-05 — Reconciliation matching grid shows no preview of what a bank
+  line is matched to.**
+  (resolved 2026-07-28 → `docs/work-log/2026-07-28-zeffy-batch-reconciliation.md`;
+  SHIP WITH NOTES — the expandable "Matched · N" list built for batch
+  reconciliation, sourced from `getMatchedTransactionsForSession()`, now shows
+  every matched row's date/party/amount inline, superseding the plain
+  "Matched" badge this item was filed against. See B-23 below for the
+  companion destructive-styling nit noted in the same original review, which
+  this pass did not touch and remains open.)
+  (added 2026-07-21, priority: nice-to-have) Surfaced
   during Phase 6 of `2026-07-21-ledger-reconciliation-sessions.md`
   (bank-reconciliation inc2). `BankLineWithMatch` (the session-detail API
   response) only carries `matchedTransactionId` — a bare UUID — so the
@@ -216,11 +224,6 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   `matchedTransactionId`, and render a small inline summary instead of the
   bare badge. Natural to bundle with inc3 (auto-match/Zeffy batch matching)
   since that increment already touches this same query path.
-  Also noted in the same review: **Unmatch's `<ConfirmDialog>` uses
-  `destructive` (red) styling** despite Unmatch being a fully reversible,
-  low-stakes action (re-matching is one click). Cosmetic nit — recommend
-  softening to the non-destructive style next time this component is touched
-  (e.g. alongside the B-05 fix above), not urgent enough for its own pass.
 
 - [ ] **B-06 — No repair path for a mis-uploaded reconciliation-session
   CSV.** (added 2026-07-21, priority: nice-to-have) Surfaced during Phase 6 of
@@ -330,3 +333,46 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   label map into `src/lib/` and import everywhere. While there: the register/fund-detail cell
   (`[fundSlug]/page.tsx` ~L455) renders the raw stored value with CSS `capitalize`, so `debit_card`
   and `bill_pay` show as "Debit_card" / "Bill_pay" — route it through the shared label map too.
+
+- [ ] **B-22 — Batch-match correction fast-follow: allow adding to an
+  already-matched-but-still-short line, instead of unmatch-to-zero-then-re-pick.**
+  (added 2026-07-28, priority: nice-to-have) Surfaced during Phase 3/6 of
+  `docs/work-log/2026-07-28-zeffy-batch-reconciliation.md` (DECISION-051 item
+  4). Today, once a bank line has any match at all, `POST .../match` 409s
+  unconditionally (architect §4's "matched once, as a complete set" rule) —
+  so fixing one wrong pick inside a 6-row batch means unmatching every
+  remaining row down to zero and re-selecting the corrected full set, not
+  adding the one missing transaction back in isolation. Accepted as bounded
+  v1 friction (Phase 1's binding per-row-only-unmatch answer), but named as a
+  reversible fast-follow if real usage makes it painful: relax the
+  bank-line-already-matched gate in `match/route.ts` from "reject whenever
+  any match exists" to "reject only when the line is already balanced" (sum
+  of existing matches equals the bank line amount), so a partially-unmatched,
+  still-short line can accept an additional POST instead of requiring a full
+  re-pick.
+
+- [ ] **B-23 — Auto-suggest a batch match (sum a week of same-payment-method
+  rows against a deposit automatically).**
+  (added 2026-07-28, priority: nice-to-have) Named out of scope in Phase 1 of
+  `docs/work-log/2026-07-28-zeffy-batch-reconciliation.md` and in the
+  Bank-Reconciliation guide's own "Coming soon" callout (`reconciliation-section.tsx`
+  §10) — an existing schema-index comment (`ix_ledger_bank_lines_check_slip`,
+  "shape inc3's auto-match will need") already anticipated this as a later
+  increment. v1 (shipped 2026-07-28) is manual multi-select only; this item
+  is the auto-clustering/auto-suggestion layer on top — propose a likely set
+  of candidate rows (e.g. same payment method, adjacent dates, summing near
+  the bank line's amount) instead of requiring the treasurer to hand-pick
+  every row.
+
+- [ ] **B-24 — Unmatch's `<ConfirmDialog>` uses `destructive` (red) styling
+  despite being a fully reversible action.**
+  (added 2026-07-21, carried forward from B-05 2026-07-28, priority:
+  nice-to-have) Originally noted alongside B-05 during Phase 6 of
+  `2026-07-21-ledger-reconciliation-sessions.md`; B-05 itself was resolved by
+  `docs/work-log/2026-07-28-zeffy-batch-reconciliation.md` but this cosmetic
+  nit was out of scope for that pass and remains open. Unmatch (both the
+  legacy single-match button and the new per-row batch Unmatch action in
+  `reconciliation-matching-grid.tsx`) is a low-stakes, one-click-reversible
+  action — re-matching costs nothing — yet its `<ConfirmDialog>` renders with
+  `destructive` (red) styling, which overstates the risk. Recommend softening
+  to the non-destructive style next time this component is touched.

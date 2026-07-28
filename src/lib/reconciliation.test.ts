@@ -7,6 +7,7 @@ import {
   computeTieOut,
   validatePeriodOverlap,
   computePeriodGapWarning,
+  computeSelectionSummary,
   type ChaseCsvColumnIndex,
 } from "./reconciliation";
 
@@ -249,5 +250,63 @@ describe("computePeriodGapWarning", () => {
 
   it("22. priorPeriodEnd === null (first-ever session for this account) returns null", () => {
     expect(computePeriodGapWarning("2025-07-01", null)).toBeNull();
+  });
+});
+
+describe("computeSelectionSummary", () => {
+  it("23. a batch of income rows summing exactly to a credit bank line is balanced", () => {
+    const result = computeSelectionSummary(
+      [
+        { flow: "income", amountCents: 57600 },
+        { flow: "income", amountCents: 12000 },
+      ],
+      69600,
+    );
+    expect(result.selectedSumCents).toBe(69600);
+    expect(result.deltaCents).toBe(0);
+    expect(result.balanced).toBe(true);
+  });
+
+  it("24. short by a cent yields a positive deltaCents and is not balanced", () => {
+    const result = computeSelectionSummary([{ flow: "income", amountCents: 69599 }], 69600);
+    expect(result.deltaCents).toBe(1);
+    expect(result.balanced).toBe(false);
+  });
+
+  it("25. over by a cent yields a negative deltaCents and is not balanced", () => {
+    const result = computeSelectionSummary([{ flow: "income", amountCents: 69601 }], 69600);
+    expect(result.deltaCents).toBe(-1);
+    expect(result.balanced).toBe(false);
+  });
+
+  it("26. a batch of expense rows sums (signed negative) exactly to a debit bank line", () => {
+    const result = computeSelectionSummary(
+      [
+        { flow: "expense", amountCents: 4000 },
+        { flow: "expense", amountCents: 2500 },
+      ],
+      -6500,
+    );
+    expect(result.selectedSumCents).toBe(-6500);
+    expect(result.balanced).toBe(true);
+  });
+
+  it("27. an empty selection against a non-zero bank line is unbalanced with the full amount as delta", () => {
+    const result = computeSelectionSummary([], 69600);
+    expect(result.selectedSumCents).toBe(0);
+    expect(result.deltaCents).toBe(69600);
+    expect(result.balanced).toBe(false);
+  });
+
+  it("28. a heterogeneous income+expense batch nets correctly against a credit line", () => {
+    const result = computeSelectionSummary(
+      [
+        { flow: "income", amountCents: 10000 },
+        { flow: "expense", amountCents: 2000 },
+      ],
+      8000,
+    );
+    expect(result.selectedSumCents).toBe(8000);
+    expect(result.balanced).toBe(true);
   });
 });

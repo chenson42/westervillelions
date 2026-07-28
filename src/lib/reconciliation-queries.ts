@@ -36,7 +36,7 @@ import {
   type LedgerBankLine,
   type LedgerReconciliationMatch,
 } from "@/lib/db/schema";
-import { eq, and, isNull, desc, asc } from "drizzle-orm";
+import { eq, and, isNull, inArray, desc, asc } from "drizzle-orm";
 import type { ExistingSessionPeriod } from "@/lib/reconciliation";
 
 // ---------------------------------------------------------------------------
@@ -243,23 +243,35 @@ export async function insertBankLines(rows: NewBankLineRow[]): Promise<number> {
 }
 
 export type BankLineWithMatch = LedgerBankLine & {
-  matchId: string | null;
-  matchedTransactionId: string | null;
+  /** Every transactionId matched to this line. Empty = unmatched. Length is
+   *  the "Matched · N" count. Replaces the old singular matchId /
+   *  matchedTransactionId fields, which silently hid all-but-one member of a
+   *  batch match (a bank line can now be matched to N transactions whose
+   *  signed amounts sum to it — DECISION-051). Use
+   *  getMatchedTransactionsForSession() for the per-match detail (date,
+   *  party, amount, matchId) an expandable UI needs to render this list. */
+  matchedTransactionIds: string[];
 };
 
 /**
  * All bank lines for a session, each carrying its match state (derived from
  * a LEFT JOIN against ledger_reconciliation_matches — no denormalized status
  * column on ledger_bank_lines, per the "don't fork state" principle).
- * `matchedTransactionId` is null when the line has no match yet.
  *
- * Ordered by postingDate ascending (bank-statement order).
+ * `bank_line_id` is deliberately non-unique (DECISION-036) to support batch
+ * matches, so this LEFT JOIN can return multiple rows per bank line — grouped
+ * by `line.id` in one JS pass (no new query, no N+1) before returning, so a
+ * batch-matched line's FULL set of matched transaction ids is preserved
+ * instead of the last-joined row silently overwriting the rest.
+ *
+ * Ordered by postingDate ascending (bank-statement order); first-seen order
+ * is tracked explicitly rather than relying on Map insertion order surviving
+ * a re-sort.
  */
 export async function getBankLinesForSession(sessionId: string): Promise<BankLineWithMatch[]> {
   const rows = await db
     .select({
       line: ledgerBankLines,
-      matchId: ledgerReconciliationMatches.id,
       matchedTransactionId: ledgerReconciliationMatches.transactionId,
     })
     .from(ledgerBankLines)
@@ -270,10 +282,24 @@ export async function getBankLinesForSession(sessionId: string): Promise<BankLin
     .where(eq(ledgerBankLines.sessionId, sessionId))
     .orderBy(asc(ledgerBankLines.postingDate));
 
-  return rows.map((r) => ({
-    ...r.line,
-    matchId: r.matchId ?? null,
-    matchedTransactionId: r.matchedTransactionId ?? null,
+  const idsByLine = new Map<string, string[]>();
+  const lineById = new Map<string, LedgerBankLine>();
+  const order: string[] = [];
+  for (const r of rows) {
+    if (!lineById.has(r.line.id)) {
+      lineById.set(r.line.id, r.line);
+      order.push(r.line.id);
+    }
+    if (r.matchedTransactionId) {
+      const arr = idsByLine.get(r.line.id) ?? [];
+      arr.push(r.matchedTransactionId);
+      idsByLine.set(r.line.id, arr);
+    }
+  }
+
+  return order.map((id) => ({
+    ...lineById.get(id)!,
+    matchedTransactionIds: idsByLine.get(id) ?? [],
   }));
 }
 
@@ -345,6 +371,48 @@ export async function getCandidateTransactionsForMatching(
   return rows;
 }
 
+export type MatchedTransactionRow = CandidateTransactionRow & {
+  matchId: string;
+  bankLineId: string;
+};
+
+/**
+ * Every matched transaction for a session, one row per match, joined with
+ * enough transaction detail (date/party/amount/etc.) to render Flow 2's
+ * expandable "Matched · N" list and drive its per-row Unmatch action
+ * (DECISION-051 — new helper, not previously named in Phase 1/2). Neither
+ * `BankLineWithMatch.matchedTransactionIds` (ids only) nor
+ * `getCandidateTransactionsForMatching()` (deliberately EXCLUDES already-
+ * matched rows) can supply this on their own.
+ *
+ * One query for the whole session (no N+1) — group client-side by
+ * `bankLineId` to build each line's match list.
+ */
+export async function getMatchedTransactionsForSession(
+  sessionId: string,
+): Promise<MatchedTransactionRow[]> {
+  const rows = await db
+    .select({
+      matchId: ledgerReconciliationMatches.id,
+      bankLineId: ledgerReconciliationMatches.bankLineId,
+      id: ledgerTransactions.id,
+      txnDate: ledgerTransactions.txnDate,
+      flow: ledgerTransactions.flow,
+      amountCents: ledgerTransactions.amountCents,
+      party: ledgerTransactions.party,
+      memo: ledgerTransactions.memo,
+      checkNumber: ledgerTransactions.checkNumber,
+      paymentMethod: ledgerTransactions.paymentMethod,
+    })
+    .from(ledgerReconciliationMatches)
+    .innerJoin(
+      ledgerTransactions,
+      eq(ledgerTransactions.id, ledgerReconciliationMatches.transactionId),
+    )
+    .where(eq(ledgerReconciliationMatches.sessionId, sessionId));
+  return rows;
+}
+
 // ---------------------------------------------------------------------------
 // Matches
 // ---------------------------------------------------------------------------
@@ -372,6 +440,59 @@ export async function getMatchForTransaction(
     .where(eq(ledgerReconciliationMatches.transactionId, transactionId))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export type BatchMatchCandidateTransaction = {
+  id: string;
+  status: string;
+  bankAccountId: string | null;
+  reconciled: boolean;
+  flow: string;
+  amountCents: number;
+};
+
+/**
+ * Bulk-fetches every submitted transactionId in ONE query (`inArray`, no
+ * N+1) — step 6 of the batch `/match` route's server-side validation
+ * sequence (DECISION-051). Any id with no matching row is simply absent from
+ * the returned array; the route diffs the input ids against the returned
+ * ids to build `missingTransactionIds`.
+ */
+export async function getTransactionsByIds(
+  transactionIds: string[],
+): Promise<BatchMatchCandidateTransaction[]> {
+  if (transactionIds.length === 0) return [];
+  const rows = await db
+    .select({
+      id: ledgerTransactions.id,
+      status: ledgerTransactions.status,
+      bankAccountId: ledgerTransactions.bankAccountId,
+      reconciled: ledgerTransactions.reconciled,
+      flow: ledgerTransactions.flow,
+      amountCents: ledgerTransactions.amountCents,
+    })
+    .from(ledgerTransactions)
+    .where(inArray(ledgerTransactions.id, transactionIds));
+  return rows;
+}
+
+/**
+ * Bulk-checks which of the submitted transactionIds already have a match row
+ * (in ANY session) — step 7 of the batch `/match` route's validation
+ * sequence. One query (`inArray`, no N+1); the route treats any hit as a
+ * whole-batch-rejecting conflict (step 5 already proved the TARGET bank line
+ * has zero matches, so a hit here can only mean "matched to a different
+ * line").
+ */
+export async function getMatchesForTransactionIds(
+  transactionIds: string[],
+): Promise<string[]> {
+  if (transactionIds.length === 0) return [];
+  const rows = await db
+    .select({ transactionId: ledgerReconciliationMatches.transactionId })
+    .from(ledgerReconciliationMatches)
+    .where(inArray(ledgerReconciliationMatches.transactionId, transactionIds));
+  return rows.map((r) => r.transactionId);
 }
 
 export async function getMatchById(
@@ -426,6 +547,14 @@ export type TieOutAssembly = {
  *
  * Out-of-period lines are excluded entirely from both lists — they're never
  * part of "this session's" close gate or tie-out sum (design doc Edge Cases).
+ *
+ * `bank_line_id` is deliberately non-unique (DECISION-036) — a batch-matched
+ * line fans out to N joined rows, one per match. This groups by `line.id`
+ * FIRST (one JS pass over the same single query, no new query/N+1) so a
+ * batch-matched line's amount is pushed into matchedLineAmountsCents EXACTLY
+ * ONCE, regardless of whether it has 1 or 6 matches — the earlier per-row
+ * reduction here would silently N-times-inflate the "cleared" sum the whole
+ * "opening + cleared = closing" tie-out gate depends on.
  */
 export async function getTieOutAssembly(sessionId: string): Promise<TieOutAssembly> {
   const rows = await db
@@ -441,14 +570,25 @@ export async function getTieOutAssembly(sessionId: string): Promise<TieOutAssemb
     )
     .where(and(eq(ledgerBankLines.sessionId, sessionId), eq(ledgerBankLines.inStatementPeriod, true)));
 
-  const matchedLineAmountsCents: number[] = [];
-  const unmatchedInPeriodBankLineIds: string[] = [];
+  const seenLineIds = new Set<string>();
+  const lineAmountById = new Map<string, number>();
+  const matchedLineIds = new Set<string>();
 
   for (const row of rows) {
-    if (row.matchedTransactionId) {
-      matchedLineAmountsCents.push(row.amountCents);
+    if (!seenLineIds.has(row.id)) {
+      seenLineIds.add(row.id);
+      lineAmountById.set(row.id, row.amountCents);
+    }
+    if (row.matchedTransactionId) matchedLineIds.add(row.id);
+  }
+
+  const matchedLineAmountsCents: number[] = [];
+  const unmatchedInPeriodBankLineIds: string[] = [];
+  for (const lineId of seenLineIds) {
+    if (matchedLineIds.has(lineId)) {
+      matchedLineAmountsCents.push(lineAmountById.get(lineId)!);
     } else {
-      unmatchedInPeriodBankLineIds.push(row.id);
+      unmatchedInPeriodBankLineIds.push(lineId);
     }
   }
 
