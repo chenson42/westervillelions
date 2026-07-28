@@ -39,9 +39,15 @@
  *                                                                            # paymentMethod from 'check' to 'debit_card'
  *
  * Target: DATABASE_URL/DB_URL from .env.local by default (local dev); pass
- * PROD_DATABASE_URL to target production instead (only relevant if
- * production's own first-time Quicken seed happens without the importer's
- * checkNumber-capturing enhancement already in place).
+ * PROD_DATABASE_URL to target production instead.
+ *
+ * HISTORICAL STATUS: this backfill has already been run to completion against
+ * BOTH local dev and production (2026-07-21, T-22) — check_number is populated
+ * on the seeded rows in both databases. Nothing further to do here; retained
+ * for provenance and as the reference example of the correct additive,
+ * UPDATE-only way to add a derived column to already-seeded data (as opposed to
+ * re-running scripts/import-quicken-ledger.ts, which is destructive — see that
+ * file's header).
  *
  * Idempotent: re-running after a successful --apply re-derives the same
  * matches and re-applies the same values — safe, if redundant, to run twice.

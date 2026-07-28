@@ -31,9 +31,18 @@ import {
   validateCategoryCreateInput,
   nextCategorySortOrder,
   validateRequiredTrimmedText,
+  bucketGivingByCause,
+  BUDGET_CAUSES,
+  OTHER_COMMUNITY_SUPPORT_CAUSE,
+  isValidBudgetCause,
+  isCauseEligibleCategory,
+  sumBudgetCauseLines,
+  deriveCauseSeedLines,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
+  type GivingFoldRow,
+  type CauseSeedSourceRow,
 } from "./ledger";
 
 // ---------------------------------------------------------------------------
@@ -2137,5 +2146,157 @@ describe("validateRequiredTrimmedText", () => {
       expect(result.value).toHaveLength(500);
       expect(result.value).toBe("a".repeat(500));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isValidBudgetCause — Cause-Tagged Budget Line Items (B-17 Increment A)
+// ---------------------------------------------------------------------------
+
+describe("isValidBudgetCause", () => {
+  it("accepts each of the 8 BUDGET_CAUSES values", () => {
+    for (const cause of BUDGET_CAUSES) {
+      expect(isValidBudgetCause(cause)).toBe(true);
+    }
+  });
+
+  it("accepts OTHER_COMMUNITY_SUPPORT_CAUSE", () => {
+    expect(isValidBudgetCause(OTHER_COMMUNITY_SUPPORT_CAUSE)).toBe(true);
+  });
+
+  it("rejects an arbitrary string", () => {
+    expect(isValidBudgetCause("Not a real cause")).toBe(false);
+  });
+
+  it("rejects 'Fundraising event costs' specifically (dropped taxonomy value)", () => {
+    expect(isValidBudgetCause("Fundraising event costs")).toBe(false);
+  });
+
+  it("rejects an empty string", () => {
+    expect(isValidBudgetCause("")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OTHER_COMMUNITY_SUPPORT_CAUSE byte-identity — DECISION-045 "re-exported, not re-typed"
+// ---------------------------------------------------------------------------
+
+describe("OTHER_COMMUNITY_SUPPORT_CAUSE byte-identity", () => {
+  it("equals the literal 'Other community support'", () => {
+    expect(OTHER_COMMUNITY_SUPPORT_CAUSE).toBe("Other community support");
+  });
+
+  it("is === bucketGivingByCause()'s null-cause causeLabel output", () => {
+    const rows: GivingFoldRow[] = [
+      {
+        id: "t1",
+        txnDate: "2026-01-01",
+        amountCents: 5_000,
+        beneficiaryCause: null,
+        party: "Some Payee",
+        publicNote: null,
+      },
+    ];
+    const result = bucketGivingByCause(rows);
+    expect(result).toHaveLength(1);
+    expect(result[0].causeLabel).toBe(OTHER_COMMUNITY_SUPPORT_CAUSE);
+    // Not just equal in value — provably the same const, guarding against
+    // a future edit re-introducing a second, driftable copy of the literal.
+    expect(result[0].causeLabel === OTHER_COMMUNITY_SUPPORT_CAUSE).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isCauseEligibleCategory — Cause-Tagged Budget Line Items (B-17 Increment A)
+// ---------------------------------------------------------------------------
+
+describe("isCauseEligibleCategory", () => {
+  it("returns true for an expense category with countsAsGiving true", () => {
+    expect(isCauseEligibleCategory({ flow: "expense", countsAsGiving: true })).toBe(true);
+  });
+
+  it("returns false for an income-flow category", () => {
+    expect(isCauseEligibleCategory({ flow: "income", countsAsGiving: true })).toBe(false);
+  });
+
+  it("returns false for an expense category with countsAsGiving false", () => {
+    expect(isCauseEligibleCategory({ flow: "expense", countsAsGiving: false })).toBe(false);
+  });
+
+  it("returns false for an expense category with countsAsGiving null", () => {
+    expect(isCauseEligibleCategory({ flow: "expense", countsAsGiving: null })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sumBudgetCauseLines — Cause-Tagged Budget Line Items (B-17 Increment A)
+// ---------------------------------------------------------------------------
+
+describe("sumBudgetCauseLines", () => {
+  it("sums a list of amountCents correctly", () => {
+    expect(
+      sumBudgetCauseLines([{ amountCents: 1_000 }, { amountCents: 2_500 }, { amountCents: 500 }]),
+    ).toBe(4_000);
+  });
+
+  it("returns 0 for an empty list", () => {
+    expect(sumBudgetCauseLines([])).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deriveCauseSeedLines — Cause-Tagged Budget Line Items (B-17 Increment A)
+// ---------------------------------------------------------------------------
+
+describe("deriveCauseSeedLines", () => {
+  it("most-recent-FY tie-break: a cause in both lookback years with different amounts proposes the more-recent year's amount", () => {
+    const rows: CauseSeedSourceRow[] = [
+      { cause: "Youth & Education", amountCents: 10_000, fiscalYear: 2024 },
+      { cause: "Youth & Education", amountCents: 15_000, fiscalYear: 2025 },
+    ];
+    const result = deriveCauseSeedLines(rows, new Map());
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      cause: "Youth & Education",
+      amountCents: 15_000,
+      sourceFiscalYear: 2025,
+    });
+  });
+
+  it("union across years: a cause present only in the older year, and one present only in the newer year, are both proposed", () => {
+    const rows: CauseSeedSourceRow[] = [
+      { cause: "Disaster Relief", amountCents: 5_000, fiscalYear: 2024 },
+      { cause: "Hunger & Basic Needs", amountCents: 7_500, fiscalYear: 2025 },
+    ];
+    const result = deriveCauseSeedLines(rows, new Map());
+    expect(result).toHaveLength(2);
+    const byCause = new Map(result.map((r) => [r.cause, r]));
+    expect(byCause.get("Disaster Relief")).toMatchObject({ amountCents: 5_000, sourceFiscalYear: 2024 });
+    expect(byCause.get("Hunger & Basic Needs")).toMatchObject({ amountCents: 7_500, sourceFiscalYear: 2025 });
+  });
+
+  it("collision flagging: a proposed cause matching existingCauseAmountMap is flagged collision:true with the existing amount", () => {
+    const rows: CauseSeedSourceRow[] = [
+      { cause: "Vision & Eye Care", amountCents: 3_000, fiscalYear: 2025 },
+    ];
+    const existing = new Map([["Vision & Eye Care", 9_999]]);
+    const result = deriveCauseSeedLines(rows, existing);
+    expect(result).toHaveLength(1);
+    expect(result[0].collision).toBe(true);
+    expect(result[0].existingAmountCents).toBe(9_999);
+  });
+
+  it("collision flagging: a cause with no existing entry is collision:false with existingAmountCents null", () => {
+    const rows: CauseSeedSourceRow[] = [
+      { cause: "Community & Civic", amountCents: 2_000, fiscalYear: 2025 },
+    ];
+    const result = deriveCauseSeedLines(rows, new Map());
+    expect(result).toHaveLength(1);
+    expect(result[0].collision).toBe(false);
+    expect(result[0].existingAmountCents).toBeNull();
+  });
+
+  it("returns [] (not a throw) for zero rows in both lookback years", () => {
+    expect(deriveCauseSeedLines([], new Map())).toEqual([]);
   });
 });

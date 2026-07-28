@@ -17,6 +17,8 @@
  *   mode: 'fill-empty' | 'overwrite';      // required, no default
  *   fundIds?: string[];                    // optional subset of entityId's active funds.
  *                                          // Omitted/empty -> all active funds of entityId.
+ *   seedCauseLines?: boolean;              // optional, default false (B-17 Increment A,
+ *                                          // DECISION-045/046) — see below.
  * }
  *
  * Response 200:
@@ -30,21 +32,55 @@
  *     seededCount: number;
  *     skippedCount: number;
  *     overwrittenCount: number;
+ *     causeBreakdownSkippedCount: number;   // count of lines skipped via 'skipped_cause_breakdown' below
  *     lines: Array<{
  *       categoryId: string;
  *       categoryName: string;
  *       flow: 'income' | 'expense';
  *       amountCents: number;
  *       source: 'actual' | 'prior_budget';
- *       action: 'seeded' | 'skipped_existing' | 'overwritten';
+ *       action: 'seeded' | 'skipped_existing' | 'overwritten' | 'skipped_cause_breakdown';
+ *         // 'skipped_cause_breakdown' (regression fix, qa Phase 5 FAIL 2026-07-27): this
+ *         // category already has ledger_budget_lines children — its lump-sum amount is
+ *         // deliberately left untouched by this top-level loop rather than clobbered.
+ *         // Distinct from 'skipped_existing' (an ordinary fill-empty collision) so the UI
+ *         // can give it accurate copy. Its own cause-line-seeding pass (causeLines below,
+ *         // when seedCauseLines is true) is the correct path that may still update it.
+ *       causeLines?: Array<{               // present only when seedCauseLines was true
+ *         cause: string;                   // AND this is an expense line whose category is
+ *         amountCents: number;             // cause-eligible (flow==='expense' &&
+ *         sourceFiscalYear: number;        // countsAsGiving===true) — see
+ *         action: 'seeded' | 'skipped_existing' | 'overwritten';  // computeCauseSeedForCategory.
+ *       }>;
  *     }>;
  *   }>;
  * }
+ *
+ * Cause-line seeding (seedCauseLines: true): for every expense line above
+ * whose category is cause-eligible (flow==='expense' && category.countsAsGiving
+ * === true — DECISION-046 item 4), computeCauseSeedForCategory() proposes
+ * cause-tagged line items from the past two lookback FYs' posted actuals
+ * (most-recent-FY tie-break, union across years — src/lib/ledger.ts
+ * deriveCauseSeedLines()), and each proposed line is written via the SAME
+ * decideSeedWriteAction(mode, collision) dispatch already used for the
+ * top-level lines, inside the SAME db.transaction() as everything else — a
+ * lock rejection anywhere rolls back the whole request atomically, exactly
+ * like today's SeedLockedError pattern. A category with zero cause-tagged
+ * actuals in the lookback window gets `causeLines: []`, never an error
+ * (Human Answer 3's graceful-empty-state requirement — production's Quicken
+ * import may not be seeded yet). NOTE: only categories that already have a
+ * top-level `lines[]` entry (i.e. had actuals or a prior budget in the
+ * immediate prior FY) get cause-line seeding in this pass — a category with
+ * cause-tagged history in the older lookback FY only, but nothing in the
+ * immediate prior FY, is not proposed here; add its cause lines manually via
+ * PATCH /budgets/cause-lines.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { ledgerCategories } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import {
@@ -52,16 +88,22 @@ import {
   getFunds,
   computeSeedFromPriorYear,
   upsertBudgetLine,
+  upsertBudgetCauseLine,
+  computeCauseSeedForCategory,
 } from "@/lib/ledger-queries";
 import { decideSeedWriteAction } from "@/lib/ledger";
 
 const VALID_MODES = ["fill-empty", "overwrite"] as const;
 
 // Thrown inside the db.transaction() below to force a rollback when
-// upsertBudgetLine rejects a line (currently only the lock check, but any
-// future non-ok result from upsertBudgetLine is handled the same way) — see
-// the try/catch around the transaction call for how this maps back to an
-// HTTP response.
+// upsertBudgetLine rejects a line for a reason that must abort the WHOLE
+// request (a locked budget — writeResult.reason === "locked"; any future
+// reason not explicitly handled below falls through to this same
+// rollback-everything behavior, the safe default). A cause-broken-down
+// category (writeResult.reason === "has_cause_breakdown") is handled
+// separately, inline in the loop below — it's a per-category skip, not a
+// whole-request abort. See the try/catch around the transaction call for how
+// this maps back to an HTTP response.
 class SeedLockedError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -71,13 +113,27 @@ class SeedLockedError extends Error {
   }
 }
 
+type CauseLineResponse = {
+  cause: string;
+  amountCents: number;
+  sourceFiscalYear: number;
+  action: "seeded" | "skipped_existing" | "overwritten";
+};
+
 type ResponseLine = {
   categoryId: string;
   categoryName: string;
   flow: "income" | "expense";
   amountCents: number;
   source: "actual" | "prior_budget";
-  action: "seeded" | "skipped_existing" | "overwritten";
+  // "skipped_cause_breakdown" (regression fix, qa Phase 5 FAIL 2026-07-27):
+  // this category already has ledger_budget_lines children (it's been
+  // broken down by cause) — its lump-sum amount is deliberately left
+  // untouched rather than clobbered by this top-level loop. Distinct from
+  // "skipped_existing" (collision with an existing lump-sum target) so the
+  // UI can give it accurate copy instead of "already set".
+  action: "seeded" | "skipped_existing" | "overwritten" | "skipped_cause_breakdown";
+  causeLines?: CauseLineResponse[];
 };
 
 type ResponseFund = {
@@ -87,6 +143,11 @@ type ResponseFund = {
   seededCount: number;
   skippedCount: number;
   overwrittenCount: number;
+  // Count of top-level lines skipped specifically because the category is
+  // already broken down by cause (see ResponseLine.action above) — kept
+  // separate from skippedCount so existing "N already set" copy stays
+  // accurate for the pre-existing collision-skip case.
+  causeBreakdownSkippedCount: number;
   lines: ResponseLine[];
 };
 
@@ -101,7 +162,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { entityId, targetFiscalYear, mode, fundIds } = body;
+    const { entityId, targetFiscalYear, mode, fundIds, seedCauseLines } = body;
+
+    if (seedCauseLines !== undefined && typeof seedCauseLines !== "boolean") {
+      return NextResponse.json({ error: "seedCauseLines must be a boolean" }, { status: 400 });
+    }
+    const shouldSeedCauseLines = seedCauseLines === true;
 
     if (!entityId || typeof entityId !== "string") {
       return NextResponse.json({ error: "entityId is required" }, { status: 400 });
@@ -168,6 +234,7 @@ export async function POST(request: NextRequest) {
         let seededCount = 0;
         let skippedCount = 0;
         let overwrittenCount = 0;
+        let causeBreakdownSkippedCount = 0;
         const lines: ResponseLine[] = [];
 
         for (const line of fundPreview.seedableLines) {
@@ -201,15 +268,36 @@ export async function POST(request: NextRequest) {
             tx,
           );
 
-          // upsertBudgetLine now returns { ok: false, status: 409 } when the
-          // target (entityId, fiscalYear) is locked (assertBudgetUnlocked,
-          // called from inside upsertBudgetLine). Discarding this result
-          // would silently report a fake 200 with seededCount/overwrittenCount
-          // numbers while zero rows were actually written for a locked FY.
-          // Throw so db.transaction() rolls back the whole seed atomically —
-          // no partial-seed-then-reject state — and surface the 409 to the
-          // caller via the outer catch block below.
           if (!writeResult.ok) {
+            // "has_cause_breakdown" (regression fix, qa Phase 5 FAIL
+            // 2026-07-27): this category already has ledger_budget_lines
+            // children — upsertBudgetLine correctly refused to clobber its
+            // parent total from this lump-sum path. This is a per-category
+            // skip, NOT a reason to abort the whole seed request: the
+            // category's existing cause breakdown is left exactly as-is
+            // (its own cause-line-seeding pass below, if seedCauseLines was
+            // requested, is what may legitimately update it).
+            if (writeResult.reason === "has_cause_breakdown") {
+              causeBreakdownSkippedCount++;
+              lines.push({
+                categoryId: line.categoryId,
+                categoryName: line.categoryName,
+                flow: line.flow,
+                amountCents: line.proposedAmountCents,
+                source: line.source,
+                action: "skipped_cause_breakdown",
+              });
+              continue;
+            }
+
+            // Any other rejection (currently just "locked", from
+            // assertBudgetUnlocked) must abort the whole request. Discarding
+            // this result would silently report a fake 200 with
+            // seededCount/overwrittenCount numbers while zero rows were
+            // actually written for a locked FY. Throw so db.transaction()
+            // rolls back the whole seed atomically — no partial-seed-then-
+            // reject state — and surface the 409 to the caller via the
+            // outer catch block below.
             throw new SeedLockedError(writeResult.error, writeResult.status);
           }
 
@@ -228,6 +316,94 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        // Cause-line seeding (B-17 Increment A, DECISION-045/046) — only for
+        // funds whose kind is cause-eligible (activity/charitable), and only
+        // for expense lines whose category itself is cause-eligible
+        // (countsAsGiving === true). Reuses the SAME transaction (`tx`) and
+        // the SAME mode/decideSeedWriteAction dispatch as the top-level
+        // lines above — a lock rejection here rolls back the whole request
+        // exactly like a lock rejection in the top-level loop.
+        if (
+          shouldSeedCauseLines &&
+          (fundPreview.fund.kind === "activity" || fundPreview.fund.kind === "charitable")
+        ) {
+          const expenseCategoryIds = lines
+            .filter((l) => l.flow === "expense")
+            .map((l) => l.categoryId);
+
+          const eligibleCategoryIds = new Set<string>();
+          if (expenseCategoryIds.length > 0) {
+            const eligibleCats = await tx
+              .select({ id: ledgerCategories.id })
+              .from(ledgerCategories)
+              .where(
+                and(
+                  eq(ledgerCategories.entityId, entity.id),
+                  eq(ledgerCategories.fundKind, fundPreview.fund.kind),
+                  eq(ledgerCategories.flow, "expense"),
+                  eq(ledgerCategories.countsAsGiving, true),
+                ),
+              );
+            for (const cat of eligibleCats) eligibleCategoryIds.add(cat.id);
+          }
+
+          for (const line of lines) {
+            if (line.flow !== "expense" || !eligibleCategoryIds.has(line.categoryId)) {
+              continue;
+            }
+
+            const proposedCauseLines = await computeCauseSeedForCategory(
+              fundPreview.fund.id,
+              line.categoryId,
+              targetFiscalYear,
+              tx,
+            );
+
+            const causeLines: CauseLineResponse[] = [];
+            for (const proposed of proposedCauseLines) {
+              const causeWriteAction = decideSeedWriteAction(mode, proposed.collision);
+
+              if (causeWriteAction === "skip") {
+                causeLines.push({
+                  cause: proposed.cause,
+                  amountCents: proposed.amountCents,
+                  sourceFiscalYear: proposed.sourceFiscalYear,
+                  action: "skipped_existing",
+                });
+                continue;
+              }
+
+              const causeWriteResult = await upsertBudgetCauseLine(
+                {
+                  fundId: fundPreview.fund.id,
+                  fiscalYear: targetFiscalYear,
+                  categoryId: line.categoryId,
+                  flow: "expense",
+                  cause: proposed.cause,
+                  amountCents: proposed.amountCents,
+                },
+                tx,
+              );
+
+              // Same rollback contract as the top-level line writes above —
+              // throw so db.transaction() rolls back the whole seed
+              // atomically on a lock rejection.
+              if (!causeWriteResult.ok) {
+                throw new SeedLockedError(causeWriteResult.error, causeWriteResult.status);
+              }
+
+              causeLines.push({
+                cause: proposed.cause,
+                amountCents: proposed.amountCents,
+                sourceFiscalYear: proposed.sourceFiscalYear,
+                action: causeWriteAction === "seed" ? "seeded" : "overwritten",
+              });
+            }
+
+            line.causeLines = causeLines;
+          }
+        }
+
         responseFunds.push({
           fundId: fundPreview.fund.id,
           fundSlug: fundPreview.fund.slug,
@@ -235,6 +411,7 @@ export async function POST(request: NextRequest) {
           seededCount,
           skippedCount,
           overwrittenCount,
+          causeBreakdownSkippedCount,
           lines,
         });
       }

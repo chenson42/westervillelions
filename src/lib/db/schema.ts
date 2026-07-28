@@ -796,6 +796,33 @@ export const ledgerBudgets = pgTable(
 export type LedgerBudget = typeof ledgerBudgets.$inferSelect;
 export type NewLedgerBudget = typeof ledgerBudgets.$inferInsert;
 
+// Cause-tagged budget line items — child rows under a ledger_budgets row
+// (DECISION-045). A budget row is either a lump sum (no children) or a cause
+// breakdown (1+ children whose amounts sum to the parent's annualAmountCents,
+// kept in sync by every write path). App-layer valid `cause` values: the
+// BUDGET_CAUSES taxonomy + OTHER_COMMUNITY_SUPPORT_CAUSE (src/lib/ledger.ts).
+// No DB CHECK/enum — DECISION-041 precedent.
+export const ledgerBudgetLines = pgTable(
+  "ledger_budget_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    budgetId: uuid("budget_id")
+      .notNull()
+      .references(() => ledgerBudgets.id, { onDelete: "cascade" }),
+    cause: text("cause").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ledger_budget_lines_budget_cause_key").on(t.budgetId, t.cause),
+    index("ix_ledger_budget_lines_budget").on(t.budgetId),
+  ],
+);
+
+export type LedgerBudgetLine = typeof ledgerBudgetLines.$inferSelect;
+export type NewLedgerBudgetLine = typeof ledgerBudgetLines.$inferInsert;
+
 // Budget approve/lock state — one row per (entityId, fiscalYear), unique-
 // constrained on that pair. Single status-flip row (DECISION-043), NOT an
 // event log: locking sets the approval trio + status='locked'; unlocking

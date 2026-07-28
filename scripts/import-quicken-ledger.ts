@@ -6,25 +6,38 @@
  *   pnpm exec tsx scripts/import-quicken-ledger.ts            # dry run (default) — parses, maps, verifies, prints. No DB writes.
  *   pnpm exec tsx scripts/import-quicken-ledger.ts --apply     # executes against DATABASE_URL from .env.local
  *
- * Idempotency: every inserted transaction's memo is suffixed with " [quicken-import]".
- * On --apply, the script first deletes any existing ledger_transactions whose memo
- * ends with that marker (and any ledger_acknowledgments referencing them), then
- * re-inserts fresh — safe to re-run.
- *
  * Source CSVs are treasurer financial records and intentionally live OUTSIDE the
  * repo (see paths below). Do not copy them into the repo.
  *
- * Bank Reconciliation inc1 (T-18, DECISION-034): rows now carry a derived
- * `checkNumber` into the insert, so PRODUCTION's still-pending first Quicken
- * seed gets the column for free. Several helpers below are exported so
- * scripts/backfill-check-numbers.ts can reuse them without duplication.
- * IMPORTANT: do NOT re-run this script (even in dry-run-then---apply form)
- * against the already-seeded local dev DB to "pick up" checkNumber — its
- * delete-and-reinsert idempotency model would silently discard any
- * reconciliation/edit state layered on since the 2026-07-20 seed and
- * cascade-delete any ledger_acknowledgments tied to the doomed row IDs.
- * scripts/backfill-check-numbers.ts is the correct (and only) backfill path
- * for local dev.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * HISTORICAL STATUS — this script's job is DONE. Do NOT run it again.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This importer ran once, against LOCAL DEV, on 2026-07-20 (276 transactions,
+ * FY2025–FY2026; see docs/work-log/2026-07-20-ledger-quicken-seed.md).
+ * PRODUCTION was seeded the SAME DAY — NOT by running this script, but by
+ * scripts/port-ledger-dev-to-prod.ts, a natural-key port of dev's already-
+ * reviewed rows (the treasurer explicitly wanted the hardened dev data ported,
+ * not a fresh CSV re-derivation). Both databases are therefore seeded and were
+ * kept in sync afterward through additive, UPDATE-only scripts/SQL:
+ *   - scripts/backfill-check-numbers.ts — checkNumber column (T-18, DECISION-034)
+ *   - Bags-to-Benches → "Program supplies" recategorization (T-22)
+ *   - public gift descriptions / public_note (T-23, migration 0058)
+ *   - +$250 petty-cash opening adjustment on the club/admin fund (T-20)
+ *
+ * Idempotency model (why re-running is DESTRUCTIVE, not merely redundant): on
+ * --apply the script DELETES every ledger_transactions row whose memo ends with
+ * the " [quicken-import]" marker (cascade-deleting any ledger_acknowledgments
+ * that reference them), then re-inserts fresh rows with NEW UUIDs and recomputes
+ * reconciled state from the CSV's static "Clr" column. Re-running would wipe
+ * every post-seed edit listed above, orphan/cascade-delete acknowledgment
+ * letters, and clobber the T-20 petty-cash opening (this script still hard-codes
+ * the register-only $19,090.10 club opening). There is NO supported "re-run to
+ * pick up a new derived field" path: new columns on the already-seeded data are
+ * added by dedicated additive UPDATE scripts (e.g. backfill-check-numbers.ts),
+ * never by this importer. Kept in the repo for provenance/reference only.
+ *
+ * Several helpers below are exported so scripts/backfill-check-numbers.ts can
+ * reuse them without duplication.
  */
 
 import { config } from "dotenv";
@@ -34,6 +47,7 @@ config({ path: resolve(__dirname, "../.env.local") });
 
 import { readFileSync } from "fs";
 import { db } from "../src/lib/db";
+import { BUDGET_CAUSES } from "../src/lib/ledger";
 import {
   ledgerEntities,
   ledgerBankAccounts,
@@ -222,14 +236,23 @@ function fiscalYearOf(isoDate: string): number {
 // many different beneficiaries and can only be disambiguated by payee/memo.
 // ---------------------------------------------------------------------------
 
-const CAUSE_VISION = "Vision & Eye Care";
-const CAUSE_YOUTH = "Youth & Education";
-const CAUSE_HUNGER = "Hunger & Basic Needs";
-const CAUSE_HEALTH = "Health & Disability";
-const CAUSE_DISASTER = "Disaster Relief";
-const CAUSE_LIONS_INTL = "Lions International Programs";
-const CAUSE_CIVIC = "Community & Civic";
-const CAUSE_RECYCLING = "Bags to Benches (Recycling)";
+// Values imported from src/lib/ledger.ts's BUDGET_CAUSES (DECISION-045: one
+// taxonomy, not two private copies kept in sync by convention) — order below
+// must match BUDGET_CAUSES's declared order exactly.
+const [
+  CAUSE_VISION,
+  CAUSE_YOUTH,
+  CAUSE_HUNGER,
+  CAUSE_HEALTH,
+  CAUSE_DISASTER,
+  CAUSE_LIONS_INTL,
+  CAUSE_CIVIC,
+  CAUSE_RECYCLING,
+] = BUDGET_CAUSES;
+// Fundraising overhead, not beneficiary giving — deliberately excluded from
+// BUDGET_CAUSES (Increment A's budget-side picker), but stays a valid
+// transaction-tagging value for historical import purposes, so it remains a
+// private literal here rather than importing from ledger.ts.
 const CAUSE_FUNDRAISING = "Fundraising event costs";
 
 /** Register categories mapped to a categoryName that is deliberately cause-less (ops/insurance). */

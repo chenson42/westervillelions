@@ -41,6 +41,15 @@
  * shared by PATCH /budgets and POST /budgets/seed via upsertBudgetLine() in
  * ledger-queries.ts), and decideSeedWriteAction() (fill-empty vs. overwrite
  * dispatch). See docs/work-log/2026-07-27-ledger-guided-budgeting.md Phase 3.
+ *
+ * Cause-Tagged Budget Line Items (2026-07-27 / DECISION-045/046): the
+ * controlled cause taxonomy (BUDGET_CAUSES, OTHER_COMMUNITY_SUPPORT_CAUSE,
+ * isValidBudgetCause()) promoted out of scripts/import-quicken-ledger.ts, plus
+ * isCauseEligibleCategory(), sumBudgetCauseLines(), and deriveCauseSeedLines()
+ * (most-recent-FY tie-break, union across the lookback window, collision
+ * flagging) backing the new ledger_budget_lines child-table write path in
+ * ledger-queries.ts. See docs/work-log/2026-07-27-ledger-cause-budget-lines.md
+ * Phase 3.
  */
 
 // ---------------------------------------------------------------------------
@@ -494,7 +503,7 @@ export function bucketGivingByCause(rows: GivingFoldRow[]): CauseBucket[] {
   return Array.from(causeMap.entries())
     .map(([causeKey, { totalCents: cents, firstSeenOriginal, rows: bucketRows }]) => ({
       causeKey,
-      causeLabel: causeKey === "" ? "Other community support" : firstSeenOriginal,
+      causeLabel: causeKey === "" ? OTHER_COMMUNITY_SUPPORT_CAUSE : firstSeenOriginal,
       totalCents: cents,
       pct: totalCents > 0 ? Math.round((cents / totalCents) * 1000) / 10 : 0,
       rows: [...bucketRows].sort((a, b) => (a.txnDate < b.txnDate ? 1 : a.txnDate > b.txnDate ? -1 : 0)),
@@ -505,6 +514,163 @@ export function bucketGivingByCause(rows: GivingFoldRow[]): CauseBucket[] {
       if (b.causeKey === "" && a.causeKey !== "") return -1;
       return b.totalCents - a.totalCents;
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cause-Tagged Budget Line Items (B-17 Increment A, DECISION-045/046)
+// ---------------------------------------------------------------------------
+
+/**
+ * The controlled budget-cause taxonomy — the 9-value cause list
+ * scripts/import-quicken-ledger.ts's deriveCause() has always emitted for
+ * historical transactions, MINUS "Fundraising event costs" (fundraising
+ * overhead, not beneficiary giving — excluded from the budget-side picker
+ * per Phase 1 Gap 2 / Human Answer 5). "Scholarships" was never its own
+ * cause value — deriveCause() already folds every scholarship category into
+ * CAUSE_YOUTH ("Youth & Education") today, so no separate fold is needed
+ * here. These 8 string values must stay byte-identical to deriveCause()'s
+ * CAUSE_* consts so historical cause-tagged actuals (Increment B, and this
+ * increment's seed-from-history flow) match the taxonomy a treasurer picks
+ * from in the budget UI.
+ */
+export const BUDGET_CAUSES = [
+  "Vision & Eye Care",
+  "Youth & Education",
+  "Hunger & Basic Needs",
+  "Health & Disability",
+  "Disaster Relief",
+  "Lions International Programs",
+  "Community & Civic",
+  "Bags to Benches (Recycling)",
+] as const;
+
+export type BudgetCause = (typeof BUDGET_CAUSES)[number];
+
+/**
+ * The "catch-all" cause value for a budget line that isn't tied to one of
+ * the 8 named causes above. Re-exported from the exact literal
+ * bucketGivingByCause() already renders for a null/blank beneficiaryCause on
+ * /members/impact (DECISION-045: "re-exported, not re-typed") — this const
+ * IS that string, not a second copy of it, so the two can never drift.
+ */
+export const OTHER_COMMUNITY_SUPPORT_CAUSE = "Other community support";
+
+/**
+ * Server-side gate for any `cause` value written to ledger_budget_lines
+ * (which has no DB-level enum/CHECK — DECISION-041 precedent). Accepts
+ * exactly the 8 BUDGET_CAUSES values plus OTHER_COMMUNITY_SUPPORT_CAUSE;
+ * rejects everything else, including "" and "Fundraising event costs" (the
+ * taxonomy value Increment A deliberately dropped from the budget picker).
+ */
+export function isValidBudgetCause(cause: string): boolean {
+  return (
+    typeof cause === "string" &&
+    ((BUDGET_CAUSES as readonly string[]).includes(cause) ||
+      cause === OTHER_COMMUNITY_SUPPORT_CAUSE)
+  );
+}
+
+/**
+ * Category eligibility for the "Break down by cause" affordance (DECISION-046
+ * item 4, CONFIRMED by Chris 2026-07-27: "Giving expense categories only.").
+ * Fund-kind eligibility (activity/charitable, not administrative/scholarship)
+ * is implicit at every call site — this predicate only decides the
+ * flow/countsAsGiving half, since BudgetEditor always renders categories
+ * belonging to a single already-fund-kind-scoped fund. A non-giving category
+ * (ops, insurance, fundraising overhead — DECISION-030) never offers a cause
+ * picker, and income-flow categories never do either.
+ */
+export function isCauseEligibleCategory(input: {
+  flow: string;
+  countsAsGiving: boolean | null | undefined;
+}): boolean {
+  return input.flow === "expense" && input.countsAsGiving === true;
+}
+
+/** A single budget cause line's dollar amount — the minimal shape needed to sum a category's breakdown. */
+export type BudgetCauseLineAmount = {
+  amountCents: number;
+};
+
+/**
+ * Sums a category's cause line items into its rolled-up total. Trivial, but
+ * extracted so the "parent = sum of children" invariant's math is
+ * unit-testable without a DB (mirrors this module's established pattern of
+ * pulling pure arithmetic out of the query layer). Empty list returns 0.
+ */
+export function sumBudgetCauseLines(lines: BudgetCauseLineAmount[]): number {
+  return lines.reduce((sum, line) => sum + line.amountCents, 0);
+}
+
+/**
+ * One (cause, fiscalYear) aggregate from the seed lookback window — the
+ * DB-touching caller (computeCauseSeedForCategory in ledger-queries.ts)
+ * pre-aggregates posted, cause-tagged expense actuals for one category into
+ * this shape (one row per cause per lookback fiscal year); this function
+ * only decides what to propose from the data it's given (same split as
+ * deriveSeedLinesForFund / getFundReport).
+ */
+export type CauseSeedSourceRow = {
+  cause: string;
+  amountCents: number;
+  fiscalYear: number;
+};
+
+export type CauseSeedProposedLine = {
+  cause: string;
+  amountCents: number;
+  /** Which of the lookback fiscal years this proposed amount came from. */
+  sourceFiscalYear: number;
+  /** existingCauseAmountMap has an entry for this cause. */
+  collision: boolean;
+  existingAmountCents: number | null;
+};
+
+/**
+ * Maps a category's cause-tagged historical actuals (already aggregated per
+ * (cause, fiscalYear) by the caller) into proposed cause-line seed
+ * candidates for the target FY. Pure — no DB access.
+ *
+ * Tie-break rule (Human Answer 7, Gap 8): when a cause appears in more than
+ * one lookback fiscal year, the MOST RECENT year's amount wins — never a sum
+ * or average. Union, not intersection: a cause present in only one lookback
+ * year is still proposed (Gap 8's union requirement).
+ *
+ * Collision detection mirrors the `(budgetId, cause)` unique constraint the
+ * write path upserts against: a cause line already exists for the target FY
+ * iff `existingCauseAmountMap` has an entry for that cause.
+ *
+ * Empty input (a category with zero cause-tagged actuals anywhere in the
+ * lookback window — e.g. production's unseeded Quicken import, Human Answer
+ * 3) returns `[]`, never throws — the seed-review UI's graceful empty state
+ * depends on this.
+ *
+ * @param rows                     Pre-aggregated (cause, fiscalYear) -> total amountCents rows across the lookback window.
+ * @param existingCauseAmountMap   cause -> amountCents already set for the target FY's budget row, if any.
+ */
+export function deriveCauseSeedLines(
+  rows: CauseSeedSourceRow[],
+  existingCauseAmountMap: Map<string, number>,
+): CauseSeedProposedLine[] {
+  const byCause = new Map<string, CauseSeedSourceRow>();
+
+  for (const row of rows) {
+    const current = byCause.get(row.cause);
+    if (!current || row.fiscalYear > current.fiscalYear) {
+      byCause.set(row.cause, row);
+    }
+  }
+
+  return Array.from(byCause.values()).map((row) => {
+    const existingAmountCents = existingCauseAmountMap.get(row.cause) ?? null;
+    return {
+      cause: row.cause,
+      amountCents: row.amountCents,
+      sourceFiscalYear: row.fiscalYear,
+      collision: existingAmountCents !== null,
+      existingAmountCents,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

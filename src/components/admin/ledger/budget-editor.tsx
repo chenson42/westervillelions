@@ -4,12 +4,34 @@ import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { isCauseEligibleCategory, OTHER_COMMUNITY_SUPPORT_CAUSE } from "@/lib/ledger";
+import BudgetCauseEditor, { type ExitBreakdownReason } from "@/components/admin/ledger/budget-cause-editor";
 
 interface BudgetLine {
   categoryId: string;
   categoryName: string;
   flow: "income" | "expense";
   budgetCents: number | null;
+  /**
+   * Sourced from ledgerCategories.countsAsGiving. Drives the "Break down by
+   * cause" affordance's eligibility gate (isCauseEligibleCategory, B-17
+   * Increment A) — optional/defaulted so callers on older pages that haven't
+   * threaded it through yet don't break the type.
+   */
+  countsAsGiving?: boolean;
+  /**
+   * null = lump-sum/no breakdown; a non-empty array = this category is
+   * already in cause-breakdown mode server-side. Optional/defaulted for the
+   * same reason as countsAsGiving.
+   */
+  causeLines?: { cause: string; amountCents: number }[] | null;
+}
+
+function parseDollarsToCents(raw: string | undefined): number {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "") return 0;
+  const n = parseFloat(trimmed);
+  return !isNaN(n) && n >= 0 ? Math.round(n * 100) : 0;
 }
 
 interface BudgetEditorProps {
@@ -79,6 +101,13 @@ export default function BudgetEditor({
     categoryName: string;
     amountLabel: string;
   } | null>(null);
+  // Local-only override of a category's breakdown/lump-sum rendering mode,
+  // keyed the same as `inputs` (`${categoryId}_${flow}`). undefined = defer
+  // to the server-sourced `causeLines` field; true/false force one way or
+  // the other while a local pre-fill or a just-completed collapse/empty is
+  // ahead of the next router.refresh(). See DECISION-046 item 1 — entering
+  // breakdown mode is a client-side pre-fill with no dedicated endpoint.
+  const [breakdownOverride, setBreakdownOverride] = useState<Record<string, boolean>>({});
 
   function handleChange(key: string, value: string) {
     if (disabled) return;
@@ -188,63 +217,153 @@ export default function BudgetEditor({
     void doRemove(categoryId, flow);
   }
 
+  /**
+   * "Break down by cause" — flips LOCAL state only, no network call
+   * (DECISION-046 item 1: there is no dedicated "enter breakdown" endpoint).
+   * BudgetCauseEditor is handed a single pre-filled pending row —
+   * `OTHER_COMMUNITY_SUPPORT_CAUSE` at the category's current lump-sum
+   * value — and nothing is persisted until that row commits via its own
+   * blur/Enter path. If the treasurer navigates away first, the original
+   * lump sum is untouched.
+   */
+  function enterBreakdown(key: string) {
+    if (disabled) return;
+    setBreakdownOverride((prev) => ({ ...prev, [key]: true }));
+  }
+
+  /**
+   * Reverts a category from BudgetCauseEditor back to the plain lump-sum
+   * input. The dollar value to show afterward depends on *how* the
+   * breakdown ended:
+   *  - "cancelled" / "collapsed": the server-side ledger_budgets total was
+   *    never touched (a cancel writes nothing; collapse deliberately leaves
+   *    annualAmountCents as-is per DECISION-046 item 2) — restore the
+   *    line's original budgetCents unchanged.
+   *  - "emptied": the last cause line was removed one at a time, which
+   *    deletes the parent ledger_budgets row entirely — the category now has
+   *    no budget target set, so the input goes blank, not back to the old
+   *    total.
+   * dirtyRef is cleared in all three cases since the restored value already
+   * matches server truth — no redundant PATCH should fire on the next blur.
+   */
+  function exitBreakdown(line: BudgetLine, reason: ExitBreakdownReason) {
+    const key = `${line.categoryId}_${line.flow}`;
+    setBreakdownOverride((prev) => ({ ...prev, [key]: false }));
+    const restored =
+      reason === "emptied" ? "" : line.budgetCents !== null ? (line.budgetCents / 100).toFixed(2) : "";
+    setInputs((prev) => ({ ...prev, [key]: restored }));
+    dirtyRef.current[key] = false;
+    onInputChange?.(key, restored);
+  }
+
   return (
     <div className="space-y-1">
       {lines.map((line) => {
         const key = `${line.categoryId}_${line.flow}`;
         const isSaving = saving[key];
-        return (
-          <div key={key} className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 w-20 uppercase tracking-wide">
-              {line.flow}
-            </span>
-            <span className="text-sm text-gray-700 flex-1 truncate">{line.categoryName}</span>
-            <div className="relative w-28">
-              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">
-                $
-              </span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={inputs[key] ?? ""}
-                onChange={(e) => handleChange(key, e.target.value)}
-                onBlur={() => handleCommit(line.categoryId, line.flow)}
-                onKeyDown={(e) => handleKeyDown(e, line.categoryId, line.flow)}
-                disabled={isSaving || disabled}
-                className="block w-full rounded border border-gray-300 py-1 pl-6 pr-2 text-sm tabular-nums focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-60"
-                placeholder="—"
-                aria-label={`Budget for ${line.categoryName} (${line.flow})`}
-              />
-              {isSaving && (
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
-                  ...
+        const eligible = isCauseEligibleCategory({
+          flow: line.flow,
+          countsAsGiving: line.countsAsGiving,
+        });
+        const override = breakdownOverride[key];
+        const serverBreakdown = !!(line.causeLines && line.causeLines.length > 0);
+        const inBreakdown = override !== undefined ? override : serverBreakdown;
+
+        if (inBreakdown) {
+          const initialLines =
+            line.causeLines && line.causeLines.length > 0
+              ? line.causeLines
+              : [{ cause: OTHER_COMMUNITY_SUPPORT_CAUSE, amountCents: parseDollarsToCents(inputs[key]) }];
+          return (
+            <div key={key} className="rounded-lg border border-gray-100 p-2">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs text-gray-500 w-20 uppercase tracking-wide">
+                  {line.flow}
                 </span>
+                <span className="text-sm font-medium text-gray-900 flex-1 truncate">
+                  {line.categoryName}
+                </span>
+              </div>
+              <BudgetCauseEditor
+                fundId={fundId}
+                fiscalYear={fiscalYear}
+                categoryId={line.categoryId}
+                flow={line.flow}
+                initialLines={initialLines}
+                pending={!(line.causeLines && line.causeLines.length > 0)}
+                disabled={disabled}
+                onTotalChange={(value) => handleChange(key, value)}
+                onExitBreakdown={(reason) => exitBreakdown(line, reason)}
+              />
+            </div>
+          );
+        }
+
+        return (
+          <div key={key} className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 w-20 uppercase tracking-wide">
+                {line.flow}
+              </span>
+              <span className="text-sm text-gray-700 flex-1 truncate">{line.categoryName}</span>
+              <div className="relative w-28">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">
+                  $
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={inputs[key] ?? ""}
+                  onChange={(e) => handleChange(key, e.target.value)}
+                  onBlur={() => handleCommit(line.categoryId, line.flow)}
+                  onKeyDown={(e) => handleKeyDown(e, line.categoryId, line.flow)}
+                  disabled={isSaving || disabled}
+                  className="block w-full rounded border border-gray-300 py-1 pl-6 pr-2 text-sm tabular-nums focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-60"
+                  placeholder="—"
+                  aria-label={`Budget for ${line.categoryName} (${line.flow})`}
+                />
+                {isSaving && (
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+                    ...
+                  </span>
+                )}
+              </div>
+              {showRemoveControl && !disabled && (
+                <button
+                  type="button"
+                  onClick={() => requestRemove(line.categoryId, line.flow, line.categoryName)}
+                  title={`Remove ${line.categoryName} from this year's budget`}
+                  aria-label={`Remove ${line.categoryName} (${line.flow}) from this year's budget`}
+                  className="inline-flex items-center justify-center rounded-lg p-2 text-gray-400 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] min-w-[44px] flex-shrink-0"
+                >
+                  <svg
+                    className="h-4 w-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth="1.5"
+                    stroke="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                    />
+                  </svg>
+                </button>
               )}
             </div>
-            {showRemoveControl && !disabled && (
-              <button
-                type="button"
-                onClick={() => requestRemove(line.categoryId, line.flow, line.categoryName)}
-                title={`Remove ${line.categoryName} from this year's budget`}
-                aria-label={`Remove ${line.categoryName} (${line.flow}) from this year's budget`}
-                className="inline-flex items-center justify-center rounded-lg p-2 text-gray-400 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] min-w-[44px] flex-shrink-0"
-              >
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth="1.5"
-                  stroke="currentColor"
-                  aria-hidden="true"
+            {eligible && !disabled && (
+              <div className="pl-20">
+                <button
+                  type="button"
+                  onClick={() => enterBreakdown(key)}
+                  className="inline-flex items-center text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-2 min-h-[44px]"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-                  />
-                </svg>
-              </button>
+                  Break down by cause
+                </button>
+              </div>
             )}
           </div>
         );

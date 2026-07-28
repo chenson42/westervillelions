@@ -21,6 +21,7 @@ import {
   ledgerCategories,
   ledgerTransactions,
   ledgerBudgets,
+  ledgerBudgetLines,
   ledgerBudgetApprovals,
   ledgerSettings,
   ledgerReimbursements,
@@ -61,6 +62,9 @@ import {
   validateBudgetLineInput,
   deriveSeedLinesForFund,
   isBudgetLocked,
+  isValidBudgetCause,
+  sumBudgetCauseLines,
+  deriveCauseSeedLines,
   type GuardrailFlag,
   type BudgetVarianceResult,
   type AgedPublicFundFact,
@@ -68,6 +72,8 @@ import {
   type CauseGivingRow,
   type SeedSourceLine,
   type SeedProposedLine,
+  type CauseSeedSourceRow,
+  type CauseSeedProposedLine,
 } from "@/lib/ledger";
 
 // ---------------------------------------------------------------------------
@@ -96,6 +102,17 @@ export type FundReportCategoryLine = {
   actualCents: number;
   budgetCents: number | null;
   variance: BudgetVarianceResult;
+  /** Sourced from ledgerCategories.countsAsGiving — drives cause-breakdown
+   *  eligibility client-side (isCauseEligibleCategory, src/lib/ledger.ts).
+   *  false for budget-only rows with no matching category ("(Unknown
+   *  category)") — defensive default, no breakdown UI on orphaned rows. */
+  countsAsGiving: boolean;
+  /** Cause-tagged budget line items (B-17 Increment A, DECISION-045) for this
+   *  category's budget row, or null when the category is in lump-sum mode
+   *  (or has no budget row at all). Never `[]` — emptying the last cause
+   *  line deletes the parent ledger_budgets row, so "no breakdown" only ever
+   *  has one representation (null). */
+  causeLines: { cause: string; amountCents: number }[] | null;
 };
 
 export type FundReport = {
@@ -460,12 +477,47 @@ export async function getFundReport(
   }));
   const rolledForwardOpening = rolledForwardOpeningCents(fund.openingBalanceCents, preFyFlowRows);
 
+  // 4c. Batched fetch of cause-tagged budget line items (B-17 Increment A) for
+  // every budget row above — one query keyed off budgetRows' own IDs, no N+1
+  // per category. Folded into causeLinesByBudgetId below.
+  const budgetIds = budgetRows.map((b) => b.id);
+  const budgetLineRows =
+    budgetIds.length > 0
+      ? await db
+          .select({
+            budgetId: ledgerBudgetLines.budgetId,
+            cause: ledgerBudgetLines.cause,
+            amountCents: ledgerBudgetLines.amountCents,
+          })
+          .from(ledgerBudgetLines)
+          .where(inArray(ledgerBudgetLines.budgetId, budgetIds))
+      : [];
+  const causeLinesByBudgetId = new Map<string, { cause: string; amountCents: number }[]>();
+  for (const row of budgetLineRows) {
+    const existing = causeLinesByBudgetId.get(row.budgetId);
+    if (existing) {
+      existing.push({ cause: row.cause, amountCents: row.amountCents });
+    } else {
+      causeLinesByBudgetId.set(row.budgetId, [{ cause: row.cause, amountCents: row.amountCents }]);
+    }
+  }
+
   // 5. Build lookup maps — actuals use posted transactions only (inc2: status filter)
   const budgetMap = new Map<string, number>(); // key = `${categoryId}_${flow}`
+  const budgetIdMap = new Map<string, string>(); // key = `${categoryId}_${flow}` -> ledger_budgets.id
   for (const b of budgetRows) {
     if (b.categoryId) {
       budgetMap.set(`${b.categoryId}_${b.flow}`, b.annualAmountCents);
+      budgetIdMap.set(`${b.categoryId}_${b.flow}`, b.id);
     }
+  }
+
+  /** null = lump-sum/no breakdown; never [] — see FundReportCategoryLine.causeLines. */
+  function causeLinesFor(key: string): { cause: string; amountCents: number }[] | null {
+    const budgetId = budgetIdMap.get(key);
+    if (!budgetId) return null;
+    const lines = causeLinesByBudgetId.get(budgetId);
+    return lines && lines.length > 0 ? lines : null;
   }
 
   // Separate posted vs. pending transactions for accurate balance and encumbered figures
@@ -518,6 +570,8 @@ export async function getFundReport(
         actualCents,
         budgetCents,
         variance: budgetVariance(actualCents, budgetCents),
+        countsAsGiving: cat.countsAsGiving,
+        causeLines: causeLinesFor(key),
       });
     }
 
@@ -532,6 +586,8 @@ export async function getFundReport(
           actualCents,
           budgetCents: b.annualAmountCents,
           variance: budgetVariance(actualCents, b.annualAmountCents),
+          countsAsGiving: false,
+          causeLines: causeLinesFor(key),
         });
       }
     }
@@ -670,7 +726,20 @@ export type UpsertBudgetLineParams = {
 
 export type UpsertBudgetLineResult =
   | { ok: true; action: "upserted" | "deleted"; id?: string }
-  | { ok: false; error: string; status: 400 | 404 | 409 };
+  | {
+      ok: false;
+      error: string;
+      status: 400 | 404 | 409;
+      /**
+       * Discriminates the two distinct 409 causes so callers (specifically
+       * the seed route's top-level loop) can react differently — a locked
+       * budget must still abort/roll back the whole request, but a
+       * cause-broken-down category should be skipped and the rest of the
+       * request should proceed. Absent for 400/404s. (Regression fix,
+       * qa Phase 5 FAIL 2026-07-27 — see hasCauseLineChildren below.)
+       */
+      reason?: "locked" | "has_cause_breakdown";
+    };
 
 /**
  * Shared upsert-or-delete core for a single `(fundId, fiscalYear, categoryId,
@@ -685,6 +754,21 @@ export type UpsertBudgetLineResult =
  * (matching the original PATCH route's delete branch exactly); otherwise
  * inserts with either onConflictDoUpdate (conflictMode: "update") or
  * onConflictDoNothing (conflictMode: "skip").
+ *
+ * CAUSE-LINE-AWARE GUARD (regression fix, qa Phase 5 FAIL 2026-07-27): this
+ * is the OLD lump-sum write path, from before B-17 Increment A's cause-line
+ * child table existed. It must never write directly to a ledger_budgets row
+ * that already has ledger_budget_lines children — a numeric
+ * annualAmountCents would silently desync the parent's rolled-up total from
+ * its children (the exact invariant DECISION-045/046 calls "the single
+ * invariant the whole design depends on"), and annualAmountCents === null
+ * (the delete branch) would cascade-delete the children outright
+ * (ledger_budget_lines.budget_id -> ledger_budgets.id is ON DELETE CASCADE).
+ * A category that's been broken down by cause must be edited through
+ * upsertBudgetCauseLine / deleteBudgetCauseLine / collapseBudgetCauseLines —
+ * never through this function. Checked after the lock check (so a locked
+ * budget still 409s with its own, distinct reason first) and before either
+ * write branch, inside the same transaction.
  *
  * @param params  See UpsertBudgetLineParams.
  * @param tx      Optional Drizzle transaction client — pass the `tx` from an
@@ -739,7 +823,41 @@ export async function upsertBudgetLine(
   // design, architect Ruling 2).
   const lock = await assertBudgetUnlocked(fund.entityId, fiscalYear, tx);
   if (!lock.ok) {
-    return lock;
+    return { ...lock, reason: "locked" };
+  }
+
+  // Cause-line-aware guard — see the CAUSE-LINE-AWARE GUARD note above this
+  // function. Runs against whatever ledger_budgets row already exists for
+  // this exact (fundId, fiscalYear, categoryId, flow) tuple, regardless of
+  // whether this call would delete it (annualAmountCents === null) or
+  // overwrite it — both are unsafe once cause-line children exist.
+  const existingBudgetForChildCheck = await tx
+    .select({ id: ledgerBudgets.id })
+    .from(ledgerBudgets)
+    .where(
+      and(
+        eq(ledgerBudgets.fundId, fundId),
+        eq(ledgerBudgets.fiscalYear, fiscalYear),
+        eq(ledgerBudgets.categoryId, categoryId),
+        eq(ledgerBudgets.flow, flow),
+      ),
+    )
+    .limit(1);
+  const existingBudgetIdForChildCheck = existingBudgetForChildCheck[0]?.id;
+  if (existingBudgetIdForChildCheck) {
+    const existingChildRows = await tx
+      .select({ id: ledgerBudgetLines.id })
+      .from(ledgerBudgetLines)
+      .where(eq(ledgerBudgetLines.budgetId, existingBudgetIdForChildCheck))
+      .limit(1);
+    if (existingChildRows.length > 0) {
+      return {
+        ok: false,
+        error: "This category is broken down by cause — edit its cause lines instead.",
+        status: 409,
+        reason: "has_cause_breakdown",
+      };
+    }
   }
 
   if (annualAmountCents === null) {
@@ -799,6 +917,413 @@ export async function upsertBudgetLine(
     .returning({ id: ledgerBudgets.id });
 
   return { ok: true, action: "upserted", id: upserted.id };
+}
+
+// ---------------------------------------------------------------------------
+// upsertBudgetCauseLine / deleteBudgetCauseLine / collapseBudgetCauseLines
+// — Cause-Tagged Budget Line Items (B-17 Increment A, DECISION-045/046)
+// ---------------------------------------------------------------------------
+
+// Every function below REQUIRES an enclosing db.transaction()'s `tx` — unlike
+// upsertBudgetLine (a single-row write, safe to run standalone against the
+// module-level `db`), these functions touch both a child ledger_budget_lines
+// row AND recompute/persist the parent ledger_budgets.annualAmountCents in
+// the same request. A partial write (child upserted, parent total stale)
+// silently breaks the "parent = sum of children" invariant every read path
+// depends on — Phase 3's highest-risk implementation detail. Route handlers
+// must call `db.transaction(async (tx) => ...)` and pass `tx` through.
+
+export type UpsertBudgetCauseLineParams = {
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  flow: "income" | "expense";
+  cause: string;
+  /** Non-negative integer, required — no null/delete-via-amount convention here (see deleteBudgetCauseLine). */
+  amountCents: number;
+};
+
+export type UpsertBudgetCauseLineResult =
+  | { ok: true; action: "upserted"; lineId: string; categoryTotalCents: number }
+  | { ok: false; error: string; status: 400 | 404 | 409 };
+
+/**
+ * Upsert one cause-tagged budget line item. Also the entry point for a
+ * category's *first* cause line — i.e. "entering breakdown mode" — since the
+ * parent ledger_budgets row is created here (onConflictDoNothing) if it
+ * doesn't already exist (DECISION-046 item 1: there is no separate
+ * "convert to breakdown" endpoint; the client pre-fills the first row and
+ * this route commits it like any other).
+ *
+ * Steps, all inside the caller's transaction:
+ *   1. Fetch fund + category; validateBudgetLineInput() for the shared
+ *      fund/category/flow/fiscalYear/amount-bounds checks (reused verbatim).
+ *   2. isValidBudgetCause(cause) -> 400 if off-taxonomy.
+ *   3. assertBudgetUnlocked(fund.entityId, fiscalYear, tx).
+ *   4. Upsert the parent ledger_budgets row (onConflictDoNothing — its
+ *      annualAmountCents is corrected in step 6 regardless of whether it
+ *      pre-existed, e.g. as a lump sum).
+ *   5. Upsert the child row on (budgetId, cause) (onConflictDoUpdate).
+ *   6. Recompute SUM(amountCents) over all children for that budgetId and
+ *      UPDATE the parent's annualAmountCents to match — the step that keeps
+ *      "parent = sum of children" always true.
+ */
+export async function upsertBudgetCauseLine(
+  params: UpsertBudgetCauseLineParams,
+  tx: DrizzleTransaction,
+): Promise<UpsertBudgetCauseLineResult> {
+  const { fundId, fiscalYear, categoryId, flow, cause, amountCents } = params;
+
+  const fundRows = await tx
+    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId, kind: ledgerFunds.kind })
+    .from(ledgerFunds)
+    .where(eq(ledgerFunds.id, fundId))
+    .limit(1);
+  const fund = fundRows[0] ?? null;
+
+  const catRows = await tx
+    .select({
+      id: ledgerCategories.id,
+      fundKind: ledgerCategories.fundKind,
+      flow: ledgerCategories.flow,
+    })
+    .from(ledgerCategories)
+    .where(eq(ledgerCategories.id, categoryId))
+    .limit(1);
+  const category = catRows[0] ?? null;
+
+  const validation = validateBudgetLineInput({
+    fund: fund ? { id: fund.id, kind: fund.kind } : null,
+    category: category ? { id: category.id, fundKind: category.fundKind, flow: category.flow } : null,
+    flow,
+    fiscalYear,
+    annualAmountCents: amountCents,
+  });
+  if (!validation.ok) {
+    return validation;
+  }
+  if (!fund || !category) {
+    // Unreachable: validateBudgetLineInput returns ok:false above when either is null.
+    return { ok: false, error: "Fund or category not found", status: 404 };
+  }
+
+  if (!isValidBudgetCause(cause)) {
+    return { ok: false, error: "cause must be one of the controlled taxonomy values", status: 400 };
+  }
+
+  const lock = await assertBudgetUnlocked(fund.entityId, fiscalYear, tx);
+  if (!lock.ok) {
+    return lock;
+  }
+
+  const budgetConflictTarget = [
+    ledgerBudgets.fundId,
+    ledgerBudgets.fiscalYear,
+    ledgerBudgets.categoryId,
+    ledgerBudgets.flow,
+  ];
+
+  const [insertedBudget] = await tx
+    .insert(ledgerBudgets)
+    .values({
+      entityId: fund.entityId,
+      fundId,
+      fiscalYear,
+      categoryId,
+      flow,
+      annualAmountCents: amountCents,
+    })
+    .onConflictDoNothing({ target: budgetConflictTarget })
+    .returning({ id: ledgerBudgets.id });
+
+  let budgetId = insertedBudget?.id;
+  if (!budgetId) {
+    const existingBudget = await tx
+      .select({ id: ledgerBudgets.id })
+      .from(ledgerBudgets)
+      .where(
+        and(
+          eq(ledgerBudgets.fundId, fundId),
+          eq(ledgerBudgets.fiscalYear, fiscalYear),
+          eq(ledgerBudgets.categoryId, categoryId),
+          eq(ledgerBudgets.flow, flow),
+        ),
+      )
+      .limit(1);
+    budgetId = existingBudget[0]?.id;
+  }
+  if (!budgetId) {
+    // Unreachable in practice (insert either returns a row or the row already
+    // exists and the re-select finds it) — defensive.
+    return { ok: false, error: "Failed to resolve budget row", status: 404 };
+  }
+
+  const [line] = await tx
+    .insert(ledgerBudgetLines)
+    .values({ budgetId, cause, amountCents })
+    .onConflictDoUpdate({
+      target: [ledgerBudgetLines.budgetId, ledgerBudgetLines.cause],
+      set: { amountCents, updatedAt: new Date() },
+    })
+    .returning({ id: ledgerBudgetLines.id });
+
+  const childRows = await tx
+    .select({ amountCents: ledgerBudgetLines.amountCents })
+    .from(ledgerBudgetLines)
+    .where(eq(ledgerBudgetLines.budgetId, budgetId));
+  const categoryTotalCents = sumBudgetCauseLines(childRows);
+
+  await tx
+    .update(ledgerBudgets)
+    .set({ annualAmountCents: categoryTotalCents, updatedAt: new Date() })
+    .where(eq(ledgerBudgets.id, budgetId));
+
+  return { ok: true, action: "upserted", lineId: line.id, categoryTotalCents };
+}
+
+export type DeleteBudgetCauseLineParams = {
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  flow: "income" | "expense";
+  cause: string;
+};
+
+export type DeleteBudgetCauseLineResult =
+  | { ok: true; action: "line_deleted"; categoryTotalCents: number }
+  | { ok: true; action: "parent_deleted" }
+  | { ok: false; error: string; status: 404 | 409 };
+
+/**
+ * Remove one cause-tagged budget line item. Emptying a category's last cause
+ * line deletes the parent ledger_budgets row too — mirrors upsertBudgetLine's
+ * existing `annualAmountCents: null` -> delete-the-row behavior exactly, so
+ * "no target set" has exactly one representation in the data regardless of
+ * which mode (lump-sum or breakdown) emptied it into that state
+ * (DECISION-045).
+ */
+export async function deleteBudgetCauseLine(
+  params: DeleteBudgetCauseLineParams,
+  tx: DrizzleTransaction,
+): Promise<DeleteBudgetCauseLineResult> {
+  const { fundId, fiscalYear, categoryId, flow, cause } = params;
+
+  const fundRows = await tx
+    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId })
+    .from(ledgerFunds)
+    .where(eq(ledgerFunds.id, fundId))
+    .limit(1);
+  const fund = fundRows[0] ?? null;
+  if (!fund) {
+    return { ok: false, error: "Fund not found", status: 404 };
+  }
+
+  const budgetRows = await tx
+    .select({ id: ledgerBudgets.id })
+    .from(ledgerBudgets)
+    .where(
+      and(
+        eq(ledgerBudgets.fundId, fundId),
+        eq(ledgerBudgets.fiscalYear, fiscalYear),
+        eq(ledgerBudgets.categoryId, categoryId),
+        eq(ledgerBudgets.flow, flow),
+      ),
+    )
+    .limit(1);
+  const budgetId = budgetRows[0]?.id;
+  if (!budgetId) {
+    return { ok: false, error: "No budget row found for this category", status: 404 };
+  }
+
+  const lock = await assertBudgetUnlocked(fund.entityId, fiscalYear, tx);
+  if (!lock.ok) {
+    return lock;
+  }
+
+  const deleted = await tx
+    .delete(ledgerBudgetLines)
+    .where(and(eq(ledgerBudgetLines.budgetId, budgetId), eq(ledgerBudgetLines.cause, cause)))
+    .returning({ id: ledgerBudgetLines.id });
+  if (deleted.length === 0) {
+    return { ok: false, error: "No cause line found for this cause", status: 404 };
+  }
+
+  const remaining = await tx
+    .select({ amountCents: ledgerBudgetLines.amountCents })
+    .from(ledgerBudgetLines)
+    .where(eq(ledgerBudgetLines.budgetId, budgetId));
+
+  if (remaining.length === 0) {
+    await tx.delete(ledgerBudgets).where(eq(ledgerBudgets.id, budgetId));
+    return { ok: true, action: "parent_deleted" };
+  }
+
+  const categoryTotalCents = sumBudgetCauseLines(remaining);
+  await tx
+    .update(ledgerBudgets)
+    .set({ annualAmountCents: categoryTotalCents, updatedAt: new Date() })
+    .where(eq(ledgerBudgets.id, budgetId));
+
+  return { ok: true, action: "line_deleted", categoryTotalCents };
+}
+
+export type CollapseBudgetCauseLinesParams = {
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  flow: "income" | "expense";
+};
+
+export type CollapseBudgetCauseLinesResult =
+  | { ok: true; action: "collapsed"; annualAmountCents: number }
+  | { ok: false; error: string; status: 404 | 409 };
+
+/**
+ * Collapse a category's cause breakdown back to a single lump sum (Human
+ * Answer 4: sums the line items). Deletes all child rows; the parent's
+ * annualAmountCents is NOT recomputed here — per DECISION-046 item 2, it
+ * already equals the sum of its children going into this call (the standing
+ * invariant every prior write maintains), so deleting the children and
+ * leaving the parent's number untouched *is* "collapse by summing".
+ * Idempotent-safe on an already-lump-sum category (zero children deleted,
+ * current amount returned unchanged).
+ */
+export async function collapseBudgetCauseLines(
+  params: CollapseBudgetCauseLinesParams,
+  tx: DrizzleTransaction,
+): Promise<CollapseBudgetCauseLinesResult> {
+  const { fundId, fiscalYear, categoryId, flow } = params;
+
+  const fundRows = await tx
+    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId })
+    .from(ledgerFunds)
+    .where(eq(ledgerFunds.id, fundId))
+    .limit(1);
+  const fund = fundRows[0] ?? null;
+  if (!fund) {
+    return { ok: false, error: "Fund not found", status: 404 };
+  }
+
+  const budgetRows = await tx
+    .select({ id: ledgerBudgets.id, annualAmountCents: ledgerBudgets.annualAmountCents })
+    .from(ledgerBudgets)
+    .where(
+      and(
+        eq(ledgerBudgets.fundId, fundId),
+        eq(ledgerBudgets.fiscalYear, fiscalYear),
+        eq(ledgerBudgets.categoryId, categoryId),
+        eq(ledgerBudgets.flow, flow),
+      ),
+    )
+    .limit(1);
+  const budget = budgetRows[0] ?? null;
+  if (!budget) {
+    return { ok: false, error: "No budget row found for this category", status: 404 };
+  }
+
+  const lock = await assertBudgetUnlocked(fund.entityId, fiscalYear, tx);
+  if (!lock.ok) {
+    return lock;
+  }
+
+  await tx.delete(ledgerBudgetLines).where(eq(ledgerBudgetLines.budgetId, budget.id));
+
+  return { ok: true, action: "collapsed", annualAmountCents: budget.annualAmountCents };
+}
+
+// ---------------------------------------------------------------------------
+// computeCauseSeedForCategory — Cause-Tagged Budget Line Items (seed extension)
+// ---------------------------------------------------------------------------
+
+/**
+ * Computes cause-line seed candidates for one category, from posted,
+ * cause-tagged expense actuals in the two-FY lookback window
+ * (targetFiscalYear - 1, targetFiscalYear - 2), grouped by cause per FY, then
+ * delegated to the pure deriveCauseSeedLines() for the most-recent-FY
+ * tie-break / union / collision logic.
+ *
+ * Only actuals whose beneficiaryCause matches the controlled taxonomy
+ * (isValidBudgetCause) count — free-text noise and "Fundraising event costs"
+ * (excluded from the budget picker) never produce a proposed cause line.
+ * Null/blank beneficiaryCause rows are excluded entirely (isNotNull filter):
+ * "Other community support" is never proposed from history, only ever
+ * entered manually via upsertBudgetCauseLine — it's a read-side fallback
+ * label for ungrouped giving, not a cause a treasurer's books actively tag.
+ *
+ * A category with zero cause-tagged actuals anywhere in the lookback window
+ * (e.g. production's unseeded Quicken import, Human Answer 3) returns `[]`,
+ * never throws — the seed-review UI's graceful empty state depends on this.
+ *
+ * @param tx  Must be the same transaction as the caller's parent write loop —
+ *            reads the target FY's existing cause lines fresh, so a
+ *            category that was just seeded a lump sum earlier in the same
+ *            request is reflected correctly.
+ */
+export async function computeCauseSeedForCategory(
+  fundId: string,
+  categoryId: string,
+  targetFiscalYear: number,
+  tx: DrizzleTransaction | typeof db = db,
+): Promise<CauseSeedProposedLine[]> {
+  const lookbackFiscalYears = [targetFiscalYear - 1, targetFiscalYear - 2];
+  const rows: CauseSeedSourceRow[] = [];
+
+  for (const fy of lookbackFiscalYears) {
+    const { start, end } = fyBounds(fy);
+    const txnRows = await tx
+      .select({
+        beneficiaryCause: ledgerTransactions.beneficiaryCause,
+        amountCents: ledgerTransactions.amountCents,
+      })
+      .from(ledgerTransactions)
+      .where(
+        and(
+          eq(ledgerTransactions.fundId, fundId),
+          eq(ledgerTransactions.categoryId, categoryId),
+          eq(ledgerTransactions.flow, "expense"),
+          eq(ledgerTransactions.status, "posted"),
+          gte(ledgerTransactions.txnDate, start),
+          lt(ledgerTransactions.txnDate, end),
+          isNotNull(ledgerTransactions.beneficiaryCause),
+        ),
+      );
+
+    const byCause = new Map<string, number>();
+    for (const row of txnRows) {
+      const cause = (row.beneficiaryCause ?? "").trim();
+      if (!cause || !isValidBudgetCause(cause)) continue;
+      byCause.set(cause, (byCause.get(cause) ?? 0) + row.amountCents);
+    }
+    for (const [cause, amountCents] of byCause) {
+      rows.push({ cause, amountCents, fiscalYear: fy });
+    }
+  }
+
+  const existingBudgetRows = await tx
+    .select({ id: ledgerBudgets.id })
+    .from(ledgerBudgets)
+    .where(
+      and(
+        eq(ledgerBudgets.fundId, fundId),
+        eq(ledgerBudgets.fiscalYear, targetFiscalYear),
+        eq(ledgerBudgets.categoryId, categoryId),
+        eq(ledgerBudgets.flow, "expense"),
+      ),
+    )
+    .limit(1);
+
+  const existingCauseAmountMap = new Map<string, number>();
+  if (existingBudgetRows[0]) {
+    const existingLines = await tx
+      .select({ cause: ledgerBudgetLines.cause, amountCents: ledgerBudgetLines.amountCents })
+      .from(ledgerBudgetLines)
+      .where(eq(ledgerBudgetLines.budgetId, existingBudgetRows[0].id));
+    for (const line of existingLines) {
+      existingCauseAmountMap.set(line.cause, line.amountCents);
+    }
+  }
+
+  return deriveCauseSeedLines(rows, existingCauseAmountMap);
 }
 
 // ---------------------------------------------------------------------------
@@ -2189,6 +2714,8 @@ export async function getEntityReport(
           actualCents,
           budgetCents: null, // entity report does not surface budgets
           variance: budgetVariance(actualCents, null),
+          countsAsGiving: cat.countsAsGiving,
+          causeLines: null, // entity report does not surface budgets, so never a breakdown
         });
       }
 
@@ -2203,6 +2730,8 @@ export async function getEntityReport(
             actualCents,
             budgetCents: null,
             variance: budgetVariance(actualCents, null),
+            countsAsGiving: false,
+            causeLines: null,
           });
         }
       }

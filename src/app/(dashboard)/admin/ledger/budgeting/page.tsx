@@ -143,12 +143,16 @@ export default async function AdminLedgerBudgetingPage({
           categoryName: l.categoryName,
           flow: "income" as const,
           budgetCents: l.budgetCents,
+          countsAsGiving: l.countsAsGiving,
+          causeLines: l.causeLines,
         })),
         ...(report?.expense ?? []).map((l) => ({
           categoryId: l.categoryId,
           categoryName: l.categoryName,
           flow: "expense" as const,
           budgetCents: l.budgetCents,
+          countsAsGiving: l.countsAsGiving,
+          causeLines: l.causeLines,
         })),
       ];
 

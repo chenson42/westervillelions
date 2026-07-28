@@ -82,6 +82,16 @@ export default function BudgetingSection() {
           Plan a small, intentional surplus on the Administrative side rather than budgeting to
           exactly zero.
         </li>
+        <li>
+          For a giving category, you can <strong>break the target down by cause</strong> &mdash;
+          Youth &amp; Education, Hunger Relief, Disaster Relief, and so on &mdash; instead of a single
+          lump sum. The category&rsquo;s total becomes the sum of its cause lines, matching the grain
+          the{" "}
+          <Link href="/members/impact" className={linkClass}>
+            Impact dashboard
+          </Link>{" "}
+          reports giving in. Categories you don&rsquo;t break down keep their single amount as before.
+        </li>
       </ul>
 
       <h3 className="mt-5 font-semibold text-gray-900">
