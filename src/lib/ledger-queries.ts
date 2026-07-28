@@ -28,6 +28,7 @@ import {
   ledgerFilings,
   ledgerDonors,
   ledgerAcknowledgments,
+  duesPayments,
   members,
   users,
   type LedgerEntity,
@@ -67,6 +68,8 @@ import {
   deriveCauseSeedLines,
   normalizeBudgetLineLabel,
   MAX_BUDGET_LINE_LABEL_LENGTH,
+  buildCauseActualsByKey,
+  computeDuesTimingAdjustment,
   type GuardrailFlag,
   type BudgetVarianceResult,
   type AgedPublicFundFact,
@@ -76,6 +79,8 @@ import {
   type SeedProposedLine,
   type CauseSeedSourceRow,
   type CauseSeedProposedLine,
+  type CauseActualSourceRow,
+  type DuesTimingAdjustment,
 } from "@/lib/ledger";
 
 // ---------------------------------------------------------------------------
@@ -149,6 +154,15 @@ export type FundReportCategoryLine = {
    *  `(cause)`, now that a cause can have multiple labeled lines. `label`
    *  is `""` for the generic/unlabeled line. */
   causeLines: { id: string; cause: string; label: string; amountCents: number }[] | null;
+  /** Soft-delete-until-finalize (DECISION-052/053, Increment 2 of
+   *  docs/work-log/2026-07-28-budgeting-page-redesign.md). ISO string when
+   *  the row's ledger_budgets.pending_delete_at is set, else null. PURELY
+   *  INFORMATIONAL — does not participate in budgetCents, variance, or any
+   *  of this report's totals (totalIncomeCents/totalExpenseCents/
+   *  endingCents), which must stay computed from the full, committed row
+   *  set until the budget is actually finalized. null when no budget row
+   *  exists for this category/flow at all (same as budgetCents === null). */
+  pendingDeleteAt: string | null;
 };
 
 export type FundReport = {
@@ -167,6 +181,18 @@ export type FundReport = {
   endingCents: number;
   /** Sum of pending (unposted) expense amounts — "encumbered" figure */
   pendingExpenseCents: number;
+  /** Posted expense actuals for THIS report's own fund+FY, grouped by
+   *  `(categoryId, cause, party)` and keyed via `causeLineReferenceKey`
+   *  (src/lib/ledger.ts) — Prior-Year Reference on Cause/Beneficiary Budget
+   *  Lines, 2026-07-28. Computed from the same posted transactions this
+   *  report already aggregates into `actualCents`, so it costs no extra
+   *  query. Purely informational: a caller uses THIS FY's report as the
+   *  "prior" one to look up a cause line's `priorActualCents` by
+   *  `causeLineReferenceKey(categoryId, cause, label)` — never used to
+   *  compute this report's own totals/budgetCents/variance/causeLines[].
+   *  amountCents. `{}` when the fund has no cause-tagged expense actuals at
+   *  all (e.g. an unseeded entity), not an error state. */
+  causeActualsByKey: Record<string, number>;
 };
 
 export type FundSummary = {
@@ -259,11 +285,24 @@ export async function getEntityById(id: string): Promise<LedgerEntity | null> {
  * Returns all active funds for an entity, ordered by name.
  */
 export async function getFunds(entityId: string): Promise<LedgerFund[]> {
+  // Order by fund KIND (administrative first), then name — not alphabetical by
+  // name (which put the Club's "Activity Fund" ahead of its "Administrative
+  // Fund"). The Administrative fund should always lead, on both the budgeting
+  // page and the ledger surfaces, which both read the fund list through here.
+  // (Treasurer request 2026-07-28.)
   return db
     .select()
     .from(ledgerFunds)
     .where(and(eq(ledgerFunds.entityId, entityId), eq(ledgerFunds.isActive, true)))
-    .orderBy(ledgerFunds.name);
+    .orderBy(
+      sql`case ${ledgerFunds.kind}
+            when 'administrative' then 0
+            when 'charitable' then 1
+            when 'activity' then 2
+            when 'scholarship' then 3
+            else 4 end`,
+      ledgerFunds.name,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -565,10 +604,18 @@ export async function getFundReport(
   // 5. Build lookup maps — actuals use posted transactions only (inc2: status filter)
   const budgetMap = new Map<string, number>(); // key = `${categoryId}_${flow}`
   const budgetIdMap = new Map<string, string>(); // key = `${categoryId}_${flow}` -> ledger_budgets.id
+  // Soft-delete-until-finalize (DECISION-052/053, Increment 2): ISO string
+  // when the row's pending_delete_at is set, else null. Purely informational
+  // — see FundReportCategoryLine.pendingDeleteAt's doc comment.
+  const pendingDeleteMap = new Map<string, string | null>(); // key = `${categoryId}_${flow}`
   for (const b of budgetRows) {
     if (b.categoryId) {
       budgetMap.set(`${b.categoryId}_${b.flow}`, b.annualAmountCents);
       budgetIdMap.set(`${b.categoryId}_${b.flow}`, b.id);
+      pendingDeleteMap.set(
+        `${b.categoryId}_${b.flow}`,
+        b.pendingDeleteAt ? b.pendingDeleteAt.toISOString() : null,
+      );
     }
   }
 
@@ -595,6 +642,24 @@ export async function getFundReport(
       actualMap.set(key, (actualMap.get(key) ?? 0) + txn.amountCents);
     }
   }
+
+  // Cause/beneficiary prior-year reference (2026-07-28-causeline-prior-year-
+  // reference): group this same FY's posted expense actuals by
+  // (categoryId, cause, party) — reuses postedTxns already fetched above, no
+  // extra query. See FundReport.causeActualsByKey's doc comment.
+  const causeActualSourceRows: CauseActualSourceRow[] = [];
+  for (const txn of postedTxns) {
+    if (txn.flow !== "expense" || !txn.categoryId) continue;
+    const cause = (txn.beneficiaryCause ?? "").trim();
+    if (!cause) continue;
+    causeActualSourceRows.push({
+      categoryId: txn.categoryId,
+      cause,
+      party: txn.party,
+      amountCents: txn.amountCents,
+    });
+  }
+  const causeActualsByKey = buildCauseActualsByKey(causeActualSourceRows);
 
   // 6. Collect category IDs that appear in posted actuals but not the active category list
   //    (e.g. category was deactivated after transactions were recorded — still show it)
@@ -634,6 +699,7 @@ export async function getFundReport(
         variance: budgetVariance(actualCents, budgetCents),
         countsAsGiving: cat.countsAsGiving,
         causeLines: causeLinesFor(key),
+        pendingDeleteAt: pendingDeleteMap.get(key) ?? null,
       });
     }
 
@@ -650,6 +716,7 @@ export async function getFundReport(
           variance: budgetVariance(actualCents, b.annualAmountCents),
           countsAsGiving: false,
           causeLines: causeLinesFor(key),
+          pendingDeleteAt: pendingDeleteMap.get(key) ?? null,
         });
       }
     }
@@ -674,6 +741,7 @@ export async function getFundReport(
     totalExpenseCents,
     endingCents,
     pendingExpenseCents,
+    causeActualsByKey,
   };
 }
 
@@ -739,14 +807,22 @@ export type BudgetApprovalWithNames = LedgerBudgetApproval & {
  * this directly, matching how it already fetches every other piece of page
  * data (getFunds, getFundReport, computeSeedFromPriorYear) without an
  * internal API round-trip (DECISION-044).
+ *
+ * @param tx  Optional Drizzle transaction client — pass the enclosing `tx` so
+ *            the lock-check read happens inside the same transaction as the
+ *            finalize write it's guarding (DECISION-052/053, Increment 2:
+ *            closes the check-then-act race on POST /budget-approvals).
+ *            Defaults to the module-level `db`, matching
+ *            assertBudgetUnlocked's own optional-tx convention.
  */
 export async function getBudgetApproval(
   entityId: string,
   fiscalYear: number,
+  tx: DrizzleTransaction | typeof db = db,
 ): Promise<BudgetApprovalWithNames | null> {
   const approvedByUser = alias(users, "approvedByUser");
   const unlockedByUser = alias(users, "unlockedByUser");
-  const rows = await db
+  const rows = await tx
     .select({
       ...getTableColumns(ledgerBudgetApprovals),
       approvedByName: approvedByUser.name,
@@ -980,6 +1056,158 @@ export async function upsertBudgetLine(
     .returning({ id: ledgerBudgets.id });
 
   return { ok: true, action: "upserted", id: upserted.id };
+}
+
+// ---------------------------------------------------------------------------
+// setBudgetLinePendingDelete — Soft-delete/restore-until-finalize
+// (DECISION-052/053, Increment 2 of
+// docs/work-log/2026-07-28-budgeting-page-redesign.md)
+// ---------------------------------------------------------------------------
+
+export type SetBudgetLinePendingDeleteParams = {
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  flow: "income" | "expense";
+  pendingDelete: boolean;
+};
+
+export type SetBudgetLinePendingDeleteResult =
+  | { ok: true; action: "pending-delete" | "restored" }
+  | {
+      ok: false;
+      error: string;
+      status: 400 | 404 | 409;
+      /** Present on 409s only — mirrors UpsertBudgetLineResult's discriminant
+       *  so PATCH /api/admin/ledger/budgets can surface a distinct reason for
+       *  each 409 cause the same way it already does for the amount path. */
+      reason?: "locked" | "has_cause_breakdown";
+    };
+
+/**
+ * Soft-delete/restore core for a single `(fundId, fiscalYear, categoryId,
+ * flow)` budget line. Runs the SAME guard sequence upsertBudgetLine already
+ * runs — fund/category lookup, assertBudgetUnlocked, the cause-line-children
+ * guard — but flips ONLY pending_delete_at. annual_amount_cents is never
+ * read or written by this function; that is what makes "restore brings the
+ * number back exactly" true by construction, not by special-casing.
+ *
+ * Unlike upsertBudgetLine (which inserts a fresh row when none exists yet),
+ * a pending-delete write only ever makes sense against an EXISTING row —
+ * there's nothing to soft-delete or restore if the category was never
+ * budgeted. So this function 404s when no ledger_budgets row matches the
+ * tuple (defense-in-depth only: the client-side resolveBudgetLineDeleteAction
+ * — ux-developer, src/lib/ledger.ts — never sends this request for a
+ * never-saved row).
+ *
+ * Both directions (pendingDelete: true and false) run the FULL guard
+ * sequence, including the lock check — restore is lock-guarded too
+ * (architect's explicit ruling, Phase 2 Increment 2: "the one new
+ * server-side gate... present on both the soft-delete and the restore
+ * direction, not just soft-delete").
+ *
+ * @param tx  Optional Drizzle transaction client. Defaults to the
+ *            module-level `db` for the standalone PATCH route caller.
+ */
+export async function setBudgetLinePendingDelete(
+  params: SetBudgetLinePendingDeleteParams,
+  tx: DrizzleTransaction | typeof db = db,
+): Promise<SetBudgetLinePendingDeleteResult> {
+  const { fundId, fiscalYear, categoryId, flow, pendingDelete } = params;
+
+  const fundRows = await tx
+    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId, kind: ledgerFunds.kind })
+    .from(ledgerFunds)
+    .where(eq(ledgerFunds.id, fundId))
+    .limit(1);
+  const fund = fundRows[0] ?? null;
+
+  const catRows = await tx
+    .select({
+      id: ledgerCategories.id,
+      fundKind: ledgerCategories.fundKind,
+      flow: ledgerCategories.flow,
+    })
+    .from(ledgerCategories)
+    .where(eq(ledgerCategories.id, categoryId))
+    .limit(1);
+  const category = catRows[0] ?? null;
+
+  // Reuses upsertBudgetLine's own fund/category/flow/fiscalYear shape
+  // validation. annualAmountCents: null short-circuits its amount-bounds
+  // branch (there's no amount involved in a pending-delete write).
+  const validation = validateBudgetLineInput({
+    fund: fund ? { id: fund.id, kind: fund.kind } : null,
+    category: category ? { id: category.id, fundKind: category.fundKind, flow: category.flow } : null,
+    flow,
+    fiscalYear,
+    annualAmountCents: null,
+  });
+  if (!validation.ok) {
+    return validation;
+  }
+  if (!fund || !category) {
+    // Unreachable: validateBudgetLineInput returns ok:false above when either
+    // is null. Guards TS narrowing below.
+    return { ok: false, error: "Fund or category not found", status: 404 };
+  }
+
+  // Lock check — run for BOTH directions (soft-delete AND restore), same as
+  // upsertBudgetLine's own placement (after shape validation, before any
+  // row-existence/write branch).
+  const lock = await assertBudgetUnlocked(fund.entityId, fiscalYear, tx);
+  if (!lock.ok) {
+    return { ...lock, reason: "locked" };
+  }
+
+  // Row-must-exist check. Unlike upsertBudgetLine (where "no row" just means
+  // "insert one"), pending-delete has no insert branch — there must already
+  // be something to mark or restore.
+  const existingRows = await tx
+    .select({ id: ledgerBudgets.id })
+    .from(ledgerBudgets)
+    .where(
+      and(
+        eq(ledgerBudgets.fundId, fundId),
+        eq(ledgerBudgets.fiscalYear, fiscalYear),
+        eq(ledgerBudgets.categoryId, categoryId),
+        eq(ledgerBudgets.flow, flow),
+      ),
+    )
+    .limit(1);
+  const existingId = existingRows[0]?.id;
+  if (!existingId) {
+    return { ok: false, error: "No budget line exists for this category to modify.", status: 404 };
+  }
+
+  // Cause-line-children guard — identical query upsertBudgetLine already
+  // runs. A category broken down by cause can never be marked pending-delete
+  // (the UI never renders a soft-delete control for one; this is
+  // defense-in-depth against a direct API call).
+  const childRows = await tx
+    .select({ id: ledgerBudgetLines.id })
+    .from(ledgerBudgetLines)
+    .where(eq(ledgerBudgetLines.budgetId, existingId))
+    .limit(1);
+  if (childRows.length > 0) {
+    return {
+      ok: false,
+      error: "This category is broken down by cause — edit its cause lines instead.",
+      status: 409,
+      reason: "has_cause_breakdown",
+    };
+  }
+
+  // The pure flag-flip. annual_amount_cents is never touched here.
+  await tx
+    .update(ledgerBudgets)
+    .set({
+      pendingDeleteAt: pendingDelete ? new Date() : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(ledgerBudgets.id, existingId));
+
+  return { ok: true, action: pendingDelete ? "pending-delete" : "restored" };
 }
 
 // ---------------------------------------------------------------------------
@@ -3192,6 +3420,7 @@ export async function getEntityReport(
           variance: budgetVariance(actualCents, null),
           countsAsGiving: cat.countsAsGiving,
           causeLines: null, // entity report does not surface budgets, so never a breakdown
+          pendingDeleteAt: null, // entity report does not surface budgets, so never pending-delete
         });
       }
 
@@ -3208,6 +3437,7 @@ export async function getEntityReport(
             variance: budgetVariance(actualCents, null),
             countsAsGiving: false,
             causeLines: null,
+            pendingDeleteAt: null,
           });
         }
       }
@@ -3234,6 +3464,10 @@ export async function getEntityReport(
       totalExpenseCents,
       endingCents,
       pendingExpenseCents,
+      // Entity report does not surface budgets or cause-line breakdowns
+      // (causeLines is always null above) — no prior-year cause-line
+      // reference to compute here either.
+      causeActualsByKey: {},
     });
   }
 
@@ -3977,4 +4211,52 @@ export async function getAcknowledgment(ackId: string): Promise<
     donor: row.donor ?? null,
     entity: row.entity ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// getDuesTimingAdjustment — Budget-Balance Overview (2026-07-28)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches every dues-linked posted income row for a fund, across all fiscal
+ * years (no txnDate bound — a payment can be dated in any FY relative to the
+ * membership year it's for), and re-homes it to the FY it's actually FOR via
+ * computeDuesTimingAdjustment() (src/lib/ledger.ts) — the dues-timing
+ * adjustment backing the fund-report page's balance banner
+ * (docs/work-log/2026-07-28-budget-balance-overview.md).
+ *
+ * Dues income only ever posts to the Club entity's Administrative fund
+ * (syncDuesCreate hardcodes slug='club'/'administrative' — confirmed in
+ * Phase 1), so this naturally returns an all-zero adjustment for every other
+ * fund; the caller hides the adjustment block whenever both totals are zero.
+ *
+ * Returns `null` only when the query itself throws — the caller (the
+ * fund-report page) degrades to a cash-basis-only banner rather than
+ * crashing the whole report page.
+ */
+export async function getDuesTimingAdjustment(
+  fundId: string,
+  fiscalYear: number,
+): Promise<DuesTimingAdjustment | null> {
+  try {
+    const rows = await db
+      .select({
+        txnDate: ledgerTransactions.txnDate,
+        amountCents: ledgerTransactions.amountCents,
+        duesFiscalYear: duesPayments.fiscalYear,
+      })
+      .from(ledgerTransactions)
+      .innerJoin(duesPayments, eq(ledgerTransactions.duesPaymentId, duesPayments.id))
+      .where(
+        and(
+          eq(ledgerTransactions.fundId, fundId),
+          eq(ledgerTransactions.flow, "income"),
+          eq(ledgerTransactions.status, "posted"),
+        ),
+      );
+
+    return computeDuesTimingAdjustment(rows, fiscalYear);
+  } catch {
+    return null;
+  }
 }

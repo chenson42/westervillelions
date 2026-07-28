@@ -7,6 +7,14 @@ interface PrintLine {
   budgetCents: number | null;
   priorBudgetCents: number | null;
   priorActualCents: number | null;
+  /**
+   * Soft-delete/restore-until-finalize (Increment 2, DECISION-052/053).
+   * Non-null lines are excluded entirely from the printout (see FlowTable)
+   * — the worksheet is a forward-looking plan of the budget that will
+   * actually take effect, and a line already marked for removal isn't part
+   * of that plan.
+   */
+  pendingDeleteAt: string | null;
 }
 
 interface PrintFund {
@@ -33,6 +41,10 @@ interface PrintFund {
  * additions/subtractions, grouped in its own `<tbody>` with
  * `break-inside-avoid-page` so a category and its blank lines never split
  * across a page boundary (Phase 1 gap note: print pagination).
+ *
+ * Pending-delete lines (Increment 2, DECISION-052/053) are excluded entirely
+ * — see FlowTable's filter. A line marked for removal isn't part of the
+ * forward-looking plan this worksheet exists to print and hand-annotate.
  */
 export default function BudgetPrintWorksheet({
   entityName,
@@ -70,8 +82,16 @@ function FundWorksheet({
   priorFY: number;
   targetFY: number;
 }) {
-  const income = fund.budgetEditorLines.filter((l) => l.flow === "income");
-  const expense = fund.budgetEditorLines.filter((l) => l.flow === "expense");
+  // Pending-delete lines (Increment 2, DECISION-052/053) are excluded before
+  // the empty-check below, so a fund whose only lines are all marked for
+  // removal is omitted entirely — same "nothing to print" behavior this
+  // check already gave a fund with zero budget lines at all.
+  const income = fund.budgetEditorLines.filter(
+    (l) => l.flow === "income" && l.pendingDeleteAt === null,
+  );
+  const expense = fund.budgetEditorLines.filter(
+    (l) => l.flow === "expense" && l.pendingDeleteAt === null,
+  );
 
   if (income.length === 0 && expense.length === 0) return null;
 

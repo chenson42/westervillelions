@@ -9,6 +9,7 @@ import {
   OTHER_COMMUNITY_SUPPORT_CAUSE,
   MAX_BUDGET_LINE_LABEL_LENGTH,
   sumBudgetCauseLines,
+  formatBudgetReferenceCents,
 } from "@/lib/ledger";
 
 const ALL_CAUSES: readonly string[] = [...BUDGET_CAUSES, OTHER_COMMUNITY_SUPPORT_CAUSE];
@@ -20,6 +21,20 @@ export interface BudgetCauseLine {
   cause: string;
   label: string;
   amountCents: number;
+  /**
+   * Read-only prior-year reference columns (2026-07-28-causeline-prior-year-
+   * reference — extends the category-grain reference from
+   * 2026-07-28-budgeting-page-redesign Increment 1 down to this cause/
+   * beneficiary line). Sourced by the page from a second getFundReport() call
+   * at fiscalYear - 1, matched by `(categoryId, cause, label)` via
+   * `causeLineReferenceKey`. null = no prior-year data (new line, new
+   * category, or a manually-typed label with no matching prior-FY party) —
+   * renders "—". Optional/defaulted so a never-saved client-side row (the
+   * "Break down by cause" pre-fill, or a freshly added line) doesn't need to
+   * supply them.
+   */
+  priorBudgetCents?: number | null;
+  priorActualCents?: number | null;
 }
 
 interface Row {
@@ -30,6 +45,12 @@ interface Row {
   /** Dollar-string value of the amount input, e.g. "125.00". */
   value: string;
   saving: boolean;
+  /** Fixed at seed time from `initialLines` — read-only reference, never
+   *  recomputed as the treasurer edits label/amount (see BudgetCauseLine's
+   *  doc comment). null for a client-side-only row (a fresh "+ Add line" or
+   *  the breakdown pre-fill). */
+  priorBudgetCents: number | null;
+  priorActualCents: number | null;
 }
 
 export type ExitBreakdownReason = "cancelled" | "collapsed" | "emptied";
@@ -68,6 +89,20 @@ interface BudgetCauseEditorProps {
    * sum, or removed the last remaining cause line one at a time.
    */
   onExitBreakdown: (reason: ExitBreakdownReason) => void;
+}
+
+/** Read-only reference cell — one of Prior Budget / Prior Actual. Mirrors
+ *  BudgetEditor's own `ReferenceValue` (2026-07-28-budgeting-page-redesign,
+ *  Increment 1) so the two grains look identical. */
+function ReferenceValue({ label, cents }: { label: string; cents: number | null | undefined }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wide text-gray-400 truncate">{label}</p>
+      <p className="text-sm tabular-nums text-gray-500 truncate">
+        {formatBudgetReferenceCents(cents ?? null)}
+      </p>
+    </div>
+  );
 }
 
 function parseDollarsToCents(raw: string | undefined): number {
@@ -139,6 +174,8 @@ export default function BudgetCauseEditor({
       label: l.label,
       value: (l.amountCents / 100).toFixed(2),
       saving: false,
+      priorBudgetCents: l.priorBudgetCents ?? null,
+      priorActualCents: l.priorActualCents ?? null,
     })),
   );
   const dirtyAmountRef = useRef<boolean[]>(rows.map(() => false));
@@ -319,7 +356,18 @@ export default function BudgetCauseEditor({
 
   function addRow() {
     if (disabled) return;
-    setRows((prev) => [...prev, { id: null, cause: BUDGET_CAUSES[0], label: "", value: "", saving: false }]);
+    setRows((prev) => [
+      ...prev,
+      {
+        id: null,
+        cause: BUDGET_CAUSES[0],
+        label: "",
+        value: "",
+        saving: false,
+        priorBudgetCents: null,
+        priorActualCents: null,
+      },
+    ]);
     dirtyAmountRef.current.push(false);
     dirtyLabelRef.current.push(false);
   }
@@ -458,7 +506,15 @@ export default function BudgetCauseEditor({
               {indices.map((index) => {
                 const row = rows[index];
                 return (
-                  <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div key={index} className="space-y-1">
+                    {/* Prior-year reference columns (read-only) — same
+                        grid-cols-2 pattern as BudgetEditor's category-grain
+                        columns, so it stacks cleanly at 360px too. */}
+                    <div className="grid grid-cols-2 gap-2 max-w-xs">
+                      <ReferenceValue label="Prior Budget" cents={row.priorBudgetCents} />
+                      <ReferenceValue label="Prior Actual" cents={row.priorActualCents} />
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     {row.id === null ? (
                       <select
                         value={row.cause}
@@ -534,6 +590,7 @@ export default function BudgetCauseEditor({
                           </svg>
                         </button>
                       )}
+                    </div>
                     </div>
                   </div>
                 );

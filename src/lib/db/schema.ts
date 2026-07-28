@@ -784,6 +784,11 @@ export const ledgerBudgets = pgTable(
       .references(() => ledgerCategories.id, { onDelete: "set null" }),
     flow: text("flow").notNull(), // 'income' | 'expense'
     annualAmountCents: integer("annual_amount_cents").notNull(),
+    // Soft-delete-until-finalize (DECISION-052/053, docs/work-log/2026-07-28-budgeting-page-redesign.md
+    // Increment 2). Nullable, no default: null = normal row; set = marked for
+    // removal, purged in the same transaction as Approve & lock. Never written
+    // alongside annualAmountCents changes — a pure flag-flip.
+    pendingDeleteAt: timestamp("pending_delete_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },

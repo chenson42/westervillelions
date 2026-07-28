@@ -58,7 +58,22 @@
  * path in ledger-queries.ts moved from addressing a line by `(cause)` to
  * addressing it by its own `id`. See
  * docs/work-log/2026-07-28-ledger-labeled-cause-lines.md Phase 3.
+ *
+ * Budget-Balance Overview (2026-07-28): computeDuesTimingAdjustment()
+ * re-homes dues-linked ledger income from the FY it was RECEIVED in (cash
+ * basis, txn_date) to the FY it's actually FOR (dues_payments.fiscal_year) —
+ * members routinely pay next FY's dues before the current FY closes. Backs
+ * the fund-report page's new balance banner, which otherwise reuses
+ * computeBudgetBalanceStatus as-is, fed getFundReport's actuals instead of
+ * budgeted lines. See docs/work-log/2026-07-28-budget-balance-overview.md
+ * Phase 3.
  */
+
+// ---------------------------------------------------------------------------
+// Imports
+// ---------------------------------------------------------------------------
+
+import { getFiscalYear } from "@/lib/fiscal-year";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1603,4 +1618,194 @@ export function formatBudgetReferenceCents(cents: number | null): string {
   if (cents === null) return "—";
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Cause/beneficiary budget-line prior-year reference
+// (2026-07-28-causeline-prior-year-reference, extends the category-grain
+// reference above to the cause/beneficiary lines inside a category's
+// breakdown)
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the lookup key used to match a cause/beneficiary budget line's
+ * `(cause, label)` against a fiscal year's actual transactions grouped by
+ * `(categoryId, cause, party)` — or against the prior FY's own cause lines,
+ * grouped by `(categoryId, cause, label)`. Both halves of the match go
+ * through the same key so a labeled line and its transaction-level
+ * counterpart normalize identically.
+ *
+ * `categoryId` is folded in because a cause name is only unique within one
+ * category's budget row (mirrors `causeLinesByBudgetId`'s keying in
+ * getFundReport). `labelOrParty` is normalized with `normalizeBudgetLineLabel`
+ * (trim only, no case-folding) — the same normalization a cause line's own
+ * `label` already goes through, so " WARM " and "WARM" collide but "WARM" and
+ * "Warm" remain distinct, matching DECISION-047's label semantics. The
+ * generic/unlabeled line (`label === ""`) matches only transactions with a
+ * blank/null party — it is not a catch-all for every party under that cause.
+ */
+export function causeLineReferenceKey(
+  categoryId: string,
+  cause: string,
+  labelOrParty: string | null | undefined,
+): string {
+  return `${categoryId}::${cause}::${normalizeBudgetLineLabel(labelOrParty)}`;
+}
+
+/** One posted expense actual, pre-filtered to a non-blank `beneficiaryCause`. */
+export type CauseActualSourceRow = {
+  categoryId: string;
+  cause: string;
+  party: string | null;
+  amountCents: number;
+};
+
+/**
+ * Groups posted expense actuals by `(categoryId, cause, party)` into a
+ * lookup map keyed by `causeLineReferenceKey` — the prior-year-ACTUAL half of
+ * the cause/beneficiary budget line reference columns. Pure — no DB access;
+ * the caller (getFundReport) pre-filters to posted, expense-flow rows with a
+ * non-blank `beneficiaryCause` for one fund+FY. Multiple transactions with
+ * the same `(categoryId, cause, party)` sum together, same as any other
+ * actuals aggregation in this module.
+ */
+export function buildCauseActualsByKey(rows: CauseActualSourceRow[]): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const row of rows) {
+    const key = causeLineReferenceKey(row.categoryId, row.cause, row.party);
+    map[key] = (map[key] ?? 0) + row.amountCents;
+  }
+  return map;
+}
+
+// ---------------------------------------------------------------------------
+// computeFundLineSums — Budget soft-delete (Increment 2, DECISION-052 item 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure core of guided-budget-setup.tsx's `fundSums()` — sums a fund's live,
+ * per-line dollar values into income/expense totals for the balance badge,
+ * EXCLUDING any line currently marked pending-delete. Extracted so this
+ * exclusion has a Vitest seam independent of mounting the client island
+ * (this repo has no component-test infra — jsdom/RTL — so UI-adjacent pure
+ * logic is pulled out here the same way computeBudgetBalanceStatus already
+ * is).
+ *
+ * This is a client-side-only projection (DECISION-052 item 1) — it has
+ * nothing to do with getFundReport's own committed totals, which stay
+ * completely unaffected by pending-delete until the budget is finalized.
+ *
+ * @param lineValues        `${categoryId}_${flow}` -> live dollar value in cents (guided-budget-setup.tsx's `lineValues[fundId]`).
+ * @param pendingDeleteKeys  `${categoryId}_${flow}` -> true if that line is currently marked pending-delete (`pendingDeleteKeys[fundId]`). Missing/false = not pending-delete.
+ */
+export function computeFundLineSums(
+  lineValues: Record<string, number>,
+  pendingDeleteKeys: Record<string, boolean> = {},
+): { incomeCents: number; expenseCents: number } {
+  let incomeCents = 0;
+  let expenseCents = 0;
+  for (const [key, cents] of Object.entries(lineValues)) {
+    if (pendingDeleteKeys[key]) continue;
+    if (key.endsWith("_income")) incomeCents += cents;
+    else if (key.endsWith("_expense")) expenseCents += cents;
+  }
+  return { incomeCents, expenseCents };
+}
+
+// ---------------------------------------------------------------------------
+// resolveBudgetLineDeleteAction — Budget soft-delete (Increment 2, DECISION-052/053)
+// ---------------------------------------------------------------------------
+
+/**
+ * Unifies the two client-side "remove this budget line" gestures — the
+ * trash/remove control and blanking an input then blurring/Enter — onto one
+ * decision. Pure, no DB access, so it has its own Vitest seam
+ * (DECISION-053 item 3): everything else in this increment's client logic
+ * routes through a server round-trip and gets tested there instead.
+ *
+ * `"soft-delete"` only when the row already exists server-side AND the
+ * committed raw value is blank — that already-persisted row gets
+ * `PATCH { pendingDelete: true }` (its amount is preserved, not cleared, so
+ * Restore brings the number back exactly). Every other combination —
+ * including a blank value on a row that was never saved — is `"noop"`: there
+ * is nothing to soft-delete, and the caller must not fire a network call.
+ *
+ * `hasExistingRow` should be read directly off the line's current
+ * `budgetCents !== null` (see budget-editor.tsx), which stays true even for a
+ * pending-delete row (soft-delete preserves the amount) — never a separately
+ * tracked "was this ever saved" flag.
+ */
+export function resolveBudgetLineDeleteAction(
+  hasExistingRow: boolean,
+  rawValue: string,
+): "soft-delete" | "noop" {
+  return rawValue.trim() === "" && hasExistingRow ? "soft-delete" : "noop";
+}
+
+// ---------------------------------------------------------------------------
+// computeDuesTimingAdjustment — Budget-Balance Overview (2026-07-28)
+// ---------------------------------------------------------------------------
+
+export type DuesTimingSourceRow = {
+  /** Wall-clock 'YYYY-MM-DD' date the ledger row posted (ledger_transactions.txn_date). */
+  txnDate: string;
+  amountCents: number;
+  /** dues_payments.fiscal_year — the EXPLICIT membership year this payment is FOR (not derived from txnDate). */
+  duesFiscalYear: number;
+};
+
+export type DuesTimingAdjustment = {
+  fiscalYear: number;
+  /** Dues income actually posted with a txnDate inside this FY — already part of getFundReport's cash-basis totalIncomeCents. */
+  cashBasisDuesCents: number;
+  /** Dues income re-homed to the membership year it's actually FOR, regardless of when it was received. */
+  adjustedDuesCents: number;
+  /** adjustedDuesCents - cashBasisDuesCents. Add to a fund's cash-basis totalIncomeCents to get its dues-adjusted total. */
+  deltaCents: number;
+};
+
+/**
+ * Re-homes dues-linked ledger income from "the FY it was received in" (cash
+ * basis, txnDate) to "the FY it's actually FOR" (dues_payments.fiscal_year) —
+ * the dues-timing adjustment for the Budget-Balance Overview banner
+ * (docs/work-log/2026-07-28-budget-balance-overview.md Phase 1). Members
+ * routinely pay next FY's dues (e.g. via Zeffy) before the current FY ends,
+ * which inflates the FY they're received in and understates the FY they're
+ * for on a strict cash basis.
+ *
+ * Pure — the caller (getDuesTimingAdjustment in ledger-queries.ts) fetches
+ * every dues-linked posted income row for a fund, across ALL fiscal years (no
+ * txnDate bound — a payment can be dated in any FY relative to the
+ * membership year it's for), and this function buckets those rows against
+ * the ONE fiscal year currently being viewed.
+ *
+ * FY-from-txnDate is derived via the (year, monthIndex, day) numeric `Date`
+ * constructor on the parsed string parts — never `new Date(txnDate)` on the
+ * raw ISO string, which parses as UTC and can silently shift a date-only
+ * value across a month/FY boundary depending on the server's timezone (the
+ * naive-timestamp-as-UTC bug that has bitten this project before).
+ *
+ * @param rows        Every dues-linked posted income row for the fund, any FY.
+ * @param fiscalYear  The FY currently being viewed on the report page.
+ */
+export function computeDuesTimingAdjustment(
+  rows: DuesTimingSourceRow[],
+  fiscalYear: number,
+): DuesTimingAdjustment {
+  let cashBasisDuesCents = 0;
+  let adjustedDuesCents = 0;
+
+  for (const row of rows) {
+    const [y, m, d] = row.txnDate.split("-").map(Number);
+    const receivedFY = getFiscalYear(new Date(y, m - 1, d));
+    if (receivedFY === fiscalYear) cashBasisDuesCents += row.amountCents;
+    if (row.duesFiscalYear === fiscalYear) adjustedDuesCents += row.amountCents;
+  }
+
+  return {
+    fiscalYear,
+    cashBasisDuesCents,
+    adjustedDuesCents,
+    deltaCents: adjustedDuesCents - cashBasisDuesCents,
+  };
 }

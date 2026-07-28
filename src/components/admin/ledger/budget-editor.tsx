@@ -3,11 +3,11 @@
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   isCauseEligibleCategory,
   OTHER_COMMUNITY_SUPPORT_CAUSE,
   formatBudgetReferenceCents,
+  resolveBudgetLineDeleteAction,
 } from "@/lib/ledger";
 import BudgetCauseEditor, {
   type BudgetCauseLine,
@@ -44,6 +44,16 @@ interface BudgetLine {
    */
   priorBudgetCents?: number | null;
   priorActualCents?: number | null;
+  /**
+   * Soft-delete/restore-until-finalize (2026-07-28-budgeting-page-redesign,
+   * Increment 2, DECISION-052/053). Non-null = this row is marked for
+   * removal and stays visible with a "deleted" treatment until the budget is
+   * finalized (Approve & lock), at which point it's purged server-side.
+   * Serialized as an ISO string (or null) at the getFundReport boundary.
+   * Optional/defaulted so older callers that haven't threaded this through
+   * don't break the type.
+   */
+  pendingDeleteAt?: string | null;
 }
 
 /** Read-only reference cell — one of Prior Budget / Prior Actual. */
@@ -99,6 +109,15 @@ interface BudgetEditorProps {
   showRemoveControl?: boolean;
   /** Prior labels used anywhere in this entity's cause lines — feeds BudgetCauseEditor's `<datalist>` autocomplete. */
   labelOptions?: string[];
+  /**
+   * Fired the instant a soft-delete or restore click resolves optimistically
+   * — before the network round-trip completes — keyed the same way as
+   * `onInputChange` (`${categoryId}_${flow}`). Lets GuidedBudgetSetup update
+   * its `pendingDeleteKeys` state immediately so the live balance badge
+   * excludes the line right away; `router.refresh()` (already called on
+   * every successful commit) reconciles it with server truth afterward.
+   */
+  onPendingDeleteChange?: (key: string, pendingDelete: boolean) => void;
 }
 
 /**
@@ -106,7 +125,14 @@ interface BudgetEditorProps {
  * Only shown to users with LEDGER_MANAGE (gated in the parent Server Component).
  *
  * Each category row has a dollar input that submits on blur or Enter (spreadsheet UX).
- * Setting a value to empty or "0" removes the budget line (API: annualAmountCents: null).
+ * Setting an already-saved line's value to empty removes it — soft-delete,
+ * not a hard delete (2026-07-28-budgeting-page-redesign, Increment 2,
+ * DECISION-052/053): the row stays visible with a "deleted" treatment and a
+ * Restore toggle until the budget is finalized. Explicit "0" is a deliberate
+ * $0 budget, never a delete. `resolveBudgetLineDeleteAction` (src/lib/ledger.ts)
+ * is the single source of truth both the trash-icon control and the
+ * blank-then-blur/Enter gesture route through, so a genuinely never-saved
+ * blank row stays a true no-op (no network call).
  */
 export default function BudgetEditor({
   fundId,
@@ -116,6 +142,7 @@ export default function BudgetEditor({
   disabled = false,
   showRemoveControl = false,
   labelOptions = [],
+  onPendingDeleteChange,
 }: BudgetEditorProps) {
   const router = useRouter();
   // Track per-line editing state: input value (dollars), saving flag
@@ -129,12 +156,6 @@ export default function BudgetEditor({
   });
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const dirtyRef = useRef<Record<string, boolean>>({});
-  const [removeConfirm, setRemoveConfirm] = useState<{
-    categoryId: string;
-    flow: "income" | "expense";
-    categoryName: string;
-    amountLabel: string;
-  } | null>(null);
   // Local-only override of a category's breakdown/lump-sum rendering mode,
   // keyed the same as `inputs` (`${categoryId}_${flow}`). undefined = defer
   // to the server-sourced `causeLines` field; true/false force one way or
@@ -151,31 +172,85 @@ export default function BudgetEditor({
   }
 
   /**
+   * The single soft-delete/restore write path (DECISION-052 item 2) — both
+   * the trash-icon control and a genuine amount edit's failure path never
+   * call this directly for a hard delete; `annualAmountCents: null` is no
+   * longer sent by this component for any row that ever existed. Fires
+   * `onPendingDeleteChange` optimistically (ahead of the round-trip) so
+   * GuidedBudgetSetup's live balance badge updates instantly.
+   */
+  async function setPendingDelete(
+    categoryId: string,
+    flow: "income" | "expense",
+    pendingDelete: boolean,
+  ) {
+    if (disabled) return;
+    const key = `${categoryId}_${flow}`;
+    setSaving((prev) => ({ ...prev, [key]: true }));
+    try {
+      const res = await fetch("/api/admin/ledger/budgets", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fundId, fiscalYear, categoryId, flow, pendingDelete }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const message =
+          data.reason === "has_cause_breakdown"
+            ? "This category is broken down by cause — remove its cause lines first."
+            : data.error ||
+              (pendingDelete
+                ? "Could not remove this budget line. Try again."
+                : "Could not restore this budget line. Try again.");
+        throw new Error(message);
+      }
+      onPendingDeleteChange?.(key, pendingDelete);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update this budget line. Try again.");
+    } finally {
+      setSaving((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
+  /**
    * Core commit — takes the raw dollar string explicitly rather than reading
-   * `inputs` state, so the explicit "Remove" control (which needs to commit
-   * an empty value the instant it's clicked, before React re-renders) can't
+   * `inputs` state, so the trash-icon control (which needs to commit an
+   * empty value the instant it's clicked, before React re-renders) can't
    * race a stale closure the way calling handleCommit() directly would.
+   *
+   * Routes the blank-vs-amount branch through resolveBudgetLineDeleteAction
+   * (DECISION-053 item 3): blank + already-persisted row -> soft-delete;
+   * blank + genuinely never-saved row -> true no-op, no network call at all.
+   * Everything else is an ordinary Shape A amount write, including an
+   * explicit "0" (a deliberate $0 budget, never a delete).
    */
   async function commitValue(categoryId: string, flow: "income" | "expense", rawValue: string) {
     if (disabled) return;
     const key = `${categoryId}_${flow}`;
     const raw = rawValue.trim();
-    // FU-1: empty string → remove the budget line (annualAmountCents = null).
-    // Explicit "0" or "0.00" → $0 budget (annualAmountCents = 0), which is valid.
-    let annualAmountCents: number | null;
+    const currentLine = lines.find((l) => l.categoryId === categoryId && l.flow === flow);
+    const hasExistingRow = currentLine ? currentLine.budgetCents !== null : false;
+
+    const action = resolveBudgetLineDeleteAction(hasExistingRow, raw);
+    if (action === "soft-delete") {
+      await setPendingDelete(categoryId, flow, true);
+      return;
+    }
     if (raw === "") {
-      annualAmountCents = null;
-    } else {
-      const n = parseFloat(raw);
-      if (isNaN(n) || n < 0) {
-        toast.error("Enter a valid amount (0 or greater) or leave blank to remove the budget.");
-        return;
-      }
-      annualAmountCents = Math.round(n * 100);
-      if (annualAmountCents > 2_147_483_647) {
-        toast.error("Budget amount exceeds maximum.");
-        return;
-      }
+      // Genuinely never-saved row with a blank value — true no-op.
+      return;
+    }
+
+    const n = parseFloat(raw);
+    if (isNaN(n) || n < 0) {
+      toast.error("Enter a valid amount (0 or greater) or leave blank to remove the budget.");
+      return;
+    }
+    const annualAmountCents = Math.round(n * 100);
+    if (annualAmountCents > 2_147_483_647) {
+      toast.error("Budget amount exceeds maximum.");
+      return;
     }
 
     setSaving((prev) => ({ ...prev, [key]: true }));
@@ -218,37 +293,28 @@ export default function BudgetEditor({
     }
   }
 
-  function requestRemove(categoryId: string, flow: "income" | "expense", categoryName: string) {
+  /**
+   * Trash-icon control — always resolves through resolveBudgetLineDeleteAction
+   * with a blank rawValue (a click is equivalent to blanking the line): an
+   * already-persisted row (line.budgetCents !== null) soft-deletes
+   * immediately, no confirm (removal is reversible now — DECISION-052/053).
+   * A never-saved row (e.g. an active category getFundReport surfaces with
+   * no budget set yet) is a true no-op — there's nothing to remove.
+   */
+  function requestRemove(line: BudgetLine) {
     if (disabled) return;
-    const key = `${categoryId}_${flow}`;
-    const raw = inputs[key]?.trim() ?? "";
-    const n = raw === "" ? NaN : parseFloat(raw);
-    const amountCents = !isNaN(n) ? Math.round(n * 100) : 0;
-    if (raw === "" || amountCents === 0) {
-      // Nothing meaningful to discard — remove immediately, no confirm.
-      void doRemove(categoryId, flow);
-      return;
-    }
-    setRemoveConfirm({
-      categoryId,
-      flow,
-      categoryName,
-      amountLabel: `$${(amountCents / 100).toFixed(2)}`,
-    });
-  }
-
-  async function doRemove(categoryId: string, flow: "income" | "expense") {
-    const key = `${categoryId}_${flow}`;
+    const key = `${line.categoryId}_${line.flow}`;
+    if (resolveBudgetLineDeleteAction(line.budgetCents !== null, "") === "noop") return;
     setInputs((prev) => ({ ...prev, [key]: "" }));
+    dirtyRef.current[key] = false;
     onInputChange?.(key, "");
-    await commitValue(categoryId, flow, "");
+    void setPendingDelete(line.categoryId, line.flow, true);
   }
 
-  function handleConfirmRemove() {
-    if (!removeConfirm) return;
-    const { categoryId, flow } = removeConfirm;
-    setRemoveConfirm(null);
-    void doRemove(categoryId, flow);
+  /** Restore — single click, no confirm; a pending-delete row always has an existing row by definition. */
+  function requestRestore(line: BudgetLine) {
+    if (disabled) return;
+    void setPendingDelete(line.categoryId, line.flow, false);
   }
 
   /**
@@ -341,6 +407,63 @@ export default function BudgetEditor({
           );
         }
 
+        if (line.pendingDeleteAt) {
+          // Soft-deleted row (DECISION-052/053) — stays visible, clearly
+          // "deleted": strikethrough + muted, amount input disabled (this is
+          // what prevents an edit-while-pending / re-add collision), trash
+          // control replaced by a single-click, no-confirm Restore. Purged
+          // for real only when the budget is finalized (Approve & lock).
+          return (
+            <div
+              key={key}
+              className="space-y-1 py-1 px-2 -mx-2 rounded-lg bg-gray-50 border-b border-gray-50 last:border-0"
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-gray-400 w-20 uppercase tracking-wide flex-shrink-0">
+                  {line.flow}
+                </span>
+                <span className="text-sm text-gray-500 line-through flex-1 min-w-0 truncate">
+                  {line.categoryName}
+                </span>
+                <span className="inline-flex items-center rounded-lg bg-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-600 whitespace-nowrap">
+                  Deleted &mdash; removed when finalized
+                </span>
+              </div>
+              <div className="flex items-center gap-2 sm:pl-20">
+                <div className="grid grid-cols-2 gap-2 flex-1 min-w-0 sm:flex-none sm:w-52">
+                  <ReferenceValue label="Prior Budget" cents={line.priorBudgetCents} />
+                  <ReferenceValue label="Prior Actual" cents={line.priorActualCents} />
+                </div>
+                <div className="relative w-28 flex-shrink-0">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">
+                    $
+                  </span>
+                  <input
+                    type="number"
+                    value={inputs[key] ?? ""}
+                    disabled
+                    readOnly
+                    className="block w-full rounded border border-gray-200 bg-gray-100 py-1 pl-6 pr-2 text-sm tabular-nums text-gray-400 line-through"
+                    aria-label={`Budget for ${line.categoryName} (${line.flow}), marked for removal`}
+                  />
+                </div>
+                {showRemoveControl && !disabled && (
+                  <button
+                    type="button"
+                    onClick={() => requestRestore(line)}
+                    disabled={isSaving}
+                    title={`Restore ${line.categoryName} to this year's budget`}
+                    aria-label={`Restore ${line.categoryName} (${line.flow}) to this year's budget`}
+                    className="inline-flex items-center justify-center rounded-lg px-3 text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] flex-shrink-0 disabled:opacity-60"
+                  >
+                    {isSaving ? "…" : "Restore"}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        }
+
         return (
           <div key={key} className="space-y-1 py-1 border-b border-gray-50 last:border-0">
             <div className="flex items-center gap-2">
@@ -385,7 +508,7 @@ export default function BudgetEditor({
               {showRemoveControl && !disabled && (
                 <button
                   type="button"
-                  onClick={() => requestRemove(line.categoryId, line.flow, line.categoryName)}
+                  onClick={() => requestRemove(line)}
                   title={`Remove ${line.categoryName} from this year's budget`}
                   aria-label={`Remove ${line.categoryName} (${line.flow}) from this year's budget`}
                   className="inline-flex items-center justify-center rounded-lg p-2 text-gray-400 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] min-w-[44px] flex-shrink-0"
@@ -424,24 +547,8 @@ export default function BudgetEditor({
       <p className="text-xs text-gray-400 mt-2">
         {disabled
           ? "This budget is locked for editing."
-          : "Enter amounts in dollars. Press Enter or click away to save. Enter 0 for a $0 budget. Leave blank to remove."}
+          : "Enter amounts in dollars. Press Enter or click away to save. Enter 0 for a $0 budget. Leave blank to remove — removal is reversible until this budget is finalized."}
       </p>
-
-      <ConfirmDialog
-        open={removeConfirm !== null}
-        onOpenChange={(open) => {
-          if (!open) setRemoveConfirm(null);
-        }}
-        title="Remove this budget line?"
-        description={
-          removeConfirm
-            ? `This removes the ${removeConfirm.amountLabel} target for "${removeConfirm.categoryName}" (${removeConfirm.flow}). The category and any recorded activity are not affected.`
-            : ""
-        }
-        confirmLabel="Remove"
-        destructive
-        onConfirm={handleConfirmRemove}
-      />
     </div>
   );
 }

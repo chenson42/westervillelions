@@ -10,10 +10,12 @@ import {
   getFundReport,
   listLedgerFiscalYears,
   getBudgetCauseLineLabels,
+  getDuesTimingAdjustment,
 } from "@/lib/ledger-queries";
 import { currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
 import BudgetEditor from "@/components/admin/ledger/budget-editor";
+import FundBalanceOverview from "@/components/admin/ledger/fund-balance-overview";
 import type { FundReportCategoryLine } from "@/lib/ledger-queries";
 
 export const dynamic = "force-dynamic";
@@ -78,15 +80,23 @@ export default async function AdminFundReportPage({
   const fund = allFunds.find((f) => f.slug === fundSlug);
   if (!fund) notFound();
 
-  // Validate fiscal year
+  // Validate fiscal year. Default anchor is the most-recently-CLOSED FY
+  // (currentFY - 1), not the in-progress current FY — a "balanced?" verdict
+  // for a year still underway isn't final (docs/work-log/2026-07-28-budget-
+  // balance-overview.md Phase 1). The FiscalYearSelector below stays fully
+  // live to view any other year, including the current in-progress one.
   const currentFY = currentFiscalYear(new Date());
+  const mostRecentlyClosedFY = currentFY - 1;
   const parsedFY = fyParam ? parseInt(fyParam, 10) : NaN;
-  const fiscalYear = !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
+  const fiscalYear =
+    !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : mostRecentlyClosedFY;
+  const isClosedFY = fiscalYear < currentFY;
 
-  const [report, fiscalYears, labelOptions] = await Promise.all([
+  const [report, fiscalYears, labelOptions, duesAdjustment] = await Promise.all([
     getFundReport(fund.id, fiscalYear),
     listLedgerFiscalYears(entity.id),
     getBudgetCauseLineLabels(entity.id),
+    getDuesTimingAdjustment(fund.id, fiscalYear),
   ]);
 
   const basePath = `/admin/ledger/${fundSlug}/report`;
@@ -156,6 +166,16 @@ export default async function AdminFundReportPage({
         </div>
       ) : (
         <>
+          {/* Budget-Balance Overview banner */}
+          <FundBalanceOverview
+            fundKind={fund.kind}
+            fiscalYear={fiscalYear}
+            isClosed={isClosedFY}
+            totalIncomeCents={report.totalIncomeCents}
+            totalExpenseCents={report.totalExpenseCents}
+            duesAdjustment={duesAdjustment}
+          />
+
           {/* Balance summary */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[

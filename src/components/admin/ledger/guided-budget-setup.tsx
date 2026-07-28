@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import BudgetEditor from "@/components/admin/ledger/budget-editor";
 import type { BudgetCauseLine } from "@/components/admin/ledger/budget-cause-editor";
-import { computeBudgetBalanceStatus } from "@/lib/ledger";
+import { computeBudgetBalanceStatus, computeFundLineSums } from "@/lib/ledger";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
@@ -89,6 +89,13 @@ export interface FundSetupItem {
      *  in the page. null = no prior-year data (new category/entity), renders "—". */
     priorBudgetCents: number | null;
     priorActualCents: number | null;
+    /**
+     * Soft-delete/restore-until-finalize (Increment 2, DECISION-052/053) —
+     * non-null = this row is marked for removal, purged only on Approve &
+     * lock. Sourced straight from getFundReport's target-FY report (not the
+     * prior-FY report, which has no bearing here).
+     */
+    pendingDeleteAt: string | null;
   }[];
   /**
    * Active categories for this fund's kind, per flow, that don't already
@@ -199,6 +206,25 @@ export default function GuidedBudgetSetup({
     return init;
   });
 
+  // Per-fund, per-line pending-delete flags (Increment 2, DECISION-052/053)
+  // — keyed identically to lineValues. Initialized from each line's
+  // pendingDeleteAt, updated instantly by BudgetEditor's
+  // onPendingDeleteChange (ahead of the round-trip), reconciled with server
+  // truth on the router.refresh() every successful commit already triggers.
+  const [pendingDeleteKeys, setPendingDeleteKeys] = useState<Record<string, Record<string, boolean>>>(
+    () => {
+      const init: Record<string, Record<string, boolean>> = {};
+      for (const fund of funds) {
+        const m: Record<string, boolean> = {};
+        for (const line of fund.budgetEditorLines) {
+          m[`${line.categoryId}_${line.flow}`] = line.pendingDeleteAt !== null;
+        }
+        init[fund.fundId] = m;
+      }
+      return init;
+    },
+  );
+
   function handleInputChange(fundId: string, key: string, value: string) {
     const trimmed = value.trim();
     let cents = 0;
@@ -212,15 +238,34 @@ export default function GuidedBudgetSetup({
     }));
   }
 
+  function handlePendingDeleteChange(fundId: string, key: string, pendingDelete: boolean) {
+    setPendingDeleteKeys((prev) => ({
+      ...prev,
+      [fundId]: { ...(prev[fundId] ?? {}), [key]: pendingDelete },
+    }));
+  }
+
+  /**
+   * Live "excluded from the running total" projection (DECISION-052 item
+   * 1) — entirely client-side. A pending-delete line's amount is dropped
+   * from both incomeCents/expenseCents the instant soft-delete/restore
+   * resolves, so the treasurer sees the effect on the balance badge before
+   * the budget is ever finalized. getFundReport's own committed totals are
+   * completely unaffected (see that function's doc comment).
+   */
   function fundSums(fundId: string): { incomeCents: number; expenseCents: number } {
-    const m = lineValues[fundId] ?? {};
-    let incomeCents = 0;
-    let expenseCents = 0;
-    for (const [key, cents] of Object.entries(m)) {
-      if (key.endsWith("_income")) incomeCents += cents;
-      else if (key.endsWith("_expense")) expenseCents += cents;
+    return computeFundLineSums(lineValues[fundId] ?? {}, pendingDeleteKeys[fundId] ?? {});
+  }
+
+  /** Total pending-delete lines across every fund — feeds the Approve & lock warning copy. */
+  function totalPendingDeleteCount(): number {
+    let count = 0;
+    for (const m of Object.values(pendingDeleteKeys)) {
+      for (const v of Object.values(m)) {
+        if (v) count += 1;
+      }
     }
-    return { incomeCents, expenseCents };
+    return count;
   }
 
   function openAddCategory(fund: FundSetupItem, flow: "income" | "expense") {
@@ -358,6 +403,7 @@ export default function GuidedBudgetSetup({
 
   const targetLabel = `FY${targetFiscalYear}`;
   const editorDisabled = locked || !canManage;
+  const pendingDeleteCount = totalPendingDeleteCount();
 
   return (
     <div className="space-y-6">
@@ -537,6 +583,9 @@ export default function GuidedBudgetSetup({
                         fiscalYear={targetFiscalYear}
                         lines={fund.budgetEditorLines}
                         onInputChange={(key, value) => handleInputChange(fund.fundId, key, value)}
+                        onPendingDeleteChange={(key, pendingDelete) =>
+                          handlePendingDeleteChange(fund.fundId, key, pendingDelete)
+                        }
                         disabled={editorDisabled}
                         showRemoveControl={canManage && !locked}
                         labelOptions={labelOptions}
@@ -715,8 +764,9 @@ export default function GuidedBudgetSetup({
         open={approveConfirmOpen}
         onOpenChange={setApproveConfirmOpen}
         title={`Lock ${targetLabel} budget?`}
-        description={`This records board minute "${boardMinute.trim()}" and makes every fund's ${targetLabel} budget read-only. It can be unlocked later to amend, then must be re-approved.`}
+        description={`This records board minute "${boardMinute.trim()}" and makes every fund's ${targetLabel} budget read-only.${pendingDeleteCount > 0 ? ` ${pendingDeleteCount} budget line${pendingDeleteCount === 1 ? "" : "s"} marked for removal will be permanently deleted when you lock this budget.` : ""} It can be unlocked later to amend, then must be re-approved.`}
         confirmLabel="Approve & lock"
+        destructive={pendingDeleteCount > 0}
         onConfirm={() => {
           setApproveConfirmOpen(false);
           void handleApprove();

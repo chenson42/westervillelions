@@ -91,9 +91,13 @@ import {
   collapseBudgetCauseLines,
   computeCauseSeedForCategory,
   upsertBudgetLine,
+  setBudgetLinePendingDelete,
   getFundReport,
+  getDuesTimingAdjustment,
 } from "./ledger-queries";
 import { ledgerFunds, ledgerCategories, ledgerBudgets, ledgerBudgetLines } from "./db/schema";
+import { causeLineReferenceKey } from "./ledger";
+import { db } from "./db";
 
 // ---------------------------------------------------------------------------
 // Minimal Drizzle transaction client mock factory
@@ -1034,5 +1038,359 @@ describe("getFundReport asOfDate bounding", () => {
 
     expect(report?.totalIncomeCents).toBe(5_000);
     expect(report?.endingCents).toBe(15_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setBudgetLinePendingDelete — Soft-delete/restore-until-finalize
+// (DECISION-052/053, Increment 2 of
+// docs/work-log/2026-07-28-budgeting-page-redesign.md). Phase 3 design's
+// "Unit Tests to Write in Phase 4" items 1-5.
+// ---------------------------------------------------------------------------
+
+describe("setBudgetLinePendingDelete", () => {
+  it("soft-delete: sets pending_delete_at and leaves annualAmountCents byte-for-byte untouched", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW], // fund lookup
+        [CATEGORY_ROW], // category lookup
+        UNLOCKED_APPROVAL, // assertBudgetUnlocked
+        [{ id: "budget-1" }], // row-must-exist lookup
+        [], // cause-line-children guard: no children
+      ],
+    });
+
+    const result = await setBudgetLinePendingDelete(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "pending-delete" });
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].table).toBe(ledgerBudgets);
+    expect(updateCalls[0].values.pendingDeleteAt).toBeInstanceOf(Date);
+    // The whole point of a pure flag-flip: no amount field in the write at all.
+    expect(updateCalls[0].values).not.toHaveProperty("annualAmountCents");
+  });
+
+  it("restore: clears pending_delete_at, again never touching the amount", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [CATEGORY_ROW],
+        UNLOCKED_APPROVAL,
+        [{ id: "budget-1" }],
+        [], // no children
+      ],
+    });
+
+    const result = await setBudgetLinePendingDelete(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: false },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "restored" });
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].values.pendingDeleteAt).toBeNull();
+    expect(updateCalls[0].values).not.toHaveProperty("annualAmountCents");
+  });
+
+  it("rejects 409 { reason: 'locked' } on a locked budget — for BOTH pendingDelete: true and pendingDelete: false (restore is lock-guarded too)", async () => {
+    for (const pendingDelete of [true, false]) {
+      const { tx, updateCalls } = makeMockTx({
+        selectResults: [[FUND_ROW], [CATEGORY_ROW], LOCKED_APPROVAL],
+      });
+
+      const result = await setBudgetLinePendingDelete(
+        { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete },
+        tx as never,
+      );
+
+      expect(result).toEqual({
+        ok: false,
+        error: "This budget is locked. Unlock it to make changes.",
+        status: 409,
+        reason: "locked",
+      });
+      expect(updateCalls).toHaveLength(0);
+    }
+  });
+
+  it("rejects 409 { reason: 'has_cause_breakdown' } for a row with ledger_budget_lines children — defense-in-depth, the UI never renders a soft-delete control for one", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [CATEGORY_ROW],
+        UNLOCKED_APPROVAL,
+        [{ id: "budget-1" }], // row exists
+        [{ id: "line-1" }], // and has a child
+      ],
+    });
+
+    const result = await setBudgetLinePendingDelete(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "This category is broken down by cause — edit its cause lines instead.",
+      status: 409,
+      reason: "has_cause_breakdown",
+    });
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("returns 404 when no ledger_budgets row exists for the (fundId, fiscalYear, categoryId, flow) tuple — there's nothing to soft-delete or restore", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [CATEGORY_ROW],
+        UNLOCKED_APPROVAL,
+        [], // no existing row for this tuple
+      ],
+    });
+
+    const result = await setBudgetLinePendingDelete(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "No budget line exists for this category to modify.",
+      status: 404,
+    });
+    expect(updateCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getFundReport — pending-delete regression guard (DECISION-052/053,
+// Increment 2). Phase 3 design's "Unit Tests to Write in Phase 4" item 7 —
+// THE guard against leaking an uncommitted soft-delete edit onto the admin
+// fund-report page and the member-facing Monthly Statement. Asserted
+// directly against two live getFundReport() calls, not reasoned about.
+// ---------------------------------------------------------------------------
+
+describe("getFundReport — pending-delete regression guard", () => {
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  const FUND = { id: "fund-1", entityId: "entity-1", kind: "charitable", openingBalanceCents: 0 };
+  const CATEGORY = { id: "cat-1", name: "Program supplies", flow: "expense", countsAsGiving: false };
+  const TXNS = [
+    {
+      id: "t1",
+      categoryId: "cat-1",
+      flow: "expense",
+      amountCents: 4_000,
+      status: "posted",
+      txnDate: "2026-09-10", // inside FY2026 (Jul 2026-Jun 2027)
+    },
+  ];
+
+  function budgetRow(pendingDeleteAt: Date | null) {
+    return {
+      id: "budget-1",
+      categoryId: "cat-1",
+      flow: "expense",
+      annualAmountCents: 10_000,
+      pendingDeleteAt,
+    };
+  }
+
+  /** Queues the 6 canned select() results getFundReport() consumes when
+   *  there's exactly one budget row present (fund, txns, categories, budgets,
+   *  pre-FY rollforward, then the cause-tagged-budget-line-items query which
+   *  fires whenever budgetIds.length > 0 — no children in either scenario). */
+  function queueFundReport(pendingDeleteAt: Date | null) {
+    mockDbState.queue.push([FUND], TXNS, [CATEGORY], [budgetRow(pendingDeleteAt)], [], []);
+  }
+
+  it("leaves budgetCents/variance/totalIncomeCents/totalExpenseCents/endingCents byte-for-byte identical whether or not the row is marked pending-delete", async () => {
+    queueFundReport(null);
+    const withoutPending = await getFundReport("fund-1", 2026);
+
+    queueFundReport(new Date("2026-07-28T16:40:00.000Z"));
+    const withPending = await getFundReport("fund-1", 2026);
+
+    expect(withoutPending).not.toBeNull();
+    expect(withPending).not.toBeNull();
+
+    // The flag itself must differ between the two calls...
+    expect(withoutPending!.expense[0].pendingDeleteAt).toBeNull();
+    expect(withPending!.expense[0].pendingDeleteAt).toBe("2026-07-28T16:40:00.000Z");
+
+    // ...but every committed figure is untouched by it.
+    expect(withPending!.expense[0].budgetCents).toBe(withoutPending!.expense[0].budgetCents);
+    expect(withPending!.expense[0].actualCents).toBe(withoutPending!.expense[0].actualCents);
+    expect(withPending!.expense[0].variance).toEqual(withoutPending!.expense[0].variance);
+    expect(withPending!.expense[0].causeLines).toEqual(withoutPending!.expense[0].causeLines);
+    expect(withPending!.totalIncomeCents).toBe(withoutPending!.totalIncomeCents);
+    expect(withPending!.totalExpenseCents).toBe(withoutPending!.totalExpenseCents);
+    expect(withPending!.endingCents).toBe(withoutPending!.endingCents);
+
+    // Byte-for-byte, not just field-by-field: strip pendingDeleteAt from both
+    // reports and diff everything else in one shot.
+    const stripPendingDeleteAt = (value: unknown): unknown =>
+      JSON.parse(JSON.stringify(value, (key, v) => (key === "pendingDeleteAt" ? undefined : v)));
+    expect(stripPendingDeleteAt(withPending)).toEqual(stripPendingDeleteAt(withoutPending));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getFundReport — causeActualsByKey (Prior-Year Reference on Cause/
+// Beneficiary Budget Lines, 2026-07-28-causeline-prior-year-reference).
+// Extends the category-grain prior-year reference (2026-07-28-budgeting-
+// page-redesign, Increment 1) down to the cause/beneficiary lines inside a
+// category's breakdown. getFundReport itself is FY-agnostic about "prior" —
+// the caller (budgeting/page.tsx) calls it once at fiscalYear and once at
+// fiscalYear - 1, then matches the two via causeLineReferenceKey. These
+// tests exercise getFundReport's own half of that: the (categoryId, cause,
+// party) grouping it computes from posted expense actuals it already fetches.
+// ---------------------------------------------------------------------------
+
+describe("getFundReport — causeActualsByKey", () => {
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  const FUND = { id: "fund-1", entityId: "entity-1", kind: "charitable", openingBalanceCents: 0 };
+
+  it("groups posted expense actuals by (categoryId, cause, party), ignoring pending rows, income rows, and blank/whitespace-only cause rows", async () => {
+    const categories = [
+      { id: "cat-1", name: "Charitable donation out", flow: "expense", countsAsGiving: true },
+      { id: "cat-2", name: "Program income", flow: "income", countsAsGiving: false },
+    ];
+    const txns = [
+      { id: "t1", categoryId: "cat-1", flow: "expense", amountCents: 5_000, status: "posted", txnDate: "2026-08-01", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+      { id: "t2", categoryId: "cat-1", flow: "expense", amountCents: 2_500, status: "posted", txnDate: "2026-08-02", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+      { id: "t3", categoryId: "cat-1", flow: "expense", amountCents: 1_000, status: "posted", txnDate: "2026-08-03", beneficiaryCause: "Hunger & Basic Needs", party: "Caring & Sharing" },
+      // Pending — excluded from actuals entirely (mirrors actualMap's own posted-only filter).
+      { id: "t4", categoryId: "cat-1", flow: "expense", amountCents: 99_999, status: "pending", txnDate: "2026-08-04", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+      // Income flow — never a cause-line source (isCauseEligibleCategory gates on expense only).
+      { id: "t5", categoryId: "cat-2", flow: "income", amountCents: 200, status: "posted", txnDate: "2026-08-05", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+      // Blank / whitespace-only beneficiaryCause — no cause to group by.
+      { id: "t6", categoryId: "cat-1", flow: "expense", amountCents: 50, status: "posted", txnDate: "2026-08-06", beneficiaryCause: null, party: "WARM" },
+      { id: "t7", categoryId: "cat-1", flow: "expense", amountCents: 60, status: "posted", txnDate: "2026-08-07", beneficiaryCause: "   ", party: "WARM" },
+    ];
+    mockDbState.queue.push([FUND], txns, categories, [], []);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+
+    const warmKey = causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "WARM");
+    const caringKey = causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "Caring & Sharing");
+    expect(report!.causeActualsByKey[warmKey]).toBe(7_500); // t1 + t2, NOT t4 (pending)
+    expect(report!.causeActualsByKey[caringKey]).toBe(1_000);
+    // Never a key for the income row or the two blank-cause rows.
+    expect(Object.keys(report!.causeActualsByKey)).toHaveLength(2);
+
+    // Regression: the pre-existing actualCents/totals figure still includes
+    // every posted expense txn regardless of cause tag (unaffected by this
+    // feature) — 5000+2500+1000+50+60, excluding pending t4 and income t5.
+    expect(report!.expense[0].actualCents).toBe(8_610);
+    expect(report!.totalExpenseCents).toBe(8_610);
+  });
+
+  it("regression: causeLines[].amountCents (the budget figures) and causeActualsByKey (the actual figures) are computed independently — adding the latter never touches the former", async () => {
+    const category = { id: "cat-1", name: "Charitable donation out", flow: "expense", countsAsGiving: true };
+    const budgetRow = { id: "budget-1", categoryId: "cat-1", flow: "expense", annualAmountCents: 20_000, pendingDeleteAt: null };
+    const budgetLineRows = [
+      { id: "line-1", budgetId: "budget-1", cause: "Hunger & Basic Needs", label: "WARM", amountCents: 12_000 },
+      { id: "line-2", budgetId: "budget-1", cause: "Hunger & Basic Needs", label: "", amountCents: 8_000 },
+    ];
+    const txns = [
+      { id: "t1", categoryId: "cat-1", flow: "expense", amountCents: 11_000, status: "posted", txnDate: "2026-08-01", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+      { id: "t2", categoryId: "cat-1", flow: "expense", amountCents: 7_000, status: "posted", txnDate: "2026-08-02", beneficiaryCause: "Hunger & Basic Needs", party: null },
+    ];
+    mockDbState.queue.push([FUND], txns, [category], [budgetRow], [], budgetLineRows);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+
+    // Budget figures — untouched by this feature, still exactly what the
+    // budget lines say.
+    expect(report!.expense[0].budgetCents).toBe(20_000);
+    expect(report!.expense[0].causeLines).toEqual([
+      { id: "line-1", cause: "Hunger & Basic Needs", label: "WARM", amountCents: 12_000 },
+      { id: "line-2", cause: "Hunger & Basic Needs", label: "", amountCents: 8_000 },
+    ]);
+
+    // Actual figures — the new, independent aggregation. Deliberately
+    // different numbers from the budget lines above, proving the two are
+    // never conflated.
+    expect(report!.causeActualsByKey[causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "WARM")]).toBe(11_000);
+    expect(report!.causeActualsByKey[causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "")]).toBe(7_000);
+
+    expect(report!.expense[0].actualCents).toBe(18_000);
+    expect(report!.totalExpenseCents).toBe(18_000);
+  });
+
+  it("empty fund (no cause-tagged actuals at all) returns {} for causeActualsByKey, not a throw", async () => {
+    mockDbState.queue.push([FUND], [], [], [], []);
+    const report = await getFundReport("fund-1", 2026);
+    expect(report!.causeActualsByKey).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDuesTimingAdjustment — Budget-Balance Overview (2026-07-28)
+// ---------------------------------------------------------------------------
+
+describe("getDuesTimingAdjustment", () => {
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  it("re-homes a dues row received in FY2025 but for FY2026 into FY2026's adjusted figure", async () => {
+    mockDbState.queue.push([
+      { txnDate: "2026-06-15", amountCents: 12_000, duesFiscalYear: 2026 },
+    ]);
+
+    const fy2025 = await getDuesTimingAdjustment("fund-1", 2025);
+    expect(fy2025).toEqual({
+      fiscalYear: 2025,
+      cashBasisDuesCents: 12_000,
+      adjustedDuesCents: 0,
+      deltaCents: -12_000,
+    });
+
+    mockDbState.queue.push([
+      { txnDate: "2026-06-15", amountCents: 12_000, duesFiscalYear: 2026 },
+    ]);
+
+    const fy2026 = await getDuesTimingAdjustment("fund-1", 2026);
+    expect(fy2026).toEqual({
+      fiscalYear: 2026,
+      cashBasisDuesCents: 0,
+      adjustedDuesCents: 12_000,
+      deltaCents: 12_000,
+    });
+  });
+
+  it("no dues-linked rows for the fund -> all-zero adjustment, not null (caller hides the block, doesn't treat this as a failure)", async () => {
+    mockDbState.queue.push([]);
+    const result = await getDuesTimingAdjustment("fund-1", 2026);
+    expect(result).toEqual({
+      fiscalYear: 2026,
+      cashBasisDuesCents: 0,
+      adjustedDuesCents: 0,
+      deltaCents: 0,
+    });
+  });
+
+  it("query failure returns null so the caller can degrade to cash-basis only instead of crashing the report page", async () => {
+    const spy = vi.spyOn(db, "select").mockImplementationOnce(() => {
+      throw new Error("connection reset");
+    });
+    const result = await getDuesTimingAdjustment("fund-1", 2026);
+    expect(result).toBeNull();
+    spy.mockRestore();
   });
 });

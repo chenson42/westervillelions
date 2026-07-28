@@ -12,7 +12,7 @@ import {
   getBudgetApproval,
   getBudgetCauseLineLabels,
 } from "@/lib/ledger-queries";
-import { isBudgetLocked } from "@/lib/ledger";
+import { isBudgetLocked, causeLineReferenceKey } from "@/lib/ledger";
 import { currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import EntitySwitcher from "@/components/admin/ledger/entity-switcher";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
@@ -157,6 +157,43 @@ export default async function AdminLedgerBudgetingPage({
         priorByKey.set(`${l.categoryId}_expense`, { budgetCents: l.budgetCents, actualCents: l.actualCents });
       }
 
+      // Cause/beneficiary prior-year reference (2026-07-28-causeline-prior-
+      // year-reference — extends the category-grain reference above to the
+      // cause/beneficiary lines inside a category's breakdown). Both maps
+      // are keyed via causeLineReferenceKey(categoryId, cause, label):
+      //   - priorCauseBudgetByKey: the prior FY's OWN cause lines, matched
+      //     (cause, label) -> amountCents. null when FY(priorFY) has no
+      //     budget line for that (cause, label) yet (e.g. no FY2025 budget
+      //     entered at all).
+      //   - priorReport.causeActualsByKey: the prior FY's posted expense
+      //     actuals grouped by (cause, party) — already computed by
+      //     getFundReport from data it fetches anyway, no extra query here.
+      const priorCauseBudgetByKey = new Map<string, number>();
+      for (const l of [...(priorReport?.income ?? []), ...(priorReport?.expense ?? [])]) {
+        for (const cl of l.causeLines ?? []) {
+          priorCauseBudgetByKey.set(
+            causeLineReferenceKey(l.categoryId, cl.cause, cl.label),
+            cl.amountCents,
+          );
+        }
+      }
+      const priorCauseActualsByKey = priorReport?.causeActualsByKey ?? {};
+
+      function enrichCauseLines(
+        categoryId: string,
+        causeLines: { id: string; cause: string; label: string; amountCents: number }[] | null,
+      ) {
+        if (!causeLines) return null;
+        return causeLines.map((cl) => {
+          const key = causeLineReferenceKey(categoryId, cl.cause, cl.label);
+          return {
+            ...cl,
+            priorBudgetCents: priorCauseBudgetByKey.get(key) ?? null,
+            priorActualCents: priorCauseActualsByKey[key] ?? null,
+          };
+        });
+      }
+
       const budgetEditorLines = [
         ...(report?.income ?? []).map((l) => ({
           categoryId: l.categoryId,
@@ -164,9 +201,10 @@ export default async function AdminLedgerBudgetingPage({
           flow: "income" as const,
           budgetCents: l.budgetCents,
           countsAsGiving: l.countsAsGiving,
-          causeLines: l.causeLines,
+          causeLines: enrichCauseLines(l.categoryId, l.causeLines),
           priorBudgetCents: priorByKey.get(`${l.categoryId}_income`)?.budgetCents ?? null,
           priorActualCents: priorByKey.get(`${l.categoryId}_income`)?.actualCents ?? null,
+          pendingDeleteAt: l.pendingDeleteAt,
         })),
         ...(report?.expense ?? []).map((l) => ({
           categoryId: l.categoryId,
@@ -174,9 +212,10 @@ export default async function AdminLedgerBudgetingPage({
           flow: "expense" as const,
           budgetCents: l.budgetCents,
           countsAsGiving: l.countsAsGiving,
-          causeLines: l.causeLines,
+          causeLines: enrichCauseLines(l.categoryId, l.causeLines),
           priorBudgetCents: priorByKey.get(`${l.categoryId}_expense`)?.budgetCents ?? null,
           priorActualCents: priorByKey.get(`${l.categoryId}_expense`)?.actualCents ?? null,
+          pendingDeleteAt: l.pendingDeleteAt,
         })),
       ];
 

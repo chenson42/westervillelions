@@ -376,3 +376,81 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   action — re-matching costs nothing — yet its `<ConfirmDialog>` renders with
   `destructive` (red) styling, which overstates the risk. Recommend softening
   to the non-destructive style next time this component is touched.
+
+- [x] **B-25 — Enter the approved FY2025 budget so "Prior Budget" isn't blank.**
+  (added 2026-07-28, priority: high — meeting-critical follow-up from
+  `docs/work-log/2026-07-28-budgeting-page-redesign.md` Phase 5/6) The new
+  Prior Budget reference column is correct code (`formatBudgetReferenceCents(null)`
+  → "—") but renders blank for every category because last year's *approved*
+  budget was never entered into `ledger_budgets` for FY2025 — only FY2026's
+  actuals-seeded budget exists, and `ledger_budgets` has zero rows at any
+  fiscal year on the local DB per qa's direct query. Prior Actual populates
+  fine (it's a live sum of `ledger_transactions`, not dependent on a stored
+  budget row). Not an Increment 1 code defect — the feature is doing exactly
+  what it should with the data that exists — but the reference column is
+  half as useful as intended until FY2025's adopted numbers are typed in.
+  Action: have the treasurer (or whoever holds the original paper/spreadsheet
+  budget) enter FY2025's approved budget line-by-line using the existing
+  `BudgetEditor` at `?fy=2025`, once, per entity/fund.
+  **RESOLVED 2026-07-28** — `scripts/enter-fy2025-approved-budget.ts` (dry-run
+  reconciled to the penny, then `--apply`'d to production): 28 `ledger_budgets`
+  category-grain rows entered at fiscal_year=2025 across Club Administrative
+  (income $6,980.00 / expense $11,773.00) and Foundation Charitable (income
+  $32,500.00 / expense $42,062.00), matching the approved-budget PDF totals
+  exactly. No `ledger_budget_lines` (cause/beneficiary) detail was entered for
+  FY2025 — category grain only, per the treasurer-approved scope.
+
+- [x] **B-26 — Club/Administrative fund budget: missing rows + missing
+  categories entirely, vs. the approved budget.**
+  (added 2026-07-28, priority: high — surfaced by a separate budget audit,
+  filed here per Phase 6 of `docs/work-log/2026-07-28-budgeting-page-redesign.md`)
+  The Club (Administrative) fund currently has no budget rows at all, and is
+  also missing categories the approved budget actually itemizes: New Member
+  Fee, 4th of July Parade, Awards, Contingency, Lion L Support, Membership —
+  plus District dues and International dues are not split (today likely one
+  combined "dues" category, if any). This is a data-completeness gap, not a
+  code defect in Increment 1's reference-column or print work. Needs a
+  category-inventory pass against the club's approved budget before the next
+  budget cycle, then the corresponding `ledger_budgets` rows entered.
+  **RESOLVED 2026-07-28** — same script as B-25 above. Created the 6 missing
+  Club/Administrative categories (New Member Fee, 4th of July Parade, Awards,
+  Contingency, Lion L Support, Membership) plus 3 Foundation/Charitable
+  categories (White Cane, Restaurant fundraisers, Miscellaneous) — 9 total —
+  and entered all 13 Club/Administrative expense + 3 income budget rows for
+  FY2025. District dues + International dues + Intl new-member fee were
+  combined onto the existing "Per-capita tax" category per the
+  treasurer-approved mapping, rather than split into separate categories.
+
+- [ ] **B-27 — Increment 2: soft-delete/restore-until-finalize for budget
+  lines.**
+  (added 2026-07-28, deferred from `docs/work-log/2026-07-28-budgeting-page-redesign.md`
+  Phase 1's recommended two-increment split; priority: medium) The treasurer's
+  original request item #4 — removing a budget line marks it "deleted" with a
+  visible restore toggle instead of immediately hard-deleting it, and the
+  deletion only takes effect when the budget is finalized (approve & lock).
+  Phase 1 spec'd this as a persisted `pending_delete_at` nullable timestamp on
+  `ledger_budgets` (schema.ts:772), excluded from the live balance calc
+  immediately, committed (rows hard-deleted) in the same transaction as the
+  finalize/lock write, gated identically to today's `showRemoveControl`
+  (`canManage && !locked`). Cause-line-grain removal (`ledgerBudgetLines`,
+  `BudgetCauseEditor`) stays hard-delete — out of scope, unchanged. This is a
+  genuine new persisted state machine interacting with the existing lock
+  invariant (`assertBudgetUnlocked`) and needs its own architect + tech-lead
+  pass (Phase 2/3), not a continuation of Increment 1's accelerated pipeline.
+  See Phase 1's "Gaps"/"Open Questions" sections in that work-log for the
+  resolved design questions (implicit-restore-on-edit, confirm-dialog removal,
+  balance-calc exclusion) to carry into Phase 3.
+
+- [ ] **B-28 — Delete the unreachable seed API route and dead seed-computation
+  code.**
+  (added 2026-07-28, priority: nice-to-have — flagged in Phase 4/6 of
+  `docs/work-log/2026-07-28-budgeting-page-redesign.md`) Increment 1 removed
+  every UI path to "seed from last year" (both `ProposedLinesList` and the
+  seed action itself, per the treasurer's Human Answer), but left
+  `POST /api/admin/ledger/budgets/seed` and `computeSeedFromPriorYear`/
+  `SeedProposedLine` in `ledger-queries.ts`/`ledger.ts` in place — unreachable
+  from the UI, harmless to the build, but dead code. Delete the route file and
+  the now-unused exports once confirmed nothing else imports them (grep first
+  — `guided-budget-setup.tsx` no longer references either). Also check
+  `/admin/ledger/guide#budgeting` (the in-app Treasury User's Guide) for stale
+  "seed from last year" instructional copy describing the removed flow.

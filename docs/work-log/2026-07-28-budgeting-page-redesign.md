@@ -29,11 +29,18 @@ Redesign `/admin/ledger/budgeting` to be cleaner and printable:
 | Phase | Owner | Status | Verdict | Date |
 |-------|-------|--------|---------|------|
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-28 |
-| 2 — Architectural review | architect | Pending | — | — |
-| 3 — Technical design | tech-lead | Pending | — | — |
-| 4 — Implementation | ux-developer (Increment 1) | Complete | — | 2026-07-28 |
-| 5 — Verification | qa | Complete | PASS | 2026-07-28 |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 2 — Architectural review (Increment 1) | architect | Skipped (accelerated pipeline, documented) | — | 2026-07-28 |
+| 3 — Technical design (Increment 1) | tech-lead | Compressed into implementation brief (7pm deadline) | — | 2026-07-28 |
+| 4 — Implementation (Increment 1) | ux-developer | Complete | — | 2026-07-28 |
+| 5 — Verification (Increment 1) | qa | Complete | PASS | 2026-07-28 |
+| 6 — Shipped vs intent (Increment 1) | analyst | Complete | SHIP WITH NOTES | 2026-07-28 |
+| 2 — Architectural review (Increment 2) | architect | Complete | Approved with suggestions | 2026-07-28 |
+| 3 — Technical design (Increment 2) | tech-lead | Complete | Design complete, implementers named | 2026-07-28 |
+| 4 — Implementation (Increment 2, schema) | database-admin | Complete | — | 2026-07-28 |
+| 4 — Implementation (Increment 2, server) | api-developer | Complete | — | 2026-07-28 |
+| 4 — Implementation (Increment 2, client) | ux-developer | Complete | — | 2026-07-28 |
+| 5 — Verification (Increment 2) | qa | Not started | — | — |
+| 6 — Shipped vs intent (Increment 2) | analyst | Not started | — | — |
 
 ---
 
@@ -145,69 +152,248 @@ Skipped per CLAUDE.md accelerated-pipeline rule: Increment 1 is obviously within
 
 # Phase 2 — Architectural Review (architect)
 
-## Verdict
+## Increment 2 — Phase 2 (Architectural Review) — 2026-07-28
 
-[Approved | Approved with suggestions | Needs revision]
+**Owner:** architect
+**Scope:** Soft-delete/restore-until-finalize for `ledger_budgets` (category/flow grain), deferred from Increment 1 per the Human Answers block above. Read Phase 1's soft-delete analysis (Design Q1/Q6, Flows 3-5, Gaps section) plus `src/lib/db/schema.ts` (`ledgerBudgets`/`ledgerBudgetApprovals`/`ledgerBudgetLines`), `src/lib/ledger-queries.ts` (`getFundReport`, `assertBudgetUnlocked`, `upsertBudgetLine`), `src/lib/ledger.ts` (`isBudgetLocked`, `computeBudgetBalanceStatus`), `src/components/admin/ledger/budget-editor.tsx`, `guided-budget-setup.tsx`, and the budget-approvals routes before writing this.
 
-## Placement
+### VERDICT
 
-- Directory placement: [src/...]
-- Server vs Client split: [where 'use client' is needed and why]
-- Dependencies: [new dep needed (yes/no), evaluation against criteria]
+**Approved with suggestions.** The confirmed model (persisted `pending_delete_at`, category/flow grain only, finalize = hard-delete-in-the-same-transaction-as-lock) is the correct shape and fits the existing architecture cleanly — one nullable column, one sibling write-path function next to `upsertBudgetLine`, one transaction extension on the existing approve route. Nothing here requires a new directory, a new dependency, or a new `FEATURES` key. The suggestions below are load-bearing implementation-contract calls that Phase 3 must resolve explicitly rather than improvise, because two of them (the delete-semantics unification and the running-total seam) have a wrong answer that would either reintroduce the exact footgun this feature exists to remove, or leak an uncommitted edit onto a member-facing surface.
 
-## Invariants Touched
+### 1. Schema shape — CONFIRMED, simple
 
-- [Invariant, how this change respects it (or how it changes it — requires CLAUDE.md update)]
+Add one column to `ledgerBudgets` in `schema.ts`:
 
-## Notes
+```ts
+pendingDeleteAt: timestamp("pending_delete_at"),
+```
 
-[Anything Phase 3 must honor.]
+Nullable, no default, no `withTimezone` (matches the table's existing plain `timestamp` columns — `createdAt`/`updatedAt` on this same table are naive `timestamp`, not `timestamptz`; stay consistent with the table's own convention rather than the newer `{ withTimezone: true }` convention used on more recently added tables like the reconciliation tables). New migration `drizzle/migrations/0066_ledger_budgets_pending_delete.sql` (0065 is the current highest):
+
+```sql
+ALTER TABLE ledger_budgets ADD COLUMN IF NOT EXISTS pending_delete_at timestamp;
+```
+
+That is the whole migration. **No index needed.** The only new query pattern is the finalize-time purge (`WHERE entity_id = ? AND fiscal_year = ? AND pending_delete_at IS NOT NULL`), and `ledger_budgets` rows per `(entityId, fiscalYear)` number in the dozens (categories × 2 flows, one small nonprofit), not a scale where a partial index buys anything measurable. No unique-constraint change either — `pending_delete_at` is pure metadata on an existing row; the `(fundId, fiscalYear, categoryId, flow)` unique constraint is untouched and in fact does real work here (see item 6 below: it's precisely why "re-add the same category/flow" can never collide). Schema-is-source-of-truth flow is standard: `schema.ts` first, then the matching idempotent migration, same order as every prior increment on this table (0062/0063/0064).
+
+### 2. The delete-semantics change — the load-bearing call
+
+I read `commitValue`/`requestRemove`/`doRemove` in `budget-editor.tsx` directly (lines 159-252). Today, **two different gestures both resolve to the identical API call**: clicking the trash icon (`requestRemove` → `doRemove` → `commitValue(..., "")`) and simply blanking the input and blurring (`handleCommit` → `commitValue(..., "")`) — both send `PATCH { annualAmountCents: null }`, and `upsertBudgetLine` hard-deletes on `null` unconditionally. **This is the exact behavior soft-delete must retire for a persisted row, not just decorate.** If Phase 3 leaves blank-input-on-blur wired to `annualAmountCents: null`, a treasurer who fat-fingers backspace on a saved line still gets an instant, irreversible hard-delete — the soft-delete feature would only protect the trash-icon path while leaving the more accident-prone path (blank + blur/Enter) exactly as dangerous as today. That would ship a soft-delete feature that doesn't actually prevent the treasurer's stated problem.
+
+**Ruling: unify both gestures onto soft-delete, with one exception for genuinely-unsaved state.**
+
+- If a `ledger_budgets` row already exists for `(fundId, fiscalYear, categoryId, flow)` (i.e., there's something to lose), **both** the trash-icon click **and** blanking-the-input-then-blur/Enter must route to the new soft-delete write path (set `pending_delete_at`), never to `annualAmountCents: null`.
+- If no row exists yet (a category that was never budgeted this year — input was already blank, nothing persisted), blanking is a true client-side no-op: no network call, matching today's UX for an already-empty field. There's nothing to soft-delete.
+- **New write path:** recommend a sibling function next to `upsertBudgetLine` in `ledger-queries.ts` — e.g. `setBudgetLinePendingDelete(params: { fundId, fiscalYear, categoryId, flow, pendingDelete: boolean }, tx)` — that runs the *identical* guard sequence `upsertBudgetLine` already runs (fund/category lookup → `assertBudgetUnlocked` → the existing cause-line-children guard) and then does nothing but flip `pending_delete_at` to `now()` or `null`. It must **never** touch `annualAmountCents` — this is what "amount is preserved on soft-delete, restore brings the number back" requires, and it falls out for free if this function is a pure flag-flip with no amount branch at all.
+  - The cause-line-children guard carrying over is not optional: a category in cause-breakdown mode (`BudgetCauseEditor`) has no trash icon in `budget-editor.tsx` today (confirmed by reading the JSX — the remove control only renders in the non-breakdown branch), so the UI already prevents this, but the server-side guard should still reject it defensively, exactly the same reason `upsertBudgetLine` checks it rather than trusting the client.
+  - Recommend exposing this as a new mutually-exclusive body shape on the *existing* `PATCH /api/admin/ledger/budgets` route (`{ fundId, fiscalYear, categoryId, flow, pendingDelete: boolean }`, no `annualAmountCents` key) rather than a new route — keeps one endpoint, one auth/feature check, one 409-shape for the lock race, consistent with this feature's own precedent (the original guided-budgeting design's "one shared upsert core" call). Tech-lead should make the final call on route-vs-body-shape, but the shared-core principle should hold either way.
+- **`annualAmountCents === null` on `upsertBudgetLine`/PATCH should be retired as a *live UI* path**, not necessarily deleted as code — it's already unreachable-from-the-UI dead weight once `budget-editor.tsx` is rewired (the seed route is the only other caller, and it's already flagged in B-28 as unreachable/pending deletion). Tech-lead must confirm no code path in the rewritten `budget-editor.tsx` ever sends `annualAmountCents: null` for a row with an existing `ledger_budgets` id.
+- **Restore** = the same endpoint with `pendingDelete: false`. Per Flow 4, no confirm dialog — it's explicitly a non-destructive, corrective action.
+- **Drop the existing remove-line `ConfirmDialog`** (`budget-editor.tsx:430-444`). Phase 1's own gap note flagged this as likely once removal becomes reversible, and Increment 2 is exactly the increment that makes it true — one click to mark deleted, one click to restore, no confirm needed for either. The one meaningful warning moves to the Approve & lock dialog's copy (Flow 5's "N line(s) marked for deletion will be permanently removed" clause). This is a *removal* of a confirm, not an introduction of a native dialog — does not create a CLAUDE.md violation.
+- **Input stays disabled while a line is marked pending-delete** (per Flow 3's "input disabled while marked," which is also the Human-confirmed model). This single UI rule is what resolves edge case 6 below — see item 6.
+
+### 3. Where the running-total exclusion lives — the subtle seam
+
+I read `getFundReport` in full (`ledger-queries.ts:451-678`). **Its `totalIncomeCents`/`totalExpenseCents`/`endingCents` are computed from posted *actual transactions*, never from `budgetCents` — there is no fund-level aggregate of budget amounts anywhere inside this function.** The per-category `budgetCents` field exists only for per-line display and `variance` calc. Separately, I read `guided-budget-setup.tsx`'s `fundSums()` (lines 190-224): the "live running total" the treasurer sees while editing (the balance badge driving `computeBudgetBalanceStatus`) is computed **entirely client-side**, summing a local `lineValues` state that's seeded once from `budgetEditorLines[].budgetCents` and updated live via `BudgetEditor`'s `onInputChange` callback — it is never re-derived from a server round-trip or from `getFundReport` directly.
+
+**Ruling: the exclusion is a budgeting-page-specific client projection. Do NOT filter `getFundReport` globally.**
+
+1. `getFundReport`'s per-category `FundReportCategoryLine` gains one new **optional, purely informational** field — `pendingDeleteAt: string | null` — sourced off the `budgetRows` the function already fetches (free, no new query). This field must not participate in `budgetCents`, `variance`, `totalIncomeCents`, `totalExpenseCents`, or `endingCents` — all of those stay computed from the full, committed row set exactly as today.
+2. This is the correct seam *because* `getFundReport`'s budget figures feed consumers that must keep showing the **committed** budget until finalize actually happens: `src/app/(dashboard)/admin/ledger/[fundSlug]/report/page.tsx` (the admin fund-report page) and, via `src/lib/financial-report-queries.ts`, `src/components/members/monthly-statement-table.tsx` — the **member-facing** Monthly Statement. If `getFundReport` excluded pending-delete rows globally, a treasurer marking a line pending-delete mid-session — before ever clicking Approve & lock — would immediately change what a member sees on their own statement. That is a real invariant violation, not a cosmetic inconsistency: the confirmed model is explicit that "only on finalize does the deletion take effect," and a member-facing leak of an uncommitted edit contradicts that directly.
+3. `budgeting/page.tsx` must thread the new `pendingDeleteAt` field through into `budgetEditorLines`, alongside the Increment 1 `priorBudgetCents`/`priorActualCents` fields it already threads the same way.
+4. `guided-budget-setup.tsx`'s `fundSums()` must exclude any key whose line is currently pending-delete from the `incomeCents`/`expenseCents` sums it feeds to `computeBudgetBalanceStatus` — and that exclusion must update **instantly** on click (soft-delete/restore), not wait for `router.refresh()`, exactly like `onInputChange` already updates the sum instantly on keystroke today. This requires threading a pending-delete-aware flag through the same per-key state `lineValues` already tracks.
+5. `computeBudgetBalanceStatus` itself needs no change — it's already documented as a pure, presentation-only function over two pre-summed numbers; soft-delete awareness belongs in the caller that builds those numbers, not inside it.
+
+**Every consumer of `getFundReport`'s budget figures, and how each is affected:** `budgeting/page.tsx` (this feature — gains the new field, must build the client-side exclusion); `[fundSlug]/report/page.tsx` (admin fund report — unaffected, correctly keeps showing committed figures); `monthly-statement-table.tsx` / `financial-report-queries.ts` (member-facing statement — unaffected, correctly keeps showing committed figures, and must stay unaffected per the reasoning above); `src/app/api/admin/ledger/categories/route.ts` (uses `getFundReport` for an unrelated purpose — worth a quick confirmation in Phase 3 that it doesn't read `budgetCents` in a way the new optional field could disturb, but adding an optional field is additive and should not require any change there).
+
+### 4. The finalize transaction (approve/lock)
+
+I read `POST /api/admin/ledger/budget-approvals/route.ts` in full. Today it does a single `db.insert(...).onConflictDoUpdate(...)` with **no `db.transaction()` wrapper at all** — unlike `upsertBudgetLine`, which already accepts an optional `tx` for exactly this reason.
+
+**Ruling:**
+- This route must be rewritten to open a `db.transaction(async (tx) => { ... })` that performs, atomically: (a) the existing lock-status upsert into `ledgerBudgetApprovals`, and (b) `DELETE FROM ledger_budgets WHERE entity_id = ? AND fiscal_year = ? AND pending_delete_at IS NOT NULL` (a plain Drizzle `.delete(ledgerBudgets).where(and(eq(entityId), eq(fiscalYear), isNotNull(pendingDeleteAt)))`, scoped by `entityId` since approval is keyed per-entity across all of that entity's funds, not per-fund).
+- The pre-write lock check (`getBudgetApproval` → `isBudgetLocked`) should move **inside** the same transaction (pass `tx` through), not run before it as today — otherwise two concurrent finalize requests could both pass the check before either writes, the same class of check-then-act race `assertBudgetUnlocked` already guards against on the write side. This isn't a new problem this feature invents, but extending the route to a real transaction is the natural point to close it.
+- **No cause-line cascade risk at finalize:** rows eligible for `pending_delete_at` can only be lump-sum rows (item 2's guard prevents a category with `ledger_budget_lines` children from ever being marked pending-delete), so the hard-delete at finalize never triggers the `ON DELETE CASCADE` on `ledgerBudgetLines.budgetId` unexpectedly. Worth a one-line comment in the migration or the delete call site noting this invariant explicitly, since it's easy to forget once cause-line-grain removal (unchanged, hard-delete-with-confirm) is running alongside soft-delete in the same UI.
+- **Unlocking does not resurrect anything** — confirmed by reading `budget-approvals/unlock/route.ts`: unlock only flips `status` back to `'unlocked'` and never touches `ledger_budgets`. Since the pending-delete purge is a genuine, permanent hard-delete at lock time (no history/versioning table, consistent with today's remove-line behavior), there is nothing for unlock to restore — matches the existing invariant that removal has always been permanent once committed. Confirm this explicitly in the Phase 3 doc so it isn't assumed to need new work.
+
+### 5. Invariants
+
+- **Schema is the source of truth:** `schema.ts` gains `pendingDeleteAt` first, matching migration follows — standard flow, no deviation.
+- **Migrations re-run on every deploy:** the single `ADD COLUMN IF NOT EXISTS` statement is idempotent by construction.
+- **Permissions are the only gating mechanism:** no new `FEATURES.*` key. Soft-delete/restore gate identically to today's `showRemoveControl` (`canManage && !locked`, i.e., `FEATURES.LEDGER_MANAGE`); finalize stays gated by `FEATURES.LEDGER_APPROVE`. Every new write path (`setBudgetLinePendingDelete` or equivalent) must call `assertBudgetUnlocked` exactly like `upsertBudgetLine` does — this is the one new server-side gate this feature introduces, and it must be present on both the soft-delete and the restore direction, not just soft-delete.
+- **No native dialogs:** removing the remove-line `ConfirmDialog` (item 2) is a simplification, not a violation — nothing here introduces `window.confirm`/`alert`/`prompt`. The updated Approve & lock dialog stays a `ConfirmDialog`.
+- **Server/client boundary:** `budget-editor.tsx` and `guided-budget-setup.tsx` are already `"use client"` and stay that way — this feature is entirely local-state-driven (disabled inputs, instant visual toggle, instant running-total exclusion) with no new Server Component needed. The new write path is a route handler under the existing `src/app/api/admin/ledger/budgets` surface, consistent with API/Action Rules.
+- **Member-facing exposure boundary:** unaffected. This entire feature lives inside `(dashboard)/admin/ledger/budgeting` and the `PATCH /api/admin/ledger/budgets` route family — no public or member-portal route is touched, and item 3's ruling is specifically what keeps it that way for the Monthly Statement.
+
+### 6. Edge cases — ruled
+
+- **A budget never gets locked, pending-deletes persist indefinitely:** Acceptable for v1. The row (and its stale amount) stays in `ledger_budgets` and therefore stays in `getFundReport`'s committed figures (fund report, member statement) until finalize — a "marked but never actually committed" state that can persist indefinitely. This matches existing precedent (nothing today forces a fund's budget to ever get locked either) and is a direct, intended consequence of the confirmed model tying commit-of-deletes to finalize only. **No "apply without lock" affordance should be added** — that would be scope creep past the confirmed model and would reopen exactly the "does removal without finalize actually take effect?" question the treasurer already resolved. Document as a known tradeoff, not a defect.
+- **Editing a pending-delete line's amount:** Not directly reachable — item 2's ruling disables the input while a line is marked deleted, so there's no path to type a new amount without clicking Restore first. No separate server-side handling needed beyond that UI rule (though the server-side `setBudgetLinePendingDelete`/amount-upsert functions should each independently reject/no-op the "wrong" operation defensively, the same defense-in-depth posture the rest of this codebase already takes toward client-side gates).
+- **Soft-delete then re-add the same `(categoryId, flow)`:** Resolved by construction, not by special-casing — the row is never actually deleted, so there is no uniqueness collision to handle. "Re-add" is just "click Restore, then edit the amount" (two clicks against the one existing row), not a new insert against the `(fundId, fiscalYear, categoryId, flow)` unique constraint. This is exactly why item 1 rules that no constraint change is needed.
+
+### Notes for Phase 3 (tech-lead)
+
+- Resolve the exact API shape for item 2 (new body field on the existing PATCH route vs. a new route) and name the sibling query function precisely (`setBudgetLinePendingDelete` is a suggested name, not a mandate).
+- Write the exact `FundReportCategoryLine`/`BudgetLine`/`FundSetupItem.budgetEditorLines` type additions for `pendingDeleteAt`, threading it from `getFundReport` → `page.tsx` → `GuidedBudgetSetup` → `BudgetEditor`.
+- Specify the exact visual treatment for a pending-delete row (strikethrough + gray background + badge copy, per Phase 1 Flow 3) and the Restore control's placement (replaces the trash icon in the same slot).
+- Specify the updated Approve & lock `ConfirmDialog` copy (Flow 5's new clause) and confirm the count of pending-delete lines is computed client-side from the same data threaded through in item 3.
+- Name the unit tests this needs: `setBudgetLinePendingDelete` guard sequence (locked → 409, cause-line children → 409, happy path both directions), the finalize-transaction purge (locked rows past finalize are gone; non-pending rows survive), and `fundSums()`'s exclusion of pending-delete lines from the balance calc.
+- The already-flagged follow-ups from Increment 1 (B-28: delete the dead seed route/`computeSeedFromPriorYear`) are unrelated to this increment and don't block it — no need to bundle that cleanup in here.
 
 ---
 
 # Phase 3 — Technical Design (tech-lead)
 
-## Summary
+Increment 1's Phase 3 was compressed into the implementation brief per the 7pm-deadline accelerated pipeline (see the Phase 2 skip note above) — no separate Phase 3 doc was written for it, and Phase 4's "Implementer Notes" section stands in its place. Increment 2 gets the full design pass below, per the architect's Phase 2 verdict that this piece "deserves its own tech-lead design pass."
 
-[One paragraph: what we're building and why.]
+## Increment 2 — Phase 3 (Technical Design) — 2026-07-28
 
-## Permissions
+**Owner:** tech-lead
+**Scope:** Soft-delete/restore-until-finalize for `ledger_budgets` (category/flow grain), implementing DECISION-052's rulings exactly and closing the open questions the architect left for this phase. Grounded by reading `src/lib/db/schema.ts` (`ledgerBudgets`/`ledgerBudgetApprovals`/`ledgerBudgetLines`), `src/lib/ledger-queries.ts` (`getFundReport`, `upsertBudgetLine`, `assertBudgetUnlocked`, `getBudgetApproval`), the budget-approvals/unlock routes, `src/components/admin/ledger/budget-editor.tsx` and `guided-budget-setup.tsx`, and `budget-print-worksheet.tsx` in full.
 
-- Permission key(s): `area.action`
-- Default role bindings: [list]
+### Summary
 
-## API Contract
+Add a nullable `pending_delete_at` column to `ledger_budgets` so removing a budget line becomes reversible until the budget is finalized. Both the trash-icon control and blanking-an-input-then-blur route to the same new soft-delete write path for any already-persisted row — the amount is preserved, not cleared, so Restore brings the number back exactly. The line stays visible with a "deleted" visual treatment and a Restore toggle; its amount input is disabled while pending-delete. The running-total balance badge excludes pending-delete lines instantly (client-side only); `getFundReport`'s committed budget figures — which also feed the admin fund report and the member-facing Monthly Statement — are completely unaffected, so nothing changes for a member or a board reviewer until the treasurer actually clicks Approve & lock. That click becomes the one moment pending deletes take effect: the approve/lock route is rewritten to run the lock-status write and the pending-delete purge inside a single transaction, closing a pre-existing check-then-act race in the same motion. Cause-line (labeled beneficiary) removal is untouched — it stays an immediate hard-delete, and a category with cause-line children can never be marked pending-delete.
 
-- `POST /api/...` — purpose, request body, response shape
-- `GET /api/...` — purpose, query params, response shape
-- Or server-action signatures: `async function actionName(input): Promise<Result>`
+### Permissions
 
-## Data Model
+No new `FEATURES.*` key. Reuses the page's existing two-tier gate exactly as today:
+- **`FEATURES.LEDGER_MANAGE`** gates soft-delete and restore — identical to today's `showRemoveControl = canManage && !locked`. Every write goes through `assertBudgetUnlocked`, so a stale tab racing a lock still gets the server's 409 regardless of what the disabled UI prop shows.
+- **`FEATURES.LEDGER_APPROVE`** gates finalize (Approve & lock) — unchanged. Finalize is the only moment pending deletes commit.
+- No change to default role bindings (Treasurer/Assistant Treasurer hold `LEDGER_MANAGE`; Board/President hold `LEDGER_APPROVE`, per existing bindings).
 
-[New tables / columns / indexes, or "No schema changes required."]
+### API Contract
 
-## Component / Page Plan
+**`PATCH /api/admin/ledger/budgets`** — extended, not replaced. Two mutually-exclusive request shapes on the same route (DECISION-053 item 1):
 
-- Pages to create: [list]
-- Components to create: [list]
-- Files to modify: [list]
+```
+// Shape A — amount write (existing, unchanged)
+{ fundId, fiscalYear, categoryId, flow, annualAmountCents: number | null }
 
-## Implementation Order
+// Shape B — pending-delete write (new)
+{ fundId, fiscalYear, categoryId, flow, pendingDelete: boolean }
+```
 
-1. Schema (if any) → add migration in `drizzle/migrations/` and update `src/lib/db/schema.ts`
-2. `FEATURES` entry in `src/lib/permissions.ts` + role binding migration
-3. Route handlers / server actions
-4. UI
-5. Email notification (if applicable) — enqueue via `sendEmail` in `src/lib/email.ts`
-6. Release notes entry
+- If a request body contains both `annualAmountCents` and `pendingDelete` → **400** `"Provide either annualAmountCents or pendingDelete, not both."`
+- If neither key is present → **400**, same shape-validation message the route already returns today for a missing/invalid `annualAmountCents`.
+- Shape A behavior is **completely unchanged** — still calls `upsertBudgetLine`, still accepts `annualAmountCents: null` to hard-delete a row with no cause-line children (kept for back-compat / any future non-UI caller; the redesigned client, per below, never sends it anymore for a row that ever existed).
+- Shape B dispatches to a new sibling function, `setBudgetLinePendingDelete(params, tx)` in `src/lib/ledger-queries.ts`, mirroring `upsertBudgetLine`'s signature and guard order exactly:
+  1. Fund + category lookup (400/404 on missing).
+  2. `assertBudgetUnlocked(fund.entityId, fiscalYear, tx)` → 409 `{ reason: "locked" }` on a locked budget — run for **both** `pendingDelete: true` and `pendingDelete: false` (restore must be lock-guarded too, per the architect's explicit ruling that this is "the one new server-side gate... present on both the soft-delete and the restore direction, not just soft-delete").
+  3. Cause-line-children guard (the same query `upsertBudgetLine` already runs) → 409 `{ reason: "has_cause_breakdown" }` if the row has any `ledger_budget_lines` children. Run on both directions defensively, even though a childful row can never legitimately reach a pending-delete state in the first place.
+  4. **Row-must-exist check**: if no `ledger_budgets` row matches `(fundId, fiscalYear, categoryId, flow)` → **404** `"No budget line exists for this category to modify."` (DECISION-053 item 2 — defense-in-depth only; the client-side no-op rule below means the UI should never actually trigger this in normal use).
+  5. Flip only `pending_delete_at` — set to `now()` when `pendingDelete: true`, `null` when `pendingDelete: false`. **`annual_amount_cents` is never read or written by this function** — this is what makes "restore brings the number back" true by construction, not by special-casing.
+- **Response 200:** `{ action: "pending-delete" | "restored" }` (no `id` needed — the row already exists and its id doesn't change).
+- **Recommend factoring the fund/category lookup + cause-line-children query into a small shared private helper** used by both `upsertBudgetLine` and `setBudgetLinePendingDelete`, so the guard sequence has one implementation, not two copies that could drift. Naming this as a refactor note for api-developer, not a hard requirement if time-boxed.
 
-## Edge Cases & Risks
+**Blank-input-then-blur vs. trash-icon mapping (both client gestures, same server call):**
+- A new pure function, `resolveBudgetLineDeleteAction(hasExistingRow: boolean, rawValue: string): "soft-delete" | "noop"` lives in `src/lib/ledger.ts` next to `isBudgetLocked`/`computeBudgetBalanceStatus`/`formatBudgetReferenceCents` (DECISION-053 item 3). It returns `"soft-delete"` when `rawValue.trim() === "" && hasExistingRow`, else `"noop"`.
+- **Trash icon click** (`requestRemove`/`doRemove` in `budget-editor.tsx`): always calls `resolveBudgetLineDeleteAction(line.budgetCents !== null, inputs[key] ?? "")`. `"soft-delete"` → `PATCH { pendingDelete: true }`. `"noop"` → nothing happens (there's no row to remove — e.g., an unsaved, still-blank line rendered with a trash icon before anything was ever typed).
+- **Blank + blur/Enter** (`handleCommit`/`commitValue`): when the committed raw value is `""`, call the same `resolveBudgetLineDeleteAction`. `"soft-delete"` → the same `PATCH { pendingDelete: true }` (never `annualAmountCents: null`). `"noop"` → no network call at all — this is the existing `dirtyRef` short-circuit plus the "no row exists" check working together; nothing new to build for this case beyond routing the non-empty branch correctly.
+- **`hasExistingRow` is read directly off the current `line.budgetCents !== null` prop**, not a separately-tracked piece of local state — this holds even for a pending-delete row, because the amount is preserved on soft-delete (a pending-delete row's `budgetCents` stays non-null). Every commit already triggers `router.refresh()`, so `line` reflects true server state by the time any subsequent gesture fires.
+- **Restore** (the button that replaces the trash icon on a pending-delete row): always `PATCH { pendingDelete: false }`, no confirm, no `resolveBudgetLineDeleteAction` check needed (a pending-delete row always has an existing row by definition).
+- **The existing remove-line `ConfirmDialog` (`budget-editor.tsx:430-444`) is deleted**, not repurposed. Soft-delete and restore are both single-click, no-confirm actions now.
 
-- [Thing that could fail or that needs special handling]
+**`POST /api/admin/ledger/budget-approvals` (approve/lock, "finalize") — rewritten to be transactional:**
 
-## Implementer
+```
+Body (unchanged): { entityId, fiscalYear, boardMinute }
+Response 200 (unchanged): { entityId, fiscalYear, status: 'locked', approvedByUserId, approvedAt, boardMinute }
+```
 
-[database-admin | api-developer | ux-developer | full-stack-developer]
+The route body wraps everything after request validation in one `db.transaction(async (tx) => { ... })`:
+1. **Lock-check moves inside the transaction.** `getBudgetApproval(entityId, fiscalYear, tx)` — this requires adding an optional `tx: DrizzleTransaction | typeof db = db` parameter to `getBudgetApproval` (it currently only accepts the module-level `db`, unlike `assertBudgetUnlocked` which already has this parameter). If `isBudgetLocked(current)` → abort the transaction and return the existing 409 ("This budget is already locked...").
+2. **The lock-status upsert** — unchanged `insert(...).onConflictDoUpdate(...)` into `ledgerBudgetApprovals`, now run against `tx` instead of the module `db`.
+3. **The pending-delete purge** — `tx.delete(ledgerBudgets).where(and(eq(ledgerBudgets.entityId, entityId), eq(ledgerBudgets.fiscalYear, fiscalYear), isNotNull(ledgerBudgets.pendingDeleteAt)))`. Scoped by `entityId` (not per-fund), matching how approval itself is entity-wide across all of that entity's funds.
+4. Both writes commit together, or neither does — closing the pre-existing check-then-act race (two concurrent finalize requests can no longer both pass the lock check before either writes).
+- **No response shape change** — the client already knows the pending-delete count from its own local state (see Component Plan below), so there's no need to return a purge count.
+- **Unlock (`POST .../unlock`) is unchanged** — confirmed by reading it in full: it only ever flips `status` and writes the unlock trio, never touches `ledger_budgets`. Since the purge at finalize is a genuine hard-delete with no history table, there is nothing for unlock to resurrect — this matches today's existing behavior for a hard-deleted budget line (removal has always been permanent once committed).
+
+### Data Model
+
+- `src/lib/db/schema.ts` — `ledgerBudgets` gains one nullable column:
+  ```ts
+  pendingDeleteAt: timestamp("pending_delete_at"),
+  ```
+  Plain (non-timezone) `timestamp`, matching the table's existing `createdAt`/`updatedAt` convention. No default, no index, no constraint change — the existing `(fundId, fiscalYear, categoryId, flow)` unique constraint is untouched and is exactly why "soft-delete, then re-add the same category/flow" needs no special handling (the row was never actually gone).
+- **Migration `drizzle/migrations/0066_ledger_budgets_pending_delete.sql`** (0065 is the current highest) — the entire migration:
+  ```sql
+  ALTER TABLE ledger_budgets ADD COLUMN IF NOT EXISTS pending_delete_at timestamp;
+  ```
+  Idempotent by construction.
+- **`getFundReport`'s `FundReportCategoryLine`** (`src/lib/ledger-queries.ts`) gains one new field:
+  ```ts
+  pendingDeleteAt: string | null;
+  ```
+  Sourced off the `budgetRows` the function already fetches (free — no new query), serialized to an ISO string at this boundary rather than passed as a raw `Date` (DECISION-053 item 4, matching the existing convention where `budgeting/page.tsx`'s `formatApprovalDate` already converts `Date` fields to strings before handing them to a client component). **Confirmed: `budgetCents`, `variance`, `causeLines`, `totalIncomeCents`, `totalExpenseCents`, `endingCents` are completely unchanged** — every one of those stays computed from the full, committed row set exactly as today. This field is purely informational and participates in nothing else `getFundReport` computes.
+- **No other schema change.** `ledgerBudgetLines` and `ledgerBudgetApprovals` are untouched.
+
+### Component / Page Plan
+
+**Files to modify (no new files/components needed):**
+
+- **`src/lib/db/schema.ts`** — add `pendingDeleteAt` to `ledgerBudgets`.
+- **`src/lib/ledger-queries.ts`** — `getFundReport`'s `FundReportCategoryLine` gains `pendingDeleteAt`; new `setBudgetLinePendingDelete`; `getBudgetApproval` gains an optional `tx` param.
+- **`src/lib/ledger.ts`** — new pure `resolveBudgetLineDeleteAction(hasExistingRow, rawValue)`.
+- **`src/app/api/admin/ledger/budgets/route.ts`** — branch on `pendingDelete` vs. `annualAmountCents` in the request body; 400 when both/neither present.
+- **`src/app/api/admin/ledger/budget-approvals/route.ts`** — wrap in `db.transaction()`; move the lock check inside; add the pending-delete purge.
+- **`src/app/(dashboard)/admin/ledger/budgeting/page.tsx`** — thread `pendingDeleteAt` (a string or null, straight off `getFundReport`'s target-FY report — **not** the prior-FY report, which has no bearing here) into `budgetEditorLines`, the same way `priorBudgetCents`/`priorActualCents` are already threaded through.
+- **`src/components/admin/ledger/guided-budget-setup.tsx`**:
+  - `FundSetupItem.budgetEditorLines[].pendingDeleteAt: string | null` added to the type.
+  - New client state `pendingDeleteKeys: Record<string, Record<string, boolean>>`, keyed identically to `lineValues` (`fundId` → `` `${categoryId}_${flow}` ``), initialized from each line's `pendingDeleteAt !== null`.
+  - `BudgetEditor` gains a new prop, `onPendingDeleteChange?: (key: string, pendingDelete: boolean) => void`, fired the instant a soft-delete/restore click resolves optimistically (mirrors how `onInputChange` already fires on every keystroke, ahead of the network round-trip) — `GuidedBudgetSetup` wires this to update `pendingDeleteKeys` immediately, then `router.refresh()` (already called by every successful commit) reconciles it with server truth.
+  - `fundSums(fundId)` excludes any key where `pendingDeleteKeys[fundId]?.[key]` is true from both `incomeCents` and `expenseCents` (DECISION-052 item 1's live-exclusion ruling, made concrete).
+  - **Approve & lock `ConfirmDialog` copy update**: compute `pendingDeleteCount` by summing `pendingDeleteKeys` across all funds (the same live client state `fundSums()` reads — instant, no extra round-trip). New copy: `` `This records board minute "${boardMinute.trim()}" and makes every fund's ${targetLabel} budget read-only.${pendingDeleteCount > 0 ? ` ${pendingDeleteCount} line(s) marked for deletion will be permanently removed.` : ""} It can be unlocked later to amend, then must be re-approved.` ``. Set `destructive={pendingDeleteCount > 0}` on this dialog (red confirm button only when something will actually be lost) — this is the one meaningful warning DECISION-052/the architect's ruling moved here from the now-deleted remove-line confirm.
+- **`src/components/admin/ledger/budget-editor.tsx`**:
+  - `BudgetLine` type gains `pendingDeleteAt?: string | null`.
+  - Delete the `removeConfirm` state, the `ConfirmDialog` at the bottom of the file, and `requestRemove`'s amount-based branch (confirm-vs-immediate) — every removal is now immediate and reversible.
+  - New rendering branch per line: when `line.pendingDeleteAt` is set, render the row with strikethrough on the category name, a muted/gray row background, a small badge reading "Deleted — will be removed when this budget is finalized," the amount still visible in the input **with the input `disabled`**, and the trash-icon button replaced by a "Restore" button in the same slot (same `min-h-[44px] min-w-[44px]` touch target).
+  - The non-pending row's trash-icon handler and the blank+blur handler both route through `resolveBudgetLineDeleteAction` as specified in the API Contract section, then `PATCH { pendingDelete: true }` on `"soft-delete"`.
+  - Restore button: `PATCH { pendingDelete: false }`, no confirm.
+- **`src/components/admin/ledger/budget-print-worksheet.tsx`** — `PrintLine` gains `pendingDeleteAt: string | null`; `FlowTable` filters `lines.filter((l) => l.pendingDeleteAt === null)` before rendering (DECISION-053 item 5 — **pending-delete lines do not print**, since the worksheet is a forward-looking plan of what the budget will actually be, and a line already marked for removal isn't part of that). If a fund's flow table ends up with zero remaining lines after the filter, it's simply omitted, same as today's `if (income.length === 0 && expense.length === 0) return null` behavior on `FundWorksheet`.
+
+### Implementation Order
+
+1. **Schema** — add `pendingDeleteAt` to `ledgerBudgets` in `schema.ts`; write `drizzle/migrations/0066_ledger_budgets_pending_delete.sql`. Run `pnpm db:migrate` locally and confirm the column exists.
+2. **Queries** — `setBudgetLinePendingDelete` in `ledger-queries.ts` (guard sequence + flag flip only); `getFundReport`'s `pendingDeleteAt` field addition; `getBudgetApproval`'s optional `tx` param; the rewritten transactional approve/lock route (lock-check-inside-tx + purge). Write the named unit tests below alongside these.
+3. **Routes** — `PATCH /api/admin/ledger/budgets`'s new body-shape branch; confirm the 400 (both/neither key), 404 (no row), and 409 (locked / has-cause-breakdown, both directions) responses.
+4. **UI** — `resolveBudgetLineDeleteAction` in `ledger.ts`; `budget-editor.tsx`'s pending-delete row rendering + Restore control + dropped `ConfirmDialog`; `guided-budget-setup.tsx`'s `pendingDeleteKeys` state, `fundSums()` exclusion, and the updated Approve dialog copy/`destructive` toggle; `budget-print-worksheet.tsx`'s filter.
+5. **Tests** — the eleven named in the section below, all passing, hermetic (`unset DATABASE_URL DB_URL; pnpm test`).
+6. **Release notes** — a `docs/release-notes/vX.Y.md` entry once QA passes, via the `/release-notes` skill (treasurer-facing framing: "budget line removal is now reversible until you lock the budget").
+
+### Edge Cases & Risks
+
+- **Check-then-act race on finalize.** Closed by wrapping the lock-check and the purge in one `db.transaction()` (API Contract section above) — two concurrent finalize requests can no longer both read "unlocked" before either commits.
+- **A row with cause-line children.** `setBudgetLinePendingDelete` runs the identical cause-line-children guard `upsertBudgetLine` already runs, on both directions. The UI never renders a trash icon for a cause-breakdown row in the first place (confirmed by reading `budget-editor.tsx`'s JSX — the remove control only exists in the non-breakdown branch), so this 409 is pure defense-in-depth, not a reachable UI path today.
+- **Blank input on a never-saved row.** `resolveBudgetLineDeleteAction(false, "")` → `"noop"`; no network call, no visual change. Already partially free from the existing `dirtyRef` short-circuit (a field that was never touched never calls `handleCommit` at all); the new function makes the "even if touched, there's nothing to lose" case explicit and testable.
+- **Soft-delete → restore → edit.** Restore clears `pendingDeleteAt` and re-enables the input with its preserved amount showing; a subsequent edit is an ordinary `PATCH { annualAmountCents }` — no special handling needed, this is just the input becoming editable again.
+- **A budget that never gets finalized.** Pending-delete rows (and their preserved amounts) persist indefinitely in `ledger_budgets`, and therefore stay in `getFundReport`'s committed figures (report page, member statement) — accepted as a known tradeoff per the architect's ruling, not a defect. No "apply without lock" affordance is being added.
+- **Print worksheet.** Confirmed: pending-delete lines are excluded from the printout entirely (DECISION-053 item 5) — they represent categories about to be removed, not part of the plan being printed for hand-annotation.
+- **Member statement / admin fund report leak.** The one regression this whole design exists to prevent: `getFundReport`'s `budgetCents`/`variance`/`totalIncomeCents`/`totalExpenseCents`/`endingCents` must be byte-for-byte identical whether or not any row in the fund+FY has `pendingDeleteAt` set. This is asserted directly by unit test #7 below, not just reasoned about — a pending-delete row must remain fully "live" everywhere except the two client-side UI surfaces (the balance badge and the print worksheet) that are explicitly scoped to change.
+- **`getBudgetApproval`'s new `tx` parameter.** A signature change to an existing exported function — confirm its one other caller (`budgeting/page.tsx`, called with no `tx` argument, i.e. the default `db`) still typechecks unchanged; the parameter is optional and defaults exactly like `assertBudgetUnlocked`'s.
+
+### Unit Tests to Write in Phase 4
+
+1. `setBudgetLinePendingDelete` sets `pending_delete_at` and leaves `annual_amount_cents` byte-for-byte unchanged (happy path, soft-delete direction).
+2. `setBudgetLinePendingDelete` restore direction clears `pending_delete_at`, again leaving the amount unchanged.
+3. `setBudgetLinePendingDelete` rejects with 409 `{ reason: "locked" }` on a locked budget, for both `pendingDelete: true` and `pendingDelete: false`.
+4. `setBudgetLinePendingDelete` rejects with 409 `{ reason: "has_cause_breakdown" }` for a row with `ledger_budget_lines` children.
+5. `setBudgetLinePendingDelete` returns 404 when no row exists for the `(fundId, fiscalYear, categoryId, flow)` tuple.
+6. `resolveBudgetLineDeleteAction(hasExistingRow, rawValue)` — pure-function table test: blank + existing row → `"soft-delete"`; blank + no row → `"noop"`; non-blank → `"noop"` (unreachable in practice via the blur handler, but the function's contract should still be explicit) for both true/false combinations.
+7. **Regression guard**: `getFundReport`'s `budgetCents`, `variance`, `totalIncomeCents`, `totalExpenseCents`, `endingCents` are identical for a fund+FY before and after marking one of its budget rows `pending_delete_at` — proves the member-statement/fund-report leak this design is built to prevent doesn't exist.
+8. `fundSums()` (or its extracted pure core, if factored out for testability) excludes a pending-delete line's amount from both `incomeCents` and `expenseCents`.
+9. The approve/lock route: a budget with 1+ pending-delete rows, on successful finalize, ends with those rows physically gone from `ledger_budgets` and the lock-status row set to `'locked'` — both in the same request.
+10. The approve/lock route: non-pending-delete rows for the same fund+FY survive finalize untouched.
+11. Unlock, called after a finalize that purged pending-delete rows, does not cause those rows to reappear (confirms the "hard delete, no history" invariant holds through an unlock/re-approve cycle).
+
+### Implementer Sequence
+
+1. **database-admin** — schema (`pendingDeleteAt` column) + migration `0066_ledger_budgets_pending_delete.sql`.
+2. **api-developer** — `setBudgetLinePendingDelete`, `getFundReport`'s field addition, `getBudgetApproval`'s `tx` param, the rewritten transactional approve/lock route, the `PATCH /budgets` route's new body branch, and unit tests #1–5, #7, #9–11 above.
+3. **ux-developer** — `resolveBudgetLineDeleteAction` (+ unit test #6), `budget-editor.tsx`'s pending-delete row treatment + Restore control + dropped `ConfirmDialog`, `guided-budget-setup.tsx`'s `pendingDeleteKeys`/`fundSums()` exclusion (+ unit test #8) + Approve dialog copy/`destructive` toggle, and `budget-print-worksheet.tsx`'s filter.
+
+**Gate:** design complete, implementer sequence named above. No architectural concern surfaced (Phase 2's suggestions are fully resolved by this doc); no functional inconsistency surfaced against Phase 1. Ready for Phase 4 — database-admin first.
 
 ---
 
@@ -356,33 +542,280 @@ Ready to deploy Increment 1. All four required gates green, reference-column dat
 
 # Phase 6 — Shipped vs Intent (analyst)
 
+**Date:** 2026-07-28
+**Reviewed by:** analyst
+**Framing:** This is a post-deploy sign-off — v1.44.0 is already live. The question is not "should this ship," it's "did what shipped deliver Increment 1's intent, and what needs to be tracked now that it's out in front of the treasurer."
+
 ## VERDICT
 
-[SHIP IT | SHIP WITH NOTES | NEEDS REWORK]
+**SHIP WITH NOTES**
 
 ## ONE-LINE TAKE
 
-> [The shipped feature in one honest sentence.]
+> Increment 1 shipped exactly what Phase 1 scoped — read-only prior-year reference columns, a static print worksheet with hand-annotation lines and page-break protection, and a clean removal of the seed flow — with zero regression to approve/lock, add-category, or the cause-line editor; the notes below are a real data gap (no FY2025 budget entered anywhere) and pre-existing structural model gaps that predate this increment and don't block tonight's use.
 
 ## What's Working
 
-- [Specific. The flow that works well and why.]
+- **The reference-column mental model is exactly right.** I read the shipped `budget-editor.tsx` directly: `ReferenceValue` cells render `formatBudgetReferenceCents` output as plain read-only text next to a genuinely blank `<input>` — no `value=` ever set from the prior-year data (qa confirmed this by grepping all 16 rendered inputs; I confirmed it by reading the component, the input's `value={inputs[key] ?? ""}` is keyed off independent local state, never seeded from `priorBudgetCents`/`priorActualCents`). This was the crux of Design Question #2 in Phase 1 (blank-vs-$0 must not get muddied by the new columns) and it shipped clean.
+- **The print worksheet is a real static snapshot, not a live mirror.** `budget-print-worksheet.tsx` takes `budgetEditorLines` as server-fetched props, not client input state — so a treasurer mid-edit at the meeting gets last-saved values on the printout, matching Phase 1's explicit recommendation. `break-inside-avoid-page` is applied per-category `<tbody>` (not per-fund), which is the correct grain — Phase 1's gap note called out exactly this risk ("a long category list could paginate badly mid-row") and the fix matches the concern precisely.
+- **The seed-flow removal is total, not partial.** I grepped `guided-budget-setup.tsx` directly: zero occurrences of `ProposedLinesList`, and the only remaining "seed" hits are a historical code comment, not UI. This matches the Human Answer's "REPLACE seeding with blank inputs" instruction (full removal, not just the preview) exactly — the treasurer's Design-Q4 fork was resolved in favor of the more aggressive option and the code reflects that choice cleanly.
+- **Mobile stacking is real, not decorative.** The shipped row structure genuinely splits into a category-name row and a separate `grid-cols-2` reference-value row that only widens to a fixed layout at `sm:`, exactly as Phase 1's mobile gap asked for — this isn't a class name that looks right, the JSX structure itself changed shape.
+- **Empty states match the brand guideline verbatim.** Both the no-entities and no-funds empty states in `page.tsx` use `bg-gray-50 rounded-2xl p-10 text-center text-gray-500` — the project's exact prescribed empty-state pattern, unchanged by this increment but correctly still present after the surrounding refactor.
 
 ## Intent-vs-Shipped Diff
 
-- Phase 1 said: [X]. Shipped: [Y]. Verdict: [matches | acceptable drift | regression]
+- Phase 1 said: prior-year budget + actual as a read-only reuse of `getFundReport(fund.id, priorFY)`, no new aggregation. Shipped: exactly that — a second parallel `getFundReport` call in `page.tsx`, threaded through a `priorByKey` map into `budgetEditorLines`. **Verdict: matches.**
+- Phase 1 said: print via `print:hidden` + `window.print()`, reusing the `print-statement-button.tsx` pattern verbatim, no new dependency. Shipped: `print-budget-button.tsx` (copy of that pattern) + `budget-print-worksheet.tsx` (`hidden print:block`), plus the admin layout/sidebar and site footer were additionally given `print:hidden`/`print:pl-0` treatment that Phase 1 didn't explicitly call out but that was necessary for the chrome-hidden goal to actually hold — the sidebar and footer would otherwise have printed on every admin page, not just this one. **Verdict: matches** (the layout/footer touch is a correct completion of stated intent, not scope creep).
+- Phase 1 said: drop `ProposedLinesList` but keep the seed action itself (my Phase 1 recommendation, Design Q4) — this was explicitly overridden by the treasurer's Human Answer to remove both. Shipped: both removed, per the Human Answer. **Verdict: matches the Human Answer** (supersedes my Phase 1 recommendation, which is exactly how this pipeline is supposed to work — the treasurer's explicit scoping call is authoritative over my draft recommendation).
+- Phase 1 said (gap): a brand-new (entity, FY) with zero prior-year data should render "—", not a broken/blank-looking cell. Shipped: `formatBudgetReferenceCents(null)` → "—", confirmed both in the pure-function unit tests and in qa's live-data spot check (7 zero-activity categories correctly show "$0.00" — a real zero, not absent — while categories with no `ledger_budgets` row show "—"). **Verdict: matches.**
+- Phase 1 said (gap): dropping the remove-line `ConfirmDialog` probably makes sense once removal is reversible via soft-delete. Shipped: soft-delete is deferred to Increment 2, so the `ConfirmDialog` on remove is correctly still present (I read it directly in `budget-editor.tsx` — `requestRemove` skips the dialog only when there's nothing meaningful to discard, otherwise still confirms). **Verdict: matches** — this was conditioned on soft-delete shipping, and since it didn't, keeping the confirm is the right call, not an oversight.
+- Phase 1 said (gap): cause-line-grain (`ledgerBudgetLines`) reference columns and soft-delete are out of v1 scope. Shipped: `BudgetCauseEditor`'s breakdown-mode rows are untouched by this increment — no reference columns added there, no soft-delete language. **Verdict: matches.**
+- Phase 1 said (Increment 2, deferred): soft-delete/restore-until-finalize, needs its own architect + tech-lead pass. Shipped: correctly not attempted in Increment 1; explicitly flagged as deferred in the work-log and in the v1.44.0 release notes. **Verdict: matches** (filed as B-27 below).
 
 ## Edge Cases
 
-- Empty state: [pass | fail | not applicable]
-- Failure microcopy: [pass | fail]
-- Permission gate: [pass | fail]
-- Mobile (360px): [pass | fail]
+- Empty state (no entities / no funds): **pass** — verified in `page.tsx`, exact brand-guideline classes.
+- Empty state (category with no prior-year data): **pass** — "—" rendering confirmed by direct code read and by qa's live-data check.
+- Failure microcopy (invalid amount, locked-budget 409 race): **pass, unchanged** — this increment didn't touch `commitValue`'s error handling; the existing toast copy ("Enter a valid amount…", the 409 lock message) still fires from the new layout, confirmed by reading `budget-editor.tsx` directly.
+- Permission gate: **pass** — `page.tsx`'s two-tier `hasAnyFeature([LEDGER_MANAGE, LEDGER_APPROVE])` gate (redirect to `/access-pending` on neither) is byte-for-byte the pre-existing pattern; not modified by this increment, confirmed by direct read.
+- Mobile (360px): **pass, per code structure** — the stacked layout is real (see What's Working), though neither qa nor I have driven an actual 360px browser viewport (no browser-automation tool available to either of us). This is a code-level pass, not an eyes-on pass — see the print-check note below for what's still open.
+- Brand consistency (rounded-2xl cards, rounded-lg buttons, ConfirmDialog for destructive): **pass** — empty states use `rounded-2xl`, the print button and category controls don't introduce any `rounded-full`, and the remove-line confirm still routes through `<ConfirmDialog destructive>`, not `window.confirm`.
 
-## Follow-Ups (if SHIP WITH NOTES)
+## Follow-Ups (SHIP WITH NOTES)
 
-- [Concrete, actionable. Each gets its own work-log entry.]
+Filed to `docs/backlog.md`:
 
-## Red Flags (if NEEDS REWORK)
+- **B-25 — Enter the approved FY2025 budget** so the Prior Budget column stops rendering "—" everywhere. This is the top follow-up — the code is correct, the data behind it doesn't exist yet. Not a defect in this increment.
+- **B-26 — Club/Administrative fund budget rows + missing categories** (New Member Fee, 4th of July Parade, Awards, Contingency, Lion L Support, Membership; District vs. International dues not split) vs. the approved budget. Data-completeness gap, not a code defect.
+- **B-27 — Increment 2: soft-delete/restore-until-finalize.** The deferred half of the treasurer's original request. Needs its own architect + tech-lead pass before implementation — it's a new persisted state machine interacting with the existing budget-lock invariant, not a continuation of Increment 1's accelerated pipeline.
+- **B-28 — Delete the unreachable seed API route** (`/api/admin/ledger/budgets/seed`) and the now-dead `computeSeedFromPriorYear`/`SeedProposedLine` code, plus check `/admin/ledger/guide#budgeting` for stale "seed from last year" instructional copy.
+- **Pointer, not re-derived:** a separate budget audit (outside this pipeline) surfaced structural model gaps that predate and are broader than Increment 1 — opening carryover/closing-balance trailer, planned-deficit-as-approved handling (vs. treating it as a warning), fundraiser gross-vs-net pairing, a contingency/reserve primitive, per-line notes, raffle/non-raffle split, an empty `ledger_budget_approvals` table, and a duplicate/empty "club/activity" fund. These are real and worth triage, but they're a post-meeting exercise for whoever ran that audit to turn into scoped backlog items with the audit's own detail — I'm flagging the existence and category of these findings here rather than re-deriving fixes for items outside Increment 1's Phase 1 scope.
 
-- [Specific. What has to change before this ships.]
+## Tonight's Human Print-Check (exact steps)
+
+Nothing here is blocked on code — every item below is "needs eyes," confirmed by both qa and me reading the shipped source, not a suspected bug:
+
+1. Open `/admin/ledger/budgeting?entity=foundation&fy=2026`, sign in as a `LEDGER_MANAGE` or `LEDGER_APPROVE` holder.
+2. Click **Print / Save as PDF**. Confirm: no sidebar, no site header/footer, no entity/FY selectors, no Approve/Unlock panel, no trash icons — just the worksheet title, one table per fund/flow, and 2 blank ruled lines under every category.
+3. **Repeat step 1-2 for the Club entity specifically** (`?entity=club&fy=2026` or whatever its slug is) — this is the multi-fund/multi-category case Foundation's single fund couldn't exercise. Confirm a category's row + its 2 blank lines never split across a printed page boundary anywhere in Club's longer category list.
+4. On the same printout, confirm the "New Budget" column shows real dollar amounts where budget rows exist and "—" only where none do — per B-25/B-26 above, expect Prior Budget to read "—" across the board (real data gap, not a bug) and expect Club's New Budget column to also read mostly "—" until B-26 is worked.
+5. Resize a browser window (or use dev-tools device emulation) to 360px on the on-screen (non-print) editor and confirm the category row stacks with no horizontal scroll, and that "Prior Budget"/"Prior Actual" labels are legible at that width.
+6. Eyeball check, not a pass/fail: does the printout read as "neat" to the treasurer — is the 2-blank-line spacing usable for actual handwriting, is "Prior Budget" vs. "Prior Actual" unambiguous at a glance in a live meeting.
+
+---
+
+# Increment 2 — Phase 4 — Implementation (schema) — 2026-07-28
+
+**Owner:** database-admin
+**Status:** complete
+
+### Summary
+
+Added a single nullable `pending_delete_at timestamp` column to `ledger_budgets`, implementing DECISION-052/053's confirmed shape exactly: no default, no `withTimezone` (matches the table's existing plain `createdAt`/`updatedAt` convention), no index, no constraint change. This is the entire schema surface Increment 2 needs — the write-path logic (soft-delete flip, finalize-time purge) belongs to api-developer.
+
+### What I did
+
+- Read `ledgerBudgets` in `src/lib/db/schema.ts` (line 772) and its migration precedent (`0062`, `0065`) to confirm the table's timestamp convention (plain `timestamp`, not `timestamptz`) before adding the column.
+- Confirmed `0065_remove_empty_scholarship_fund.sql` is the current highest-numbered migration, so `0066` was free (no collision with a parallel increment).
+- Added `pendingDeleteAt: timestamp("pending_delete_at")` to `ledgerBudgets` in `schema.ts`, placed directly after `annualAmountCents` with a comment referencing DECISION-052/053 and this work-log.
+- Wrote `drizzle/migrations/0066_ledger_budgets_pending_delete.sql`: a single `ALTER TABLE ledger_budgets ADD COLUMN IF NOT EXISTS pending_delete_at TIMESTAMP;` statement, idempotent by construction.
+- Ran `pnpm exec tsc --noEmit` — clean, no errors.
+- Applied the migration locally against `.env.local`'s Neon DB via `pnpm db:migrate`, then re-ran it a second time to confirm the replay is a clean no-op (second run emits `NOTICE: column "pending_delete_at" of relation "ledger_budgets" already exists, skipping` and completes with `✅ Migrations completed successfully`).
+- Verified the live column shape with `psql \d ledger_budgets`: `pending_delete_at | timestamp without time zone | | |` — nullable, no default, confirmed.
+
+### Outputs
+
+- **Schema:** `src/lib/db/schema.ts` — `ledgerBudgets` gains `pendingDeleteAt: timestamp("pending_delete_at")` (nullable, no default, no `withTimezone`). `LedgerBudget`/`NewLedgerBudget` (`$inferSelect`/`$inferInsert`, schema.ts:796-797) now carry the field automatically — no separate type edit needed.
+- **Migration:** `drizzle/migrations/0066_ledger_budgets_pending_delete.sql` — one statement, confirmed idempotent by two-pass local replay (see above).
+- **Tables affected:** `ledger_budgets` only. No change to `ledger_budget_lines` or `ledger_budget_approvals`.
+- **No new role bindings or seed rows** — this is a metadata column, not a feature gate; no new `FEATURES.*` key per DECISION-052/053.
+- **Local apply command used:** `export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate` (ran twice to confirm idempotency). `pnpm db:push` was not additionally run — `db:migrate` + the build's own `drizzle-kit push --force` will reconcile `schema.ts` on the next deploy; the column is additive and nullable so this carries no risk.
+
+### Open questions / handoff notes
+
+- **Exact symbol:** TypeScript field `pendingDeleteAt`, DB column `pending_delete_at`. Nullable, `Date | null` in the inferred type, **no default** — every existing row currently has `NULL` here after the migration.
+- **For api-developer:** build `setBudgetLinePendingDelete(params, tx)` next to `upsertBudgetLine` in `ledger-queries.ts` per the Phase 3 design (API Contract section above) — it must flip only `pending_delete_at` (`now()` / `null`) and never touch `annual_amount_cents`. Add the `pendingDeleteAt` field to `getFundReport`'s `FundReportCategoryLine` (serialize `Date` → ISO string per the design doc's convention), thread it through `budgeting/page.tsx`, and wire the transactional finalize-time purge (`DELETE FROM ledger_budgets WHERE entity_id = ? AND fiscal_year = ? AND pending_delete_at IS NOT NULL`) into the rewritten `POST /api/admin/ledger/budget-approvals` transaction.
+- **Foreign keys/relationships:** unchanged — `ledger_budgets` still FKs to `ledger_entities`, `ledger_funds` (both cascade), and `ledger_categories` (set null). The existing `(fund_id, fiscal_year, category_id, flow)` unique constraint is untouched, which is exactly why "soft-delete then re-add" needs no special handling (per Phase 2/3's ruling).
+- **Next agent:** api-developer (Phase 4, server half) per the implementer sequence named in Phase 3.
+
+---
+
+# Increment 2 — Phase 4 — Implementation (API) — 2026-07-28
+
+**Owner:** api-developer
+**Status:** complete
+
+### Summary
+
+Implemented the full server half of soft-delete/restore-until-finalize per DECISION-052/053 exactly: a new `setBudgetLinePendingDelete` write core in `ledger-queries.ts` that mirrors `upsertBudgetLine`'s guard sequence but only ever flips `pending_delete_at`; a second, mutually-exclusive request-body shape on `PATCH /api/admin/ledger/budgets`; an informational `pendingDeleteAt` field added to `getFundReport`'s `FundReportCategoryLine` (proven, not just claimed, to leave every committed figure byte-for-byte unchanged); and a rewrite of `POST /api/admin/ledger/budget-approvals` to run the lock-check, the lock-status write, and the pending-delete purge inside one `db.transaction()`, closing a pre-existing check-then-act race. All 11 Phase 3-named tests that fall on the server side of the implementer split (1-5, 7, 9-11) are written and passing, plus the PATCH route's 400 both/neither test named in this task's brief.
+
+### What I did
+
+- Read the Phase 2 architect ruling, Phase 3 tech-lead design, and database-admin's schema handoff in full before writing any code.
+- Added `setBudgetLinePendingDelete(params, tx)` to `src/lib/ledger-queries.ts`, placed directly after `upsertBudgetLine`: resolves fund/category (reusing `validateBudgetLineInput` with `annualAmountCents: null` to skip its amount-bounds branch), runs `assertBudgetUnlocked` for **both** `pendingDelete: true` and `pendingDelete: false` (409 `reason: "locked"`), then a row-must-exist check (404 — pending-delete has no insert branch, unlike `upsertBudgetLine`), then the cause-line-children guard (409 `reason: "has_cause_breakdown"`, identical query to `upsertBudgetLine`'s), then a pure flag-flip (`pending_delete_at = now()` or `null`) that never reads or writes `annual_amount_cents`.
+- Added `pendingDeleteAt: string | null` to `FundReportCategoryLine` in `getFundReport` (`ledger-queries.ts`) — sourced off the `budgetRows` the function already fetches (a new `pendingDeleteMap`, built alongside the existing `budgetMap`/`budgetIdMap`), serialized `Date` → ISO string at this boundary. Threaded into both `buildLines` push sites (the normal category loop and the orphaned-budget-row loop). Added `pendingDeleteAt: null` to the two unrelated `FundReportCategoryLine` push sites inside `getEntityReport` (that function's own `buildLines`, which never surfaces budgets at all) purely to satisfy the now-required field — no behavior change there.
+- Gave `getBudgetApproval` an optional `tx: DrizzleTransaction | typeof db = db` parameter (matching `assertBudgetUnlocked`'s existing convention) so the approve/lock route can run its lock-check inside the same transaction as its writes. Confirmed its one other caller (`budgeting/page.tsx`, 2-arg call site) still typechecks unchanged.
+- Rewrote `PATCH /api/admin/ledger/budgets` (`src/app/api/admin/ledger/budgets/route.ts`) to dispatch on two mutually-exclusive body shapes: `{ ...annualAmountCents }` (Shape A, unchanged behavior, unchanged response shape) and `{ ...pendingDelete }` (Shape B, new — dispatches to `setBudgetLinePendingDelete`, surfaces `reason` in the JSON body on a 409). 400 when both keys present; the "neither present" case falls through unchanged into Shape A's existing amount-type check, which already 400s with its pre-existing message — no new code needed for that half of the requirement.
+- Rewrote `POST /api/admin/ledger/budget-approvals` (`src/app/api/admin/ledger/budget-approvals/route.ts`) to wrap the lock-check + lock-status upsert + pending-delete purge in one `db.transaction()`. A `BudgetAlreadyLockedError` sentinel class (mirrors the existing `SeedLockedError` pattern in `budgets/seed/route.ts`) is thrown inside the transaction and caught by the outer handler to preserve the exact pre-existing 409 response. The purge is `tx.delete(ledgerBudgets).where(and(eq(entityId), eq(fiscalYear), isNotNull(pendingDeleteAt)))` — entity-wide, matching how approval itself is entity-wide across all of that entity's funds.
+- Confirmed by direct read that `POST .../unlock` needed **no changes** — it never touches `ledger_budgets`, so a purge at finalize has nothing for unlock to resurrect. Wrote a regression test that would fail loudly if this ever changed (see Tests below).
+- Wrote and ran all named tests; ran `pnpm exec tsc --noEmit`, `unset DATABASE_URL DB_URL; pnpm test`, and `pnpm build:only` — all green.
+
+### Outputs
+
+**`setBudgetLinePendingDelete(params, tx)`** — `src/lib/ledger-queries.ts`:
+```ts
+type SetBudgetLinePendingDeleteParams = {
+  fundId: string; fiscalYear: number; categoryId: string;
+  flow: "income" | "expense"; pendingDelete: boolean;
+};
+type SetBudgetLinePendingDeleteResult =
+  | { ok: true; action: "pending-delete" | "restored" }
+  | { ok: false; error: string; status: 400 | 404 | 409; reason?: "locked" | "has_cause_breakdown" };
+```
+
+**`PATCH /api/admin/ledger/budgets`** — gate: `FEATURES.LEDGER_MANAGE` (unchanged). Two mutually-exclusive shapes:
+```
+// Shape A (unchanged): { fundId, fiscalYear, categoryId, flow, annualAmountCents: number | null }
+//   -> 200 { action: 'upserted' | 'deleted', id?: string }
+// Shape B (new):        { fundId, fiscalYear, categoryId, flow, pendingDelete: boolean }
+//   -> 200 { action: 'pending-delete' | 'restored' }
+```
+Errors: 400 both/neither of `annualAmountCents`/`pendingDelete` present (or neither → falls through to Shape A's existing amount-type 400); 404 fund/category not found, or (Shape B only) no budget row exists for the tuple; 409 `{ error, reason: 'locked' | 'has_cause_breakdown' }` (Shape B surfaces `reason`; Shape A's error body is unchanged from before this increment).
+
+**`POST /api/admin/ledger/budget-approvals`** — gate: `FEATURES.LEDGER_APPROVE` (unchanged). Body/response shape unchanged. Now transactional: lock-check + lock-status upsert + `DELETE ... WHERE entity_id = ? AND fiscal_year = ? AND pending_delete_at IS NOT NULL` all happen inside one `db.transaction()`. Same 409 message/status as before on an already-locked budget, now thrown from inside the transaction via a `BudgetAlreadyLockedError` sentinel.
+
+**`POST /api/admin/ledger/budget-approvals/unlock`** — unchanged, confirmed by direct read and by a new regression test.
+
+**`getFundReport`** — `FundReportCategoryLine` gains `pendingDeleteAt: string | null`, purely informational. `budgetCents`/`variance`/`causeLines`/`totalIncomeCents`/`totalExpenseCents`/`endingCents` proven byte-for-byte unchanged by a direct regression test (see below), not just reasoned about.
+
+- Files touched: `src/lib/ledger-queries.ts`, `src/lib/ledger-queries.test.ts`, `src/app/api/admin/ledger/budgets/route.ts`, `src/app/api/admin/ledger/budgets/route.test.ts` (new), `src/app/api/admin/ledger/budget-approvals/route.ts`, `src/app/api/admin/ledger/budget-approvals/route.test.ts` (new), `src/app/api/admin/ledger/budget-approvals/unlock/route.test.ts` (new).
+- No schema change (database-admin's migration `0066` already committed; see the Phase 4 — schema section above).
+- No new `FEATURES.*` key, no decisions.md entry needed (implementation followed DECISION-052/053 exactly, no new judgment calls).
+
+### Tests written (all passing)
+
+In `src/lib/ledger-queries.test.ts` (`describe("setBudgetLinePendingDelete", ...)`  and `describe("getFundReport — pending-delete regression guard", ...)`):
+1. Soft-delete sets `pending_delete_at`, leaves `annualAmountCents` untouched (asserted via `not.toHaveProperty("annualAmountCents")` on the update call).
+2. Restore clears `pending_delete_at`, same amount-untouched assertion.
+3. 409 `{ reason: "locked" }` for **both** `pendingDelete: true` and `pendingDelete: false` (looped in one test).
+4. 409 `{ reason: "has_cause_breakdown" }` for a row with `ledger_budget_lines` children.
+5. 404 when no `ledger_budgets` row exists for the tuple.
+7. `getFundReport` regression guard: two live calls (one with a row's `pendingDeleteAt` null, one with it set) — asserts `budgetCents`/`actualCents`/`variance`/`causeLines`/`totalIncomeCents`/`totalExpenseCents`/`endingCents` are identical, then strips `pendingDeleteAt` from both full report objects via a JSON replacer and asserts deep equality on everything else — byte-for-byte, not field-by-field.
+
+In `src/app/api/admin/ledger/budgets/route.test.ts` (new file):
+- 400 when both `annualAmountCents` and `pendingDelete` present.
+- 400 when neither present (asserts it's the same pre-existing amount-validation message).
+- Shape B dispatches to `setBudgetLinePendingDelete` and surfaces `reason` in the 409 body.
+- Shape A still dispatches to `upsertBudgetLine` unchanged.
+
+In `src/app/api/admin/ledger/budget-approvals/route.test.ts` (new file):
+9. Finalize hard-deletes pending-delete rows atomically with the lock write — both writes happen inside one `db.transaction()` call (`db.transaction` called exactly once; one insert into `ledgerBudgetApprovals`, one delete from `ledgerBudgets`).
+10. The purge's compiled `DELETE ... WHERE` clause (rendered via `PgDialect().sqlToQuery()`, not just reasoned about) is scoped to `entity_id` + `fiscal_year` + `pending_delete_at IS NOT NULL` — proving non-pending rows are structurally excluded.
+- Bonus: an already-locked budget 409s with zero inserts/deletes (closes the race — the abort happens before either write, not after).
+
+In `src/app/api/admin/ledger/budget-approvals/unlock/route.test.ts` (new file):
+11. Unlock only ever writes `ledgerBudgetApprovals` — `db.delete`/`db.transaction` are mocked to **throw** if ever called, so any future change wiring unlock to touch `ledger_budgets` fails this test loudly instead of silently passing.
+
+**Test count:** `unset DATABASE_URL DB_URL; pnpm test` → **662 passed** (was 648; +14: 6 in `ledger-queries.test.ts`, 4 in the new `budgets/route.test.ts`, 3 in the new `budget-approvals/route.test.ts`, 1 in the new `unlock/route.test.ts`). All hermetic — no `DATABASE_URL`/`DB_URL` in the environment.
+
+### Gates
+
+- `pnpm exec tsc --noEmit` — clean, zero errors.
+- `unset DATABASE_URL DB_URL; pnpm test` — 662/662 passed.
+- `pnpm build:only` — exit 0, full route manifest generated (not explicitly required by this task's gate list, but run anyway given the transactional route rewrite; no build errors).
+- No `console.log` in any touched file (grepped directly).
+- `assertBudgetUnlocked` runs on every `setBudgetLinePendingDelete` call, both directions.
+- The finalize (`POST /budget-approvals`) is one atomic `db.transaction()` — lock-check, lock-status write, and purge all inside it.
+- No schema change made in this phase (already complete from database-admin's Phase 4).
+- Version/release notes/commit intentionally NOT bumped, per this task's explicit instruction.
+
+### Open questions / handoff notes for ux-developer
+
+- **PATCH request shapes** — see "Outputs" above verbatim. Your `resolveBudgetLineDeleteAction` (`src/lib/ledger.ts`) decides which shape to send: `"soft-delete"` → `PATCH { fundId, fiscalYear, categoryId, flow, pendingDelete: true }`; Restore → the same with `pendingDelete: false`; a genuine amount edit stays `PATCH { ...annualAmountCents }` (Shape A, byte-identical to before this increment).
+- **409/404 reason codes to branch UI copy on** (Shape B only — Shape A's error body is unchanged): `{ error, reason: "locked" }` and `{ error, reason: "has_cause_breakdown" }` on 409; a plain `{ error }` (no `reason` field) on 404 (`"No budget line exists for this category to modify."` — should be unreachable from your UI per the design's own note that a never-saved row is a client-side no-op, never a network call).
+- **New `pendingDeleteAt: string | null` field on `FundReportCategoryLine`** — already threaded out of `getFundReport`. `budgeting/page.tsx` still needs to be updated to pass it through into `budgetEditorLines` (per the Phase 3 design's Component Plan) — that's your Phase 4 work, not done here; I only added the field to the query layer.
+- **`resolveBudgetLineDeleteAction`** (pure function in `src/lib/ledger.ts`) and its unit test (#6) are yours, not written here.
+- **`fundSums()`'s pending-delete exclusion** (in `guided-budget-setup.tsx`) and its unit test (#8) are yours, not written here.
+- **Restore has no confirm dialog** (per Flow 4) — a single `PATCH { pendingDelete: false }` click, no dialog, matching the design.
+- **The existing remove-line `ConfirmDialog`** in `budget-editor.tsx` should be deleted per the architect/tech-lead ruling — both soft-delete and restore are single-click, no-confirm actions now. The one meaningful warning moves to the Approve & lock dialog's copy (pending-delete count, `destructive` toggle) — see Phase 3's Component Plan section for the exact copy.
+- **Next agent:** ux-developer, per the implementer sequence named in Phase 3.
+
+---
+
+# Increment 2 — Phase 4 — Implementation (UI) — 2026-07-28
+
+**Owner:** ux-developer
+**Status:** Complete
+
+### Summary
+
+Implemented the full client half of soft-delete/restore-until-finalize per DECISION-052/053 exactly, on top of api-developer's server handoff. A new pure `resolveBudgetLineDeleteAction(hasExistingRow, rawValue)` in `src/lib/ledger.ts` unifies the trash-icon control and the blank-input-then-blur/Enter gesture onto one decision; `budget-editor.tsx` renders a pending-delete row visibly "deleted" (strikethrough, muted, disabled input, a badge, and a single-click Restore control) and drops its now-unneeded remove-line `ConfirmDialog` entirely; `guided-budget-setup.tsx`'s live balance badge (`fundSums()`) excludes pending-delete lines via a new pure `computeFundLineSums()` helper, and the Approve & lock `ConfirmDialog` gains a destructive warning with the exact pending-delete count; `budget-print-worksheet.tsx` excludes pending-delete lines from the printed worksheet; `budgeting/page.tsx` threads the new `pendingDeleteAt` field through from `getFundReport`. Both Phase-3-named client unit tests (#6, #8) are written and passing, plus the full 673/673 hermetic suite.
+
+### What I did
+
+- Read the Phase 3 tech-lead design and api-developer's Phase 4 (server) handoff in full before writing any code — confirmed the exact PATCH Shape B contract (`{ fundId, fiscalYear, categoryId, flow, pendingDelete: boolean }` → `{ action: "pending-delete" | "restored" }`), the 409 `reason` discriminant (`"locked" | "has_cause_breakdown"`), and the plain 404 body.
+- Added `resolveBudgetLineDeleteAction(hasExistingRow, rawValue)` to `src/lib/ledger.ts` (pure, no DB) — `"soft-delete"` only when `rawValue.trim() === "" && hasExistingRow`, else `"noop"`. Wrote test #6 (the truth table: blank+existing, whitespace-only+existing, blank+never-saved, non-blank+existing, non-blank+never-saved) in `src/lib/ledger.test.ts`.
+- Added `computeFundLineSums(lineValues, pendingDeleteKeys)` to `src/lib/ledger.ts` — the pure core of `guided-budget-setup.tsx`'s `fundSums()`, extracted because this repo has no component-test infra (vitest config is `environment: "node"`, no jsdom/RTL) — the same reason `computeBudgetBalanceStatus` etc. already live here instead of being inlined in the client island. Wrote test #8 (6 cases: normal sum, income exclusion, expense exclusion, explicit `false` included normally, empty input, omitted `pendingDeleteKeys` defaults to `{}`).
+- Rewrote `budget-editor.tsx`:
+  - `BudgetLine` gains `pendingDeleteAt?: string | null`; `BudgetEditorProps` gains `onPendingDeleteChange?: (key, pendingDelete) => void`, fired optimistically ahead of the round-trip.
+  - New `setPendingDelete(categoryId, flow, pendingDelete)` — the single soft-delete/restore write path (`PATCH { pendingDelete }`), surfacing the 409 `has_cause_breakdown` reason as "This category is broken down by cause — remove its cause lines first.", falling back to the server's own `error` string otherwise (which already carries the existing locked message, "This budget is locked. Unlock it to make changes.", verbatim — no need to re-author it client-side).
+  - `commitValue` (the blur/Enter path) now calls `resolveBudgetLineDeleteAction(hasExistingRow, raw)` first — `hasExistingRow` read directly off `lines.find(...).budgetCents !== null` (never a separately tracked flag, since a pending-delete row's amount is preserved). `"soft-delete"` → `setPendingDelete(..., true)`; blank + never-saved → true no-op, no network call; otherwise the unchanged Shape A amount-edit path (explicit `"0"` still a deliberate $0 budget).
+  - `requestRemove(line)` (trash click) — always resolves with a hard-coded blank `rawValue` (a click is the semantic equivalent of blanking the line): `hasExistingRow` true → immediate soft-delete, no confirm; `hasExistingRow` false (an active category `getFundReport` surfaces with no budget set yet, still showing a trash icon) → true no-op.
+  - `requestRestore(line)` — single-click `setPendingDelete(..., false)`, no confirm (a pending-delete row always has an existing row by definition).
+  - New pending-delete row rendering branch: category name strikethrough + muted, a `bg-gray-200` "Deleted — removed when finalized" badge, the amount input rendered `disabled`/`readOnly` (preventing edit-while-pending independent of the page-level lock state), and the trash button replaced by a "Restore" button in the same slot — both gated identically to the existing trash control (`showRemoveControl && !disabled`, i.e. `canManage && !locked`).
+  - **Deleted** the `removeConfirm` state and the remove-line `ConfirmDialog` entirely, along with the now-unused `ConfirmDialog` import — removal is reversible now, per DECISION-052/053.
+  - Updated the editor's footer helper copy to mention removal is reversible until finalize.
+- Updated `guided-budget-setup.tsx`:
+  - `FundSetupItem.budgetEditorLines[]` gains `pendingDeleteAt: string | null` (required, sourced straight off `getFundReport`'s target-FY report).
+  - New `pendingDeleteKeys` state (`Record<fundId, Record<key, boolean>>`), initialized from each line's `pendingDeleteAt !== null`, updated by a new `handlePendingDeleteChange` wired to `BudgetEditor`'s `onPendingDeleteChange`.
+  - `fundSums()` now delegates to `computeFundLineSums(lineValues[fundId], pendingDeleteKeys[fundId])` — the per-fund balance badges (both the inline "Balanced"/"Needs review" chip and the Approve panel's fund list) update the instant a soft-delete/restore click resolves, ahead of `router.refresh()`.
+  - New `totalPendingDeleteCount()` sums `pendingDeleteKeys` across every fund; the Approve & lock `ConfirmDialog`'s description now appends `"${n} budget line(s) marked for removal will be permanently deleted when you lock this budget."` when `n > 0`, and the dialog's `destructive` prop is `pendingDeleteCount > 0` (red confirm only when something will actually be lost — matches the ConfirmDialog convention used for other destructive confirms in this codebase).
+- Updated `budget-print-worksheet.tsx`: `PrintLine` gains `pendingDeleteAt: string | null`; `FundWorksheet` filters both `income`/`expense` to `pendingDeleteAt === null` *before* the existing `income.length === 0 && expense.length === 0` emptiness check, so a fund whose only lines are all marked for removal is omitted entirely (same "nothing to print" behavior the check already gave a fund with zero budget lines).
+- Updated `budgeting/page.tsx`: both `budgetEditorLines` map sites (income and expense) now pass `pendingDeleteAt: l.pendingDeleteAt` straight through from the target-FY `getFundReport()` call (not the prior-FY report, which has no bearing here).
+- Ran `pnpm exec tsc --noEmit`, `unset DATABASE_URL DB_URL; pnpm test`, and `pnpm build:only` — all green. Grepped every touched file for `console.log`/`console.debug` — none found.
+
+### Outputs
+
+- `src/lib/ledger.ts` — `resolveBudgetLineDeleteAction`, `computeFundLineSums`.
+- `src/lib/ledger.test.ts` — test #6 (`describe("resolveBudgetLineDeleteAction", ...)`, 5 cases) and test #8 (`describe("computeFundLineSums", ...)`, 6 cases).
+- `src/components/admin/ledger/budget-editor.tsx` — `pendingDeleteAt` on `BudgetLine`, `onPendingDeleteChange` prop, `setPendingDelete`, rewritten `commitValue`/`requestRemove`, new `requestRestore`, pending-delete row rendering branch, removed `removeConfirm`/`ConfirmDialog`.
+- `src/components/admin/ledger/guided-budget-setup.tsx` — `pendingDeleteAt` on `FundSetupItem.budgetEditorLines`, `pendingDeleteKeys` state + `handlePendingDeleteChange`, `fundSums()` now delegates to `computeFundLineSums`, `totalPendingDeleteCount()`, Approve dialog warning copy + `destructive` toggle.
+- `src/components/admin/ledger/budget-print-worksheet.tsx` — `pendingDeleteAt` on `PrintLine`, `FundWorksheet`'s income/expense filter.
+- `src/app/(dashboard)/admin/ledger/budgeting/page.tsx` — `pendingDeleteAt` threaded into both `budgetEditorLines` map sites.
+- No new decisions.md entry needed — implementation followed DECISION-052/053 exactly, no new judgment calls beyond the one documented above (falling back to the server's own locked-error string rather than re-authoring it client-side, and filtering pending-delete lines at the `FundWorksheet` level before the emptiness check rather than inside `FlowTable`, so an all-pending-delete fund is omitted the same way a zero-line fund already is).
+
+### Test list (all passing)
+
+- `src/lib/ledger.test.ts` `describe("resolveBudgetLineDeleteAction", ...)` — blank+existing → soft-delete; whitespace-only+existing → soft-delete; blank+never-saved → noop; non-blank+existing → noop; non-blank+never-saved → noop.
+- `src/lib/ledger.test.ts` `describe("computeFundLineSums", ...)` — normal sum with no pending keys; excludes a pending-delete income line; excludes a pending-delete expense line; an explicit `false` pending flag is included normally; empty `lineValues` returns `{0, 0}`; omitted `pendingDeleteKeys` defaults to `{}`.
+- Full suite: `unset DATABASE_URL DB_URL; pnpm test` → **673 passed** (was 662 after api-developer's Phase 4; +11 here: 5 + 6).
+
+### Gates
+
+- `pnpm exec tsc --noEmit` — clean, zero errors.
+- `unset DATABASE_URL DB_URL; pnpm test` — 673/673 passed, hermetic (no `DATABASE_URL`/`DB_URL` in the environment).
+- `pnpm build:only` — exit 0, full route manifest generated, no build errors.
+- No `console.log`/`console.debug` in any touched file (grepped directly).
+- Soft-delete/restore controls gated identically to today's remove control: `canManage && !locked` (`showRemoveControl && !disabled`). The amount input is disabled whenever `pendingDeleteAt` is set, independent of the page-level lock state.
+- No native browser dialogs added; the remove-line `ConfirmDialog` was removed per the design, not replaced — soft-delete and restore are both single-click, no-confirm. The Approve & lock `ConfirmDialog` (still present, unchanged component) carries the one meaningful warning now.
+- Version/release notes/commit intentionally NOT bumped, per this task's explicit instruction.
+
+### Open questions / handoff notes
+
+- **QA manual click-through list** (next agent: **qa**, Phase 5):
+  1. Soft-delete a saved budget line via the trash icon — it stays visible, struck through, muted, badged "Deleted — removed when finalized"; its amount input is disabled; the fund's live balance badge immediately excludes it from the running total.
+  2. Click Restore on that line — it returns to the normal editable row with its original amount intact (not blanked), and the balance badge includes it again.
+  3. Blank a saved line's input and blur/press Enter — same soft-delete effect as the trash icon (row goes to "deleted" state, no confirm dialog appears).
+  4. Blank a genuinely never-saved line (an active category with no budget set yet) and blur — nothing happens; no toast, no network call, the row stays exactly as it was.
+  5. Attempt to soft-delete (trash icon) a category currently in cause-breakdown mode — confirm the trash control isn't even rendered for a breakdown row (unchanged from before this increment); if reachable via a direct API test, confirm the 409 toast reads "This category is broken down by cause — remove its cause lines first."
+  6. With 1+ lines marked pending-delete, open Approve & lock — confirm the dialog shows the exact count ("N budget line(s) marked for removal will be permanently deleted when you lock this budget.") and the confirm button renders red (destructive). With zero pending-delete lines, confirm the dialog has no warning sentence and a normal (non-red) confirm button.
+  7. Lock the budget — confirm the pending-delete rows are gone entirely on reload (purged), and every non-pending line survived untouched.
+  8. Print the worksheet (before finalizing) with at least one pending-delete line present — confirm it does not appear on the printout, and that a fund whose only line is pending-delete doesn't print an empty section for that fund.
+  9. Resize to 360px — confirm the pending-delete row's strikethrough label, badge, disabled input, and Restore button stack cleanly with no horizontal scroll or overlap.
+  10. Confirm a locked budget (viewed by an LEDGER_APPROVE-only or LEDGER_MANAGE-after-lock viewer) still shows any pending-delete rows in their muted/struck state but with no Restore button, matching the existing no-trash-icon-when-locked convention.
+- **New copy strings the Lions Club may want to refine:** the "Deleted — removed when finalized" badge text; the Approve & lock warning sentence ("N budget line(s) marked for removal will be permanently deleted when you lock this budget."); the has-cause-breakdown 409 toast ("This category is broken down by cause — remove its cause lines first.").
+- **UX decisions/tradeoffs made, not called out explicitly in Phase 3:**
+  - The trash-icon click resolves `resolveBudgetLineDeleteAction` with a hard-coded blank `rawValue` rather than the input's currently-displayed value — this is the only reading consistent with the design's own "unsaved, still-blank line" no-op example, since a saved line's input almost always displays its non-blank formatted amount (even `"0.00"` for a deliberate $0 line) and would otherwise never resolve to `"soft-delete"` via the trash icon at all.
+  - `computeFundLineSums` was extracted as a new pure helper (not named in Phase 3, which only said "`fundSums()` or its extracted pure core") because this repo's Vitest config has no jsdom/component-test environment — there was no way to exercise `fundSums()`'s exclusion logic in test #8 without pulling it out, consistent with `computeBudgetBalanceStatus`'s existing precedent in the same file.
+  - Filtered pending-delete lines at the `FundWorksheet` level (before its existing emptiness check) rather than only inside `FlowTable`, so a fund whose every line is pending-delete is omitted from the printout exactly like a fund with zero budget lines — otherwise `FlowTable` would render a header with no body rows.
+- **Next agent:** qa, for Phase 5 verification.

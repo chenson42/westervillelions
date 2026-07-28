@@ -41,11 +41,18 @@ import {
   normalizeBudgetLineLabel,
   MAX_BUDGET_LINE_LABEL_LENGTH,
   formatBudgetReferenceCents,
+  resolveBudgetLineDeleteAction,
+  computeFundLineSums,
+  causeLineReferenceKey,
+  buildCauseActualsByKey,
+  computeDuesTimingAdjustment,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
   type GivingFoldRow,
   type CauseSeedSourceRow,
+  type CauseActualSourceRow,
+  type DuesTimingSourceRow,
 } from "./ledger";
 
 // ---------------------------------------------------------------------------
@@ -2176,6 +2183,93 @@ describe("formatBudgetReferenceCents", () => {
 });
 
 // ---------------------------------------------------------------------------
+// causeLineReferenceKey / buildCauseActualsByKey — Prior-Year Reference on
+// Cause/Beneficiary Budget Lines (2026-07-28-causeline-prior-year-reference)
+// ---------------------------------------------------------------------------
+
+describe("causeLineReferenceKey", () => {
+  it("trims leading/trailing whitespace the same way normalizeBudgetLineLabel does — ' WARM ' and 'WARM' collide", () => {
+    expect(causeLineReferenceKey("cat-1", "Charitable donation out", " WARM ")).toBe(
+      causeLineReferenceKey("cat-1", "Charitable donation out", "WARM"),
+    );
+  });
+
+  it("does not case-fold — 'WARM' and 'Warm' remain distinct keys (free text, not a taxonomy)", () => {
+    expect(causeLineReferenceKey("cat-1", "Charitable donation out", "WARM")).not.toBe(
+      causeLineReferenceKey("cat-1", "Charitable donation out", "Warm"),
+    );
+  });
+
+  it("null/undefined normalize to the generic/unlabeled ('') slot, same key as an explicit ''", () => {
+    const generic = causeLineReferenceKey("cat-1", "Youth & Education", "");
+    expect(causeLineReferenceKey("cat-1", "Youth & Education", null)).toBe(generic);
+    expect(causeLineReferenceKey("cat-1", "Youth & Education", undefined)).toBe(generic);
+  });
+
+  it("folds categoryId into the key — the same cause+label in two different categories are distinct keys", () => {
+    expect(causeLineReferenceKey("cat-1", "Youth & Education", "WARM")).not.toBe(
+      causeLineReferenceKey("cat-2", "Youth & Education", "WARM"),
+    );
+  });
+});
+
+describe("buildCauseActualsByKey", () => {
+  it("a cause line's label matching a prior-year party gets that party's summed actual", () => {
+    const rows: CauseActualSourceRow[] = [
+      { categoryId: "cat-1", cause: "Hunger & Basic Needs", party: "WARM", amountCents: 5_000 },
+      { categoryId: "cat-1", cause: "Hunger & Basic Needs", party: "WARM", amountCents: 2_500 },
+    ];
+    const map = buildCauseActualsByKey(rows);
+    const key = causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "WARM");
+    expect(map[key]).toBe(7_500);
+  });
+
+  it("a label with no matching prior-year party has no entry — caller reads this as null (no prior actual)", () => {
+    const rows: CauseActualSourceRow[] = [
+      { categoryId: "cat-1", cause: "Hunger & Basic Needs", party: "WARM", amountCents: 5_000 },
+    ];
+    const map = buildCauseActualsByKey(rows);
+    const key = causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "Caring & Sharing");
+    expect(map[key]).toBeUndefined();
+  });
+
+  it("case/trim normalization matches causeLineReferenceKey's: ' WARM ' as a party and 'WARM' as a label collide", () => {
+    const rows: CauseActualSourceRow[] = [
+      { categoryId: "cat-1", cause: "Hunger & Basic Needs", party: " WARM ", amountCents: 1_000 },
+    ];
+    const map = buildCauseActualsByKey(rows);
+    const key = causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "WARM");
+    expect(map[key]).toBe(1_000);
+  });
+
+  it("the generic/unlabeled line (label '') matches only null/blank-party actuals, not every party under that cause", () => {
+    const rows: CauseActualSourceRow[] = [
+      { categoryId: "cat-1", cause: "Hunger & Basic Needs", party: null, amountCents: 3_000 },
+      { categoryId: "cat-1", cause: "Hunger & Basic Needs", party: "WARM", amountCents: 5_000 },
+    ];
+    const map = buildCauseActualsByKey(rows);
+    const genericKey = causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "");
+    const warmKey = causeLineReferenceKey("cat-1", "Hunger & Basic Needs", "WARM");
+    expect(map[genericKey]).toBe(3_000);
+    expect(map[warmKey]).toBe(5_000);
+  });
+
+  it("different categories with the same (cause, party) never collide", () => {
+    const rows: CauseActualSourceRow[] = [
+      { categoryId: "cat-1", cause: "Youth & Education", party: "WARM", amountCents: 1_000 },
+      { categoryId: "cat-2", cause: "Youth & Education", party: "WARM", amountCents: 9_000 },
+    ];
+    const map = buildCauseActualsByKey(rows);
+    expect(map[causeLineReferenceKey("cat-1", "Youth & Education", "WARM")]).toBe(1_000);
+    expect(map[causeLineReferenceKey("cat-2", "Youth & Education", "WARM")]).toBe(9_000);
+  });
+
+  it("returns {} (not a throw) for zero rows", () => {
+    expect(buildCauseActualsByKey([])).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isValidBudgetCause — Cause-Tagged Budget Line Items (B-17 Increment A)
 // ---------------------------------------------------------------------------
 
@@ -2358,5 +2452,163 @@ describe("normalizeBudgetLineLabel", () => {
     expect(() => normalizeBudgetLineLabel(overLong)).not.toThrow();
     expect(normalizeBudgetLineLabel(overLong)).toHaveLength(200);
     expect(MAX_BUDGET_LINE_LABEL_LENGTH).toBe(120);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveBudgetLineDeleteAction — Budget soft-delete (Increment 2, Phase 3 test #6)
+// ---------------------------------------------------------------------------
+
+describe("resolveBudgetLineDeleteAction", () => {
+  it("blank value + existing row -> \"soft-delete\"", () => {
+    expect(resolveBudgetLineDeleteAction(true, "")).toBe("soft-delete");
+  });
+
+  it("whitespace-only value + existing row -> \"soft-delete\" (trims before checking)", () => {
+    expect(resolveBudgetLineDeleteAction(true, "   ")).toBe("soft-delete");
+  });
+
+  it("blank value + no existing row -> \"noop\" (nothing to soft-delete)", () => {
+    expect(resolveBudgetLineDeleteAction(false, "")).toBe("noop");
+  });
+
+  it("non-blank value + existing row -> \"noop\" (unreachable via the blur handler today, but the contract holds)", () => {
+    expect(resolveBudgetLineDeleteAction(true, "50")).toBe("noop");
+  });
+
+  it("non-blank value + no existing row -> \"noop\"", () => {
+    expect(resolveBudgetLineDeleteAction(false, "50")).toBe("noop");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeFundLineSums — Budget soft-delete (Increment 2, Phase 3 test #8)
+// ---------------------------------------------------------------------------
+
+describe("computeFundLineSums", () => {
+  it("sums income and expense lines with no pending-delete keys", () => {
+    const result = computeFundLineSums({
+      cat1_income: 10_000,
+      cat2_income: 5_000,
+      cat3_expense: 7_500,
+    });
+    expect(result).toEqual({ incomeCents: 15_000, expenseCents: 7_500 });
+  });
+
+  it("excludes a pending-delete income line from incomeCents", () => {
+    const result = computeFundLineSums(
+      { cat1_income: 10_000, cat2_income: 5_000 },
+      { cat1_income: true },
+    );
+    expect(result.incomeCents).toBe(5_000);
+  });
+
+  it("excludes a pending-delete expense line from expenseCents", () => {
+    const result = computeFundLineSums(
+      { cat1_expense: 7_500, cat2_expense: 2_500 },
+      { cat1_expense: true },
+    );
+    expect(result.expenseCents).toBe(2_500);
+  });
+
+  it("a line marked pendingDelete: false is included normally", () => {
+    const result = computeFundLineSums(
+      { cat1_income: 10_000 },
+      { cat1_income: false },
+    );
+    expect(result.incomeCents).toBe(10_000);
+  });
+
+  it("empty lineValues returns zero for both totals", () => {
+    expect(computeFundLineSums({})).toEqual({ incomeCents: 0, expenseCents: 0 });
+  });
+
+  it("pendingDeleteKeys defaults to {} when omitted", () => {
+    expect(computeFundLineSums({ cat1_income: 100 })).toEqual({
+      incomeCents: 100,
+      expenseCents: 0,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeDuesTimingAdjustment — Budget-Balance Overview (2026-07-28)
+// ---------------------------------------------------------------------------
+
+describe("computeDuesTimingAdjustment", () => {
+  it("a dues row received in FY2025 but FOR FY2026 is excluded from FY2025's adjusted income and counted in FY2026's", () => {
+    const rows: DuesTimingSourceRow[] = [
+      { txnDate: "2026-06-15", amountCents: 12_000, duesFiscalYear: 2026 },
+    ];
+
+    const fy2025 = computeDuesTimingAdjustment(rows, 2025);
+    expect(fy2025.cashBasisDuesCents).toBe(12_000); // received (txnDate) inside FY2025
+    expect(fy2025.adjustedDuesCents).toBe(0); // it's FOR FY2026, so excluded from FY2025's adjusted figure
+    expect(fy2025.deltaCents).toBe(-12_000);
+
+    const fy2026 = computeDuesTimingAdjustment(rows, 2026);
+    expect(fy2026.cashBasisDuesCents).toBe(0); // not received (by txnDate) inside FY2026
+    expect(fy2026.adjustedDuesCents).toBe(12_000); // it's FOR FY2026
+    expect(fy2026.deltaCents).toBe(12_000);
+  });
+
+  it("a dues row received and FOR the same fiscal year nets to zero delta", () => {
+    const rows: DuesTimingSourceRow[] = [
+      { txnDate: "2026-08-01", amountCents: 12_000, duesFiscalYear: 2026 },
+    ];
+    const result = computeDuesTimingAdjustment(rows, 2026);
+    expect(result.cashBasisDuesCents).toBe(12_000);
+    expect(result.adjustedDuesCents).toBe(12_000);
+    expect(result.deltaCents).toBe(0);
+  });
+
+  it("no rows at all -> all-zero adjustment (caller hides the block; not a crash)", () => {
+    const result = computeDuesTimingAdjustment([], 2026);
+    expect(result).toEqual({
+      fiscalYear: 2026,
+      cashBasisDuesCents: 0,
+      adjustedDuesCents: 0,
+      deltaCents: 0,
+    });
+  });
+
+  it("multiple rows across FYs are grouped independently per fiscal year requested", () => {
+    const rows: DuesTimingSourceRow[] = [
+      { txnDate: "2026-06-01", amountCents: 12_000, duesFiscalYear: 2026 }, // early payment, received FY2025, for FY2026
+      { txnDate: "2026-06-10", amountCents: 9_600, duesFiscalYear: 2026 }, // another early payment
+      { txnDate: "2025-08-01", amountCents: 12_000, duesFiscalYear: 2025 }, // ordinary on-time payment, received & for FY2025
+    ];
+
+    const fy2025 = computeDuesTimingAdjustment(rows, 2025);
+    // Cash basis: both June 2026 payments (txnDate in FY2025) + the on-time one = all three received in FY2025
+    expect(fy2025.cashBasisDuesCents).toBe(12_000 + 9_600 + 12_000);
+    // Adjusted: only the row actually FOR FY2025
+    expect(fy2025.adjustedDuesCents).toBe(12_000);
+    expect(fy2025.deltaCents).toBe(12_000 - (12_000 + 9_600 + 12_000));
+
+    const fy2026 = computeDuesTimingAdjustment(rows, 2026);
+    expect(fy2026.cashBasisDuesCents).toBe(0); // nothing dated inside FY2026
+    expect(fy2026.adjustedDuesCents).toBe(12_000 + 9_600); // both early payments are FOR FY2026
+    expect(fy2026.deltaCents).toBe(12_000 + 9_600);
+  });
+
+  it("a txnDate right at the FY boundary (July 1) is read as the new FY — no naive-UTC off-by-one", () => {
+    const rows: DuesTimingSourceRow[] = [
+      { txnDate: "2026-07-01", amountCents: 12_000, duesFiscalYear: 2026 },
+    ];
+    const fy2026 = computeDuesTimingAdjustment(rows, 2026);
+    expect(fy2026.cashBasisDuesCents).toBe(12_000);
+    const fy2025 = computeDuesTimingAdjustment(rows, 2025);
+    expect(fy2025.cashBasisDuesCents).toBe(0);
+  });
+
+  it("a txnDate right before the FY boundary (June 30) is read as the prior FY", () => {
+    const rows: DuesTimingSourceRow[] = [
+      { txnDate: "2026-06-30", amountCents: 12_000, duesFiscalYear: 2025 },
+    ];
+    const fy2025 = computeDuesTimingAdjustment(rows, 2025);
+    expect(fy2025.cashBasisDuesCents).toBe(12_000);
+    expect(fy2025.adjustedDuesCents).toBe(12_000);
+    expect(fy2025.deltaCents).toBe(0);
   });
 });
