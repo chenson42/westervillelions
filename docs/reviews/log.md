@@ -32,6 +32,8 @@ For no-op reviews (a cycle genuinely produced no actionable findings), use:
 2026-05-23 | retrospective | nothing material
 ```
 
+2026-07-28 | dependencies | CVE gate cleared: next-auth 5.0.0-beta.30→beta.32 + @auth/drizzle-adapter 1.11.2→1.11.3 + corrected two stale/ineffective pnpm overrides (@auth/core was pinned to the vulnerable 0.41.1; brace-expansion override range didn't reach the patched 5.0.8) — `pnpm audit --prod --audit-level=high` now exits 0 (was exit 1, 3 critical + 2 high); auth smoke test (credentials sign-in → session → gated admin page) verified working; residual 1 moderate + 1 low both below the high gate; see 2026-07-28-dependencies.md
+
 If three retrospectives in a row produce nothing, the cadence itself is suspect — surface that to the user.
 
 ## Entries
