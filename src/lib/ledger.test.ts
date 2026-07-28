@@ -38,6 +38,8 @@ import {
   isCauseEligibleCategory,
   sumBudgetCauseLines,
   deriveCauseSeedLines,
+  normalizeBudgetLineLabel,
+  MAX_BUDGET_LINE_LABEL_LENGTH,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
@@ -2298,5 +2300,39 @@ describe("deriveCauseSeedLines", () => {
 
   it("returns [] (not a throw) for zero rows in both lookback years", () => {
     expect(deriveCauseSeedLines([], new Map())).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeBudgetLineLabel — Labeled Cause Budget Lines (DECISION-047/048)
+// ---------------------------------------------------------------------------
+
+describe("normalizeBudgetLineLabel", () => {
+  it("trims leading/trailing whitespace: ' WARM ' and 'WARM' normalize identically", () => {
+    expect(normalizeBudgetLineLabel(" WARM ")).toBe("WARM");
+    expect(normalizeBudgetLineLabel(" WARM ")).toBe(normalizeBudgetLineLabel("WARM"));
+  });
+
+  it("an all-whitespace input normalizes to ''", () => {
+    expect(normalizeBudgetLineLabel("   ")).toBe("");
+    expect(normalizeBudgetLineLabel("\t\n")).toBe("");
+  });
+
+  it("null/undefined normalize to ''", () => {
+    expect(normalizeBudgetLineLabel(null)).toBe("");
+    expect(normalizeBudgetLineLabel(undefined)).toBe("");
+  });
+
+  it("does not case-fold — 'WARM' and 'Warm' remain distinct (free text, not a taxonomy)", () => {
+    expect(normalizeBudgetLineLabel("WARM")).toBe("WARM");
+    expect(normalizeBudgetLineLabel("Warm")).toBe("Warm");
+    expect(normalizeBudgetLineLabel("WARM")).not.toBe(normalizeBudgetLineLabel("Warm"));
+  });
+
+  it("does not throw on an over-length input — the pure helper only trims; the caller enforces MAX_BUDGET_LINE_LABEL_LENGTH", () => {
+    const overLong = "x".repeat(200);
+    expect(() => normalizeBudgetLineLabel(overLong)).not.toThrow();
+    expect(normalizeBudgetLineLabel(overLong)).toHaveLength(200);
+    expect(MAX_BUDGET_LINE_LABEL_LENGTH).toBe(120);
   });
 });

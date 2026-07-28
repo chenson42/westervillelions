@@ -810,12 +810,19 @@ export const ledgerBudgetLines = pgTable(
       .notNull()
       .references(() => ledgerBudgets.id, { onDelete: "cascade" }),
     cause: text("cause").notNull(),
+    // Free-text label distinguishing multiple lines under the same cause
+    // (DECISION-047/048). NOT NULL DEFAULT '' — blank is a real, collidable
+    // value ("the one generic line per cause"), not an absence. Every
+    // pre-existing v1.40.0 row becomes label='' on migration, i.e. it stays
+    // that cause's generic line — no functional change to any row that
+    // existed before this migration ran.
+    label: text("label").notNull().default(""),
     amountCents: integer("amount_cents").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [
-    unique("ledger_budget_lines_budget_cause_key").on(t.budgetId, t.cause),
+    unique("ledger_budget_lines_budget_cause_label_key").on(t.budgetId, t.cause, t.label),
     index("ix_ledger_budget_lines_budget").on(t.budgetId),
   ],
 );

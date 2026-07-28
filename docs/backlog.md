@@ -92,29 +92,32 @@ follow-ups may also land here when they don't warrant an immediate work-log.
 
 - [ ] **B-20 — Playwright e2e coverage for the Ledger budgeting module (currently zero specs).**
   (added 2026-07-27, priority: nice-to-have — surfaced in `docs/work-log/2026-07-27-ledger-cause-budget-lines.md`
-  Phase 5/6) qa's two Phase 5 passes on B-17 Increment A had no browser-automation
-  tool available and could not reach five client-only flows: navigate-away-without-committing
-  a breakdown pre-fill, `ConfirmDialog` gating on cause-line remove, live dropdown
-  rename of a committed cause line, guided-seed confirm-dialogs/toast copy, and 360px
-  row stacking. `e2e/` today covers events/donate/admin-security/receipts/signups —
-  none of it touches Ledger/budgeting at all. Add Playwright specs for these five
-  flows (and the existing `BudgetEditor`/guided-budgeting flows they sit alongside)
-  during the next 7-day test-coverage review, so future Ledger changes get real
-  regression coverage on this surface instead of qa re-deriving "not reachable" each time.
+  Phase 5/6; widened 2026-07-28 per `docs/work-log/2026-07-28-ledger-labeled-cause-lines.md`
+  Phase 6) qa's Phase 5 passes on B-17 Increment A and on the Labeled Cause Lines
+  follow-up both had no browser-automation tool available and could not reach
+  client-only flows. Combined list still needing Playwright coverage:
+  navigate-away-without-committing a breakdown pre-fill, `ConfirmDialog` gating on
+  cause-line remove, guided-seed confirm-dialogs/toast copy, 360px row stacking,
+  **grouped-by-cause display (cause header → per-cause subtotal → nested labeled
+  lines → category total)**, **`<datalist>` label autocomplete (entity-scoped,
+  cross-fund)**, **in-place label edit with no visible row flicker (independent
+  amount/label dirty-tracking)**, **locked-budget UI disabling + the two distinct
+  toast copies (`locked` vs `duplicate_cause_label`)**, and **the "+ Add line"
+  cause `<select>` offering an already-used cause without exclusion**. (The old
+  "live dropdown rename of a committed cause line" item is dropped — that flow no
+  longer exists; see B-21.) `e2e/` today covers events/donate/admin-security/
+  receipts/signups — none of it touches Ledger/budgeting at all. Add Playwright
+  specs for all of the above (and the existing `BudgetEditor`/guided-budgeting
+  flows they sit alongside) during the next 7-day test-coverage review.
 
-- [ ] **B-21 — Dedicated rename endpoint for cause-line budget rows (if the DELETE+PATCH window is ever hit).**
-  (added 2026-07-27, priority: low — surfaced in `docs/work-log/2026-07-27-ledger-cause-budget-lines.md`
-  Phase 4c/5/6) Changing an already-committed cause line's cause via the dropdown
-  is implemented as sequential `DELETE` then `PATCH` (`budget-cause-editor.tsx`
-  `handleCauseChange`), not one atomic call — DECISION-046 scoped the API to
-  upsert/delete/collapse only, no rename verb. A network failure between the two
-  calls leaves a narrow window where the line is transiently gone; the UI is not
-  silent about it (explicit toast + `router.refresh()` self-heal) and the blast
-  radius is one planning-data cause line, re-enterable by hand. qa called this
-  ship-with-a-note in both Phase 5 passes, not a blocker. Revisit only if real
-  treasurer usage shows this window gets hit in practice — add
-  `PATCH .../cause-lines/rename` (or fold rename into the existing upsert route
-  with an `oldCause` param) at that point, not preemptively.
+- [x] **B-21 — Dedicated rename endpoint for cause-line budget rows — SUPERSEDED, closed 2026-07-28.**
+  (added 2026-07-27, closed 2026-07-28 — see `docs/work-log/2026-07-28-ledger-labeled-cause-lines.md`
+  DECISION-047/048) The DELETE+PATCH rename window this item worried about no
+  longer exists: the Labeled Cause Lines increment removed in-place cause editing
+  entirely (a line's cause is fixed at creation; moving it to a different cause is
+  now an explicit DELETE + CREATE, a deliberate, user-confirmed scope cut, not a
+  workaround). Amount and label edits both go through a single `PATCH { id, ... }`
+  with no delete-then-recreate step at all. Nothing left to build here.
 
 - [ ] **B-16 — Standalone ledger-category management surface (edit, deactivate, reorder).**
   (added 2026-07-27, priority: nice-to-have) Flagged in Phase 1/2 of

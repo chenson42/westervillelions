@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import BudgetEditor from "@/components/admin/ledger/budget-editor";
+import type { BudgetCauseLine } from "@/components/admin/ledger/budget-cause-editor";
 import { computeBudgetBalanceStatus, type SeedProposedLine } from "@/lib/ledger";
 
 function formatDollars(cents: number): string {
@@ -131,7 +132,7 @@ export interface FundSetupItem {
     flow: "income" | "expense";
     budgetCents: number | null;
     countsAsGiving: boolean;
-    causeLines: { cause: string; amountCents: number }[] | null;
+    causeLines: BudgetCauseLine[] | null;
   }[];
   /**
    * Active categories for this fund's kind, per flow, that don't already
@@ -167,6 +168,8 @@ interface GuidedBudgetSetupProps {
   /** Single source of truth for read-only rendering — mirrors isBudgetLocked() server-side. */
   locked: boolean;
   approval: BudgetApprovalSummary | null;
+  /** Prior labels used anywhere in this entity's cause lines — feeds every BudgetCauseEditor's `<datalist>` autocomplete. */
+  labelOptions?: string[];
 }
 
 /**
@@ -259,6 +262,7 @@ export default function GuidedBudgetSetup({
   canApprove,
   locked,
   approval,
+  labelOptions = [],
 }: GuidedBudgetSetupProps) {
   const router = useRouter();
   const [seedingScope, setSeedingScope] = useState<string | null>(null);
@@ -878,6 +882,7 @@ export default function GuidedBudgetSetup({
                         onInputChange={(key, value) => handleInputChange(fund.fundId, key, value)}
                         disabled={editorDisabled}
                         showRemoveControl={canManage && !locked}
+                        labelOptions={labelOptions}
                       />
                     ) : (
                       <div className="bg-gray-50 rounded-2xl p-4 text-center text-sm text-gray-500">

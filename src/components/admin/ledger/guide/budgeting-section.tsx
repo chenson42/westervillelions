@@ -92,6 +92,12 @@ export default function BudgetingSection() {
           </Link>{" "}
           reports giving in. Categories you don&rsquo;t break down keep their single amount as before.
         </li>
+        <li>
+          A cause can hold <strong>several labeled lines</strong> when it funds more than one
+          beneficiary &mdash; e.g. under <em>Hunger &amp; Basic Needs</em> you might budget WARM and
+          Westerville Sharing &amp; Caring separately. Each line takes an optional label; the cause
+          subtotal is the sum of its lines.
+        </li>
       </ul>
 
       <h3 className="mt-5 font-semibold text-gray-900">

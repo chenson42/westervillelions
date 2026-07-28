@@ -7,20 +7,26 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   BUDGET_CAUSES,
   OTHER_COMMUNITY_SUPPORT_CAUSE,
+  MAX_BUDGET_LINE_LABEL_LENGTH,
   sumBudgetCauseLines,
 } from "@/lib/ledger";
 
 const ALL_CAUSES: readonly string[] = [...BUDGET_CAUSES, OTHER_COMMUNITY_SUPPORT_CAUSE];
+const CAUSE_LINES_URL = "/api/admin/ledger/budgets/cause-lines";
 
-interface BudgetCauseLine {
+export interface BudgetCauseLine {
+  /** null only for a client-side pending pre-fill row that's never been saved. */
+  id: string | null;
   cause: string;
+  label: string;
   amountCents: number;
 }
 
 interface Row {
+  /** null = never saved to the server — a fresh/pending row (mirrors B-17's `committedCause` convention, but keyed correctly now that cause can repeat). */
+  id: string | null;
   cause: string;
-  /** null = this row has never been saved to the server under this cause — a fresh/pending row. */
-  committedCause: string | null;
+  label: string;
   /** Dollar-string value of the amount input, e.g. "125.00". */
   value: string;
   saving: boolean;
@@ -35,16 +41,19 @@ interface BudgetCauseEditorProps {
   flow: "income" | "expense";
   /**
    * Seed rows for local state. Either the server-confirmed breakdown
-   * (`pending: false`) or a single client-side pre-fill row (`pending: true`,
-   * cause = OTHER_COMMUNITY_SUPPORT_CAUSE, amount = the category's prior
-   * lump-sum value) — see budget-editor.tsx's "Break down by cause" handler.
-   * Never empty.
+   * (`pending: false`, every row has an `id`) or a single client-side
+   * pre-fill row (`pending: true`, `id: null`, cause =
+   * OTHER_COMMUNITY_SUPPORT_CAUSE, amount = the category's prior lump-sum
+   * value) — see budget-editor.tsx's "Break down by cause" handler. Never
+   * empty.
    */
   initialLines: BudgetCauseLine[];
   /** True when initialLines is a local pre-fill that hasn't been saved yet. */
   pending: boolean;
   /** Locked-budget defense-in-depth — mirrors BudgetEditor's own `disabled` prop. */
   disabled?: boolean;
+  /** Prior labels used anywhere in this entity's cause lines — feeds the `<datalist>` autocomplete. */
+  labelOptions?: string[];
   /**
    * Live dollar-string total, fired on every amount keystroke (not just on
    * commit) — the parent forwards this into its own onInputChange, which is
@@ -68,28 +77,47 @@ function parseDollarsToCents(raw: string | undefined): number {
   return !isNaN(n) && n >= 0 ? Math.round(n * 100) : 0;
 }
 
-function nextUnusedCause(usedCauses: Set<string>): string {
-  return ALL_CAUSES.find((c) => !usedCauses.has(c)) ?? ALL_CAUSES[0];
-}
-
 function currentTotalCents(rows: Row[]): number {
   return sumBudgetCauseLines(rows.map((r) => ({ amountCents: parseDollarsToCents(r.value) })));
 }
 
 /**
- * Cause-level budget breakdown for one category (B-17 Increment A). Nested
- * inside BudgetEditor when a giving-eligible expense category
- * (isCauseEligibleCategory) is in breakdown mode. Mirrors BudgetEditor's own
- * commit-on-blur/Enter, explicit-remove, and ConfirmDialog conventions
- * exactly — this is the third nested layer in an already-dense editor, so it
- * must not look or behave like a bolted-on component.
+ * Reads the server's `{ error, reason }` 409/400 body and returns the copy to
+ * show the treasurer. The server already writes a specific, cause-naming
+ * message for both `locked` and `duplicate_cause_label` (see
+ * `assertBudgetUnlocked`/`duplicateCauseLabelResult` in ledger-queries.ts), so
+ * this just forwards `data.error` with a generic fallback per reason — it
+ * exists so every call site handles a missing/malformed body identically.
+ */
+function describeWriteError(
+  data: { error?: string; reason?: "locked" | "duplicate_cause_label" },
+  fallback: string,
+): string {
+  if (data.error) return data.error;
+  if (data.reason === "locked") return "This budget is locked. Unlock it to make changes.";
+  if (data.reason === "duplicate_cause_label") {
+    return "A line for this cause and label already exists — edit it instead.";
+  }
+  return fallback;
+}
+
+/**
+ * Cause-level budget breakdown for one category (B-17 Increment A; re-keyed
+ * to `id` and grouped-by-cause by Labeled Cause Budget Lines,
+ * DECISION-047/048). Nested inside BudgetEditor when a giving-eligible
+ * expense category (isCauseEligibleCategory) is in breakdown mode. Mirrors
+ * BudgetEditor's own commit-on-blur/Enter, explicit-remove, and
+ * ConfirmDialog conventions exactly — this is the third nested layer in an
+ * already-dense editor, so it must not look or behave like a bolted-on
+ * component.
  *
- * Rename semantics: changing an already-committed row's cause via the
- * dropdown issues a DELETE (old cause) then a PATCH (new cause, current
- * amount) — there is no dedicated rename endpoint (DECISION-046 favors the
- * smallest endpoint surface: upsert, delete, collapse only). A pending
- * (never-saved) row's cause just updates local state; nothing is written
- * until its first amount commit.
+ * Row identity is the line's own `id` (`id === null` means "never saved").
+ * A cause is chosen once, at creation — there is no in-place cause change in
+ * this increment (DECISION-048 item 2). A never-saved row shows a cause
+ * `<select>`; once it commits, its cause becomes a plain group header, not a
+ * control. Rows are grouped by cause for display (header + per-cause
+ * subtotal + nested labeled lines), in canonical ALL_CAUSES order so the
+ * grouping is stable across re-renders/reloads.
  */
 export default function BudgetCauseEditor({
   fundId,
@@ -99,55 +127,80 @@ export default function BudgetCauseEditor({
   initialLines,
   pending,
   disabled = false,
+  labelOptions = [],
   onTotalChange,
   onExitBreakdown,
 }: BudgetCauseEditorProps) {
   const router = useRouter();
   const [rows, setRows] = useState<Row[]>(() =>
     initialLines.map((l) => ({
+      id: pending ? null : l.id,
       cause: l.cause,
-      committedCause: pending ? null : l.cause,
+      label: l.label,
       value: (l.amountCents / 100).toFixed(2),
       saving: false,
     })),
   );
-  const dirtyRef = useRef<boolean[]>(rows.map(() => false));
+  const dirtyAmountRef = useRef<boolean[]>(rows.map(() => false));
+  const dirtyLabelRef = useRef<boolean[]>(rows.map(() => false));
   const [removeConfirm, setRemoveConfirm] = useState<{
     index: number;
     cause: string;
     amountLabel: string;
   } | null>(null);
   const [collapseConfirmOpen, setCollapseConfirmOpen] = useState(false);
+  const datalistId = `cause-line-labels_${categoryId}_${flow}`;
 
-  const usedCauses = new Set(rows.map((r) => r.cause));
-  const hasCommittedRows = rows.some((r) => r.committedCause !== null);
+  const hasCommittedRows = rows.some((r) => r.id !== null);
   const totalCents = currentTotalCents(rows);
+
+  function setRowSaving(index: number, saving: boolean) {
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, saving } : r)));
+  }
 
   function handleAmountChange(index: number, value: string) {
     if (disabled) return;
     const next = rows.map((r, i) => (i === index ? { ...r, value } : r));
     setRows(next);
-    dirtyRef.current[index] = true;
+    dirtyAmountRef.current[index] = true;
     onTotalChange?.((currentTotalCents(next) / 100).toFixed(2));
+  }
+
+  function handleLabelChange(index: number, label: string) {
+    if (disabled) return;
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, label } : r)));
+    dirtyLabelRef.current[index] = true;
+  }
+
+  function handlePendingCauseChange(index: number, cause: string) {
+    if (disabled) return;
+    // Never saved — just update the local group it'll land in once it
+    // commits. No network call: nothing exists server-side to rename yet.
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, cause } : r)));
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>, index: number) {
     if (e.key === "Enter") {
       e.currentTarget.blur();
-      void commitAmount(index);
+      void commitRow(index);
     }
   }
 
-  async function commitAmount(index: number) {
+  async function commitRow(index: number) {
     const row = rows[index];
     if (!row) return;
-    // Already-committed rows only re-save when actually edited (spreadsheet
-    // UX, matches BudgetEditor's dirtyRef gate). A never-saved pending row
-    // always attempts its first commit on blur/Enter — that IS how it gets
-    // created; if the treasurer never blurs/Enters the field (e.g. navigates
-    // away entirely), nothing is written, per the Phase 3 design invariant.
-    if (row.committedCause !== null && !dirtyRef.current[index]) return;
-    dirtyRef.current[index] = false;
+
+    if (row.id === null) {
+      await commitCreate(index);
+      return;
+    }
+    await commitUpdate(index);
+  }
+
+  /** First-ever commit for a never-saved row — this IS how it gets created. */
+  async function commitCreate(index: number) {
+    const row = rows[index];
+    if (!row) return;
 
     const raw = row.value.trim();
     if (raw === "") {
@@ -164,97 +217,118 @@ export default function BudgetCauseEditor({
       toast.error("Amount exceeds maximum.");
       return;
     }
+    if (row.label.length > MAX_BUDGET_LINE_LABEL_LENGTH) {
+      toast.error(`Label must be ${MAX_BUDGET_LINE_LABEL_LENGTH} characters or fewer.`);
+      return;
+    }
 
-    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, saving: true } : r)));
+    setRowSaving(index, true);
     try {
-      const res = await fetch("/api/admin/ledger/budgets/cause-lines", {
+      const res = await fetch(CAUSE_LINES_URL, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fundId, fiscalYear, categoryId, flow, cause: row.cause, amountCents }),
+        body: JSON.stringify({
+          fundId,
+          fiscalYear,
+          categoryId,
+          flow,
+          cause: row.cause,
+          label: row.label,
+          amountCents,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        // Surfaces the server's exact message, including the 409 lock
-        // string, unchanged.
-        throw new Error(data.error || "Failed to save cause line.");
+        throw new Error(describeWriteError(data, "Failed to save cause line."));
       }
-      const data: { categoryTotalCents: number } = await res.json();
+      const data: { lineId: string; cause: string; label: string; categoryTotalCents: number } =
+        await res.json();
       setRows((prev) =>
-        prev.map((r, i) => (i === index ? { ...r, committedCause: row.cause, saving: false } : r)),
+        prev.map((r, i) =>
+          i === index ? { ...r, id: data.lineId, cause: data.cause, label: data.label, saving: false } : r,
+        ),
       );
+      dirtyAmountRef.current[index] = false;
+      dirtyLabelRef.current[index] = false;
       onTotalChange?.((data.categoryTotalCents / 100).toFixed(2));
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save cause line. Try again.");
-      setRows((prev) => prev.map((r, i) => (i === index ? { ...r, saving: false } : r)));
+      setRowSaving(index, false);
     }
   }
 
-  async function handleCauseChange(index: number, newCause: string) {
-    if (disabled) return;
+  /** Amount and/or label edit on an already-committed row — single in-place UPDATE, no delete+recreate. */
+  async function commitUpdate(index: number) {
     const row = rows[index];
-    if (!row || row.cause === newCause) return;
+    if (!row || row.id === null) return;
 
-    if (row.committedCause === null) {
-      // Never saved — just update the local selection, no network call.
-      setRows((prev) => prev.map((r, i) => (i === index ? { ...r, cause: newCause } : r)));
+    const amountDirty = dirtyAmountRef.current[index];
+    const labelDirty = dirtyLabelRef.current[index];
+    if (!amountDirty && !labelDirty) return;
+
+    let amountCents: number | undefined;
+    if (amountDirty) {
+      const raw = row.value.trim();
+      if (raw === "") {
+        toast.error(`Enter an amount for "${row.cause}", or remove this line.`);
+        return;
+      }
+      const n = parseFloat(raw);
+      if (isNaN(n) || n < 0) {
+        toast.error("Enter a valid amount (0 or greater).");
+        return;
+      }
+      amountCents = Math.round(n * 100);
+      if (amountCents > 2_147_483_647) {
+        toast.error("Amount exceeds maximum.");
+        return;
+      }
+    }
+    if (labelDirty && row.label.length > MAX_BUDGET_LINE_LABEL_LENGTH) {
+      toast.error(`Label must be ${MAX_BUDGET_LINE_LABEL_LENGTH} characters or fewer.`);
       return;
     }
 
-    // Already-committed row — "renaming" its cause is a delete of the old
-    // cause plus an upsert of the new one, since there's no dedicated rename
-    // endpoint. If the PATCH half fails after the DELETE succeeds, refresh
-    // from the server so the UI never lies about what's actually saved.
-    const amountCents = parseDollarsToCents(row.value);
-    const oldCause = row.committedCause;
-    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, saving: true } : r)));
+    const body: { id: string; amountCents?: number; label?: string } = { id: row.id };
+    if (amountDirty) body.amountCents = amountCents;
+    if (labelDirty) body.label = row.label;
+
+    setRowSaving(index, true);
     try {
-      const delRes = await fetch("/api/admin/ledger/budgets/cause-lines", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fundId, fiscalYear, categoryId, flow, cause: oldCause }),
-      });
-      if (!delRes.ok) {
-        const data = await delRes.json().catch(() => ({}));
-        throw new Error(data.error || "Could not change cause. Try again.");
-      }
-      const patchRes = await fetch("/api/admin/ledger/budgets/cause-lines", {
+      const res = await fetch(CAUSE_LINES_URL, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fundId, fiscalYear, categoryId, flow, cause: newCause, amountCents }),
+        body: JSON.stringify(body),
       });
-      if (!patchRes.ok) {
-        const data = await patchRes.json().catch(() => ({}));
-        throw new Error(
-          data.error ||
-            `"${oldCause}" was removed but could not be re-added as "${newCause}". Refreshing to show the current state.`,
-        );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(describeWriteError(data, "Failed to save cause line."));
       }
-      const data: { categoryTotalCents: number } = await patchRes.json();
-      setRows((prev) =>
-        prev.map((r, i) => (i === index ? { ...r, cause: newCause, committedCause: newCause, saving: false } : r)),
-      );
+      const data: { label: string; categoryTotalCents: number } = await res.json();
+      setRows((prev) => prev.map((r, i) => (i === index ? { ...r, label: data.label, saving: false } : r)));
+      dirtyAmountRef.current[index] = false;
+      dirtyLabelRef.current[index] = false;
       onTotalChange?.((data.categoryTotalCents / 100).toFixed(2));
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not change cause. Try again.");
-      router.refresh();
-      setRows((prev) => prev.map((r, i) => (i === index ? { ...r, saving: false } : r)));
+      toast.error(err instanceof Error ? err.message : "Could not save cause line. Try again.");
+      setRowSaving(index, false);
     }
   }
 
   function addRow() {
     if (disabled) return;
-    const cause = nextUnusedCause(usedCauses);
-    setRows((prev) => [...prev, { cause, committedCause: null, value: "", saving: false }]);
-    dirtyRef.current.push(false);
+    setRows((prev) => [...prev, { id: null, cause: BUDGET_CAUSES[0], label: "", value: "", saving: false }]);
+    dirtyAmountRef.current.push(false);
+    dirtyLabelRef.current.push(false);
   }
 
   function requestRemove(index: number) {
     if (disabled) return;
     const row = rows[index];
     if (!row) return;
-    if (row.committedCause === null) {
+    if (row.id === null) {
       // Never saved — drop it locally, nothing to confirm or delete server-side.
       doRemoveLocal(index);
       return;
@@ -269,7 +343,8 @@ export default function BudgetCauseEditor({
 
   function doRemoveLocal(index: number) {
     const next = rows.filter((_, i) => i !== index);
-    dirtyRef.current.splice(index, 1);
+    dirtyAmountRef.current.splice(index, 1);
+    dirtyLabelRef.current.splice(index, 1);
     if (next.length === 0) {
       // Only reachable when the removed row was the sole, never-committed
       // pre-fill row — a pure cancel, nothing was ever written.
@@ -281,17 +356,17 @@ export default function BudgetCauseEditor({
 
   async function doRemoveCommitted(index: number) {
     const row = rows[index];
-    if (!row || row.committedCause === null) return;
-    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, saving: true } : r)));
+    if (!row || row.id === null) return;
+    setRowSaving(index, true);
     try {
-      const res = await fetch("/api/admin/ledger/budgets/cause-lines", {
+      const res = await fetch(CAUSE_LINES_URL, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fundId, fiscalYear, categoryId, flow, cause: row.committedCause }),
+        body: JSON.stringify({ id: row.id }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to remove cause line.");
+        throw new Error(describeWriteError(data, "Failed to remove cause line."));
       }
       const data: { action: "line_deleted" | "parent_deleted"; categoryTotalCents?: number } =
         await res.json();
@@ -303,7 +378,8 @@ export default function BudgetCauseEditor({
         return;
       }
       const next = rows.filter((_, i) => i !== index);
-      dirtyRef.current.splice(index, 1);
+      dirtyAmountRef.current.splice(index, 1);
+      dirtyLabelRef.current.splice(index, 1);
       setRows(next);
       if (typeof data.categoryTotalCents === "number") {
         onTotalChange?.((data.categoryTotalCents / 100).toFixed(2));
@@ -311,7 +387,7 @@ export default function BudgetCauseEditor({
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not remove cause line. Try again.");
-      setRows((prev) => prev.map((r, i) => (i === index ? { ...r, saving: false } : r)));
+      setRowSaving(index, false);
     }
   }
 
@@ -341,72 +417,127 @@ export default function BudgetCauseEditor({
     }
   }
 
+  // Group rows by cause, iterated in canonical ALL_CAUSES order (not
+  // insertion order) so the grouping is stable across re-renders/reloads.
+  const rowsByCause = new Map<string, number[]>();
+  rows.forEach((row, index) => {
+    const bucket = rowsByCause.get(row.cause);
+    if (bucket) bucket.push(index);
+    else rowsByCause.set(row.cause, [index]);
+  });
+  const groupOrder = ALL_CAUSES.filter((c) => rowsByCause.has(c));
+  // Defensive: a cause value outside the canonical list (shouldn't happen —
+  // isValidBudgetCause gates every write) still renders, appended at the end,
+  // rather than silently disappearing.
+  for (const c of rowsByCause.keys()) {
+    if (!groupOrder.includes(c)) groupOrder.push(c);
+  }
+
   return (
-    <div className="space-y-2">
-      {rows.map((row, index) => {
-        const otherUsed = new Set(rows.filter((_, i) => i !== index).map((r) => r.cause));
-        const options = ALL_CAUSES.filter((c) => !otherUsed.has(c) || c === row.cause);
+    <div className="space-y-3">
+      <datalist id={datalistId}>
+        {labelOptions.map((l) => (
+          <option key={l} value={l} />
+        ))}
+      </datalist>
+
+      {groupOrder.map((cause) => {
+        const indices = rowsByCause.get(cause) ?? [];
+        const subtotalCents = sumBudgetCauseLines(
+          indices.map((i) => ({ amountCents: parseDollarsToCents(rows[i].value) })),
+        );
         return (
-          <div
-            key={index}
-            className="flex flex-col gap-2 rounded-lg bg-gray-50 p-2 sm:flex-row sm:items-center"
-          >
-            <select
-              value={row.cause}
-              onChange={(e) => void handleCauseChange(index, e.target.value)}
-              disabled={disabled || row.saving}
-              aria-label="Cause for this line item"
-              className="block w-full rounded border border-gray-300 py-1.5 px-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-60 sm:flex-1 min-h-[36px]"
-            >
-              {options.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1 sm:w-28">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">
-                  $
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={row.value}
-                  onChange={(e) => handleAmountChange(index, e.target.value)}
-                  onBlur={() => void commitAmount(index)}
-                  onKeyDown={(e) => handleKeyDown(e, index)}
-                  disabled={disabled || row.saving}
-                  className="block w-full rounded border border-gray-300 py-1 pl-6 pr-2 text-sm tabular-nums focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-60"
-                  placeholder="0.00"
-                  aria-label={`Amount for ${row.cause}`}
-                />
-              </div>
-              {!disabled && (
-                <button
-                  type="button"
-                  onClick={() => requestRemove(index)}
-                  title={`Remove ${row.cause}`}
-                  aria-label={`Remove ${row.cause} line`}
-                  className="inline-flex items-center justify-center rounded-lg p-2 text-gray-400 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] min-w-[44px] flex-shrink-0"
-                >
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth="1.5"
-                    stroke="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+          <div key={cause} className="rounded-lg bg-gray-50 p-2 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-gray-800">{cause}</p>
+              <p className="text-xs text-gray-500 tabular-nums">
+                Subtotal: <span className="font-medium text-gray-700">${(subtotalCents / 100).toFixed(2)}</span>
+              </p>
+            </div>
+            <div className="space-y-2 pl-3 border-l-2 border-gray-200">
+              {indices.map((index) => {
+                const row = rows[index];
+                return (
+                  <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    {row.id === null ? (
+                      <select
+                        value={row.cause}
+                        onChange={(e) => handlePendingCauseChange(index, e.target.value)}
+                        disabled={disabled || row.saving}
+                        aria-label="Cause for this line item"
+                        className="block w-full rounded border border-gray-300 py-1.5 px-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-60 sm:w-48 min-h-[36px]"
+                      >
+                        {ALL_CAUSES.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-sm text-gray-400 select-none sm:w-3" aria-hidden="true">
+                        &bull;
+                      </span>
+                    )}
+                    <input
+                      type="text"
+                      list={datalistId}
+                      value={row.label}
+                      onChange={(e) => handleLabelChange(index, e.target.value)}
+                      onBlur={() => void commitRow(index)}
+                      onKeyDown={(e) => handleKeyDown(e, index)}
+                      disabled={disabled || row.saving}
+                      maxLength={MAX_BUDGET_LINE_LABEL_LENGTH}
+                      placeholder="(generic)"
+                      aria-label={`Label for this ${cause} line`}
+                      className="block w-full rounded border border-gray-300 py-1.5 px-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-60 sm:flex-1 min-h-[36px]"
                     />
-                  </svg>
-                </button>
-              )}
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1 sm:w-28">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">
+                          $
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={row.value}
+                          onChange={(e) => handleAmountChange(index, e.target.value)}
+                          onBlur={() => void commitRow(index)}
+                          onKeyDown={(e) => handleKeyDown(e, index)}
+                          disabled={disabled || row.saving}
+                          className="block w-full rounded border border-gray-300 py-1 pl-6 pr-2 text-sm tabular-nums focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-60"
+                          placeholder="0.00"
+                          aria-label={`Amount for ${cause}${row.label ? ` (${row.label})` : ""}`}
+                        />
+                      </div>
+                      {!disabled && (
+                        <button
+                          type="button"
+                          onClick={() => requestRemove(index)}
+                          title={`Remove ${cause}${row.label ? ` (${row.label})` : ""} line`}
+                          aria-label={`Remove ${cause}${row.label ? ` (${row.label})` : ""} line`}
+                          className="inline-flex items-center justify-center rounded-lg p-2 text-gray-400 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] min-w-[44px] flex-shrink-0"
+                        >
+                          <svg
+                            className="h-4 w-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth="1.5"
+                            stroke="currentColor"
+                            aria-hidden="true"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                            />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
@@ -422,10 +553,9 @@ export default function BudgetCauseEditor({
             <button
               type="button"
               onClick={addRow}
-              disabled={usedCauses.size >= ALL_CAUSES.length}
-              className="text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-2 min-h-[44px]"
+              className="text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-2 min-h-[44px]"
             >
-              + Add cause
+              + Add line
             </button>
             {hasCommittedRows ? (
               <button
@@ -470,7 +600,7 @@ export default function BudgetCauseEditor({
         open={collapseConfirmOpen}
         onOpenChange={setCollapseConfirmOpen}
         title="Collapse to a single lump sum?"
-        description="This deletes the individual cause line items — the category's dollar total is kept as one lump-sum amount, but the per-cause detail is lost and can't be recovered. You can break it down by cause again later, but you'll need to re-enter each line."
+        description="This deletes the individual cause line items — the category's dollar total is kept as one lump-sum amount, but the per-cause detail (including every label) is lost and can't be recovered. You can break it down by cause again later, but you'll need to re-enter each line."
         confirmLabel="Collapse"
         destructive
         onConfirm={() => {

@@ -88,7 +88,7 @@ import {
   getFunds,
   computeSeedFromPriorYear,
   upsertBudgetLine,
-  upsertBudgetCauseLine,
+  upsertBudgetCauseLineForSeed,
   computeCauseSeedForCategory,
 } from "@/lib/ledger-queries";
 import { decideSeedWriteAction } from "@/lib/ledger";
@@ -373,7 +373,7 @@ export async function POST(request: NextRequest) {
                 continue;
               }
 
-              const causeWriteResult = await upsertBudgetCauseLine(
+              const causeWriteResult = await upsertBudgetCauseLineForSeed(
                 {
                   fundId: fundPreview.fund.id,
                   fiscalYear: targetFiscalYear,

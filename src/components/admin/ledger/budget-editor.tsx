@@ -5,7 +5,10 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { isCauseEligibleCategory, OTHER_COMMUNITY_SUPPORT_CAUSE } from "@/lib/ledger";
-import BudgetCauseEditor, { type ExitBreakdownReason } from "@/components/admin/ledger/budget-cause-editor";
+import BudgetCauseEditor, {
+  type BudgetCauseLine,
+  type ExitBreakdownReason,
+} from "@/components/admin/ledger/budget-cause-editor";
 
 interface BudgetLine {
   categoryId: string;
@@ -22,9 +25,11 @@ interface BudgetLine {
   /**
    * null = lump-sum/no breakdown; a non-empty array = this category is
    * already in cause-breakdown mode server-side. Optional/defaulted for the
-   * same reason as countsAsGiving.
+   * same reason as countsAsGiving. `id`/`label` widened by Labeled Cause
+   * Budget Lines (DECISION-047/048) — every server-sourced line now carries
+   * both.
    */
-  causeLines?: { cause: string; amountCents: number }[] | null;
+  causeLines?: BudgetCauseLine[] | null;
 }
 
 function parseDollarsToCents(raw: string | undefined): number {
@@ -66,6 +71,8 @@ interface BudgetEditorProps {
    * showRemoveControl regardless of lock state).
    */
   showRemoveControl?: boolean;
+  /** Prior labels used anywhere in this entity's cause lines — feeds BudgetCauseEditor's `<datalist>` autocomplete. */
+  labelOptions?: string[];
 }
 
 /**
@@ -82,6 +89,7 @@ export default function BudgetEditor({
   onInputChange,
   disabled = false,
   showRemoveControl = false,
+  labelOptions = [],
 }: BudgetEditorProps) {
   const router = useRouter();
   // Track per-line editing state: input value (dollars), saving flag
@@ -270,10 +278,17 @@ export default function BudgetEditor({
         const inBreakdown = override !== undefined ? override : serverBreakdown;
 
         if (inBreakdown) {
-          const initialLines =
+          const initialLines: BudgetCauseLine[] =
             line.causeLines && line.causeLines.length > 0
               ? line.causeLines
-              : [{ cause: OTHER_COMMUNITY_SUPPORT_CAUSE, amountCents: parseDollarsToCents(inputs[key]) }];
+              : [
+                  {
+                    id: null,
+                    cause: OTHER_COMMUNITY_SUPPORT_CAUSE,
+                    label: "",
+                    amountCents: parseDollarsToCents(inputs[key]),
+                  },
+                ];
           return (
             <div key={key} className="rounded-lg border border-gray-100 p-2">
               <div className="flex items-center gap-2 mb-2">
@@ -292,6 +307,7 @@ export default function BudgetEditor({
                 initialLines={initialLines}
                 pending={!(line.causeLines && line.causeLines.length > 0)}
                 disabled={disabled}
+                labelOptions={labelOptions}
                 onTotalChange={(value) => handleChange(key, value)}
                 onExitBreakdown={(reason) => exitBreakdown(line, reason)}
               />

@@ -9,6 +9,7 @@ import {
   getFunds,
   getFundReport,
   listLedgerFiscalYears,
+  getBudgetCauseLineLabels,
 } from "@/lib/ledger-queries";
 import { currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
@@ -82,9 +83,10 @@ export default async function AdminFundReportPage({
   const parsedFY = fyParam ? parseInt(fyParam, 10) : NaN;
   const fiscalYear = !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
 
-  const [report, fiscalYears] = await Promise.all([
+  const [report, fiscalYears, labelOptions] = await Promise.all([
     getFundReport(fund.id, fiscalYear),
     listLedgerFiscalYears(entity.id),
+    getBudgetCauseLineLabels(entity.id),
   ]);
 
   const basePath = `/admin/ledger/${fundSlug}/report`;
@@ -346,6 +348,7 @@ export default async function AdminFundReportPage({
                 fundId={fund.id}
                 fiscalYear={fiscalYear}
                 lines={budgetEditorLines}
+                labelOptions={labelOptions}
               />
             </div>
           )}

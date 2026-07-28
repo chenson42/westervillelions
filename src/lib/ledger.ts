@@ -50,6 +50,14 @@
  * flagging) backing the new ledger_budget_lines child-table write path in
  * ledger-queries.ts. See docs/work-log/2026-07-27-ledger-cause-budget-lines.md
  * Phase 3.
+ *
+ * Labeled Cause Budget Lines (2026-07-28 / DECISION-047/048): relaxes the
+ * above's "one line per cause" rule so a category can carry several
+ * distinctly-labeled lines under the same cause. MAX_BUDGET_LINE_LABEL_LENGTH
+ * and normalizeBudgetLineLabel() back the new `label` column; every write
+ * path in ledger-queries.ts moved from addressing a line by `(cause)` to
+ * addressing it by its own `id`. See
+ * docs/work-log/2026-07-28-ledger-labeled-cause-lines.md Phase 3.
  */
 
 // ---------------------------------------------------------------------------
@@ -600,6 +608,40 @@ export type BudgetCauseLineAmount = {
  */
 export function sumBudgetCauseLines(lines: BudgetCauseLineAmount[]): number {
   return lines.reduce((sum, line) => sum + line.amountCents, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Labeled Cause Budget Lines (DECISION-047/048)
+// ---------------------------------------------------------------------------
+
+/**
+ * Server-enforced max length (after trim) for a budget cause line's free-text
+ * label. Matches this codebase's other short free-text fields (e.g. `party`).
+ */
+export const MAX_BUDGET_LINE_LABEL_LENGTH = 120;
+
+/**
+ * Normalizes a cause line's free-text label: trims leading/trailing
+ * whitespace only. Null/undefined/all-whitespace input normalizes to `""`
+ * (the "generic" line for its cause) — this is what makes the DB's
+ * `NOT NULL DEFAULT ''` blank a real, self-colliding value rather than a
+ * distinct "nothing typed" state (DECISION-047 item 1): " WARM " and "WARM"
+ * normalize to the identical string and therefore collide under the
+ * `(budgetId, cause, label)` uniqueness constraint, but "WARM" and "Warm"
+ * remain deliberately distinct — this is free text, not a second controlled
+ * taxonomy, and case-folding would silently merge two treasurer-intended
+ * labels.
+ *
+ * Pure — never throws. The caller (createBudgetCauseLine /
+ * updateBudgetCauseLine in ledger-queries.ts) is responsible for rejecting a
+ * normalized result longer than MAX_BUDGET_LINE_LABEL_LENGTH with a 400,
+ * mirroring this module's established "pure helper, DB-touching caller
+ * enforces the error" split (validateBudgetLineInput / upsertBudgetLine is
+ * the precedent).
+ */
+export function normalizeBudgetLineLabel(raw: string | undefined | null): string {
+  if (raw === null || raw === undefined) return "";
+  return raw.trim();
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   getCategories,
   getBudgetApproval,
   computeSeedFromPriorYear,
+  getBudgetCauseLineLabels,
 } from "@/lib/ledger-queries";
 import { isBudgetLocked } from "@/lib/ledger";
 import { currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
@@ -129,7 +130,13 @@ export default async function AdminLedgerBudgetingPage({
   // Current target-FY budget rows per fund (for BudgetEditor's pre-fill and
   // the initial, pre-interaction balance readout) — same source
   // [fundSlug]/report/page.tsx already uses to build budgetEditorLines.
-  const targetReports = await Promise.all(funds.map((f) => getFundReport(f.id, targetFY)));
+  // labelOptions is fetched once per page load (entity-scoped, DECISION-048
+  // item 4), not once per fund — shared across every BudgetEditor instance
+  // this page renders.
+  const [targetReports, labelOptions] = await Promise.all([
+    Promise.all(funds.map((f) => getFundReport(f.id, targetFY))),
+    getBudgetCauseLineLabels(entity.id),
+  ]);
 
   const fundItems: FundSetupItem[] = await Promise.all(
     funds.map(async (fund, i) => {
@@ -232,6 +239,7 @@ export default async function AdminLedgerBudgetingPage({
         canApprove={canApprove}
         locked={locked}
         approval={approvalSummary}
+        labelOptions={labelOptions}
       />
     </div>
   );
