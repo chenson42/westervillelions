@@ -10,7 +10,6 @@ import {
   getFundReport,
   getCategories,
   getBudgetApproval,
-  computeSeedFromPriorYear,
   getBudgetCauseLineLabels,
 } from "@/lib/ledger-queries";
 import { isBudgetLocked } from "@/lib/ledger";
@@ -21,6 +20,8 @@ import GuidedBudgetSetup, {
   type FundSetupItem,
   type BudgetApprovalSummary,
 } from "@/components/admin/ledger/guided-budget-setup";
+import PrintBudgetButton from "@/components/admin/ledger/print-budget-button";
+import BudgetPrintWorksheet from "@/components/admin/ledger/budget-print-worksheet";
 
 export const dynamic = "force-dynamic";
 
@@ -126,27 +127,35 @@ export default async function AdminLedgerBudgetingPage({
       }
     : null;
 
-  // Preview: what would be seeded per fund, computed fresh from prior-FY
-  // actuals (or prior-FY budget fallback) via computeSeedFromPriorYear.
-  const preview = await computeSeedFromPriorYear(entity.id, targetFY);
-  const previewByFundId = new Map(preview.funds.map((f) => [f.fund.id, f]));
-
   // Current target-FY budget rows per fund (for BudgetEditor's pre-fill and
   // the initial, pre-interaction balance readout) — same source
   // [fundSlug]/report/page.tsx already uses to build budgetEditorLines.
-  // labelOptions is fetched once per page load (entity-scoped, DECISION-048
-  // item 4), not once per fund — shared across every BudgetEditor instance
-  // this page renders.
-  const [targetReports, labelOptions] = await Promise.all([
+  // priorReports: same query at priorFY, read-only reuse for the Increment 1
+  // reference columns (Prior Budget / Prior Actual) — no new aggregation,
+  // see docs/work-log/2026-07-28-budgeting-page-redesign.md Phase 1 grounding
+  // note 1. labelOptions is fetched once per page load (entity-scoped,
+  // DECISION-048 item 4), not once per fund — shared across every
+  // BudgetEditor instance this page renders.
+  const [targetReports, priorReports, labelOptions] = await Promise.all([
     Promise.all(funds.map((f) => getFundReport(f.id, targetFY))),
+    Promise.all(funds.map((f) => getFundReport(f.id, priorFY))),
     getBudgetCauseLineLabels(entity.id),
   ]);
 
   const fundItems: FundSetupItem[] = await Promise.all(
     funds.map(async (fund, i) => {
-      const fundPreview = previewByFundId.get(fund.id);
-      const seedableLines = fundPreview?.seedableLines ?? [];
       const report = targetReports[i];
+      const priorReport = priorReports[i];
+
+      // Keyed the same way BudgetEditor keys its rows (`${categoryId}_${flow}`)
+      // so lookups below are a single map hit, no per-row scan.
+      const priorByKey = new Map<string, { budgetCents: number | null; actualCents: number }>();
+      for (const l of priorReport?.income ?? []) {
+        priorByKey.set(`${l.categoryId}_income`, { budgetCents: l.budgetCents, actualCents: l.actualCents });
+      }
+      for (const l of priorReport?.expense ?? []) {
+        priorByKey.set(`${l.categoryId}_expense`, { budgetCents: l.budgetCents, actualCents: l.actualCents });
+      }
 
       const budgetEditorLines = [
         ...(report?.income ?? []).map((l) => ({
@@ -156,6 +165,8 @@ export default async function AdminLedgerBudgetingPage({
           budgetCents: l.budgetCents,
           countsAsGiving: l.countsAsGiving,
           causeLines: l.causeLines,
+          priorBudgetCents: priorByKey.get(`${l.categoryId}_income`)?.budgetCents ?? null,
+          priorActualCents: priorByKey.get(`${l.categoryId}_income`)?.actualCents ?? null,
         })),
         ...(report?.expense ?? []).map((l) => ({
           categoryId: l.categoryId,
@@ -164,14 +175,10 @@ export default async function AdminLedgerBudgetingPage({
           budgetCents: l.budgetCents,
           countsAsGiving: l.countsAsGiving,
           causeLines: l.causeLines,
+          priorBudgetCents: priorByKey.get(`${l.categoryId}_expense`)?.budgetCents ?? null,
+          priorActualCents: priorByKey.get(`${l.categoryId}_expense`)?.actualCents ?? null,
         })),
       ];
-
-      // deriveSeedLinesForFund emits either all "actual" or all "prior_budget"
-      // lines for a given fund — never mixed — so checking the first line's
-      // source tells us which branch fired fund-wide.
-      const seededFromBudgetFallback =
-        seedableLines.length > 0 && seedableLines.every((l) => l.source === "prior_budget");
 
       // "+ Add category" needs the fund's active-but-not-yet-a-line
       // categories per flow (Component Plan / Phase 1 empty-fund gap). In
@@ -205,10 +212,6 @@ export default async function AdminLedgerBudgetingPage({
         fundSlug: fund.slug,
         fundName: fund.name,
         fundKind: fund.kind,
-        seedableCount: fundPreview?.seedableCount ?? 0,
-        collisionCount: fundPreview?.collisionCount ?? 0,
-        seededFromBudgetFallback,
-        seedableLines,
         budgetEditorLines,
         unbudgetedCategories,
       };
@@ -217,33 +220,48 @@ export default async function AdminLedgerBudgetingPage({
 
   return (
     <div className="space-y-6">
-      <Breadcrumb entitySlug={resolvedSlug} />
-      <PageHeader entity={entity} priorFY={priorFY} targetFY={targetFY} />
+      <div className="print:hidden space-y-6">
+        <Breadcrumb entitySlug={resolvedSlug} />
+        <PageHeader entity={entity} priorFY={priorFY} targetFY={targetFY} />
 
-      {/* Entity switcher + target FY selector */}
-      <div className="flex flex-wrap items-center gap-4">
-        <EntitySwitcher
-          entities={entities}
-          activeSlug={resolvedSlug}
-          basePath="/admin/ledger/budgeting"
-        />
-        <FiscalYearSelector
-          fiscalYears={fyOptions}
-          currentFY={targetFY}
-          basePath="/admin/ledger/budgeting"
+        {/* Entity switcher + target FY selector + print button */}
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <EntitySwitcher
+              entities={entities}
+              activeSlug={resolvedSlug}
+              basePath="/admin/ledger/budgeting"
+            />
+            <FiscalYearSelector
+              fiscalYears={fyOptions}
+              currentFY={targetFY}
+              basePath="/admin/ledger/budgeting"
+            />
+          </div>
+          <PrintBudgetButton />
+        </div>
+
+        <GuidedBudgetSetup
+          entityId={entity.id}
+          targetFiscalYear={targetFY}
+          funds={fundItems}
+          canManage={canManage}
+          canApprove={canApprove}
+          locked={locked}
+          approval={approvalSummary}
+          labelOptions={labelOptions}
         />
       </div>
 
-      <GuidedBudgetSetup
-        entityId={entity.id}
-        priorFiscalYear={priorFY}
-        targetFiscalYear={targetFY}
+      {/* Print-only worksheet — hidden on screen, shown only by window.print().
+          Static data snapshot (not the live BudgetEditor inputs) per Phase 1
+          design: category, prior-year budget + actual reference columns, and
+          this year's saved budget value, with spare hand-annotation lines. */}
+      <BudgetPrintWorksheet
+        entityName={entity.shortName ?? entity.name}
+        priorFY={priorFY}
+        targetFY={targetFY}
         funds={fundItems}
-        canManage={canManage}
-        canApprove={canApprove}
-        locked={locked}
-        approval={approvalSummary}
-        labelOptions={labelOptions}
       />
     </div>
   );
@@ -274,12 +292,12 @@ function PageHeader({
   return (
     <div>
       <p className="uppercase tracking-widest text-sm text-lions-gold mb-1 font-semibold">
-        Treasury &middot; Guided Budgeting
+        Treasury &middot; Budgeting
       </p>
-      <h1 className="text-3xl font-bold text-gray-900">Guided Budget Setup</h1>
+      <h1 className="text-3xl font-bold text-gray-900">Budget Planning</h1>
       <p className="mt-1 text-sm text-gray-500">
-        {entity.shortName ?? entity.name} &bull; Seed {fiscalYearLabel(targetFY)} from{" "}
-        {fiscalYearLabel(priorFY)}
+        {entity.shortName ?? entity.name} &bull; {fiscalYearLabel(targetFY)} budget &bull; prior
+        year reference: {fiscalYearLabel(priorFY)}
       </p>
       <p className="mt-2 text-sm">
         <Link

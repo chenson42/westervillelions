@@ -30,13 +30,15 @@ export default async function AdminLayout({
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      {/* Sidebar */}
-      <AdminSidebar userFeatures={userFeatures} isAdmin={isAdmin} />
+    <div className="flex min-h-screen bg-gray-50 print:bg-white">
+      {/* Sidebar — hidden entirely when printing (e.g. the budget worksheet) */}
+      <div className="print:hidden">
+        <AdminSidebar userFeatures={userFeatures} isAdmin={isAdmin} />
+      </div>
 
       {/* Main content */}
-      <div className="flex-1 min-w-0 lg:pl-64">
-        <main className="p-6">{children}</main>
+      <div className="flex-1 min-w-0 lg:pl-64 print:pl-0">
+        <main className="p-6 print:p-0">{children}</main>
       </div>
     </div>
   );

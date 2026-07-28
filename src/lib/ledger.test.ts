@@ -40,6 +40,7 @@ import {
   deriveCauseSeedLines,
   normalizeBudgetLineLabel,
   MAX_BUDGET_LINE_LABEL_LENGTH,
+  formatBudgetReferenceCents,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
@@ -2148,6 +2149,29 @@ describe("validateRequiredTrimmedText", () => {
       expect(result.value).toHaveLength(500);
       expect(result.value).toBe("a".repeat(500));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatBudgetReferenceCents — Budgeting page prior-year reference columns
+// (2026-07-28-budgeting-page-redesign, Increment 1)
+// ---------------------------------------------------------------------------
+
+describe("formatBudgetReferenceCents", () => {
+  it("renders null as an em dash (no prior-year data)", () => {
+    expect(formatBudgetReferenceCents(null)).toBe("—");
+  });
+
+  it("renders zero as $0.00, not a dash (a deliberate $0 prior budget/actual)", () => {
+    expect(formatBudgetReferenceCents(0)).toBe("$0.00");
+  });
+
+  it("formats a positive cents value as dollars", () => {
+    expect(formatBudgetReferenceCents(123_456)).toBe("$1234.56");
+  });
+
+  it("formats a negative cents value with a leading minus sign", () => {
+    expect(formatBudgetReferenceCents(-5000)).toBe("-$50.00");
   });
 });
 

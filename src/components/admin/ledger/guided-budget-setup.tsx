@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import BudgetEditor from "@/components/admin/ledger/budget-editor";
 import type { BudgetCauseLine } from "@/components/admin/ledger/budget-cause-editor";
-import { computeBudgetBalanceStatus, type SeedProposedLine } from "@/lib/ledger";
+import { computeBudgetBalanceStatus } from "@/lib/ledger";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
@@ -72,60 +72,11 @@ function balanceWhyNote(fundKind: string): string | null {
   return null;
 }
 
-type SeedMode = "fill-empty" | "overwrite";
-
-interface SeedResponseCauseLine {
-  cause: string;
-  amountCents: number;
-  sourceFiscalYear: number;
-  action: "seeded" | "skipped_existing" | "overwritten";
-}
-
-interface SeedResponseLine {
-  categoryId: string;
-  categoryName: string;
-  flow: "income" | "expense";
-  amountCents: number;
-  source: "actual" | "prior_budget";
-  // "skipped_cause_breakdown" (Phase 4b-fix, qa Phase 5 FAIL 2026-07-27):
-  // this category already has a cause breakdown — its lump-sum amount is
-  // deliberately left untouched by the top-level seed loop rather than
-  // clobbered. Distinct from "skipped_existing" (an ordinary fill-empty
-  // collision) so the UI can give it accurate, non-misleading copy.
-  action: "seeded" | "skipped_existing" | "overwritten" | "skipped_cause_breakdown";
-  /** Present only when the request included seedCauseLines: true. */
-  causeLines?: SeedResponseCauseLine[];
-}
-
-interface SeedResponseFund {
-  fundId: string;
-  fundName: string;
-  seededCount: number;
-  skippedCount: number;
-  overwrittenCount: number;
-  /** Count of lines with action "skipped_cause_breakdown" — Phase 4b-fix. */
-  causeBreakdownSkippedCount: number;
-  lines: SeedResponseLine[];
-}
-
-interface SeedResponse {
-  priorFiscalYear: number;
-  targetFiscalYear: number;
-  funds: SeedResponseFund[];
-}
-
 export interface FundSetupItem {
   fundId: string;
   fundSlug: string;
   fundName: string;
   fundKind: string;
-  /** Total lines that could be seeded for this fund (deriveSeedLinesForFund output length). */
-  seedableCount: number;
-  /** Subset of seedableCount that already has a value for the target FY. */
-  collisionCount: number;
-  /** True when the fund had zero prior-FY actuals and the fallback to prior-FY budget fired. */
-  seededFromBudgetFallback: boolean;
-  seedableLines: SeedProposedLine[];
   budgetEditorLines: {
     categoryId: string;
     categoryName: string;
@@ -133,6 +84,11 @@ export interface FundSetupItem {
     budgetCents: number | null;
     countsAsGiving: boolean;
     causeLines: BudgetCauseLine[] | null;
+    /** Prior-FY reference columns (Increment 1, 2026-07-28-budgeting-page-redesign)
+     *  — read-only, sourced from a second getFundReport(fund.id, priorFY) call
+     *  in the page. null = no prior-year data (new category/entity), renders "—". */
+    priorBudgetCents: number | null;
+    priorActualCents: number | null;
   }[];
   /**
    * Active categories for this fund's kind, per flow, that don't already
@@ -158,10 +114,9 @@ export interface BudgetApprovalSummary {
 
 interface GuidedBudgetSetupProps {
   entityId: string;
-  priorFiscalYear: number;
   targetFiscalYear: number;
   funds: FundSetupItem[];
-  /** Gates add/remove line, create-category, seed/overwrite. */
+  /** Gates add/remove line and create-category. */
   canManage: boolean;
   /** Gates the Approve/Lock and Unlock panels — independent of canManage. */
   canApprove: boolean;
@@ -171,56 +126,6 @@ interface GuidedBudgetSetupProps {
   /** Prior labels used anywhere in this entity's cause lines — feeds every BudgetCauseEditor's `<datalist>` autocomplete. */
   labelOptions?: string[];
 }
-
-/**
- * Compact, scrollable review list of the proposed seed lines for one fund —
- * category, flow, proposed amount, and (when the category already has a
- * FY{target} value) what it would be overwritten from. Read-only preview;
- * the actual write only happens via the Seed/Overwrite actions.
- */
-function ProposedLinesList({
-  lines,
-  targetFiscalYear,
-}: {
-  lines: SeedProposedLine[];
-  targetFiscalYear: number;
-}) {
-  if (lines.length === 0) return null;
-  const income = lines.filter((l) => l.flow === "income");
-  const expense = lines.filter((l) => l.flow === "expense");
-
-  return (
-    <div className="max-h-56 overflow-y-auto rounded-lg border border-gray-100">
-      <ul className="divide-y divide-gray-100 text-sm">
-        {[...income, ...expense].map((line) => (
-          <li key={`${line.categoryId}_${line.flow}`} className="flex items-center justify-between gap-2 px-3 py-2">
-            <div className="min-w-0">
-              <span className="text-xs uppercase tracking-wide text-gray-400 mr-2">{line.flow}</span>
-              <span className="text-gray-700 truncate">{line.categoryName}</span>
-            </div>
-            <div className="text-right flex-shrink-0">
-              <span className="font-medium text-gray-900 tabular-nums">
-                {formatDollars(line.proposedAmountCents)}
-              </span>
-              {line.collision && (
-                <span className="block text-xs text-amber-700 tabular-nums">
-                  currently {formatDollars(line.existingTargetAmountCents ?? 0)} for FY{targetFiscalYear}
-                </span>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-type ConfirmTarget = {
-  scope: "all" | string; // "all" or a fundId
-  fundName?: string;
-  collisionCount: number;
-  seedableCount: number;
-};
 
 type AddCategoryMode = "existing" | "new";
 
@@ -236,26 +141,31 @@ interface AddCategoryState {
 }
 
 /**
- * Guided budgeting client island: entity-wide + per-fund "seed from last
- * year" actions (POST /api/admin/ledger/budgets/seed), the overwrite
- * ConfirmDialog, per-fund seed-preview + live balance readout, the existing
- * BudgetEditor reused for line-level adjustment (with an explicit remove
- * control), inline category creation, and the Approve/Lock + Unlock panels.
+ * Guided budgeting client island: the existing BudgetEditor reused for
+ * line-level adjustment (with an explicit remove control and read-only
+ * prior-year reference columns), inline category creation, and the
+ * Approve/Lock + Unlock panels.
+ *
+ * "Seed from last year" (POST /api/admin/ledger/budgets/seed) and its
+ * per-fund preview list were removed in Increment 1 of the 2026-07-28
+ * budgeting-page redesign — the treasurer types each year's number directly,
+ * using the new Prior Budget / Prior Actual reference columns instead of a
+ * bulk-copy action. See docs/work-log/2026-07-28-budgeting-page-redesign.md.
  *
  * Per architect Ruling 4 / tech-lead's design: computeBudgetBalanceStatus is
  * presentation-only and is recomputed here on every keystroke via
  * BudgetEditor's onInputChange — no write path is aware of its output,
  * including the Approve panel's balance summary (warns, never blocks).
  *
- * Two-tier visibility (Ruling 3): canManage gates add/remove/create-category/
- * seed; canApprove gates Approve/Unlock, independent of canManage. A locked
- * budget hides every canManage-only control regardless of role and renders
- * BudgetEditor disabled — server-side assertBudgetUnlocked() is the real
- * enforcement, this is defense-in-depth only.
+ * Two-tier visibility (Ruling 3): canManage gates add/remove line and
+ * create-category; canApprove gates Approve/Unlock, independent of
+ * canManage. A locked budget hides every canManage-only control regardless
+ * of role and renders BudgetEditor disabled — server-side
+ * assertBudgetUnlocked() is the real enforcement, this is defense-in-depth
+ * only.
  */
 export default function GuidedBudgetSetup({
   entityId,
-  priorFiscalYear,
   targetFiscalYear,
   funds,
   canManage,
@@ -265,23 +175,7 @@ export default function GuidedBudgetSetup({
   labelOptions = [],
 }: GuidedBudgetSetupProps) {
   const router = useRouter();
-  const [seedingScope, setSeedingScope] = useState<string | null>(null);
-  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
   const [addCategoryState, setAddCategoryState] = useState<AddCategoryState | null>(null);
-
-  // B-17 Increment A — optional cause-level detail alongside the usual
-  // category-total seed. Single toggle shared by both the entity-wide and
-  // per-fund seed actions (a rarely-used option; one checkbox keeps the
-  // guided-setup UI from doubling up on controls). Default off — seeding
-  // stays exactly as it was before this increment unless explicitly opted in.
-  const [seedCauseLines, setSeedCauseLines] = useState(false);
-  // Fill-empty mode normally seeds immediately with no confirmation (it never
-  // touches an existing value). With seedCauseLines on, that's no longer
-  // strictly true at cause granularity (api-developer's flag: fill-empty +
-  // seedCauseLines can still convert an existing lump-sum category into a
-  // breakdown, since cause-level collision is independent of the category-
-  // level skip) — gate that specific combination behind an explicit confirm.
-  const [causeSeedConfirm, setCauseSeedConfirm] = useState<{ fundIds?: string[] } | null>(null);
 
   const [boardMinute, setBoardMinute] = useState("");
   const [approving, setApproving] = useState(false);
@@ -327,111 +221,6 @@ export default function GuidedBudgetSetup({
       else if (key.endsWith("_expense")) expenseCents += cents;
     }
     return { incomeCents, expenseCents };
-  }
-
-  async function runSeed(mode: SeedMode, fundIds?: string[]) {
-    const scopeKey = fundIds && fundIds.length === 1 ? fundIds[0] : "all";
-    setSeedingScope(scopeKey);
-    try {
-      const res = await fetch("/api/admin/ledger/budgets/seed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entityId,
-          targetFiscalYear,
-          mode,
-          ...(fundIds && fundIds.length > 0 ? { fundIds } : {}),
-          ...(seedCauseLines ? { seedCauseLines: true } : {}),
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to seed budget.");
-      }
-      const data: SeedResponse = await res.json();
-      const summary = data.funds
-        .filter(
-          (f) =>
-            f.seededCount > 0 ||
-            f.overwrittenCount > 0 ||
-            f.skippedCount > 0 ||
-            f.causeBreakdownSkippedCount > 0,
-        )
-        .map((f) => {
-          const parts = [`${f.seededCount} seeded`];
-          if (f.overwrittenCount > 0) parts.push(`${f.overwrittenCount} overwritten`);
-          if (f.skippedCount > 0) parts.push(`${f.skippedCount} already set`);
-          // Phase 4b-fix (qa Phase 5 FAIL 2026-07-27): overwrite mode now
-          // skips — rather than silently clobbering — a category that's
-          // already broken down by cause. Surfaced here, not folded into
-          // "already set" above, since it's a different reason and would
-          // otherwise read as a routine fill-empty collision.
-          if (f.causeBreakdownSkippedCount > 0) {
-            parts.push(
-              `${f.causeBreakdownSkippedCount} categor${f.causeBreakdownSkippedCount === 1 ? "y" : "ies"} skipped — already broken down by cause`,
-            );
-          }
-          return `${f.fundName}: ${parts.join(", ")}`;
-        })
-        .join(" · ");
-
-      // Cause-line counts, when requested — separate sentence so the
-      // category-level summary above stays unchanged for every caller that
-      // doesn't opt into seedCauseLines.
-      let causeSummary = "";
-      if (seedCauseLines) {
-        let causeSeeded = 0;
-        let causeOverwritten = 0;
-        for (const fund of data.funds) {
-          for (const line of fund.lines) {
-            for (const cl of line.causeLines ?? []) {
-              if (cl.action === "seeded") causeSeeded++;
-              else if (cl.action === "overwritten") causeOverwritten++;
-            }
-          }
-        }
-        const causeParts: string[] = [];
-        if (causeSeeded > 0) causeParts.push(`${causeSeeded} cause line${causeSeeded === 1 ? "" : "s"} seeded`);
-        if (causeOverwritten > 0) {
-          causeParts.push(`${causeOverwritten} cause line${causeOverwritten === 1 ? "" : "s"} overwritten`);
-        }
-        causeSummary = causeParts.join(", ");
-      }
-
-      toast.success([summary, causeSummary].filter(Boolean).join(" · ") || "Budget seeded.");
-      router.refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not seed budget. Try again.");
-    } finally {
-      setSeedingScope(null);
-    }
-  }
-
-  function handleConfirmOverwrite() {
-    if (!confirmTarget) return;
-    const { scope } = confirmTarget;
-    setConfirmTarget(null);
-    void runSeed("overwrite", scope === "all" ? undefined : [scope]);
-  }
-
-  /**
-   * Fill-empty seeding normally runs immediately with no confirmation — it
-   * never overwrites an existing category-level value. With seedCauseLines
-   * on, route through an explicit confirm first (see causeSeedConfirm state
-   * above); otherwise preserve today's exact one-click behavior.
-   */
-  function startFillEmptySeed(fundIds?: string[]) {
-    if (seedCauseLines) {
-      setCauseSeedConfirm({ fundIds });
-      return;
-    }
-    void runSeed("fill-empty", fundIds);
-  }
-
-  function handleConfirmCauseSeed() {
-    const fundIds = causeSeedConfirm?.fundIds;
-    setCauseSeedConfirm(null);
-    void runSeed("fill-empty", fundIds);
   }
 
   function openAddCategory(fund: FundSetupItem, flow: "income" | "expense") {
@@ -567,11 +356,6 @@ export default function GuidedBudgetSetup({
     }
   }
 
-  const totalSeedable = funds.reduce((s, f) => s + f.seedableCount, 0);
-  const totalCollisions = funds.reduce((s, f) => s + f.collisionCount, 0);
-  const allEmpty = totalSeedable === 0;
-  const anySeeding = seedingScope !== null;
-  const priorLabel = `FY${priorFiscalYear}`;
   const targetLabel = `FY${targetFiscalYear}`;
   const editorDisabled = locked || !canManage;
 
@@ -709,71 +493,11 @@ export default function GuidedBudgetSetup({
         </div>
       )}
 
-      {/* Entity-wide actions — LEDGER_MANAGE only, hidden while locked */}
-      {canManage && !locked && (
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden p-5">
-          <h2 className="text-base font-semibold text-gray-900 mb-1">
-            Seed all funds from {priorLabel}
-          </h2>
-          <p className="text-sm text-gray-500 mb-4">
-            Copies last year&rsquo;s posted actuals (or last year&rsquo;s budget, for a fund with no
-            posted activity) into {targetLabel} for every category that doesn&rsquo;t
-            already have a value. Existing values are never touched unless you choose to overwrite.
-          </p>
-          <div className="flex items-start gap-2 mb-4">
-            <input
-              id="seed-cause-lines"
-              type="checkbox"
-              checked={seedCauseLines}
-              onChange={(e) => setSeedCauseLines(e.target.checked)}
-              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue"
-            />
-            <label htmlFor="seed-cause-lines" className="text-sm text-gray-700">
-              Also propose cause-level detail for giving categories, based on the last two fiscal
-              years of cause-tagged history.
-              <span className="block text-xs text-gray-400 mt-0.5">
-                Categories with no cause history yet keep their lump-sum amount only — add cause
-                lines manually below afterward.
-              </span>
-            </label>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => startFillEmptySeed()}
-              disabled={allEmpty || anySeeding}
-              className="bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-            >
-              {seedingScope === "all" ? "Seeding…" : "Seed all funds"}
-            </button>
-            {totalCollisions > 0 && (
-              <button
-                type="button"
-                onClick={() =>
-                  setConfirmTarget({ scope: "all", collisionCount: totalCollisions, seedableCount: totalSeedable })
-                }
-                disabled={anySeeding}
-                className="border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue/5 transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-              >
-                Overwrite all funds&hellip;
-              </button>
-            )}
-          </div>
-          {allEmpty && (
-            <p className="mt-3 text-sm text-gray-500">
-              No {priorLabel} activity or budget found for this entity — enter amounts
-              directly below.
-            </p>
-          )}
-        </div>
-      )}
-
       {/* Per-fund review cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {funds.map((fund) => {
           const sums = fundSums(fund.fundId);
           const balance = computeBudgetBalanceStatus(fund.fundKind, sums.incomeCents, sums.expenseCents);
-          const isSeedingThisFund = seedingScope === fund.fundId;
           const addingToThisFund = addCategoryState?.fundId === fund.fundId;
 
           return (
@@ -801,73 +525,6 @@ export default function GuidedBudgetSetup({
               </div>
 
               <div className="px-5 py-4 space-y-4">
-                {/* Seed preview summary — LEDGER_MANAGE only, hidden while locked */}
-                {canManage && !locked && (
-                  <>
-                    {fund.seedableCount === 0 ? (
-                      <div className="bg-gray-50 rounded-2xl p-4 text-sm text-gray-500">
-                        No {priorLabel} activity or budget to copy from &mdash; enter
-                        amounts directly below.
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-600 space-y-1">
-                        <p>
-                          <span className="font-medium text-gray-900">{fund.seedableCount}</span>{" "}
-                          categor{fund.seedableCount === 1 ? "y" : "ies"} would be seeded from{" "}
-                          {fund.seededFromBudgetFallback
-                            ? `${priorLabel}'s budget`
-                            : `${priorLabel} actuals`}
-                          {fund.collisionCount > 0 && (
-                            <>
-                              {" "}
-                              &mdash;{" "}
-                              <span className="font-medium text-gray-900">{fund.collisionCount}</span>{" "}
-                              already {fund.collisionCount === 1 ? "has" : "have"} a value for{" "}
-                              {targetLabel}.
-                            </>
-                          )}
-                        </p>
-                        {fund.seededFromBudgetFallback && (
-                          <p className="text-xs text-gray-400">
-                            {priorLabel} had no posted activity for this fund &mdash;
-                            seeding from last year&rsquo;s budget instead of actuals.
-                          </p>
-                        )}
-                        <ProposedLinesList lines={fund.seedableLines} targetFiscalYear={targetFiscalYear} />
-                      </div>
-                    )}
-
-                    {/* Per-fund seed / overwrite actions */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => startFillEmptySeed([fund.fundId])}
-                        disabled={fund.seedableCount === 0 || anySeeding}
-                        className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-                      >
-                        {isSeedingThisFund ? "Seeding…" : "Seed this fund"}
-                      </button>
-                      {fund.collisionCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConfirmTarget({
-                              scope: fund.fundId,
-                              fundName: fund.fundName,
-                              collisionCount: fund.collisionCount,
-                              seedableCount: fund.seedableCount,
-                            })
-                          }
-                          disabled={anySeeding}
-                          className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-2 py-2 min-h-[44px]"
-                        >
-                          Overwrite this fund&hellip;
-                        </button>
-                      )}
-                    </div>
-                  </>
-                )}
-
                 {/* Line-level adjustment — rendered whenever there's something to
                     show (has lines) OR the viewer can add the fund's first one.
                     Fixes the empty-fund gap: a brand-new fund with zero
@@ -1053,37 +710,6 @@ export default function GuidedBudgetSetup({
           );
         })}
       </div>
-
-      <ConfirmDialog
-        open={confirmTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirmTarget(null);
-        }}
-        title={confirmTarget?.scope === "all" ? "Overwrite all funds?" : `Overwrite ${confirmTarget?.fundName}?`}
-        description={
-          confirmTarget
-            ? `${confirmTarget.collisionCount} of ${confirmTarget.seedableCount} categories already have a budget for FY${targetFiscalYear}. Overwriting will replace those values with FY${priorFiscalYear} figures. Categories without an existing value are unaffected either way. This cannot be undone.${
-                seedCauseLines
-                  ? " This will also overwrite cause-level detail for giving categories where cause history exists."
-                  : ""
-              }`
-            : ""
-        }
-        confirmLabel="Overwrite"
-        destructive
-        onConfirm={handleConfirmOverwrite}
-      />
-
-      <ConfirmDialog
-        open={causeSeedConfirm !== null}
-        onOpenChange={(open) => {
-          if (!open) setCauseSeedConfirm(null);
-        }}
-        title="Seed with cause-level detail?"
-        description="This proposes cause-tagged line items for giving categories based on cause history, in addition to the usual category totals. If a category already has a lump-sum amount, this can still convert it into a per-cause breakdown — the total won't change, but it will now show as individual cause lines instead of one amount."
-        confirmLabel="Seed"
-        onConfirm={handleConfirmCauseSeed}
-      />
 
       <ConfirmDialog
         open={approveConfirmOpen}

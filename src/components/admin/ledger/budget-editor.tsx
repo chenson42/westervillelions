@@ -4,7 +4,11 @@ import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { isCauseEligibleCategory, OTHER_COMMUNITY_SUPPORT_CAUSE } from "@/lib/ledger";
+import {
+  isCauseEligibleCategory,
+  OTHER_COMMUNITY_SUPPORT_CAUSE,
+  formatBudgetReferenceCents,
+} from "@/lib/ledger";
 import BudgetCauseEditor, {
   type BudgetCauseLine,
   type ExitBreakdownReason,
@@ -30,6 +34,28 @@ interface BudgetLine {
    * both.
    */
   causeLines?: BudgetCauseLine[] | null;
+  /**
+   * Read-only prior-year reference columns (2026-07-28-budgeting-page-
+   * redesign, Increment 1) — this category/flow's budget and actual from
+   * fiscalYear - 1, sourced by the page via a second getFundReport() call.
+   * null = no prior-year data (new category or new entity); renders "—".
+   * Optional/defaulted so older callers that haven't threaded this through
+   * ([fundSlug]/report/page.tsx) don't break the type.
+   */
+  priorBudgetCents?: number | null;
+  priorActualCents?: number | null;
+}
+
+/** Read-only reference cell — one of Prior Budget / Prior Actual. */
+function ReferenceValue({ label, cents }: { label: string; cents: number | null | undefined }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wide text-gray-400 truncate">{label}</p>
+      <p className="text-sm tabular-nums text-gray-500 truncate">
+        {formatBudgetReferenceCents(cents ?? null)}
+      </p>
+    </div>
+  );
 }
 
 function parseDollarsToCents(raw: string | undefined): number {
@@ -316,13 +342,24 @@ export default function BudgetEditor({
         }
 
         return (
-          <div key={key} className="space-y-0.5">
+          <div key={key} className="space-y-1 py-1 border-b border-gray-50 last:border-0">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 w-20 uppercase tracking-wide">
+              <span className="text-xs text-gray-500 w-20 uppercase tracking-wide flex-shrink-0">
                 {line.flow}
               </span>
               <span className="text-sm text-gray-700 flex-1 truncate">{line.categoryName}</span>
-              <div className="relative w-28">
+            </div>
+            {/* Prior-year reference columns (read-only) + this year's input.
+                Mobile-first: reference cells share a 2-col grid that shrinks
+                with the viewport instead of forcing horizontal scroll at
+                360px; sm:pl-20 aligns the group under the category name to
+                match the "Break down by cause" row below. */}
+            <div className="flex items-center gap-2 sm:pl-20">
+              <div className="grid grid-cols-2 gap-2 flex-1 min-w-0 sm:flex-none sm:w-52">
+                <ReferenceValue label="Prior Budget" cents={line.priorBudgetCents} />
+                <ReferenceValue label="Prior Actual" cents={line.priorActualCents} />
+              </div>
+              <div className="relative w-28 flex-shrink-0">
                 <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">
                   $
                 </span>

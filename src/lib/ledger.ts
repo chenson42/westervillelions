@@ -1584,3 +1584,23 @@ export function validateRequiredTrimmedText(
   }
   return { ok: true, value: trimmed.slice(0, maxLen) };
 }
+
+// ---------------------------------------------------------------------------
+// formatBudgetReferenceCents — Budgeting page prior-year reference columns
+// (2026-07-28-budgeting-page-redesign, Increment 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Formats a nullable cents value for the budgeting page's read-only
+ * prior-year reference columns (Prior Budget / Prior Actual). `null` means
+ * "no data" — a brand-new entity, a category that didn't exist last fiscal
+ * year, or a category with no budget row last year — and renders as the same
+ * "—" convention getFundReport already uses elsewhere, not a blank cell that
+ * looks broken. Pure and exported so it's unit-testable without mounting
+ * BudgetEditor.
+ */
+export function formatBudgetReferenceCents(cents: number | null): string {
+  if (cents === null) return "—";
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
+}
