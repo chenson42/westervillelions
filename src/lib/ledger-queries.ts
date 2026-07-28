@@ -94,6 +94,36 @@ function fyBounds(fy: number): { start: string; end: string } {
   };
 }
 
+/**
+ * Adds one calendar day to a 'YYYY-MM-DD' string via plain integer
+ * arithmetic — no `Date` object, no timezone-shift surface, mirroring
+ * fyBounds()'s own plain-string style. Used by getFundReport()'s `asOfDate`
+ * bound (Monthly Financial Statement, 2026-07-28): `date` columns in this
+ * schema are already plain strings (not `timestamp`), so unlike
+ * `reconciledAt` there is no naive-timestamp-as-UTC risk here at all — this
+ * helper just needs to get calendar rollover right.
+ */
+function addOneDayToYMD(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const daysInMonth = [31, isLeapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  let nextY = y;
+  let nextM = m;
+  let nextD = d + 1;
+  if (nextD > daysInMonth[m - 1]) {
+    nextD = 1;
+    nextM = m + 1;
+    if (nextM > 12) {
+      nextM = 1;
+      nextY = y + 1;
+    }
+  }
+  return `${nextY}-${String(nextM).padStart(2, "0")}-${String(nextD).padStart(2, "0")}`;
+}
+
+function isLeapYear(y: number): boolean {
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
+
 // ---------------------------------------------------------------------------
 // Shared return types
 // ---------------------------------------------------------------------------
@@ -403,10 +433,25 @@ export async function listTransactions(
  *
  * A category with only a budget row (no actuals yet) gets actualCents = 0.
  * A category with only actuals (no budget row) gets budgetCents = null → "—".
+ *
+ * `opts.asOfDate` ('YYYY-MM-DD', inclusive) bounds the FYTD-actuals /
+ * rollforward / budget-variance math at a month-end instead of "now" —
+ * added for the Monthly Financial Statement (2026-07-28, DECISION-049).
+ * This is the ONLY change `asOfDate` makes: the step-2 transactions query's
+ * exclusive upper bound becomes `min(fyEnd, asOfDate + 1 day)` instead of
+ * `fyEnd`. Every other step (categories, budgets, pre-FY rollforward,
+ * cause-line batching, actuals grouping, variance) is untouched — this
+ * function is the single source of truth for FYTD/budget/book-balance
+ * figures precisely so the member-facing monthly statement can never
+ * silently drift from what the admin Ledger shows. Omitting `opts`/
+ * `asOfDate` reproduces today's behavior byte-for-byte (`upperBound` equals
+ * `end`, identical to the pre-existing query) — every existing call site
+ * (the admin fund-report page, `BudgetEditor`) is unaffected.
  */
 export async function getFundReport(
   fundId: string,
   fiscalYear: number,
+  opts?: { asOfDate?: string },
 ): Promise<FundReport | null> {
   // 1. Fetch the fund row
   const fundRows = await db
@@ -418,8 +463,11 @@ export async function getFundReport(
   if (!fund) return null;
 
   const { start, end } = fyBounds(fiscalYear);
+  const asOfUpperBound = opts?.asOfDate ? addOneDayToYMD(opts.asOfDate) : end;
+  const upperBound = asOfUpperBound < end ? asOfUpperBound : end;
 
-  // 2. Fetch transactions for this fund+FY
+  // 2. Fetch transactions for this fund+FY (bounded at asOfDate's month-end
+  // when provided — see the `asOfDate` doc comment above)
   const txns = await db
     .select()
     .from(ledgerTransactions)
@@ -427,7 +475,7 @@ export async function getFundReport(
       and(
         eq(ledgerTransactions.fundId, fundId),
         gte(ledgerTransactions.txnDate, start),
-        lt(ledgerTransactions.txnDate, end),
+        lt(ledgerTransactions.txnDate, upperBound),
       ),
     );
 

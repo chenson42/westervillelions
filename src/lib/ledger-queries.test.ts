@@ -40,14 +40,48 @@
  *      carry-forward; every case below calls the new function names/signatures.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 // ledger-queries.ts imports the real `db` (src/lib/db), which throws at import
 // time when DATABASE_URL/DB_URL is unset (e.g. a bare `pnpm test` or CI without
-// .env.local). These tests never touch the real db export — every case drives a
-// mock transaction client passed in as `tx` — so we mock the module to keep the
-// suite hermetic, mirroring src/lib/members.test.ts.
-vi.mock("@/lib/db", () => ({ db: {} }));
+// .env.local). We mock the module to keep the suite hermetic, mirroring
+// src/lib/members.test.ts.
+//
+// Two different consumption patterns share this one mock:
+//   - Every existing describe block below drives its own `tx` mock (see
+//     makeMockTx) and never touches the module-level `db` export at all.
+//   - The `getFundReport asOfDate bounding` block (bottom of this file, added
+//     for the Monthly Financial Statement feature, 2026-07-28) calls
+//     getFundReport() directly, which uses the module-level `db` —
+//     mockDbState's FIFO queue answers those calls in call order, and
+//     `wheres` captures each select's raw WHERE condition so the asOfDate
+//     bound itself can be asserted (via PgDialect().sqlToQuery()), not just
+//     downstream arithmetic.
+const { mockDbState } = vi.hoisted(() => ({
+  mockDbState: { queue: [] as unknown[][], wheres: [] as unknown[] },
+}));
+
+vi.mock("@/lib/db", () => {
+  function chain(): unknown {
+    const obj: Record<string, unknown> = {
+      from: () => obj,
+      where: (cond: unknown) => {
+        mockDbState.wheres.push(cond);
+        return obj;
+      },
+      orderBy: () => obj,
+      groupBy: () => obj,
+      limit: () => obj,
+      innerJoin: () => obj,
+      leftJoin: () => obj,
+      then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+        Promise.resolve(mockDbState.queue.shift() ?? []).then(resolve, reject),
+    };
+    return obj;
+  }
+  return { db: { select: () => chain() } };
+});
 
 import {
   createBudgetCauseLine,
@@ -57,6 +91,7 @@ import {
   collapseBudgetCauseLines,
   computeCauseSeedForCategory,
   upsertBudgetLine,
+  getFundReport,
 } from "./ledger-queries";
 import { ledgerFunds, ledgerCategories, ledgerBudgets, ledgerBudgetLines } from "./db/schema";
 
@@ -922,5 +957,82 @@ describe("upsertBudgetLine — cause-line-aware guard (regression fix)", () => {
     expect(result).toEqual({ ok: true, action: "upserted", id: "budget-1" });
     expect(insertCalls).toHaveLength(1);
     expect(insertCalls[0].table).toBe(ledgerBudgets);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getFundReport asOfDate bounding — Monthly Financial Statement (2026-07-28),
+// Phase 3 design's "Unit Tests to Write in Phase 4" item 1. The other 7 named
+// tests live in src/lib/financial-report-queries.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("getFundReport asOfDate bounding", () => {
+  const dialect = new PgDialect();
+
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  const ASOF_FUND_ROW = { id: "fund-1", entityId: "entity-1", kind: "charitable", openingBalanceCents: 0 };
+
+  /** Queues the 5 canned select() results getFundReport() consumes in order
+   *  (fund lookup, txns, categories, budgets, pre-FY rollforward) — no
+   *  cause-tagged budget lines or orphaned actual-only categories in any
+   *  scenario below, so both conditional queries stay skipped. */
+  function queueEmptyFundReport(fund: unknown) {
+    mockDbState.queue.push([fund], [], [], [], []);
+  }
+
+  it("bounds the actuals query's upper bound to asOfDate+1 day (inclusive of asOfDate itself) when asOfDate falls inside the fiscal year", async () => {
+    queueEmptyFundReport(ASOF_FUND_ROW);
+
+    await getFundReport("fund-1", 2026, { asOfDate: "2026-12-15" });
+
+    // wheres[0] = fund lookup; wheres[1] = the txns query this feature bounds.
+    const { params } = dialect.sqlToQuery(mockDbState.wheres[1] as never);
+    expect(params).toEqual(["fund-1", "2026-07-01", "2026-12-16"]);
+  });
+
+  it("clamps the bound to the fiscal-year end when asOfDate falls after it (defensive — not expected from getMonthlyStatement's own callers)", async () => {
+    queueEmptyFundReport(ASOF_FUND_ROW);
+
+    await getFundReport("fund-1", 2026, { asOfDate: "2027-08-15" });
+
+    const { params } = dialect.sqlToQuery(mockDbState.wheres[1] as never);
+    expect(params).toEqual(["fund-1", "2026-07-01", "2027-07-01"]);
+  });
+
+  it("uses the fiscal-year end verbatim when asOfDate is omitted — byte-identical to today's behavior for every existing call site", async () => {
+    queueEmptyFundReport(ASOF_FUND_ROW);
+
+    await getFundReport("fund-1", 2026);
+
+    const { params } = dialect.sqlToQuery(mockDbState.wheres[1] as never);
+    expect(params).toEqual(["fund-1", "2026-07-01", "2027-07-01"]);
+  });
+
+  it("includes a transaction dated exactly on asOfDate and (by the bound proven above) excludes anything after it — arithmetic over the correctly-bounded row set", async () => {
+    mockDbState.queue.push(
+      [{ ...ASOF_FUND_ROW, openingBalanceCents: 10_000 }],
+      [
+        {
+          id: "t1",
+          categoryId: "cat-1",
+          flow: "income",
+          amountCents: 5_000,
+          status: "posted",
+          txnDate: "2026-06-15", // exactly asOfDate — must be included
+        },
+      ],
+      [{ id: "cat-1", name: "Dues", flow: "income", countsAsGiving: true }],
+      [],
+      [],
+    );
+
+    const report = await getFundReport("fund-1", 2025, { asOfDate: "2026-06-15" });
+
+    expect(report?.totalIncomeCents).toBe(5_000);
+    expect(report?.endingCents).toBe(15_000);
   });
 });

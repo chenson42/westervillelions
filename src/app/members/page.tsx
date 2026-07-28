@@ -174,6 +174,13 @@ export default async function MembersPage() {
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Our Impact</h3>
             <p className="text-gray-700">See how the Lions Club serves our community</p>
           </a>
+          <a
+            href="/members/financial-reports"
+            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+          >
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Financial Statements</h3>
+            <p className="text-gray-700">View the club&rsquo;s monthly Statement of Financial Condition</p>
+          </a>
         </div>
 
         {birthdaysThisMonth.length > 0 && (
