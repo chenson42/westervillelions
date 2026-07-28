@@ -220,18 +220,27 @@ WHERE e.slug = 'foundation'
     SELECT 1 FROM ledger_funds f WHERE f.entity_id = e.id AND f.slug = 'charitable'
   );
 
-INSERT INTO ledger_funds (entity_id, slug, name, kind, opening_balance_cents)
-SELECT e.id, 'scholarship', 'Scholarship Fund', 'scholarship', 0
-FROM ledger_entities e
-WHERE e.slug = 'foundation'
-  AND NOT EXISTS (
-    SELECT 1 FROM ledger_funds f WHERE f.entity_id = e.id AND f.slug = 'scholarship'
-  );
+-- NOTE (2026-07-28, docs/work-log/2026-07-28-remove-empty-scholarship-fund.md):
+-- The Foundation "Scholarship Fund" seed below was removed. It shipped in
+-- v1.20.0 as an anticipated segregated fund, but the club has always run
+-- scholarships out of the Charitable fund's "Scholarships" category, so the
+-- fund sat empty (0 transactions, 0 budgets) from inception. Treasurer
+-- approved removing the empty fund for cleanliness (reversible — see
+-- 0065_remove_empty_scholarship_fund.sql, which drops the fund + its
+-- scholarship-kind categories on existing installs where they're still
+-- empty). Do NOT re-add this INSERT — a fresh install must not create the
+-- fund at all, matching what 0065 leaves behind on existing installs. The
+-- 'scholarship' fund KIND remains valid elsewhere in schema/logic; only this
+-- seed row is gone.
 
 -- ─── 6. Seed: categories (from transparency doc §8) ──────────────────────────
 -- Categories are scoped per entity.  Club gets administrative + activity categories.
--- Foundation gets charitable + scholarship categories.
--- Scholarship fund reuses charitable category names (per spec).
+-- Foundation gets charitable categories.
+-- (Scholarship-kind categories were removed alongside the fund above — see
+-- the 2026-07-28 note. The club runs scholarships from a "Scholarships"
+-- category under the Charitable fund's fund_kind='charitable' expense
+-- categories — added via the admin category-management UI, not part of this
+-- file's static seed VALUES list below, and left untouched by this change.)
 
 -- ── Club: Administrative income
 INSERT INTO ledger_categories (entity_id, fund_kind, flow, name, sort_order)
@@ -332,32 +341,11 @@ WHERE e.slug = 'foundation'
     WHERE c.entity_id = e.id AND c.fund_kind = 'charitable' AND c.flow = 'expense' AND c.name = cat.name
   );
 
--- ── Foundation: Scholarship income
-INSERT INTO ledger_categories (entity_id, fund_kind, flow, name, sort_order)
-SELECT e.id, 'scholarship', 'income', cat.name, cat.sort_order
-FROM ledger_entities e
-CROSS JOIN (VALUES
-  ('Public donations', 10),
-  ('Grants received',  20)
-) AS cat(name, sort_order)
-WHERE e.slug = 'foundation'
-  AND NOT EXISTS (
-    SELECT 1 FROM ledger_categories c
-    WHERE c.entity_id = e.id AND c.fund_kind = 'scholarship' AND c.flow = 'income' AND c.name = cat.name
-  );
-
--- ── Foundation: Scholarship expense
-INSERT INTO ledger_categories (entity_id, fund_kind, flow, name, sort_order)
-SELECT e.id, 'scholarship', 'expense', cat.name, cat.sort_order
-FROM ledger_entities e
-CROSS JOIN (VALUES
-  ('Scholarship award', 10)
-) AS cat(name, sort_order)
-WHERE e.slug = 'foundation'
-  AND NOT EXISTS (
-    SELECT 1 FROM ledger_categories c
-    WHERE c.entity_id = e.id AND c.fund_kind = 'scholarship' AND c.flow = 'expense' AND c.name = cat.name
-  );
+-- NOTE (2026-07-28): "Foundation: Scholarship income" and "Foundation:
+-- Scholarship expense" category seed blocks (fund_kind='scholarship',
+-- 'Public donations'/'Grants received'/'Scholarship award') were removed
+-- along with the fund above. See the 2026-07-28 note near the fund seed and
+-- 0065_remove_empty_scholarship_fund.sql. Do NOT re-add.
 
 -- ─── 7. Seed: settings singleton ─────────────────────────────────────────────
 
