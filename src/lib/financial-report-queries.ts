@@ -286,27 +286,53 @@ function hasMonthElapsed(monthEnd: string, now: Date = new Date()): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * True iff a row is an outstanding (uncashed) check — the app's ONE
+ * definition, matching getDashboard()'s uncashedChecks predicate in
+ * ledger-queries.ts exactly (`paymentMethod='check' AND flow='expense'`,
+ * both already narrowed to status='posted' AND reconciled=false by the
+ * caller's SQL WHERE clause): a check the club WROTE that the bank hasn't
+ * cleared yet. Deliberately keyed on `flow='expense'`, not merely
+ * `paymentMethod='check'` alone — a dues payment RECEIVED by paper check
+ * (`paymentMethod='check', flow='income'`) is a genuinely-unreconciled
+ * deposit, not an outstanding-check carve-out candidate, and must keep
+ * gating. See docs/work-log/2026-07-28-report-gate-outstanding-checks.md.
+ */
+function isOutstandingCheckRow(r: { paymentMethod: string | null; flow: string }): boolean {
+  return r.paymentMethod === "check" && r.flow === "expense";
+}
+
+/**
  * Per-entity reconciliation gate, scoped to member-exposed funds only
  * (locked Q1 answer): a month gates (is NOT ready) when EITHER:
  *   1. it hasn't fully elapsed yet (hasMonthElapsed() is false — covers the
  *      current calendar month and any future month, regardless of backlog
  *      state; see hasMonthElapsed()'s doc comment for the bug this fixes), OR
  *   2. a posted, unreconciled transaction exists, dated on/before `monthEnd`,
- *      in a fund whose kind is in MEMBER_EXPOSED_FUND_KINDS for this entity.
+ *      in a fund whose kind is in MEMBER_EXPOSED_FUND_KINDS for this entity —
+ *      EXCLUDING outstanding (uncashed) checks (isOutstandingCheckRow()
+ *      above). A legitimately-outstanding check the treasurer has already
+ *      written and the report already footnotes (bookVsCashDivergenceCents,
+ *      hasUncashedCheck per line) is not a "books aren't done" signal, and
+ *      letting it gate cascaded to block every later month too — see
+ *      docs/work-log/2026-07-28-report-gate-outstanding-checks.md for the
+ *      prod repro (Foundation/Charitable stuck at Feb 2026 solely because of
+ *      two outstanding checks dated 2026-03-07).
  *
  * Condition 2 reuses getOverview()'s unreconciledPriorMonth predicate
- * verbatim (status='posted' AND reconciled=false AND txnDate <= boundary),
- * just generalized from "before this calendar month" to an arbitrary
- * boundary, and scoped to member-exposed funds so a stale unreconciled
- * Activity/Scholarship transaction never blocks the Administrative/
- * Charitable statement from publishing.
+ * (status='posted' AND reconciled=false AND txnDate <= boundary), generalized
+ * from "before this calendar month" to an arbitrary boundary, scoped to
+ * member-exposed funds so a stale unreconciled Activity/Scholarship
+ * transaction never blocks the Administrative/Charitable statement from
+ * publishing, and now also excluding true outstanding checks so they no
+ * longer gate either. A check+income row (dues paid by paper check) is NOT
+ * excluded — it's a genuinely-unreconciled deposit and must still gate.
  *
- * The entity/status/reconciled narrowing happens in SQL; the fund-kind and
- * date-threshold check happens in JS (mirroring getOverview()'s own
- * unreconciledPriorMonth, which filters its date threshold in JS over an
- * already-fetched row set) — kept this way deliberately so the predicate is
- * directly unit-testable against canned rows without needing to introspect
- * generated SQL.
+ * The entity/status/reconciled narrowing happens in SQL; the fund-kind,
+ * date-threshold, and outstanding-check check happen in JS (mirroring
+ * getOverview()'s own unreconciledPriorMonth, which filters its date
+ * threshold in JS over an already-fetched row set) — kept this way
+ * deliberately so the predicate is directly unit-testable against canned
+ * rows without needing to introspect generated SQL.
  */
 export async function isMonthGatedForEntity(
   entityId: string,
@@ -320,6 +346,8 @@ export async function isMonthGatedForEntity(
     .select({
       txnDate: ledgerTransactions.txnDate,
       fundKind: ledgerFunds.kind,
+      paymentMethod: ledgerTransactions.paymentMethod,
+      flow: ledgerTransactions.flow,
     })
     .from(ledgerTransactions)
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
@@ -331,7 +359,10 @@ export async function isMonthGatedForEntity(
       ),
     );
 
-  return rows.some((r) => isMemberExposedKind(r.fundKind) && r.txnDate <= monthEnd);
+  return rows.some(
+    (r) =>
+      isMemberExposedKind(r.fundKind) && r.txnDate <= monthEnd && !isOutstandingCheckRow(r),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -492,12 +523,25 @@ export async function computeUncashedCheckCategoryIds(
  * isMonthGatedForEntity() itself (which also carries the hasMonthElapsed()
  * fix) before being returned, so `null` is reachable again whenever the
  * candidate turns out not to be genuinely open.
+ *
+ * blockingDates below excludes outstanding (uncashed) checks via
+ * isOutstandingCheckRow() — same carve-out as isMonthGatedForEntity() — so
+ * this candidate computation doesn't independently reintroduce the
+ * cascading-block bug. Without this, the final re-check against
+ * isMonthGatedForEntity() would correctly clear later months, but the
+ * CANDIDATE itself would never be computed past "the month before the
+ * earliest outstanding check," permanently truncating the picker (the prod
+ * repro: Foundation/Charitable stuck offering only through Feb 2026 because
+ * of two outstanding checks dated 2026-03-07, even though isMonthGatedForEntity()
+ * alone would clear every month through June).
  */
 export async function getLatestOpenMonthForEntity(entityId: string): Promise<string | null> {
   const rows = await db
     .select({
       txnDate: ledgerTransactions.txnDate,
       fundKind: ledgerFunds.kind,
+      paymentMethod: ledgerTransactions.paymentMethod,
+      flow: ledgerTransactions.flow,
     })
     .from(ledgerTransactions)
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
@@ -514,7 +558,7 @@ export async function getLatestOpenMonthForEntity(entityId: string): Promise<str
   const ceilingMonth = priorMonthKey(currentMonthKey);
 
   const blockingDates = rows
-    .filter((r) => isMemberExposedKind(r.fundKind))
+    .filter((r) => isMemberExposedKind(r.fundKind) && !isOutstandingCheckRow(r))
     .map((r) => r.txnDate);
 
   let candidate: string;

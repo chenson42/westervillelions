@@ -224,6 +224,50 @@ describe("isMonthGatedForEntity", () => {
 
     vi.useRealTimers();
   });
+
+  // -------------------------------------------------------------------------
+  // Outstanding-check carve-out (2026-07-28 bug fix —
+  // docs/work-log/2026-07-28-report-gate-outstanding-checks.md). Prod repro:
+  // Foundation/Charitable's picker stopped at Feb 2026 solely because of two
+  // outstanding checks dated 2026-03-07, even though those months' books were
+  // otherwise correct and the report already footnotes uncashed checks.
+  // -------------------------------------------------------------------------
+
+  it("does NOT gate on an unreconciled OUTSTANDING CHECK (payment_method='check', flow='expense') — the app's one uncashed-check definition, matching getDashboard()'s predicate exactly", async () => {
+    mockDbState.queue.push([
+      {
+        txnDate: "2026-03-07",
+        fundKind: "charitable",
+        paymentMethod: "check",
+        flow: "expense",
+      },
+    ]);
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
+  });
+
+  it("STILL gates on an unreconciled check+INCOME row (dues paid by paper check) — regression for keying on payment_method alone instead of flow='expense'; this must fail if someone excludes all payment_method='check' rows", async () => {
+    mockDbState.queue.push([
+      {
+        txnDate: "2026-06-24",
+        fundKind: "administrative",
+        paymentMethod: "check",
+        flow: "income",
+      },
+    ]);
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
+  });
+
+  it("STILL gates on an unreconciled non-check expense (e.g. debit_card/bill_pay) dated on/before month-end", async () => {
+    mockDbState.queue.push([
+      {
+        txnDate: "2026-06-24",
+        fundKind: "administrative",
+        paymentMethod: "debit_card",
+        flow: "expense",
+      },
+    ]);
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
