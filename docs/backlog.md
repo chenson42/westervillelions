@@ -29,6 +29,42 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   `(entity, fiscalYear)` cannot be edited via any write path, not just a
   UI-disabled control.
 
+- [ ] **B-17 — Cause-level budget detail: cause-tagged line items under a category.**
+  (added 2026-07-28, priority: idea — needs Phase 1) Chuck's model, raised while
+  reviewing whether the budget can hit the `/members/impact` "giving by cause"
+  grain. Shape: a budget **category** target can be built up from **line items**,
+  each assigned a **cause** + amount, where the category total = sum of its cause
+  line items — OR the treasurer just enters a lump sum for the category and skips
+  the breakdown (both modes supported). Cause becomes a **structured field on a
+  budget line item** (not free text). Because a line item lives *under* a category
+  (which is per-fund), the same cause can appear under several categories/funds as
+  separate line items — which matches the historical data exactly.
+  **Why this shape (vs. the two alternatives explored 2026-07-28):**
+  the Quicken import already derives category and cause via *two different*
+  functions (`mapFoundation`/`mapClub` → categoryName; `deriveCause` → a controlled
+  9-value cause taxonomy on every charitable/activity EXPENSE row — see
+  `scripts/import-quicken-ledger.ts:213-292,525-529`). Causes genuinely **cross**
+  categories and funds (e.g. "Youth & Education" spans `Scholarships` +
+  `Charitable donation out`; generic buckets like `Grant out` hold many causes),
+  so (A) "make each cause a category" would force a category re-org + per-fund
+  cause duplication, and (B) a fully independent cause axis is a much bigger build.
+  This category→cause **two-level** model keeps categories as the top grain (what
+  v1.39.0 shipped), needs no category re-org, and adds cause as sub-detail.
+  **Seeding:** pull the past ~2 FYs of cause-tagged transactions, group by
+  (category, cause), present those as starting line items under each category.
+  **Open questions for Phase 1:** (1) null-cause giving rows need an "Other
+  community support" line item — get the live count (read-only analysis was
+  staged this session but the prod query was not run); (2) taxonomy warts to
+  reconcile — "Disaster Relief" already exists as both a cause *and* a category;
+  "Fundraising event costs" is in the cause list but isn't beneficiary giving;
+  "Scholarships" folds into Youth or stays a finer cause; (3) how a cause line
+  item's actuals are matched — actuals key on `categoryId` today, so cause-level
+  budget-vs-actual needs the transaction's `beneficiary_cause` to become a
+  structured, pickable value too (not free text) for the match to be reliable;
+  (4) schema: a `ledger_budget_lines` child of `ledger_budgets` (or a nullable
+  `cause` on a revised budget row) + how it interacts with the v1.39.0
+  `ledger_budget_approvals` lock.
+
 - [ ] **B-16 — Standalone ledger-category management surface (edit, deactivate, reorder).**
   (added 2026-07-27, priority: nice-to-have) Flagged in Phase 1/2 of
   `docs/work-log/2026-07-27-ledger-budget-approve.md` and deliberately deferred:
