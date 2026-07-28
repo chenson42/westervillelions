@@ -240,19 +240,23 @@ export default function BudgetCauseEditor({
     if (!row) return;
 
     const raw = row.value.trim();
+    // A blank amount means a deliberate $0 line — a beneficiary you want on the
+    // worksheet with nothing budgeted (or "starting at zero"). Removal is the
+    // trash button, not an empty box. Typing "0" reaches the same place.
+    let amountCents: number;
     if (raw === "") {
-      toast.error(`Enter an amount for "${row.cause}", or remove this line.`);
-      return;
-    }
-    const n = parseFloat(raw);
-    if (isNaN(n) || n < 0) {
-      toast.error("Enter a valid amount (0 or greater).");
-      return;
-    }
-    const amountCents = Math.round(n * 100);
-    if (amountCents > 2_147_483_647) {
-      toast.error("Amount exceeds maximum.");
-      return;
+      amountCents = 0;
+    } else {
+      const n = parseFloat(raw);
+      if (isNaN(n) || n < 0) {
+        toast.error("Enter a valid amount (0 or greater).");
+        return;
+      }
+      amountCents = Math.round(n * 100);
+      if (amountCents > 2_147_483_647) {
+        toast.error("Amount exceeds maximum.");
+        return;
+      }
     }
     if (row.label.length > MAX_BUDGET_LINE_LABEL_LENGTH) {
       toast.error(`Label must be ${MAX_BUDGET_LINE_LABEL_LENGTH} characters or fewer.`);
@@ -282,7 +286,16 @@ export default function BudgetCauseEditor({
         await res.json();
       setRows((prev) =>
         prev.map((r, i) =>
-          i === index ? { ...r, id: data.lineId, cause: data.cause, label: data.label, saving: false } : r,
+          i === index
+            ? {
+                ...r,
+                id: data.lineId,
+                cause: data.cause,
+                label: data.label,
+                value: (amountCents / 100).toFixed(2),
+                saving: false,
+              }
+            : r,
         ),
       );
       dirtyAmountRef.current[index] = false;
@@ -307,19 +320,22 @@ export default function BudgetCauseEditor({
     let amountCents: number | undefined;
     if (amountDirty) {
       const raw = row.value.trim();
+      // A cleared field on an existing line means a deliberate $0 (keep the
+      // line, budget nothing) — the trash button, not an empty box, is how a
+      // line is removed. Typing "0" reaches the same place.
       if (raw === "") {
-        toast.error(`Enter an amount for "${row.cause}", or remove this line.`);
-        return;
-      }
-      const n = parseFloat(raw);
-      if (isNaN(n) || n < 0) {
-        toast.error("Enter a valid amount (0 or greater).");
-        return;
-      }
-      amountCents = Math.round(n * 100);
-      if (amountCents > 2_147_483_647) {
-        toast.error("Amount exceeds maximum.");
-        return;
+        amountCents = 0;
+      } else {
+        const n = parseFloat(raw);
+        if (isNaN(n) || n < 0) {
+          toast.error("Enter a valid amount (0 or greater).");
+          return;
+        }
+        amountCents = Math.round(n * 100);
+        if (amountCents > 2_147_483_647) {
+          toast.error("Amount exceeds maximum.");
+          return;
+        }
       }
     }
     if (labelDirty && row.label.length > MAX_BUDGET_LINE_LABEL_LENGTH) {
@@ -343,7 +359,18 @@ export default function BudgetCauseEditor({
         throw new Error(describeWriteError(data, "Failed to save cause line."));
       }
       const data: { label: string; categoryTotalCents: number } = await res.json();
-      setRows((prev) => prev.map((r, i) => (i === index ? { ...r, label: data.label, saving: false } : r)));
+      setRows((prev) =>
+        prev.map((r, i) =>
+          i === index
+            ? {
+                ...r,
+                label: data.label,
+                value: amountCents !== undefined ? (amountCents / 100).toFixed(2) : r.value,
+                saving: false,
+              }
+            : r,
+        ),
+      );
       dirtyAmountRef.current[index] = false;
       dirtyLabelRef.current[index] = false;
       onTotalChange?.((data.categoryTotalCents / 100).toFixed(2));
