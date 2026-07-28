@@ -73,12 +73,16 @@ export default async function AdminLedgerBudgetingPage({
   const entity = await getEntity(resolvedSlug);
   if (!entity) notFound();
 
-  // Guided setup is inherently *next* year's budget — default target FY is
-  // currentFY + 1, not the current FY.
+  // Default target FY is the CURRENT fiscal year — clubs budget the year they
+  // are in (the budget is typically set at/near the year's start). Planning a
+  // future year is still one click away via the fiscal-year selector (?fy=).
+  // (Changed 2026-07-28 from currentFY+1: the next-year default kept landing
+  // treasurers on an empty year and hiding the current year's real budget —
+  // see docs/work-log/2026-07-28-budgeting-default-fy.md.)
   const currentFY = currentFiscalYear(new Date());
   const parsedFY = fyParam ? parseInt(fyParam, 10) : NaN;
   const targetFY =
-    !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY + 1;
+    !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
   const priorFY = targetFY - 1;
   const fyOptions = [currentFY, currentFY + 1, currentFY + 2];
 

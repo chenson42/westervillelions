@@ -12,6 +12,33 @@ can be referenced from work-logs, board minutes, and future sessions.
 
 ## Money & compliance
 
+- [ ] **T-24 — Standing reference: accounting basis + Lions International financial-transparency standard.**
+  (added 2026-07-28) **Books are kept on a modified-cash ("checkbook") basis** — transactions
+  recorded when entered (checks when written, income when deposited/recorded), not full accrual and
+  not strict clear-date cash. This is why book balance and bank balance differ by outstanding items
+  (e.g. FY2025 Foundation: $14,425.28 book vs. $20,000.28 bank at 6/30/2025 = outstanding checks);
+  the monthly statement shows book balance and footnotes the cash difference. **Lions International
+  does NOT mandate a specific basis** — per *Best Practices for Financial Transparency*
+  (LCI **DA-BPFT.EN 6/2024**, saved this session), the requirements are principle-based:
+  the financial report must **balance to the bank statement**, all expenditures must be
+  **board-approved and reflected in minutes**, income itemized by source (fundraisers itemized),
+  and each report shows **opening balance → income → expenditures → ending balance per account**.
+  Cash/modified-cash is the norm for clubs this size and satisfies the "balance to the bank"
+  requirement most simply — keep it, but the club "should consult an accounting professional…
+  compliant with local regulations and the district rules of audit" (LCI's own caveat).
+  **How the app already meets the LCI standard:** the member Monthly Statement (`/members/financial-reports`)
+  IS the LCI Financial Report shape (opening/income/expenditures/ending, per fund); the reconciliation
+  workbench enforces "report balances to the bank"; `boardMinute` + budget approve/lock = board-approved
+  expenditures; the two-entity/fund model = LCI's Public(activity) vs Administrative fund split.
+  **Gap-check items to confirm against the LCI flyer (each may become its own T-nn):**
+  (a) board receives a financial report **no less than monthly** — now aided by the member statements;
+  (b) **two bank signatories from different households**, both signing checks where appropriate;
+  (c) **annual audit/review** at treasurer transition or term-end (bank statement, minutes, event
+  reports, receipts, year-end report that reconciles);
+  (d) **treasurer bonded** (already a budget line — "Officer Bonding");
+  (e) itemized fundraiser reports (money received + each expense, validated by attendance/tickets) —
+  the statement is category-level today; per-event itemization is a possible enhancement.
+
 - [ ] **T-01 — Foundation paid for member polo shirts.** Check #8221, 4/13/2025, $250, register
   category "Membership." 501(c)(3) public money spent on member apparel is a private-benefit
   problem. The club correctly bought polos from the admin account in May 2026 (#8019, $239.60), so
