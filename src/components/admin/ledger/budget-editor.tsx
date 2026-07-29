@@ -9,6 +9,7 @@ import {
   OTHER_COMMUNITY_SUPPORT_CAUSE,
   formatBudgetReferenceCents,
   resolveBudgetLineDeleteAction,
+  MAX_BUDGET_NOTE_LENGTH,
 } from "@/lib/ledger";
 import BudgetCauseEditor, {
   ALL_CAUSES,
@@ -60,6 +61,16 @@ interface BudgetLine {
    * even in breakdown mode), and the deleted treatment must win.
    */
   pendingDeleteAt?: string | null;
+  /**
+   * Budget Star & Notes (DECISION-057, docs/work-log/2026-07-28-budget-star-
+   * notes.md). Star = flag this category for discussion; note = a working
+   * text note (≤ MAX_BUDGET_NOTE_LENGTH chars), neither shown to members.
+   * Optional/defaulted (false/null) so older callers that haven't threaded
+   * these through ([fundSlug]/report/page.tsx) don't break the type —
+   * annotation controls only render when showAnnotationControls is true.
+   */
+  starred?: boolean;
+  note?: string | null;
 }
 
 /** Read-only reference cell — one of Prior Budget / Prior Actual. */
@@ -88,6 +99,48 @@ function TrashIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+      />
+    </svg>
+  );
+}
+
+/** Star toggle icon (Budget Star & Notes, DECISION-057) — "flag for
+ *  discussion," filled gold when starred, outline gray otherwise. */
+function StarIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      className="h-5 w-5"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth={filled ? 0 : 1.5}
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.562.562 0 00-.586 0L6.982 21.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"
+      />
+    </svg>
+  );
+}
+
+/** Note icon (Budget Star & Notes, DECISION-057) — opens the inline
+ *  textarea; filled blue when a note already exists, outline gray otherwise. */
+function NoteIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      className="h-5 w-5"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth={filled ? 0 : 1.5}
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"
       />
     </svg>
   );
@@ -168,6 +221,27 @@ interface BudgetEditorProps {
    * way as onInputChange/onPendingDeleteChange.
    */
   onCauseLinePendingDeltaChange?: (key: string, deltaCents: number) => void;
+  /**
+   * Shows star/note annotation controls on every category row (Budget Star &
+   * Notes, DECISION-057), wired to PATCH /api/admin/ledger/budgets/annotations.
+   * Default false so existing callers that don't opt in
+   * ([fundSlug]/report/page.tsx) render unchanged. Unlike showRemoveControl,
+   * this is NOT combined with `!locked` by callers — annotations stay
+   * editable even when the FY budget is Approve-&-locked (Decision 6); the
+   * controls this prop gates ignore `disabled` entirely, on purpose.
+   * Bubbled straight through to every nested BudgetCauseEditor so cause-line
+   * annotation controls share the same opt-in.
+   */
+  showAnnotationControls?: boolean;
+  /**
+   * Fired the instant a star toggle click resolves optimistically — before
+   * the round trip completes — keyed like onInputChange
+   * (`${categoryId}_${flow}`). Lets GuidedBudgetSetup's sort-to-top react
+   * instantly; called again with the previous value if the PATCH fails, so
+   * the parent's sort order reverts along with the icon. Optional — only
+   * meaningful when showAnnotationControls is true.
+   */
+  onStarChange?: (key: string, starred: boolean) => void;
 }
 
 /**
@@ -204,6 +278,8 @@ export default function BudgetEditor({
   labelOptions = [],
   onPendingDeleteChange,
   onCauseLinePendingDeltaChange,
+  showAnnotationControls = false,
+  onStarChange,
 }: BudgetEditorProps) {
   const router = useRouter();
   // Track per-line editing state: input value (dollars), saving flag
@@ -244,6 +320,208 @@ export default function BudgetEditor({
   // removing a category that carries causes/line items opens a ConfirmDialog
   // naming what it takes with it, unlike the unconfirmed lump-sum remove.
   const [categoryRemoveConfirm, setCategoryRemoveConfirm] = useState<BudgetLine | null>(null);
+
+  // Budget Star & Notes (DECISION-057). Optimistic star state, shadows
+  // line.starred until the next router.refresh() reconciles it — lets the
+  // filled/outline icon flip instantly and, via onStarChange, lets
+  // GuidedBudgetSetup's sort-to-top react before the PATCH resolves.
+  const [starOverride, setStarOverride] = useState<Record<string, boolean>>({});
+  // Which category row's note editor is open — one at a time, mirrors
+  // addCauseKey's single-open convention.
+  const [noteEditKey, setNoteEditKey] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState<string>("");
+  const [noteSaving, setNoteSaving] = useState<Record<string, boolean>>({});
+
+  function isStarred(line: BudgetLine): boolean {
+    const key = `${line.categoryId}_${line.flow}`;
+    return starOverride[key] !== undefined ? starOverride[key] : (line.starred ?? false);
+  }
+
+  /**
+   * Star toggle — optimistic (flips instantly, before the round trip
+   * completes, per Phase 1 Decision 1/Decision 6). Never gated on `disabled`:
+   * this endpoint intentionally skips assertBudgetUnlocked (DECISION-057),
+   * so the control stays enabled even when the FY budget is locked.
+   */
+  async function toggleStar(line: BudgetLine) {
+    const key = `${line.categoryId}_${line.flow}`;
+    const current = isStarred(line);
+    const next = !current;
+    setStarOverride((prev) => ({ ...prev, [key]: next }));
+    onStarChange?.(key, next);
+    try {
+      const res = await fetch("/api/admin/ledger/budgets/annotations", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fundId,
+          fiscalYear,
+          categoryId: line.categoryId,
+          flow: line.flow,
+          starred: next,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Couldn't save — try again.");
+      }
+      router.refresh();
+    } catch (err) {
+      setStarOverride((prev) => ({ ...prev, [key]: current }));
+      onStarChange?.(key, current);
+      toast.error(err instanceof Error ? err.message : "Couldn't save — try again.");
+    }
+  }
+
+  function openNoteEditor(line: BudgetLine) {
+    const key = `${line.categoryId}_${line.flow}`;
+    setNoteDraft(line.note ?? "");
+    setNoteEditKey(key);
+  }
+
+  function closeNoteEditor() {
+    setNoteEditKey(null);
+    setNoteDraft("");
+  }
+
+  /**
+   * Save-button-only (no autosave on blur, deliberately — see Phase 3
+   * design). On failure, keeps the editor open with the typed text intact
+   * and toasts an error — no silent loss of typed input.
+   */
+  async function saveNote(line: BudgetLine) {
+    const key = `${line.categoryId}_${line.flow}`;
+    const trimmed = noteDraft.trim();
+    if (trimmed.length > MAX_BUDGET_NOTE_LENGTH) {
+      toast.error(`Note is limited to ${MAX_BUDGET_NOTE_LENGTH} characters.`);
+      return;
+    }
+    setNoteSaving((prev) => ({ ...prev, [key]: true }));
+    try {
+      const res = await fetch("/api/admin/ledger/budgets/annotations", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fundId,
+          fiscalYear,
+          categoryId: line.categoryId,
+          flow: line.flow,
+          note: trimmed || null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Couldn't save — try again.");
+      }
+      closeNoteEditor();
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save — try again.");
+    } finally {
+      setNoteSaving((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
+  /**
+   * Star/note icon cluster (Budget Star & Notes, DECISION-057) — renders next
+   * to the category name in all three render branches (pending-delete,
+   * in-breakdown, lump-sum) when showAnnotationControls is true. Deliberately
+   * ignores `disabled`: these controls stay enabled even when the FY budget
+   * is Approve-&-locked (Decision 6) — the annotation endpoints never call
+   * assertBudgetUnlocked.
+   */
+  function renderAnnotationControls(line: BudgetLine, key: string) {
+    if (!showAnnotationControls) return null;
+    const starred = isStarred(line);
+    const hasNote = !!(line.note && line.note.trim() !== "");
+    const noteOpen = noteEditKey === key;
+    return (
+      <div className="flex items-center gap-0.5 flex-shrink-0">
+        <button
+          type="button"
+          onMouseDown={preventMouseDownDefault}
+          onClick={() => void toggleStar(line)}
+          title={starred ? "Unflag for discussion" : "Flag for discussion"}
+          aria-label={
+            starred
+              ? `Unflag ${line.categoryName} for discussion`
+              : `Flag ${line.categoryName} for discussion`
+          }
+          aria-pressed={starred}
+          className={`inline-flex items-center justify-center rounded-lg min-h-[44px] min-w-[44px] transition focus:outline-none focus:ring-2 focus:ring-lions-blue ${
+            starred ? "text-lions-gold" : "text-gray-300 hover:text-gray-400"
+          }`}
+        >
+          <StarIcon filled={starred} />
+        </button>
+        <button
+          type="button"
+          onMouseDown={preventMouseDownDefault}
+          onClick={() => (noteOpen ? closeNoteEditor() : openNoteEditor(line))}
+          title={hasNote ? "Edit note" : "Add note for discussion"}
+          aria-label={
+            hasNote ? `Edit note for ${line.categoryName}` : `Add note for ${line.categoryName}`
+          }
+          aria-expanded={noteOpen}
+          className={`inline-flex items-center justify-center rounded-lg min-h-[44px] min-w-[44px] transition focus:outline-none focus:ring-2 focus:ring-lions-blue ${
+            hasNote ? "text-lions-blue" : "text-gray-300 hover:text-gray-400"
+          }`}
+        >
+          <NoteIcon filled={hasNote} />
+        </button>
+      </div>
+    );
+  }
+
+  /** Inline note editor — a textarea directly under the row, never a modal
+   *  (Phase 1 Flow 2). Save-button-only; Cancel discards the draft with no
+   *  network call. */
+  function renderNoteEditor(line: BudgetLine, key: string) {
+    if (!showAnnotationControls || noteEditKey !== key) return null;
+    const isSaving = !!noteSaving[key];
+    const overLimit = noteDraft.length > MAX_BUDGET_NOTE_LENGTH;
+    return (
+      <div
+        className={`rounded-lg border border-gray-200 bg-gray-50 p-2 mb-2 ${singleFlow ? "" : "sm:ml-20"}`}
+      >
+        <label htmlFor={`note-${key}`} className="sr-only">
+          Note for {line.categoryName} — for discussion, not shown to members
+        </label>
+        <textarea
+          id={`note-${key}`}
+          value={noteDraft}
+          onChange={(e) => setNoteDraft(e.target.value)}
+          rows={2}
+          placeholder="Working note for discussion (not shown to members)…"
+          className="block w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+        />
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <span className={`text-xs ${overLimit ? "text-red-600" : "text-gray-400"}`}>
+            {noteDraft.length}/{MAX_BUDGET_NOTE_LENGTH}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onMouseDown={preventMouseDownDefault}
+              onClick={closeNoteEditor}
+              className="text-xs font-semibold text-gray-500 hover:text-gray-700 rounded px-2 py-2 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-lions-blue"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onMouseDown={preventMouseDownDefault}
+              onClick={() => void saveNote(line)}
+              disabled={isSaving || overLimit}
+              className="text-xs font-semibold text-white bg-lions-blue hover:bg-lions-blue-dark disabled:opacity-60 rounded-lg px-3 py-2 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-lions-blue"
+            >
+              {isSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   function handleChange(key: string, value: string) {
     if (disabled) return;
@@ -563,6 +841,7 @@ export default function BudgetEditor({
                     ? ` (${causeLineCount} cause line${causeLineCount === 1 ? "" : "s"})`
                     : ""}
                 </span>
+                {renderAnnotationControls(line, key)}
               </div>
               <div className={`flex items-center gap-2 ${singleFlow ? "" : "sm:pl-20"}`}>
                 <div className="grid grid-cols-2 gap-2 flex-1 min-w-0 sm:flex-none sm:w-52">
@@ -596,6 +875,7 @@ export default function BudgetEditor({
                   </button>
                 )}
               </div>
+              {renderNoteEditor(line, key)}
             </div>
           );
         }
@@ -625,6 +905,7 @@ export default function BudgetEditor({
                 <span className="text-sm font-medium text-gray-900 flex-1 truncate">
                   {line.categoryName}
                 </span>
+                {renderAnnotationControls(line, key)}
                 {/* Category remove in breakdown mode (Flow 6): unlike the
                     lump-sum branch, this category carries causes/line items,
                     so it opens a ConfirmDialog naming what it takes with it
@@ -643,6 +924,7 @@ export default function BudgetEditor({
                   </button>
                 )}
               </div>
+              {renderNoteEditor(line, key)}
               <BudgetCauseEditor
                 fundId={fundId}
                 fiscalYear={fiscalYear}
@@ -661,6 +943,7 @@ export default function BudgetEditor({
                 onPendingDeltaChange={(deltaCents) =>
                   onCauseLinePendingDeltaChange?.(key, deltaCents)
                 }
+                showAnnotationControls={showAnnotationControls}
               />
               <div className="mt-2 pl-1">{renderAddCauseControl(line, key)}</div>
             </div>
@@ -676,7 +959,9 @@ export default function BudgetEditor({
                 </span>
               )}
               <span className="text-sm text-gray-700 flex-1 truncate">{line.categoryName}</span>
+              {renderAnnotationControls(line, key)}
             </div>
+            {renderNoteEditor(line, key)}
             {/* Prior-year reference columns (read-only) + this year's input.
                 Mobile-first: reference cells share a 2-col grid that shrinks
                 with the viewport instead of forcing horizontal scroll at

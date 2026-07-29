@@ -85,7 +85,9 @@ export default async function AdminLedgerBudgetingPage({
   const targetFY =
     !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
   const priorFY = targetFY - 1;
-  const fyOptions = [currentFY, currentFY + 1, currentFY + 2];
+  // Prior / current / next fiscal year — the prior year lets treasurers view the
+  // completed reference budget (e.g. FY2025) that forward-only options hid.
+  const fyOptions = [currentFY - 1, currentFY, currentFY + 1];
 
   const funds = await getFunds(entity.id);
 
@@ -191,6 +193,10 @@ export default async function AdminLedgerBudgetingPage({
                *  soft-delete state, threaded straight through from
                *  getFundReport's widened causeLines[] shape. */
               pendingDeleteAt: string | null;
+              /** Budget Star & Notes (DECISION-057) — threaded straight
+               *  through from getFundReport's widened causeLines[] shape. */
+              starred: boolean;
+              note: string | null;
             }[]
           | null,
       ) {
@@ -216,6 +222,8 @@ export default async function AdminLedgerBudgetingPage({
           priorBudgetCents: priorByKey.get(`${l.categoryId}_income`)?.budgetCents ?? null,
           priorActualCents: priorByKey.get(`${l.categoryId}_income`)?.actualCents ?? null,
           pendingDeleteAt: l.pendingDeleteAt,
+          starred: l.starred,
+          note: l.note,
         })),
         ...(report?.expense ?? []).map((l) => ({
           categoryId: l.categoryId,
@@ -227,6 +235,8 @@ export default async function AdminLedgerBudgetingPage({
           priorBudgetCents: priorByKey.get(`${l.categoryId}_expense`)?.budgetCents ?? null,
           priorActualCents: priorByKey.get(`${l.categoryId}_expense`)?.actualCents ?? null,
           pendingDeleteAt: l.pendingDeleteAt,
+          starred: l.starred,
+          note: l.note,
         })),
       ];
 

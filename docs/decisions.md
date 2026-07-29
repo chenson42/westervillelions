@@ -28,6 +28,52 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-057: Budget Star & Notes — lazy-create upsert keeps `annualAmountCents` out of the conflict `SET`; star/note routed through two new endpoints that never call `assertBudgetUnlocked()`
+
+**Status:** Resolved
+**Date:** 2026-07-29
+
+**Decision:** Add `starred boolean not null default false` + `note text` (nullable, no default) to
+both `ledger_budgets` and `ledger_budget_lines` (`drizzle/migrations/0068_ledger_budget_star_notes.sql`).
+Category-grain star/note writes go through a new `PATCH /api/admin/ledger/budgets/annotations`,
+backed by `setBudgetCategoryAnnotation()`, whose lazy-create upsert puts `annualAmountCents: 0`
+**only** in the insert `.values()` and builds the `onConflictDoUpdate` `set` clause
+**conditionally** — `starred`/`note` are included only when the caller actually sent them, so a
+star-only click never blanks an existing note and never touches an existing budgeted amount.
+Cause-line-grain star/note writes go through a new sibling `PATCH
+/api/admin/ledger/budgets/cause-lines/annotations`, backed by `setBudgetCauseLineAnnotation()` —
+a plain conditional `UPDATE` against an existing row by `id`, no lazy-create (a cause line only
+ever exists once actually created). **Neither new query function calls
+`assertBudgetUnlocked()`, on purpose** — both route files carry a loud header comment stating the
+omission is intentional (Phase 1 Decision 6: stars/notes stay editable even when the FY budget is
+Approve-&-locked) and citing this decision, so a future "audit every write path for a missing lock
+check" pass doesn't silently "fix" it.
+
+**Rationale:** The lazy-create shape mirrors `upsertBudgetLine`'s existing insert/conflict pattern
+closely enough that copying it verbatim (as `upsertBudgetLine` itself does, re-writing
+`annualAmountCents` in both the insert and the conflict `set`) would be an easy, silent way to
+zero out a real budgeted amount the first time someone stars an already-budgeted category — the
+architect flagged this in Phase 2 as the single highest-risk implementation-correctness landmine
+in this feature, so the exact Drizzle shape is spelled out here rather than left to be
+independently re-derived. Routing star/note through two brand-new endpoints, rather than a third
+body shape on either existing lock-gated PATCH dispatcher (`/budgets`, `/budgets/cause-lines`),
+keeps a lock-gated and a deliberately-non-lock-gated write path from sharing one dispatch function
+distinguished only by which body keys are present — exactly the shape that gets miscopied later.
+Skipping `assertBudgetUnlocked()` at all is itself the first exception to an otherwise-universal
+"every budget write path is lock-gated" invariant in this codebase; making that omission loud and
+self-documenting at the call site is cheaper than relying on every future reader to already know
+this work-log exists.
+
+**Impact:** `src/lib/db/schema.ts` (`ledgerBudgets`/`ledgerBudgetLines` gain `starred`/`note`,
+each with a doc comment pointing at this decision and at the Phase 1 Decision 9 admin-only
+boundary); `drizzle/migrations/0068_ledger_budget_star_notes.sql`; `src/lib/ledger.ts`
+(`MAX_BUDGET_NOTE_LENGTH = 500`); `src/lib/ledger-queries.ts` (`setBudgetCategoryAnnotation`,
+`setBudgetCauseLineAnnotation`, `getFundReport`'s widened `FundReportCategoryLine`/`causeLines[]`);
+two new route files under `src/app/api/admin/ledger/budgets/`. Full design in
+`docs/work-log/2026-07-28-budget-star-notes.md` Phase 3.
+
+---
+
 ## DECISION-056: Budgeting Page Restructure — `ledger_budget_lines.pending_delete_at` mirrors `ledger_budgets.pending_delete_at` exactly, one idempotent `ADD COLUMN`, no index/backfill
 
 **Status:** Resolved

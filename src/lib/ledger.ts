@@ -67,6 +67,16 @@
  * computeBudgetBalanceStatus as-is, fed getFundReport's actuals instead of
  * budgeted lines. See docs/work-log/2026-07-28-budget-balance-overview.md
  * Phase 3.
+ *
+ * Budget Star & Notes (2026-07-29 / DECISION-057): MAX_BUDGET_NOTE_LENGTH and
+ * normalizeBudgetNote() back the new `starred`/`note` columns on both
+ * ledger_budgets and ledger_budget_lines, mirroring MAX_BUDGET_LINE_LABEL_LENGTH
+ * / normalizeBudgetLineLabel()'s trim-only discipline. The write paths
+ * (setBudgetCategoryAnnotation, setBudgetCauseLineAnnotation in
+ * ledger-queries.ts) are the FIRST budget write paths that deliberately never
+ * call assertBudgetUnlocked() — stars/notes stay editable even when the FY
+ * budget is Approve-&-locked. See docs/work-log/2026-07-28-budget-star-notes.md
+ * Phase 3.
  */
 
 // ---------------------------------------------------------------------------
@@ -1842,4 +1852,83 @@ export function computeDuesTimingAdjustment(
     adjustedDuesCents,
     deltaCents: adjustedDuesCents - cashBasisDuesCents,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Budget Star & Notes (DECISION-057)
+// ---------------------------------------------------------------------------
+
+/**
+ * Server-enforced max length (after trim) for a budget star/note annotation's
+ * free-text note — shared by the category grain (ledger_budgets.note) and the
+ * cause-line grain (ledger_budget_lines.note). Mirrors
+ * MAX_BUDGET_LINE_LABEL_LENGTH's precedent: app-enforced only, no DB CHECK
+ * (DECISION-041). See docs/work-log/2026-07-28-budget-star-notes.md Phase 3.
+ */
+export const MAX_BUDGET_NOTE_LENGTH = 500;
+
+/**
+ * Normalizes a budget annotation's free-text note: trims leading/trailing
+ * whitespace only. Null/undefined/all-whitespace input normalizes to `""` —
+ * mirrors normalizeBudgetLineLabel's trim-only discipline (this is a plain
+ * working note, not a second controlled taxonomy — no case-folding).
+ *
+ * Pure — never throws. The DB-touching caller (setBudgetCategoryAnnotation /
+ * setBudgetCauseLineAnnotation in ledger-queries.ts) is responsible for:
+ *   1. Rejecting a normalized result longer than MAX_BUDGET_NOTE_LENGTH with a
+ *      400 — checked BEFORE step 2, so a 501-space submission gets the length
+ *      error, not a silently-accepted blank.
+ *   2. Collapsing a normalized `""` result to `null` before writing — an
+ *      empty note has exactly one representation (null), never a stored `""`,
+ *      the same discipline `causeLines` uses for "no breakdown" (null, never
+ *      `[]`).
+ */
+export function normalizeBudgetNote(raw: string | undefined | null): string {
+  if (raw === null || raw === undefined) return "";
+  return raw.trim();
+}
+
+/**
+ * QA FAIL loop-back fix (Phase 5 → Phase 4, docs/work-log/2026-07-28-budget-star-notes.md;
+ * DECISION-057). setBudgetCategoryAnnotation's lazy-create path writes
+ * annualAmountCents: 0 to a category that had no ledger_budgets row yet,
+ * purely so the row can carry a starred/note flag. That's fine at the write
+ * layer (DECISION-057: no schema flag distinguishing this from a genuine $0
+ * budget, code comment only) — but getFundReport was surfacing that
+ * lazy-created 0 as an ordinary budgetCents: 0, and budget-editor.tsx's
+ * `budgetCents !== null` display discriminator then rendered a fabricated
+ * "0.00" in the amount input on every reload, exactly the "oh, it silently
+ * budgeted $0" confusion Phase 1 Flow 4 required this feature to avoid.
+ *
+ * Discriminator, scoped EXACTLY to the annotation-only case — do NOT widen
+ * this to "treat every $0 as null" generally, which would change genuine-$0
+ * (v1.45.1) and itemized-$0-with-cause-lines display, both explicitly out of
+ * scope for this fix:
+ *
+ *   annualAmountCents === 0  AND  no cause lines exist for this row  AND
+ *   (starred is true  OR  note is non-null)
+ *   → this row exists solely to carry the annotation; return null so every
+ *     consumer (amount-input seeding, the print worksheet, live-totals
+ *     seeding via computeFundLineSums) renders/sums it exactly like a truly
+ *     un-budgeted category, while starred/note still surface untouched.
+ *
+ * Left UNCHANGED by design:
+ *   - A genuine, deliberately-entered $0 budget (not starred, no note) still
+ *     returns 0 (v1.45.1 behavior, unaffected).
+ *   - A $0 category that has real cause-line detail underneath it (an
+ *     itemized $0 breakdown) still returns 0 — the cause lines ARE the
+ *     budget content, so this is not an annotation-only row.
+ *
+ * Pure — no DB access, called from getFundReport in ledger-queries.ts.
+ */
+export function resolveDisplayBudgetCents(
+  rawBudgetCents: number | null,
+  hasCauseLines: boolean,
+  starred: boolean,
+  note: string | null,
+): number | null {
+  if (rawBudgetCents === 0 && !hasCauseLines && (starred || note !== null)) {
+    return null;
+  }
+  return rawBudgetCents;
 }

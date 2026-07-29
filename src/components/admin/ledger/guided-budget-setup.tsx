@@ -96,6 +96,16 @@ export interface FundSetupItem {
      * prior-FY report, which has no bearing here).
      */
     pendingDeleteAt: string | null;
+    /**
+     * Budget Star & Notes (DECISION-057, docs/work-log/2026-07-28-budget-
+     * star-notes.md). Sourced straight from getFundReport's target-FY
+     * report. Drives both the filled/outline star icon (via BudgetEditor's
+     * own optimistic override) and the instant sort-to-top below (via
+     * starOverrides, lifted here so it reacts before the round trip
+     * completes).
+     */
+    starred: boolean;
+    note: string | null;
   }[];
   /**
    * Active categories for this fund's kind, per flow, that don't already
@@ -191,6 +201,25 @@ function seedCauseLinePendingCents(funds: FundSetupItem[]): Record<string, Recor
   return init;
 }
 
+/**
+ * Companion to seedLineValues/seedPendingDeleteKeys for Budget Star & Notes
+ * (DECISION-057) — same re-sync contract. Lifted here (rather than left
+ * purely local to BudgetEditor) so renderFlowSection's sort-to-top can react
+ * the instant a star click resolves optimistically, before
+ * BudgetEditor.onStarChange's round trip completes.
+ */
+function seedStarOverrides(funds: FundSetupItem[]): Record<string, Record<string, boolean>> {
+  const init: Record<string, Record<string, boolean>> = {};
+  for (const fund of funds) {
+    const m: Record<string, boolean> = {};
+    for (const line of fund.budgetEditorLines) {
+      m[`${line.categoryId}_${line.flow}`] = line.starred;
+    }
+    init[fund.fundId] = m;
+  }
+  return init;
+}
+
 type AddCategoryMode = "existing" | "new";
 
 interface AddCategoryState {
@@ -274,6 +303,16 @@ export default function GuidedBudgetSetup({
     Record<string, Record<string, number>>
   >(() => seedCauseLinePendingCents(funds));
 
+  // Budget Star & Notes (DECISION-057) — per-fund, per-line star state, keyed
+  // identically to the other three maps. Updated instantly (ahead of the
+  // PATCH round trip) by BudgetEditor's onStarChange, so renderFlowSection's
+  // sort-to-top reorders the moment the treasurer clicks, not after the next
+  // router.refresh(). Re-synced from server truth in the same useEffect
+  // below.
+  const [starOverrides, setStarOverrides] = useState<Record<string, Record<string, boolean>>>(
+    () => seedStarOverrides(funds),
+  );
+
   // Re-sync all three maps from `funds` whenever the server sends fresh data. The
   // useState initializers above run only at mount, but every successful edit
   // fires router.refresh(), which re-renders the Server Component page and
@@ -289,6 +328,7 @@ export default function GuidedBudgetSetup({
     setLineValues(seedLineValues(funds));
     setPendingDeleteKeys(seedPendingDeleteKeys(funds));
     setCauseLinePendingCents(seedCauseLinePendingCents(funds));
+    setStarOverrides(seedStarOverrides(funds));
   }, [funds]);
 
   function handleInputChange(fundId: string, key: string, value: string) {
@@ -308,6 +348,19 @@ export default function GuidedBudgetSetup({
     setPendingDeleteKeys((prev) => ({
       ...prev,
       [fundId]: { ...(prev[fundId] ?? {}), [key]: pendingDelete },
+    }));
+  }
+
+  /**
+   * Budget Star & Notes (DECISION-057) — fired by BudgetEditor's
+   * onStarChange the instant a star toggle resolves optimistically (and
+   * again with the previous value if the PATCH fails), so this fund's
+   * sort-to-top reacts before the round trip completes.
+   */
+  function handleStarChange(fundId: string, key: string, starred: boolean) {
+    setStarOverrides((prev) => ({
+      ...prev,
+      [fundId]: { ...(prev[fundId] ?? {}), [key]: starred },
     }));
   }
 
@@ -519,7 +572,19 @@ export default function GuidedBudgetSetup({
    * header + add control, not silence).
    */
   function renderFlowSection(fund: FundSetupItem, flow: "income" | "expense") {
-    const sectionLines = fund.budgetEditorLines.filter((l) => l.flow === flow);
+    // Stable sort: starred rows first, existing order preserved otherwise
+    // (Phase 1 Decision 1, user-confirmed). Read from starOverrides (not
+    // line.starred directly) so a star click reorders the instant
+    // BudgetEditor's onStarChange fires — well before the PATCH round trip
+    // or the next router.refresh() completes. Array.prototype.sort has been
+    // stable since ES2019, so relative order within the starred/unstarred
+    // partitions is preserved for free.
+    const isStarredFor = (key: string) => starOverrides[fund.fundId]?.[key] ?? false;
+    const sectionLines = [...fund.budgetEditorLines.filter((l) => l.flow === flow)].sort(
+      (a, b) =>
+        Number(isStarredFor(`${b.categoryId}_${b.flow}`)) -
+        Number(isStarredFor(`${a.categoryId}_${a.flow}`)),
+    );
     const addingToThisSection =
       addCategoryState?.fundId === fund.fundId && addCategoryState.flow === flow;
     const sectionLabel = flow === "income" ? "Income" : "Expense";
@@ -557,6 +622,8 @@ export default function GuidedBudgetSetup({
             disabled={editorDisabled}
             showRemoveControl={canManage && !locked}
             labelOptions={labelOptions}
+            showAnnotationControls={canManage}
+            onStarChange={(key, starred) => handleStarChange(fund.fundId, key, starred)}
           />
         ) : (
           <div className="bg-gray-50 rounded-2xl p-4 text-center text-sm text-gray-500">

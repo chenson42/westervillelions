@@ -784,6 +784,13 @@ export const ledgerBudgets = pgTable(
       .references(() => ledgerCategories.id, { onDelete: "set null" }),
     flow: text("flow").notNull(), // 'income' | 'expense'
     annualAmountCents: integer("annual_amount_cents").notNull(),
+    // Star/note annotations (DECISION-057, docs/work-log/2026-07-28-budget-star-notes.md).
+    // starred: NOT NULL DEFAULT false — pure flag, no meaning tied to amount.
+    // note: nullable, no default — null = no note. App-enforced length limit
+    // (DECISION-041 precedent, no DB CHECK). Both writable even when the FY
+    // budget is Approve-&-locked — see DECISION-057.
+    starred: boolean("starred").notNull().default(false),
+    note: text("note"),
     // Soft-delete-until-finalize (DECISION-052/053, docs/work-log/2026-07-28-budgeting-page-redesign.md
     // Increment 2). Nullable, no default: null = normal row; set = marked for
     // removal, purged in the same transaction as Approve & lock. Never written
@@ -823,6 +830,11 @@ export const ledgerBudgetLines = pgTable(
     // existed before this migration ran.
     label: text("label").notNull().default(""),
     amountCents: integer("amount_cents").notNull(),
+    // Star/note annotations (DECISION-057, docs/work-log/2026-07-28-budget-star-notes.md).
+    // Mirrors ledgerBudgets.starred/note exactly — see that table for the full
+    // rationale (app-enforced note length, writable even when locked).
+    starred: boolean("starred").notNull().default(false),
+    note: text("note"),
     // Soft-delete-until-finalize (DECISION-056). Nullable, no
     // default: null = normal row; set = marked for removal, purged in the same transaction
     // as Approve & lock. Mirrors ledgerBudgets.pendingDeleteAt exactly — never written

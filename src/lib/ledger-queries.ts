@@ -68,6 +68,9 @@ import {
   deriveCauseSeedLines,
   normalizeBudgetLineLabel,
   MAX_BUDGET_LINE_LABEL_LENGTH,
+  normalizeBudgetNote,
+  MAX_BUDGET_NOTE_LENGTH,
+  resolveDisplayBudgetCents,
   buildCauseActualsByKey,
   computeDuesTimingAdjustment,
   type GuardrailFlag,
@@ -137,6 +140,12 @@ export type FundReportCategoryLine = {
   categoryId: string;
   categoryName: string;
   actualCents: number;
+  /** null when no ledger_budgets row exists for this category/flow, OR when
+   *  the row exists ONLY to carry a star/note annotation (lazy-created with
+   *  annualAmountCents: 0, no cause lines, starred or noted) — see
+   *  resolveDisplayBudgetCents in ledger.ts (Budget Star & Notes loop-back
+   *  fix, QA FAIL, DECISION-057). A genuine deliberately-entered $0 budget,
+   *  or a $0 category with real cause-line detail, still reports 0. */
   budgetCents: number | null;
   variance: BudgetVarianceResult;
   /** Sourced from ledgerCategories.countsAsGiving — drives cause-breakdown
@@ -159,7 +168,18 @@ export type FundReportCategoryLine = {
    *  excludes a line via isCauseLineLive(cl.pendingDeleteAt,
    *  line.pendingDeleteAt), never by reading this field alone. */
   causeLines:
-    | { id: string; cause: string; label: string; amountCents: number; pendingDeleteAt: string | null }[]
+    | {
+        id: string;
+        cause: string;
+        label: string;
+        amountCents: number;
+        pendingDeleteAt: string | null;
+        /** Budget Star & Notes (DECISION-057). ADMIN-ONLY — see the
+         *  category-grain `starred`/`note` doc comment below; identical
+         *  boundary applies to this cause-line grain. */
+        starred: boolean;
+        note: string | null;
+      }[]
     | null;
   /** Soft-delete-until-finalize (DECISION-052/053, Increment 2 of
    *  docs/work-log/2026-07-28-budgeting-page-redesign.md). ISO string when
@@ -170,6 +190,19 @@ export type FundReportCategoryLine = {
    *  set until the budget is actually finalized. null when no budget row
    *  exists for this category/flow at all (same as budgetCents === null). */
   pendingDeleteAt: string | null;
+  /** Budget Star & Notes (DECISION-057, docs/work-log/2026-07-28-budget-star-notes.md).
+   *  false / null when no ledger_budgets row exists for this category/flow —
+   *  same "no row yet" convention as budgetCents === null / pendingDeleteAt
+   *  === null. ADMIN-ONLY: this field (and causeLines[].starred/.note above)
+   *  must NEVER be added to any select/mapping shared with getPhilanthropy()
+   *  or the member-facing financial-report-queries.ts path (Phase 1 Decision
+   *  9) — financial-report-queries.ts DOES consume FundReportCategoryLine via
+   *  getFundReport(), but its own buildLines() maps to an explicit
+   *  MonthlyStatementCategoryLine allowlist that does not include these two
+   *  fields; any future refactor that widens that allowlist with a spread
+   *  must not pick these up. */
+  starred: boolean;
+  note: string | null;
 };
 
 export type FundReport = {
@@ -591,13 +624,23 @@ export async function getFundReport(
             label: ledgerBudgetLines.label,
             amountCents: ledgerBudgetLines.amountCents,
             pendingDeleteAt: ledgerBudgetLines.pendingDeleteAt,
+            starred: ledgerBudgetLines.starred,
+            note: ledgerBudgetLines.note,
           })
           .from(ledgerBudgetLines)
           .where(inArray(ledgerBudgetLines.budgetId, budgetIds))
       : [];
   const causeLinesByBudgetId = new Map<
     string,
-    { id: string; cause: string; label: string; amountCents: number; pendingDeleteAt: string | null }[]
+    {
+      id: string;
+      cause: string;
+      label: string;
+      amountCents: number;
+      pendingDeleteAt: string | null;
+      starred: boolean;
+      note: string | null;
+    }[]
   >();
   for (const row of budgetLineRows) {
     const line = {
@@ -608,6 +651,8 @@ export async function getFundReport(
       pendingDeleteAt: row.pendingDeleteAt
         ? (row.pendingDeleteAt instanceof Date ? row.pendingDeleteAt.toISOString() : row.pendingDeleteAt)
         : null,
+      starred: row.starred,
+      note: row.note,
     };
     const existing = causeLinesByBudgetId.get(row.budgetId);
     if (existing) {
@@ -624,6 +669,11 @@ export async function getFundReport(
   // when the row's pending_delete_at is set, else null. Purely informational
   // — see FundReportCategoryLine.pendingDeleteAt's doc comment.
   const pendingDeleteMap = new Map<string, string | null>(); // key = `${categoryId}_${flow}`
+  // Budget Star & Notes (DECISION-057) — siblings of pendingDeleteMap above,
+  // built in the same loop. ADMIN-ONLY, see FundReportCategoryLine.starred's
+  // doc comment.
+  const starredMap = new Map<string, boolean>(); // key = `${categoryId}_${flow}`
+  const noteMap = new Map<string, string | null>(); // key = `${categoryId}_${flow}`
   for (const b of budgetRows) {
     if (b.categoryId) {
       budgetMap.set(`${b.categoryId}_${b.flow}`, b.annualAmountCents);
@@ -632,13 +682,25 @@ export async function getFundReport(
         `${b.categoryId}_${b.flow}`,
         b.pendingDeleteAt ? b.pendingDeleteAt.toISOString() : null,
       );
+      starredMap.set(`${b.categoryId}_${b.flow}`, b.starred);
+      noteMap.set(`${b.categoryId}_${b.flow}`, b.note ?? null);
     }
   }
 
   /** null = lump-sum/no breakdown; never [] — see FundReportCategoryLine.causeLines. */
   function causeLinesFor(
     key: string,
-  ): { id: string; cause: string; label: string; amountCents: number; pendingDeleteAt: string | null }[] | null {
+  ):
+    | {
+        id: string;
+        cause: string;
+        label: string;
+        amountCents: number;
+        pendingDeleteAt: string | null;
+        starred: boolean;
+        note: string | null;
+      }[]
+    | null {
     const budgetId = budgetIdMap.get(key);
     if (!budgetId) return null;
     const lines = causeLinesByBudgetId.get(budgetId);
@@ -706,7 +768,16 @@ export async function getFundReport(
       seen.add(cat.id);
       const key = `${cat.id}_${flowFilter}`;
       const actualCents = actualMap.get(key) ?? 0;
-      const budgetCents = budgetMap.get(key) ?? null;
+      const rawBudgetCents = budgetMap.get(key) ?? null;
+      const causeLines = causeLinesFor(key);
+      const starred = starredMap.get(key) ?? false;
+      const note = noteMap.get(key) ?? null;
+      // Budget Star & Notes loop-back fix (QA FAIL, DECISION-057; see
+      // resolveDisplayBudgetCents's doc comment in ledger.ts). An
+      // annotation-only lazy-created row (annualAmountCents: 0, no cause
+      // lines, starred or noted) displays as un-budgeted (null), not as a
+      // fabricated "0.00" — starred/note still surface unchanged below.
+      const budgetCents = resolveDisplayBudgetCents(rawBudgetCents, causeLines !== null, starred, note);
       result.push({
         categoryId: cat.id,
         categoryName: cat.name,
@@ -714,8 +785,10 @@ export async function getFundReport(
         budgetCents,
         variance: budgetVariance(actualCents, budgetCents),
         countsAsGiving: cat.countsAsGiving,
-        causeLines: causeLinesFor(key),
+        causeLines,
         pendingDeleteAt: pendingDeleteMap.get(key) ?? null,
+        starred,
+        note,
       });
     }
 
@@ -724,15 +797,22 @@ export async function getFundReport(
       if (b.categoryId && b.flow === flowFilter && !seen.has(b.categoryId)) {
         const key = `${b.categoryId}_${flowFilter}`;
         const actualCents = actualMap.get(key) ?? 0;
+        const causeLines = causeLinesFor(key);
+        const starred = starredMap.get(key) ?? false;
+        const note = noteMap.get(key) ?? null;
+        // Same annotation-only discriminator as above — see comment there.
+        const budgetCents = resolveDisplayBudgetCents(b.annualAmountCents, causeLines !== null, starred, note);
         result.push({
           categoryId: b.categoryId,
           categoryName: "(Unknown category)",
           actualCents,
-          budgetCents: b.annualAmountCents,
-          variance: budgetVariance(actualCents, b.annualAmountCents),
+          budgetCents,
+          variance: budgetVariance(actualCents, budgetCents),
           countsAsGiving: false,
-          causeLines: causeLinesFor(key),
+          causeLines,
           pendingDeleteAt: pendingDeleteMap.get(key) ?? null,
+          starred,
+          note,
         });
       }
     }
@@ -1234,6 +1314,195 @@ export async function setBudgetLinePendingDelete(
     .where(eq(ledgerBudgets.id, existingId));
 
   return { ok: true, action: pendingDelete ? "pending-delete" : "restored" };
+}
+
+// ---------------------------------------------------------------------------
+// setBudgetCategoryAnnotation / setBudgetCauseLineAnnotation — Budget Star &
+// Notes (DECISION-057, docs/work-log/2026-07-28-budget-star-notes.md)
+// ---------------------------------------------------------------------------
+
+export type SetBudgetAnnotationResult =
+  | { ok: true; starred: boolean; note: string | null }
+  | { ok: false; error: string; status: 400 | 404 };
+
+export type SetBudgetCategoryAnnotationParams = {
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  flow: "income" | "expense";
+  /** At least one of starred/note is required. */
+  starred?: boolean;
+  note?: string | null;
+};
+
+/**
+ * INTENTIONAL: this function never calls assertBudgetUnlocked() and imports
+ * nothing from it. Star/note are working annotations, not budget figures —
+ * Phase 1 Decision 6 (DECISION-057) requires them to stay editable even when
+ * the FY budget is Approve-&-locked. Do NOT add a lock check here to "make
+ * locking consistent" — that would silently reverse a confirmed product
+ * decision. This is the FIRST budget write path in this codebase to skip the
+ * lock check; every other write against ledger_budgets/ledger_budget_lines
+ * (upsertBudgetLine, setBudgetLinePendingDelete, createBudgetCauseLine,
+ * updateBudgetCauseLine, etc.) still calls it.
+ *
+ * Category-grain star/note write. Lazy-creates the `ledger_budgets` row
+ * (annualAmountCents: 0) when a category has no budget row yet — a category
+ * the treasurer bothers to star/note doesn't yet have to be budgeted (Phase 1
+ * Decision 4). THE LANDMINE (architect's Phase 2 must-honor item): the
+ * conflict `set` clause is built CONDITIONALLY — `annualAmountCents` never
+ * appears there at all (it is only ever written via the insert `.values()`,
+ * used solely when no row exists yet), and `starred`/`note` are included in
+ * `set` ONLY when the caller actually sent them. Without this, a star-only
+ * click on an already-$5,000-budgeted, already-noted category would silently
+ * zero the amount and/or blank the note.
+ *
+ * @param tx  Optional Drizzle transaction client. Defaults to the
+ *            module-level `db` — a single-row upsert is safe to run
+ *            standalone (mirrors upsertBudgetLine's own convention).
+ */
+export async function setBudgetCategoryAnnotation(
+  params: SetBudgetCategoryAnnotationParams,
+  tx: DrizzleTransaction | typeof db = db,
+): Promise<SetBudgetAnnotationResult> {
+  const { fundId, fiscalYear, categoryId, flow, starred, note } = params;
+
+  if (starred === undefined && note === undefined) {
+    return { ok: false, error: "At least one of starred or note is required", status: 400 };
+  }
+
+  const fundRows = await tx
+    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId })
+    .from(ledgerFunds)
+    .where(eq(ledgerFunds.id, fundId))
+    .limit(1);
+  const fund = fundRows[0] ?? null;
+  if (!fund) {
+    return { ok: false, error: "Fund not found", status: 404 };
+  }
+
+  const catRows = await tx
+    .select({ id: ledgerCategories.id })
+    .from(ledgerCategories)
+    .where(eq(ledgerCategories.id, categoryId))
+    .limit(1);
+  const category = catRows[0] ?? null;
+  if (!category) {
+    return { ok: false, error: "Category not found", status: 404 };
+  }
+
+  // Note normalization (src/lib/ledger.ts): undefined -> not being changed;
+  // "" / whitespace-only after trim -> stored as null; otherwise trim +
+  // length-check BEFORE the ""->null collapse (see normalizeBudgetNote's doc
+  // comment for why the order matters).
+  let normalizedNote: string | null | undefined;
+  if (note !== undefined) {
+    const trimmed = normalizeBudgetNote(note);
+    if (trimmed.length > MAX_BUDGET_NOTE_LENGTH) {
+      return {
+        ok: false,
+        error: `note must be ${MAX_BUDGET_NOTE_LENGTH} characters or fewer`,
+        status: 400,
+      };
+    }
+    normalizedNote = trimmed === "" ? null : trimmed;
+  }
+
+  const [row] = await tx
+    .insert(ledgerBudgets)
+    .values({
+      entityId: fund.entityId,
+      fundId,
+      fiscalYear,
+      categoryId,
+      flow,
+      annualAmountCents: 0, // ONLY here — used solely when no row exists yet
+      starred: starred ?? false,
+      note: normalizedNote ?? null,
+    })
+    .onConflictDoUpdate({
+      target: [ledgerBudgets.fundId, ledgerBudgets.fiscalYear, ledgerBudgets.categoryId, ledgerBudgets.flow],
+      set: {
+        // annualAmountCents is ABSENT here, on purpose — an existing row's
+        // real budgeted amount must never be touched by a star/note write.
+        ...(starred !== undefined ? { starred } : {}),
+        ...(normalizedNote !== undefined ? { note: normalizedNote } : {}),
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ starred: ledgerBudgets.starred, note: ledgerBudgets.note });
+
+  return { ok: true, starred: row.starred, note: row.note };
+}
+
+export type SetBudgetCauseLineAnnotationParams = {
+  id: string;
+  /** At least one of starred/note is required. */
+  starred?: boolean;
+  note?: string | null;
+};
+
+/**
+ * INTENTIONAL: this function never calls assertBudgetUnlocked() and imports
+ * nothing from it — same DECISION-057 exception as
+ * setBudgetCategoryAnnotation above. Do NOT add a lock check here.
+ *
+ * Cause-line-grain star/note write. Plain conditional `UPDATE ... WHERE id` —
+ * unlike the category grain, there is NO lazy-create here: a cause line only
+ * ever exists once actually created via the existing create-or-update route
+ * (architect's Phase 2 point 3); there is no "un-budgeted cause line"
+ * rendered anywhere the way an un-budgeted category is. Same conditional-set
+ * discipline as the category grain: `starred`/`note` are included in the
+ * `UPDATE ... SET` only when the caller actually sent them, so a star-only
+ * PATCH never blanks an existing note and vice versa.
+ *
+ * @param tx  Optional Drizzle transaction client. Defaults to the
+ *            module-level `db` — a single-row update is safe to run
+ *            standalone.
+ */
+export async function setBudgetCauseLineAnnotation(
+  params: SetBudgetCauseLineAnnotationParams,
+  tx: DrizzleTransaction | typeof db = db,
+): Promise<SetBudgetAnnotationResult> {
+  const { id, starred, note } = params;
+
+  if (starred === undefined && note === undefined) {
+    return { ok: false, error: "At least one of starred or note is required", status: 400 };
+  }
+
+  const lineRows = await tx
+    .select({ id: ledgerBudgetLines.id })
+    .from(ledgerBudgetLines)
+    .where(eq(ledgerBudgetLines.id, id))
+    .limit(1);
+  if (!lineRows[0]) {
+    return { ok: false, error: "No cause line found for this id", status: 404 };
+  }
+
+  let normalizedNote: string | null | undefined;
+  if (note !== undefined) {
+    const trimmed = normalizeBudgetNote(note);
+    if (trimmed.length > MAX_BUDGET_NOTE_LENGTH) {
+      return {
+        ok: false,
+        error: `note must be ${MAX_BUDGET_NOTE_LENGTH} characters or fewer`,
+        status: 400,
+      };
+    }
+    normalizedNote = trimmed === "" ? null : trimmed;
+  }
+
+  const [row] = await tx
+    .update(ledgerBudgetLines)
+    .set({
+      ...(starred !== undefined ? { starred } : {}),
+      ...(normalizedNote !== undefined ? { note: normalizedNote } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(ledgerBudgetLines.id, id))
+    .returning({ starred: ledgerBudgetLines.starred, note: ledgerBudgetLines.note });
+
+  return { ok: true, starred: row.starred, note: row.note };
 }
 
 // ---------------------------------------------------------------------------
@@ -3629,6 +3898,8 @@ export async function getEntityReport(
           countsAsGiving: cat.countsAsGiving,
           causeLines: null, // entity report does not surface budgets, so never a breakdown
           pendingDeleteAt: null, // entity report does not surface budgets, so never pending-delete
+          starred: false, // entity report does not surface budgets, so never starred (DECISION-057)
+          note: null,
         });
       }
 
@@ -3646,6 +3917,8 @@ export async function getEntityReport(
             countsAsGiving: false,
             causeLines: null,
             pendingDeleteAt: null,
+            starred: false,
+            note: null,
           });
         }
       }

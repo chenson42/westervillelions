@@ -42,6 +42,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { readFileSync } from "fs";
+import path from "path";
 
 // ledger-queries.ts imports the real `db` (src/lib/db), which throws at import
 // time when DATABASE_URL/DB_URL is unset (e.g. a bare `pnpm test` or CI without
@@ -96,6 +98,8 @@ import {
   setBudgetCauseGroupPendingDelete,
   getFundReport,
   getDuesTimingAdjustment,
+  setBudgetCategoryAnnotation,
+  setBudgetCauseLineAnnotation,
 } from "./ledger-queries";
 import { ledgerFunds, ledgerCategories, ledgerBudgets, ledgerBudgetLines } from "./db/schema";
 import { causeLineReferenceKey } from "./ledger";
@@ -109,6 +113,11 @@ type InsertCall = {
   table: unknown;
   values: Record<string, unknown>;
   conflictMode: "doNothing" | "doUpdate" | "plain";
+  /** The `set` object passed to .onConflictDoUpdate({ target, set }), when
+   *  conflictMode === "doUpdate" — captured so tests can assert exactly
+   *  which fields a conditional conflict-set clause included/omitted (the
+   *  Budget Star & Notes conditional-upsert landmine, DECISION-057). */
+  conflictSet?: Record<string, unknown>;
 };
 type UpdateCall = { table: unknown; values: Record<string, unknown> };
 type DeleteCall = { table: unknown };
@@ -193,8 +202,8 @@ function makeMockTx(opts: {
           insertCalls.push({ table, values, conflictMode: "doNothing" });
           return { returning: () => nextReturning() };
         },
-        onConflictDoUpdate: () => {
-          insertCalls.push({ table, values, conflictMode: "doUpdate" });
+        onConflictDoUpdate: (conflictArgs: { set?: Record<string, unknown> }) => {
+          insertCalls.push({ table, values, conflictMode: "doUpdate", conflictSet: conflictArgs?.set });
           return { returning: () => nextReturning() };
         },
         returning: () => {
@@ -1372,6 +1381,530 @@ describe("setBudgetLinePendingDelete", () => {
       status: 404,
     });
     expect(updateCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setBudgetCategoryAnnotation / setBudgetCauseLineAnnotation — Budget Star &
+// Notes (DECISION-057, docs/work-log/2026-07-28-budget-star-notes.md)
+// ---------------------------------------------------------------------------
+
+describe("setBudgetCategoryAnnotation", () => {
+  it("lazy-creates the ledger_budgets row for an un-budgeted category: annualAmountCents: 0 in the insert values, starred/note set as requested", async () => {
+    const { tx, insertCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW], // fund lookup
+        [CATEGORY_ROW], // category lookup
+      ],
+      insertReturning: [[{ starred: true, note: "confirm before locking" }]],
+    });
+
+    const result = await setBudgetCategoryAnnotation(
+      {
+        fundId: "fund-1",
+        fiscalYear: 2026,
+        categoryId: "cat-1",
+        flow: "expense",
+        starred: true,
+        note: "confirm before locking",
+      },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, starred: true, note: "confirm before locking" });
+    expect(insertCalls).toHaveLength(1);
+    expect(insertCalls[0].table).toBe(ledgerBudgets);
+    expect(insertCalls[0].values.annualAmountCents).toBe(0);
+    expect(insertCalls[0].values.starred).toBe(true);
+    expect(insertCalls[0].values.note).toBe("confirm before locking");
+  });
+
+  it("THE LANDMINE: a star-only toggle on an already-$5,000-budgeted, already-noted category never includes annualAmountCents or note in the conflict SET clause — Postgres leaves both columns byte-for-byte untouched", async () => {
+    const { tx, insertCalls } = makeMockTx({
+      selectResults: [[FUND_ROW], [CATEGORY_ROW]],
+      insertReturning: [[{ starred: true, note: "matches last year + 5%" }]],
+    });
+
+    const result = await setBudgetCategoryAnnotation(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", starred: true },
+      tx as never,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(insertCalls).toHaveLength(1);
+    const conflictSet = insertCalls[0].conflictSet!;
+    expect(conflictSet).toHaveProperty("starred", true);
+    // The whole point of this test: neither key is present in the SET clause
+    // at all — not present-and-null, ABSENT — so an existing $5,000 amount
+    // and an existing note are never touched by a star-only write.
+    expect(conflictSet).not.toHaveProperty("annualAmountCents");
+    expect(conflictSet).not.toHaveProperty("note");
+  });
+
+  it("a note-only save never includes starred in the conflict SET clause", async () => {
+    const { tx, insertCalls } = makeMockTx({
+      selectResults: [[FUND_ROW], [CATEGORY_ROW]],
+      insertReturning: [[{ starred: false, note: "new note" }]],
+    });
+
+    const result = await setBudgetCategoryAnnotation(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", note: "new note" },
+      tx as never,
+    );
+
+    expect(result.ok).toBe(true);
+    const conflictSet = insertCalls[0].conflictSet!;
+    expect(conflictSet).toHaveProperty("note", "new note");
+    expect(conflictSet).not.toHaveProperty("starred");
+    expect(conflictSet).not.toHaveProperty("annualAmountCents");
+  });
+
+  it("an empty / whitespace-only note normalizes to null, both in the lazy-create insert values and the conflict SET clause", async () => {
+    const { tx, insertCalls } = makeMockTx({
+      selectResults: [[FUND_ROW], [CATEGORY_ROW]],
+      insertReturning: [[{ starred: false, note: null }]],
+    });
+
+    const result = await setBudgetCategoryAnnotation(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", note: "   " },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, starred: false, note: null });
+    expect(insertCalls[0].values.note).toBeNull();
+    expect(insertCalls[0].conflictSet).toHaveProperty("note", null);
+  });
+
+  it("a note over 500 chars after trim is rejected with 400 — no insert is ever attempted", async () => {
+    const { tx, insertCalls } = makeMockTx({ selectResults: [[FUND_ROW], [CATEGORY_ROW]] });
+
+    const overLong = "x".repeat(501);
+    const result = await setBudgetCategoryAnnotation(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", note: overLong },
+      tx as never,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "note must be 500 characters or fewer",
+      status: 400,
+    });
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it("exactly 500 chars after trim is accepted (boundary)", async () => {
+    const { tx, insertCalls } = makeMockTx({
+      selectResults: [[FUND_ROW], [CATEGORY_ROW]],
+      insertReturning: [[{ starred: false, note: "x".repeat(500) }]],
+    });
+
+    const result = await setBudgetCategoryAnnotation(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", note: "x".repeat(500) },
+      tx as never,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(insertCalls).toHaveLength(1);
+  });
+
+  it("returns 400 when neither starred nor note is provided", async () => {
+    const { tx, insertCalls } = makeMockTx({ selectResults: [] });
+
+    const result = await setBudgetCategoryAnnotation(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense" },
+      tx as never,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "At least one of starred or note is required",
+      status: 400,
+    });
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it("returns 404 for an unknown fundId, before ever touching categoryId", async () => {
+    const { tx, insertCalls } = makeMockTx({ selectResults: [[]] });
+
+    const result = await setBudgetCategoryAnnotation(
+      { fundId: "missing-fund", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", starred: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: false, error: "Fund not found", status: 404 });
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it("returns 404 for an unknown categoryId", async () => {
+    const { tx, insertCalls } = makeMockTx({ selectResults: [[FUND_ROW], []] });
+
+    const result = await setBudgetCategoryAnnotation(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "missing-cat", flow: "expense", starred: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: false, error: "Category not found", status: 404 });
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it("DECISION-057: never returns a 409 — this function's body never references assertBudgetUnlocked at all (grep-based regression guard, not just behavioral)", () => {
+    const source = readFileSync(path.join(process.cwd(), "src/lib/ledger-queries.ts"), "utf-8");
+    const start = source.indexOf("export async function setBudgetCategoryAnnotation");
+    const end = source.indexOf("export type SetBudgetCauseLineAnnotationParams", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    expect(body).not.toContain("assertBudgetUnlocked");
+  });
+});
+
+describe("setBudgetCauseLineAnnotation", () => {
+  it("happy path: both starred and note in one call", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [[{ id: "line-1" }]], // cause line lookup
+      updateReturning: [[{ starred: true, note: "flag for board discussion" }]],
+    });
+
+    const result = await setBudgetCauseLineAnnotation(
+      { id: "line-1", starred: true, note: "flag for board discussion" },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, starred: true, note: "flag for board discussion" });
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].table).toBe(ledgerBudgetLines);
+    expect(updateCalls[0].values).toEqual({
+      starred: true,
+      note: "flag for board discussion",
+      updatedAt: expect.any(Date),
+    });
+  });
+
+  it("star-only: note is absent from the UPDATE SET, leaving an existing note untouched", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [[{ id: "line-1" }]],
+      updateReturning: [[{ starred: true, note: "existing note" }]],
+    });
+
+    await setBudgetCauseLineAnnotation({ id: "line-1", starred: true }, tx as never);
+
+    expect(updateCalls[0].values).not.toHaveProperty("note");
+    expect(updateCalls[0].values).toHaveProperty("starred", true);
+  });
+
+  it("note-only: starred is absent from the UPDATE SET, leaving the existing star untouched", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [[{ id: "line-1" }]],
+      updateReturning: [[{ starred: false, note: "updated note" }]],
+    });
+
+    await setBudgetCauseLineAnnotation({ id: "line-1", note: "updated note" }, tx as never);
+
+    expect(updateCalls[0].values).not.toHaveProperty("starred");
+    expect(updateCalls[0].values).toHaveProperty("note", "updated note");
+  });
+
+  it("an empty / whitespace-only note normalizes to null", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [[{ id: "line-1" }]],
+      updateReturning: [[{ starred: false, note: null }]],
+    });
+
+    const result = await setBudgetCauseLineAnnotation({ id: "line-1", note: "  \t " }, tx as never);
+
+    expect(result).toEqual({ ok: true, starred: false, note: null });
+    expect(updateCalls[0].values).toHaveProperty("note", null);
+  });
+
+  it("a note over 500 chars after trim is rejected with 400 — no update is ever attempted", async () => {
+    const { tx, updateCalls } = makeMockTx({ selectResults: [[{ id: "line-1" }]] });
+
+    const result = await setBudgetCauseLineAnnotation(
+      { id: "line-1", note: "x".repeat(501) },
+      tx as never,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "note must be 500 characters or fewer",
+      status: 400,
+    });
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("returns 400 when neither starred nor note is provided", async () => {
+    const { tx, updateCalls } = makeMockTx({ selectResults: [] });
+
+    const result = await setBudgetCauseLineAnnotation({ id: "line-1" }, tx as never);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "At least one of starred or note is required",
+      status: 400,
+    });
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("returns 404 for an unknown id", async () => {
+    const { tx, updateCalls } = makeMockTx({ selectResults: [[]] });
+
+    const result = await setBudgetCauseLineAnnotation({ id: "missing-line", starred: true }, tx as never);
+
+    expect(result).toEqual({ ok: false, error: "No cause line found for this id", status: 404 });
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("DECISION-057: this function's body never references assertBudgetUnlocked at all (grep-based regression guard)", () => {
+    const source = readFileSync(path.join(process.cwd(), "src/lib/ledger-queries.ts"), "utf-8");
+    const start = source.indexOf("export async function setBudgetCauseLineAnnotation");
+    const end = source.indexOf(
+      "createBudgetCauseLine / updateBudgetCauseLine / deleteBudgetCauseLine /",
+      start,
+    );
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    expect(body).not.toContain("assertBudgetUnlocked");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getFundReport — Budget Star & Notes (DECISION-057). Phase 3 design's
+// "Unit Tests to Write in Phase 4" for getFundReport: a starred/noted budget
+// row surfaces both at the category grain, a starred/noted cause line
+// surfaces both in causeLines[], and an un-budgeted category reports
+// starred: false, note: null (not undefined, not missing).
+// ---------------------------------------------------------------------------
+
+describe("getFundReport — Budget Star & Notes (DECISION-057)", () => {
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  const FUND = { id: "fund-1", entityId: "entity-1", kind: "charitable", openingBalanceCents: 0 };
+
+  it("surfaces starred: true / note: '...' on a category's FundReportCategoryLine", async () => {
+    const category = { id: "cat-1", name: "Program supplies", flow: "expense", countsAsGiving: false };
+    const budgetRow = {
+      id: "budget-1",
+      categoryId: "cat-1",
+      flow: "expense",
+      annualAmountCents: 10_000,
+      pendingDeleteAt: null,
+      starred: true,
+      note: "confirm with youth committee",
+    };
+    mockDbState.queue.push([FUND], [], [category], [budgetRow], [], []);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+    expect(report!.expense[0].starred).toBe(true);
+    expect(report!.expense[0].note).toBe("confirm with youth committee");
+  });
+
+  it("surfaces starred/note on a cause line's causeLines[] entry", async () => {
+    const category = { id: "cat-1", name: "Charitable donation out", flow: "expense", countsAsGiving: true };
+    const budgetRow = {
+      id: "budget-1",
+      categoryId: "cat-1",
+      flow: "expense",
+      annualAmountCents: 20_000,
+      pendingDeleteAt: null,
+      starred: false,
+      note: null,
+    };
+    const budgetLineRows = [
+      {
+        id: "line-1",
+        budgetId: "budget-1",
+        cause: "Hunger & Basic Needs",
+        label: "WARM",
+        amountCents: 12_000,
+        pendingDeleteAt: null,
+        starred: true,
+        note: "matches last year",
+      },
+    ];
+    mockDbState.queue.push([FUND], [], [category], [budgetRow], [], budgetLineRows);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+    expect(report!.expense[0].causeLines).toEqual([
+      {
+        id: "line-1",
+        cause: "Hunger & Basic Needs",
+        label: "WARM",
+        amountCents: 12_000,
+        pendingDeleteAt: null,
+        starred: true,
+        note: "matches last year",
+      },
+    ]);
+  });
+
+  it("an un-budgeted category reports starred: false, note: null — not undefined, not missing", async () => {
+    const category = { id: "cat-1", name: "Program supplies", flow: "expense", countsAsGiving: false };
+    // budgetRows is [] here -> budgetIds.length === 0 -> the budgetLineRows
+    // select is never issued at all (mirrors the "empty fund" precedent
+    // above: fund, txns, categories, budgetRows, preFyRows — 5 items, no 6th).
+    mockDbState.queue.push([FUND], [], [category], [], []);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+    expect(report!.expense[0]).toMatchObject({ starred: false, note: null });
+    expect(report!.expense[0].starred).not.toBeUndefined();
+    expect(report!.expense[0].note).not.toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // QA FAIL loop-back (Phase 5 → Phase 4 re-do): a lazy-created annotation-only
+  // row must report budgetCents: null, not the fabricated 0 that caused
+  // budget-editor.tsx to show "0.00" in the amount input on reload. See
+  // resolveDisplayBudgetCents's doc comment in ledger.ts for the exact,
+  // narrowly-scoped discriminator.
+  // -------------------------------------------------------------------------
+
+  it("a lazy-created annotation-only row (starred, $0, no cause lines) reports budgetCents: null, not 0", async () => {
+    const category = { id: "cat-1", name: "Vision screening", flow: "expense", countsAsGiving: false };
+    const budgetRow = {
+      id: "budget-1",
+      categoryId: "cat-1",
+      flow: "expense",
+      annualAmountCents: 0,
+      pendingDeleteAt: null,
+      starred: true,
+      note: null,
+    };
+    mockDbState.queue.push([FUND], [], [category], [budgetRow], [], []);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+    expect(report!.expense[0].budgetCents).toBeNull();
+    expect(report!.expense[0].starred).toBe(true);
+    expect(report!.expense[0].note).toBeNull();
+  });
+
+  it("a lazy-created annotation-only row (note only, not starred, $0, no cause lines) reports budgetCents: null, not 0", async () => {
+    const category = { id: "cat-1", name: "Vision screening", flow: "expense", countsAsGiving: false };
+    const budgetRow = {
+      id: "budget-1",
+      categoryId: "cat-1",
+      flow: "expense",
+      annualAmountCents: 0,
+      pendingDeleteAt: null,
+      starred: false,
+      note: "confirm with youth committee",
+    };
+    mockDbState.queue.push([FUND], [], [category], [budgetRow], [], []);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+    expect(report!.expense[0].budgetCents).toBeNull();
+    expect(report!.expense[0].starred).toBe(false);
+    expect(report!.expense[0].note).toBe("confirm with youth committee");
+  });
+
+  it("a genuine deliberately-entered $0 budget (not starred, no note) is UNCHANGED — still reports budgetCents: 0", async () => {
+    const category = { id: "cat-1", name: "Vision screening", flow: "expense", countsAsGiving: false };
+    const budgetRow = {
+      id: "budget-1",
+      categoryId: "cat-1",
+      flow: "expense",
+      annualAmountCents: 0,
+      pendingDeleteAt: null,
+      starred: false,
+      note: null,
+    };
+    mockDbState.queue.push([FUND], [], [category], [budgetRow], [], []);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+    expect(report!.expense[0].budgetCents).toBe(0);
+  });
+
+  it("a $0 category with real cause-line detail (itemized $0 breakdown) is UNCHANGED — still reports budgetCents: 0, even when starred", async () => {
+    const category = { id: "cat-1", name: "Charitable donation out", flow: "expense", countsAsGiving: true };
+    const budgetRow = {
+      id: "budget-1",
+      categoryId: "cat-1",
+      flow: "expense",
+      annualAmountCents: 0,
+      pendingDeleteAt: null,
+      starred: true,
+      note: null,
+    };
+    const budgetLineRows = [
+      {
+        id: "line-1",
+        budgetId: "budget-1",
+        cause: "Hunger & Basic Needs",
+        label: "WARM",
+        amountCents: 0,
+        pendingDeleteAt: null,
+        starred: false,
+        note: null,
+      },
+    ];
+    mockDbState.queue.push([FUND], [], [category], [budgetRow], [], budgetLineRows);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+    expect(report!.expense[0].budgetCents).toBe(0);
+    expect(report!.expense[0].causeLines).not.toBeNull();
+  });
+
+  it("a real non-zero budgeted amount is UNCHANGED when starred/noted — the architect's original landmine, at the display layer too", async () => {
+    const category = { id: "cat-1", name: "Vision screening", flow: "expense", countsAsGiving: false };
+    const budgetRow = {
+      id: "budget-1",
+      categoryId: "cat-1",
+      flow: "expense",
+      annualAmountCents: 50_000,
+      pendingDeleteAt: null,
+      starred: true,
+      note: "flagged for discussion",
+    };
+    mockDbState.queue.push([FUND], [], [category], [budgetRow], [], []);
+
+    const report = await getFundReport("fund-1", 2026);
+    expect(report).not.toBeNull();
+    expect(report!.expense[0].budgetCents).toBe(50_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Admin-only boundary regression (Phase 1 Decision 9 / DECISION-057) —
+// starred/note must never leak into getPhilanthropy() (the /members/impact
+// data source) or the member-facing financial-report-queries.ts (Monthly
+// Financial Statement) path. financial-report-queries.ts DOES import
+// getFundReport/FundReportCategoryLine (it needs actualCents/budgetCents),
+// so the boundary that matters isn't "no import" — it's "its own output
+// mapping never spreads a FundReportCategoryLine wholesale, so starred/note
+// never reach a MonthlyStatementCategoryLine." Both guards below are
+// grep-based, per the Phase 3 design's "test or grep-based check" allowance.
+// ---------------------------------------------------------------------------
+
+describe("Admin-only boundary — starred/note never leak into member-facing paths", () => {
+  it("getPhilanthropy()'s own function body never references ledgerBudgets or ledgerBudgetLines", () => {
+    const source = readFileSync(path.join(process.cwd(), "src/lib/ledger-queries.ts"), "utf-8");
+    const start = source.indexOf("export async function getPhilanthropy");
+    const end = source.indexOf("export type DonorWithGivingHistory", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    expect(body).not.toMatch(/\bledgerBudgets\b/);
+    expect(body).not.toMatch(/\bledgerBudgetLines\b/);
+  });
+
+  it("financial-report-queries.ts never references starred/note anywhere — its buildLines() maps FundReportCategoryLine to an explicit MonthlyStatementCategoryLine allowlist, never a wholesale spread", () => {
+    const source = readFileSync(
+      path.join(process.cwd(), "src/lib/financial-report-queries.ts"),
+      "utf-8",
+    );
+    expect(source).not.toMatch(/\bstarred\b/);
+    expect(source).not.toMatch(/\bnote\s*:/);
+    expect(source).not.toMatch(/\.note\b/);
   });
 });
 

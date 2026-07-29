@@ -47,6 +47,9 @@ import {
   causeLineReferenceKey,
   buildCauseActualsByKey,
   computeDuesTimingAdjustment,
+  normalizeBudgetNote,
+  MAX_BUDGET_NOTE_LENGTH,
+  resolveDisplayBudgetCents,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
@@ -2666,5 +2669,78 @@ describe("computeDuesTimingAdjustment", () => {
     expect(fy2025.cashBasisDuesCents).toBe(12_000);
     expect(fy2025.adjustedDuesCents).toBe(12_000);
     expect(fy2025.deltaCents).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeBudgetNote — Budget Star & Notes (DECISION-057)
+// ---------------------------------------------------------------------------
+
+describe("normalizeBudgetNote", () => {
+  it("trims leading/trailing whitespace", () => {
+    expect(normalizeBudgetNote(" confirm with youth committee ")).toBe(
+      "confirm with youth committee",
+    );
+  });
+
+  it("an all-whitespace input normalizes to ''", () => {
+    expect(normalizeBudgetNote("   ")).toBe("");
+    expect(normalizeBudgetNote("\t\n")).toBe("");
+  });
+
+  it("null/undefined normalize to ''", () => {
+    expect(normalizeBudgetNote(null)).toBe("");
+    expect(normalizeBudgetNote(undefined)).toBe("");
+  });
+
+  it("does not case-fold or otherwise alter interior content — plain text, not a taxonomy", () => {
+    expect(normalizeBudgetNote("Matches LAST year + 5%")).toBe("Matches LAST year + 5%");
+  });
+
+  it("does not throw on an over-length input — the pure helper only trims; the caller enforces MAX_BUDGET_NOTE_LENGTH", () => {
+    const overLong = "x".repeat(600);
+    expect(() => normalizeBudgetNote(overLong)).not.toThrow();
+    expect(normalizeBudgetNote(overLong)).toHaveLength(600);
+    expect(MAX_BUDGET_NOTE_LENGTH).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveDisplayBudgetCents — Budget Star & Notes loop-back fix (QA FAIL,
+// Phase 5 → Phase 4 re-do; DECISION-057). See the function's doc comment in
+// ledger.ts for the exact discriminator and what must stay unchanged.
+// ---------------------------------------------------------------------------
+
+describe("resolveDisplayBudgetCents", () => {
+  it("an annotation-only lazy-created row ($0, no cause lines, starred) displays as null", () => {
+    expect(resolveDisplayBudgetCents(0, false, true, null)).toBeNull();
+  });
+
+  it("an annotation-only lazy-created row ($0, no cause lines, note only, not starred) displays as null", () => {
+    expect(resolveDisplayBudgetCents(0, false, false, "confirm with youth committee")).toBeNull();
+  });
+
+  it("an annotation-only row with BOTH starred and a note still displays as null", () => {
+    expect(resolveDisplayBudgetCents(0, false, true, "confirm with youth committee")).toBeNull();
+  });
+
+  it("a genuine deliberately-entered $0 budget (not starred, no note) is UNCHANGED — still 0", () => {
+    expect(resolveDisplayBudgetCents(0, false, false, null)).toBe(0);
+  });
+
+  it("a $0 category with real cause-line detail underneath it is UNCHANGED — still 0, even when starred/noted", () => {
+    expect(resolveDisplayBudgetCents(0, true, true, null)).toBe(0);
+    expect(resolveDisplayBudgetCents(0, true, false, "matches last year")).toBe(0);
+    expect(resolveDisplayBudgetCents(0, true, true, "matches last year")).toBe(0);
+  });
+
+  it("a non-zero real budget is UNCHANGED regardless of starred/note", () => {
+    expect(resolveDisplayBudgetCents(50_000, false, true, "flagged for discussion")).toBe(50_000);
+    expect(resolveDisplayBudgetCents(50_000, false, false, null)).toBe(50_000);
+  });
+
+  it("a truly un-budgeted category (null in, no row at all) stays null", () => {
+    expect(resolveDisplayBudgetCents(null, false, false, null)).toBeNull();
+    expect(resolveDisplayBudgetCents(null, false, true, "note")).toBeNull();
   });
 });

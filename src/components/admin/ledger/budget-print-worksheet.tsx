@@ -12,6 +12,13 @@ interface PrintCauseLine {
    *  same FundSetupItem.budgetEditorLines[].causeLines the page already
    *  builds for GuidedBudgetSetup — no separate query for the print path. */
   pendingDeleteAt?: string | null;
+  /** Budget Star & Notes (DECISION-057, docs/work-log/2026-07-28-budget-
+   *  star-notes.md). Optional (mirrors pendingDeleteAt?'s convention at this
+   *  grain) so this type stays assignable from the same
+   *  FundSetupItem.budgetEditorLines[].causeLines the page already builds
+   *  for GuidedBudgetSetup. */
+  starred?: boolean;
+  note?: string | null;
 }
 
 interface PrintLine {
@@ -38,6 +45,16 @@ interface PrintLine {
    * compact), not duplicated per cause or per line.
    */
   causeLines: PrintCauseLine[] | null;
+  /**
+   * Budget Star & Notes (DECISION-057). Non-optional (mirrors
+   * pendingDeleteAt's non-optional convention at this grain — PrintFund is
+   * fed directly from FundSetupItem.budgetEditorLines, which always has both
+   * fields once this ships). Star renders as a "★ " prefix on the category
+   * name; note renders as a compact italic line directly under the row,
+   * only when non-empty.
+   */
+  starred: boolean;
+  note: string | null;
 }
 
 interface PrintFund {
@@ -190,7 +207,10 @@ function FlowTable({
         return (
           <tbody key={line.categoryId} className="break-inside-avoid-page">
             <tr className="border-b border-gray-400">
-              <td className="py-1.5 pr-2 font-medium">{line.categoryName}</td>
+              <td className="py-1.5 pr-2 font-medium">
+                {line.starred ? "★ " : ""}
+                {line.categoryName}
+              </td>
               <td className="text-right py-1.5 px-2 tabular-nums text-gray-600">
                 {formatBudgetReferenceCents(line.priorBudgetCents)}
               </td>
@@ -201,6 +221,13 @@ function FlowTable({
                 {formatBudgetReferenceCents(line.budgetCents)}
               </td>
             </tr>
+            {line.note && (
+              <tr className="border-b border-gray-200">
+                <td colSpan={4} className="py-0.5 pl-4 text-xs italic text-gray-500">
+                  Note: {line.note}
+                </td>
+              </tr>
+            )}
             {Array.from(causeGroups.entries()).map(([cause, causeLines]) => {
               const subtotalCents = sumBudgetCauseLines(causeLines);
               return (
@@ -214,17 +241,24 @@ function FlowTable({
                     </td>
                   </tr>
                   {causeLines.map((cl, i) => (
-                    <tr
-                      key={`${line.categoryId}-${cause}-${i}`}
-                      className="border-b border-gray-100"
-                    >
-                      <td className="py-0.5 pr-2 pl-8 text-xs text-gray-600" colSpan={3}>
-                        {cl.label || "(generic)"}
-                      </td>
-                      <td className="text-right py-0.5 pl-2 tabular-nums text-xs text-gray-600">
-                        {formatBudgetReferenceCents(cl.amountCents)}
-                      </td>
-                    </tr>
+                    <Fragment key={`${line.categoryId}-${cause}-${i}`}>
+                      <tr className="border-b border-gray-100">
+                        <td className="py-0.5 pr-2 pl-8 text-xs text-gray-600" colSpan={3}>
+                          {cl.starred ? "★ " : ""}
+                          {cl.label || "(generic)"}
+                        </td>
+                        <td className="text-right py-0.5 pl-2 tabular-nums text-xs text-gray-600">
+                          {formatBudgetReferenceCents(cl.amountCents)}
+                        </td>
+                      </tr>
+                      {cl.note && (
+                        <tr className="border-b border-gray-100">
+                          <td colSpan={4} className="py-0.5 pl-10 text-xs italic text-gray-400">
+                            Note: {cl.note}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </Fragment>
               );
