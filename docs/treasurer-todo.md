@@ -117,9 +117,12 @@ can be referenced from work-logs, board minutes, and future sessions.
   balance remains in it, and what were the underlying receipts? Parked in admin "Misc" income.
 - [ ] **T-08 — Attribute the $2,344 lump dues deposit** (5/27/2025, no memo) to members if
   per-member dues tie-out is wanted for that year.
-- [ ] **T-09 — Resolve two memo/category conflicts on large deposits:** 4/9/2025 $3,655 categorized
-  Pancake Breakfast, memo "Rudolph Run Sponsorships"; 12/20/2025 $14,451.90 "Rudolph Run Entry
-  Receipts," memo "Rudolph Run Sponsorships." Totals are unaffected; per-event reporting is.
+- [x] **T-09 — Resolve two memo/category conflicts on large deposits.** (RESOLVED 2026-07-29 via
+  `scripts/fix-ledger-categories.ts`, confirmed against the Chase deposits + Quicken register.)
+  4/9/2025 $3,655 = **Pancake Breakfast** (Chris confirmed; the "Rudolph Run Sponsorships" was a memo
+  error — party/memo corrected to "Pancake Breakfast Receipts"). 12/20/2025 $14,451.90 = **Rudolph Run
+  Entry Receipts** (registration income; the ledger had mis-imported the memo "Sponsorships" as the
+  party — corrected, and re-filed to the new "Rudolph Run – Registration/Entry Fees" category).
 - [ ] **T-10 — Categorize the catch-all rows.** 16 imported rows landed in Operations /
   Miscellaneous / Misc (itemized in the seed work-log), including two uncategorized 7/31/2024
   purchases (Costco $47.94, Home Depot $249) and a $50 gift card whose memo reads "Wrapped gift
