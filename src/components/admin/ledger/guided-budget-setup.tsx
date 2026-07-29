@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import BudgetEditor from "@/components/admin/ledger/budget-editor";
 import type { BudgetCauseLine } from "@/components/admin/ledger/budget-cause-editor";
-import { computeBudgetBalanceStatus, computeFundLineSums } from "@/lib/ledger";
+import { computeBudgetBalanceStatus, computeFundLineSums, sumBudgetCauseLines } from "@/lib/ledger";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
@@ -166,6 +166,31 @@ function seedPendingDeleteKeys(funds: FundSetupItem[]): Record<string, Record<st
   return init;
 }
 
+/**
+ * Companion to seedLineValues/seedPendingDeleteKeys for the Budgeting Page
+ * Restructure's third computeFundLineSums parameter — sums, per category,
+ * the cents belonging to cause lines that are individually pending-delete on
+ * their OWN flag (their parent category is still live; a whole-category
+ * exclusion is already handled by pendingDeleteKeys above, so this never
+ * double-subtracts). `annualAmountCents` is never decremented for a pending
+ * cause line (architect Ruling 1), so without this, a still-live category's
+ * lineValues[key] would silently include a dead cause line's dollars after
+ * every router.refresh() — same re-sync contract as the other two seeds.
+ */
+function seedCauseLinePendingCents(funds: FundSetupItem[]): Record<string, Record<string, number>> {
+  const init: Record<string, Record<string, number>> = {};
+  for (const fund of funds) {
+    const m: Record<string, number> = {};
+    for (const line of fund.budgetEditorLines) {
+      const key = `${line.categoryId}_${line.flow}`;
+      const pending = (line.causeLines ?? []).filter((cl) => cl.pendingDeleteAt != null);
+      m[key] = sumBudgetCauseLines(pending);
+    }
+    init[fund.fundId] = m;
+  }
+  return init;
+}
+
 type AddCategoryMode = "existing" | "new";
 
 interface AddCategoryState {
@@ -239,7 +264,17 @@ export default function GuidedBudgetSetup({
     () => seedPendingDeleteKeys(funds),
   );
 
-  // Re-sync both maps from `funds` whenever the server sends fresh data. The
+  // Per-fund, per-line cents to subtract for cause lines individually
+  // pending-delete on their own flag (Budgeting Page Restructure,
+  // DECISION-054 item 2) — the third computeFundLineSums parameter. Same
+  // re-sync contract as lineValues/pendingDeleteKeys; updated instantly
+  // (ahead of the round-trip) by BudgetEditor's
+  // onCauseLinePendingDeltaChange, bubbled up from BudgetCauseEditor.
+  const [causeLinePendingCents, setCauseLinePendingCents] = useState<
+    Record<string, Record<string, number>>
+  >(() => seedCauseLinePendingCents(funds));
+
+  // Re-sync all three maps from `funds` whenever the server sends fresh data. The
   // useState initializers above run only at mount, but every successful edit
   // fires router.refresh(), which re-renders the Server Component page and
   // hands down a new `funds` prop — without this, the running Income /
@@ -253,6 +288,7 @@ export default function GuidedBudgetSetup({
   useEffect(() => {
     setLineValues(seedLineValues(funds));
     setPendingDeleteKeys(seedPendingDeleteKeys(funds));
+    setCauseLinePendingCents(seedCauseLinePendingCents(funds));
   }, [funds]);
 
   function handleInputChange(fundId: string, key: string, value: string) {
@@ -276,23 +312,62 @@ export default function GuidedBudgetSetup({
   }
 
   /**
-   * Live "excluded from the running total" projection (DECISION-052 item
-   * 1) — entirely client-side. A pending-delete line's amount is dropped
-   * from both incomeCents/expenseCents the instant soft-delete/restore
-   * resolves, so the treasurer sees the effect on the balance badge before
-   * the budget is ever finalized. getFundReport's own committed totals are
-   * completely unaffected (see that function's doc comment).
+   * Fired the instant a cause-line/group removal starts its hold (or
+   * resolves) or an undo/restore reverses it, bubbled from BudgetCauseEditor
+   * through BudgetEditor (Budgeting Page Restructure) — BEFORE any round
+   * trip completes, so the live balance badge reacts on the click, not after
+   * the next router.refresh(). Positive delta = subtract; negative = add
+   * back (mirrors onPendingDeltaChange's own doc comment).
    */
-  function fundSums(fundId: string): { incomeCents: number; expenseCents: number } {
-    return computeFundLineSums(lineValues[fundId] ?? {}, pendingDeleteKeys[fundId] ?? {});
+  function handleCauseLinePendingDeltaChange(fundId: string, key: string, deltaCents: number) {
+    setCauseLinePendingCents((prev) => {
+      const fundMap = prev[fundId] ?? {};
+      const nextValue = (fundMap[key] ?? 0) + deltaCents;
+      return { ...prev, [fundId]: { ...fundMap, [key]: nextValue } };
+    });
   }
 
-  /** Total pending-delete lines across every fund — feeds the Approve & lock warning copy. */
+  /**
+   * Live "excluded from the running total" projection (DECISION-052 item
+   * 1, extended to cause-line grain by DECISION-054 item 2) — entirely
+   * client-side. A pending-delete line's amount is dropped from both
+   * incomeCents/expenseCents the instant soft-delete/restore resolves —
+   * whether at the whole-category grain or, now, at the individual
+   * cause-line/group grain — so the treasurer sees the effect on the
+   * balance badge before the budget is ever finalized. getFundReport's own
+   * committed totals are completely unaffected (see that function's doc
+   * comment).
+   */
+  function fundSums(fundId: string): { incomeCents: number; expenseCents: number } {
+    return computeFundLineSums(
+      lineValues[fundId] ?? {},
+      pendingDeleteKeys[fundId] ?? {},
+      causeLinePendingCents[fundId] ?? {},
+    );
+  }
+
+  /**
+   * Total pending-delete items across every fund — feeds the Approve & lock
+   * warning copy. Counts whole-category pending-deletes (unchanged) PLUS
+   * every individually pending-delete cause line (Budgeting Page
+   * Restructure) — a cause-group removal flips every member row's own flag,
+   * so this loop counts both single-line and group removals uniformly with
+   * no separate bookkeeping. Only server-committed cause-line state counts
+   * here (a client-side hold that hasn't fired yet isn't guaranteed to be
+   * purged if Approve & lock is clicked before it resolves).
+   */
   function totalPendingDeleteCount(): number {
     let count = 0;
     for (const m of Object.values(pendingDeleteKeys)) {
       for (const v of Object.values(m)) {
         if (v) count += 1;
+      }
+    }
+    for (const fund of funds) {
+      for (const line of fund.budgetEditorLines) {
+        for (const cl of line.causeLines ?? []) {
+          if (cl.pendingDeleteAt != null) count += 1;
+        }
       }
     }
     return count;
@@ -435,6 +510,195 @@ export default function GuidedBudgetSetup({
   const editorDisabled = locked || !canManage;
   const pendingDeleteCount = totalPendingDeleteCount();
 
+  /**
+   * One labeled Income/Expense section per fund (Budgeting Page Restructure)
+   * — replaces the old flat, fund-wide interleaved list. Each section
+   * independently renders its own "+ Add category" trigger at the HEADER
+   * (moved up from the bottom of the card) and its own empty state (Flow 7:
+   * a fund with categories in only one flow still shows the other flow's
+   * header + add control, not silence).
+   */
+  function renderFlowSection(fund: FundSetupItem, flow: "income" | "expense") {
+    const sectionLines = fund.budgetEditorLines.filter((l) => l.flow === flow);
+    const addingToThisSection =
+      addCategoryState?.fundId === fund.fundId && addCategoryState.flow === flow;
+    const sectionLabel = flow === "income" ? "Income" : "Expense";
+
+    return (
+      <div className="pt-3 border-t border-gray-100 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {sectionLabel}
+          </h4>
+          {canManage && !locked && !addingToThisSection && (
+            <button
+              type="button"
+              onClick={() => openAddCategory(fund, flow)}
+              className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-2 min-h-[44px]"
+            >
+              + Add {flow} category
+            </button>
+          )}
+        </div>
+
+        {sectionLines.length > 0 ? (
+          <BudgetEditor
+            fundId={fund.fundId}
+            fiscalYear={targetFiscalYear}
+            flow={flow}
+            lines={sectionLines}
+            onInputChange={(key, value) => handleInputChange(fund.fundId, key, value)}
+            onPendingDeleteChange={(key, pendingDelete) =>
+              handlePendingDeleteChange(fund.fundId, key, pendingDelete)
+            }
+            onCauseLinePendingDeltaChange={(key, deltaCents) =>
+              handleCauseLinePendingDeltaChange(fund.fundId, key, deltaCents)
+            }
+            disabled={editorDisabled}
+            showRemoveControl={canManage && !locked}
+            labelOptions={labelOptions}
+          />
+        ) : (
+          <div className="bg-gray-50 rounded-2xl p-4 text-center text-sm text-gray-500">
+            No {flow} categories yet for this fund
+            {canManage && !locked ? " — add the first one above." : "."}
+          </div>
+        )}
+
+        {addingToThisSection && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (addCategoryState?.mode === "existing") {
+                void addExistingCategory();
+              } else {
+                void submitNewCategory(fund);
+              }
+            }}
+            className="bg-gray-50 rounded-2xl p-4 space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-gray-900">
+                Add {addCategoryState?.flow} category to {fund.fundName}
+              </p>
+              <button
+                type="button"
+                onClick={() => setAddCategoryState(null)}
+                className="text-sm text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-2 py-1 min-h-[44px]"
+              >
+                Cancel
+              </button>
+            </div>
+
+            {fund.unbudgetedCategories[flow].length > 0 && (
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[10rem]">
+                  <label
+                    htmlFor={`existing-cat-${fund.fundId}-${flow}`}
+                    className="block text-xs font-medium text-gray-600 mb-1"
+                  >
+                    Use an existing category
+                  </label>
+                  <select
+                    id={`existing-cat-${fund.fundId}-${flow}`}
+                    value={addCategoryState?.existingCategoryId ?? ""}
+                    onChange={(e) =>
+                      setAddCategoryState((s) =>
+                        s ? { ...s, mode: "existing", existingCategoryId: e.target.value } : s,
+                      )
+                    }
+                    className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+                  >
+                    {fund.unbudgetedCategories[flow].map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void addExistingCategory()}
+                  disabled={addCategoryState?.submitting}
+                  className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+                >
+                  Add
+                </button>
+              </div>
+            )}
+
+            <p className="text-xs text-gray-500">
+              {fund.unbudgetedCategories[flow].length > 0
+                ? "…or create a new category:"
+                : "Create a new category:"}
+            </p>
+
+            <div>
+              <label
+                htmlFor={`new-cat-name-${fund.fundId}-${flow}`}
+                className="block text-xs font-medium text-gray-600 mb-1"
+              >
+                Category name
+              </label>
+              <input
+                id={`new-cat-name-${fund.fundId}-${flow}`}
+                type="text"
+                value={addCategoryState?.name ?? ""}
+                onChange={(e) =>
+                  setAddCategoryState((s) => (s ? { ...s, mode: "new", name: e.target.value } : s))
+                }
+                placeholder="e.g. Peace Poster Contest"
+                className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                id={`counts-as-giving-${fund.fundId}-${flow}`}
+                type="checkbox"
+                checked={addCategoryState?.countsAsGiving ?? true}
+                onChange={(e) =>
+                  setAddCategoryState((s) => (s ? { ...s, countsAsGiving: e.target.checked } : s))
+                }
+                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue"
+              />
+              <label htmlFor={`counts-as-giving-${fund.fundId}-${flow}`} className="text-sm text-gray-700">
+                Counts as giving (philanthropy/impact reporting)
+              </label>
+            </div>
+
+            <div>
+              <label
+                htmlFor={`form990-${fund.fundId}-${flow}`}
+                className="block text-xs font-medium text-gray-600 mb-1"
+              >
+                IRS Form 990 line (optional)
+              </label>
+              <input
+                id={`form990-${fund.fundId}-${flow}`}
+                type="text"
+                value={addCategoryState?.form990Line ?? ""}
+                onChange={(e) =>
+                  setAddCategoryState((s) => (s ? { ...s, form990Line: e.target.value } : s))
+                }
+                placeholder="e.g. Part IX, line 24e"
+                className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={addCategoryState?.submitting || !addCategoryState?.name.trim()}
+              className="bg-lions-blue text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+            >
+              {addCategoryState?.submitting ? "Creating…" : "Create category"}
+            </button>
+          </form>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Locked-state banner — informational tone (lions-gold), never lions-red */}
@@ -574,7 +838,6 @@ export default function GuidedBudgetSetup({
         {funds.map((fund) => {
           const sums = fundSums(fund.fundId);
           const balance = computeBudgetBalanceStatus(fund.fundKind, sums.incomeCents, sums.expenseCents);
-          const addingToThisFund = addCategoryState?.fundId === fund.fundId;
 
           return (
             <div key={fund.fundId} className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -631,189 +894,12 @@ export default function GuidedBudgetSetup({
               </div>
 
               <div className="px-5 py-4 space-y-4">
-                {/* Line-level adjustment — rendered whenever there's something to
-                    show (has lines) OR the viewer can add the fund's first one.
-                    Fixes the empty-fund gap: a brand-new fund with zero
-                    categories now still gets an "Add category" affordance. */}
-                {(fund.budgetEditorLines.length > 0 || (canManage && !locked)) && (
-                  <div className="pt-3 border-t border-gray-100 space-y-3">
-                    {fund.budgetEditorLines.length > 0 ? (
-                      <BudgetEditor
-                        fundId={fund.fundId}
-                        fiscalYear={targetFiscalYear}
-                        lines={fund.budgetEditorLines}
-                        onInputChange={(key, value) => handleInputChange(fund.fundId, key, value)}
-                        onPendingDeleteChange={(key, pendingDelete) =>
-                          handlePendingDeleteChange(fund.fundId, key, pendingDelete)
-                        }
-                        disabled={editorDisabled}
-                        showRemoveControl={canManage && !locked}
-                        labelOptions={labelOptions}
-                      />
-                    ) : (
-                      <div className="bg-gray-50 rounded-2xl p-4 text-center text-sm text-gray-500">
-                        No categories yet for this fund &mdash; add the first one below.
-                      </div>
-                    )}
-
-                    {/* "+ Add category" — LEDGER_MANAGE only, hidden while locked */}
-                    {canManage && !locked && (
-                      <div>
-                        {!addingToThisFund ? (
-                          <div className="flex gap-4">
-                            <button
-                              type="button"
-                              onClick={() => openAddCategory(fund, "income")}
-                              className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-2 min-h-[44px]"
-                            >
-                              + Add income category
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openAddCategory(fund, "expense")}
-                              className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-2 min-h-[44px]"
-                            >
-                              + Add expense category
-                            </button>
-                          </div>
-                        ) : (
-                          <form
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              if (addCategoryState?.mode === "existing") {
-                                void addExistingCategory();
-                              } else {
-                                void submitNewCategory(fund);
-                              }
-                            }}
-                            className="bg-gray-50 rounded-2xl p-4 space-y-3"
-                          >
-                            <div className="flex items-center justify-between">
-                              <p className="text-sm font-semibold text-gray-900">
-                                Add {addCategoryState?.flow} category to {fund.fundName}
-                              </p>
-                              <button
-                                type="button"
-                                onClick={() => setAddCategoryState(null)}
-                                className="text-sm text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-2 py-1 min-h-[44px]"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-
-                            {fund.unbudgetedCategories[addCategoryState?.flow ?? "income"].length > 0 && (
-                              <div className="flex flex-wrap items-end gap-2">
-                                <div className="flex-1 min-w-[10rem]">
-                                  <label
-                                    htmlFor={`existing-cat-${fund.fundId}`}
-                                    className="block text-xs font-medium text-gray-600 mb-1"
-                                  >
-                                    Use an existing category
-                                  </label>
-                                  <select
-                                    id={`existing-cat-${fund.fundId}`}
-                                    value={addCategoryState?.existingCategoryId ?? ""}
-                                    onChange={(e) =>
-                                      setAddCategoryState((s) =>
-                                        s ? { ...s, mode: "existing", existingCategoryId: e.target.value } : s,
-                                      )
-                                    }
-                                    className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-                                  >
-                                    {fund.unbudgetedCategories[addCategoryState?.flow ?? "income"].map((c) => (
-                                      <option key={c.id} value={c.id}>
-                                        {c.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => void addExistingCategory()}
-                                  disabled={addCategoryState?.submitting}
-                                  className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-                                >
-                                  Add
-                                </button>
-                              </div>
-                            )}
-
-                            <p className="text-xs text-gray-500">
-                              {fund.unbudgetedCategories[addCategoryState?.flow ?? "income"].length > 0
-                                ? "…or create a new category:"
-                                : "Create a new category:"}
-                            </p>
-
-                            <div>
-                              <label
-                                htmlFor={`new-cat-name-${fund.fundId}`}
-                                className="block text-xs font-medium text-gray-600 mb-1"
-                              >
-                                Category name
-                              </label>
-                              <input
-                                id={`new-cat-name-${fund.fundId}`}
-                                type="text"
-                                value={addCategoryState?.name ?? ""}
-                                onChange={(e) =>
-                                  setAddCategoryState((s) => (s ? { ...s, mode: "new", name: e.target.value } : s))
-                                }
-                                placeholder="e.g. Peace Poster Contest"
-                                className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-                              />
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <input
-                                id={`counts-as-giving-${fund.fundId}`}
-                                type="checkbox"
-                                checked={addCategoryState?.countsAsGiving ?? true}
-                                onChange={(e) =>
-                                  setAddCategoryState((s) =>
-                                    s ? { ...s, countsAsGiving: e.target.checked } : s,
-                                  )
-                                }
-                                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue"
-                              />
-                              <label htmlFor={`counts-as-giving-${fund.fundId}`} className="text-sm text-gray-700">
-                                Counts as giving (philanthropy/impact reporting)
-                              </label>
-                            </div>
-
-                            <div>
-                              <label
-                                htmlFor={`form990-${fund.fundId}`}
-                                className="block text-xs font-medium text-gray-600 mb-1"
-                              >
-                                IRS Form 990 line (optional)
-                              </label>
-                              <input
-                                id={`form990-${fund.fundId}`}
-                                type="text"
-                                value={addCategoryState?.form990Line ?? ""}
-                                onChange={(e) =>
-                                  setAddCategoryState((s) =>
-                                    s ? { ...s, form990Line: e.target.value } : s,
-                                  )
-                                }
-                                placeholder="e.g. Part IX, line 24e"
-                                className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-                              />
-                            </div>
-
-                            <button
-                              type="submit"
-                              disabled={addCategoryState?.submitting || !addCategoryState?.name.trim()}
-                              className="bg-lions-blue text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-                            >
-                              {addCategoryState?.submitting ? "Creating…" : "Create category"}
-                            </button>
-                          </form>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* Income / Expense sections (Budgeting Page Restructure) —
+                    each independently rendered, each carrying its own
+                    "+ Add category" header control and its own empty state
+                    (Flow 7). */}
+                {renderFlowSection(fund, "income")}
+                {renderFlowSection(fund, "expense")}
               </div>
             </div>
           );

@@ -1,8 +1,10 @@
 /**
  * Unit tests for POST /api/admin/ledger/budget-approvals — the transactional
  * rewrite from DECISION-052/053 (Increment 2 of
- * docs/work-log/2026-07-28-budgeting-page-redesign.md). Covers Phase 3
- * design's "Unit Tests to Write in Phase 4" items 9 and 10:
+ * docs/work-log/2026-07-28-budgeting-page-redesign.md), extended by the
+ * Budgeting Page Restructure's cause-line-grain purge (DECISION-054/055/056).
+ * Covers Phase 3 design's "Unit Tests to Write in Phase 4" items 9 and 10,
+ * plus the Budgeting Page Restructure's finalize-purge items:
  *   9.  A budget with 1+ pending-delete rows, on successful finalize, ends
  *       with those rows physically gone from ledger_budgets AND the
  *       lock-status row set to 'locked' — both in the same request (proven
@@ -13,15 +15,22 @@
  *       (rendered via PgDialect, not just reasoned about) scopes to
  *       entityId + fiscalYear + pending_delete_at IS NOT NULL, which
  *       structurally excludes any row whose pending_delete_at is null.
+ *   11. A live category with some-but-not-all cause lines pending-delete
+ *       purges only those lines and recomputes annualAmountCents from
+ *       survivors.
+ *   12. A live category whose EVERY cause line was independently
+ *       pending-delete has its now-childless parent deleted too, mirroring
+ *       deleteBudgetCauseLine's existing last-line behavior.
  *
  * Also covers the lock-check-inside-the-transaction race fix directly: the
- * already-locked 409 case never reaches either write.
+ * already-locked 409 case never reaches any write.
  *
  * Hermetic: mocks @/lib/auth, @/lib/permissions-server, @/lib/ledger-queries
  * (getEntityById, getBudgetApproval), and @/lib/db's db.transaction (a
- * minimal tx capturing insert/delete calls for assertion — mirrors the
- * pattern in src/app/api/admin/ledger/reconciliation/sessions/[sessionId]/
- * match/route.test.ts). @/lib/db/schema is imported unmocked (pure table
+ * minimal tx capturing insert/select/update/delete calls for assertion —
+ * mirrors the pattern in src/app/api/admin/ledger/reconciliation/sessions/
+ * [sessionId]/match/route.test.ts and src/lib/ledger-queries.test.ts's
+ * makeMockTx). @/lib/db/schema is imported unmocked (pure table
  * definitions, no @/lib/db import of its own) purely for table-identity
  * comparisons (toBe(ledgerBudgets) etc.).
  */
@@ -42,12 +51,23 @@ const { mockTxState } = vi.hoisted(() => ({
     insertCalls: [] as { table: unknown }[],
     insertReturning: [] as unknown[],
     deleteCalls: [] as { table: unknown; cond: unknown }[],
+    /** Answered in call order, but only consumed by a delete call that
+     *  actually invokes .returning() (the cause-line purge step) — the
+     *  category-grain deletes in this route never call .returning(). */
+    deleteReturning: [] as unknown[][],
+    updateCalls: [] as { table: unknown; values: Record<string, unknown> }[],
+    /** FIFO queue for tx.select(...).from(...).where(...) calls — the
+     *  surviving-budget-ids lookup, then one "remaining lines" lookup per
+     *  budgetId the cause-line purge step touched. */
+    selectResults: [] as unknown[][],
   },
 }));
 
 vi.mock("@/lib/db", () => ({
   db: {
     transaction: vi.fn(async (cb: (tx: unknown) => unknown) => {
+      let si = 0;
+      let di = 0;
       const tx = {
         insert: (table: unknown) => {
           mockTxState.insertCalls.push({ table });
@@ -59,10 +79,25 @@ vi.mock("@/lib/db", () => ({
             }),
           };
         },
+        select: () => ({
+          from: () => ({
+            where: () => Promise.resolve(mockTxState.selectResults[si++] ?? []),
+          }),
+        }),
+        update: (table: unknown) => ({
+          set: (values: Record<string, unknown>) => {
+            mockTxState.updateCalls.push({ table, values });
+            return { where: () => Promise.resolve(undefined) };
+          },
+        }),
         delete: (table: unknown) => ({
           where: (cond: unknown) => {
             mockTxState.deleteCalls.push({ table, cond });
-            return Promise.resolve(undefined);
+            const p = Promise.resolve(undefined) as Promise<unknown> & {
+              returning: () => Promise<unknown[]>;
+            };
+            p.returning = () => Promise.resolve(mockTxState.deleteReturning[di++] ?? []);
+            return p;
           },
         }),
       };
@@ -76,7 +111,7 @@ import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { getEntityById, getBudgetApproval } from "@/lib/ledger-queries";
-import { ledgerBudgetApprovals, ledgerBudgets } from "@/lib/db/schema";
+import { ledgerBudgetApprovals, ledgerBudgets, ledgerBudgetLines } from "@/lib/db/schema";
 
 function makeRequest(body: unknown): NextRequest {
   return { json: async () => body } as unknown as NextRequest;
@@ -106,6 +141,9 @@ beforeEach(() => {
   mockTxState.insertCalls = [];
   mockTxState.insertReturning = [];
   mockTxState.deleteCalls = [];
+  mockTxState.deleteReturning = [];
+  mockTxState.updateCalls = [];
+  mockTxState.selectResults = [];
 });
 
 describe("POST /api/admin/ledger/budget-approvals — finalize purge (DECISION-052/053, Increment 2)", () => {
@@ -158,5 +196,55 @@ describe("POST /api/admin/ledger/budget-approvals — finalize purge (DECISION-0
     // just that the write was undone afterward.
     expect(mockTxState.insertCalls).toHaveLength(0);
     expect(mockTxState.deleteCalls).toHaveLength(0);
+  });
+
+  it("Budgeting Page Restructure: a live category with some-but-not-all cause lines pending-delete purges only those lines and recomputes annualAmountCents from survivors", async () => {
+    vi.mocked(getBudgetApproval).mockResolvedValue(null);
+    mockTxState.insertReturning = [APPROVAL_ROW];
+    // 1st select: surviving (non-pending-delete) budget rows for this entity+FY.
+    mockTxState.selectResults = [
+      [{ id: "budget-1" }],
+      // 2nd select: remaining ledger_budget_lines under budget-1 after the
+      // cause-line purge — two labeled survivors.
+      [{ amountCents: 1_000 }, { amountCents: 2_000 }],
+    ];
+    // The cause-line purge's .returning({ budgetId }) — one line purged, under budget-1.
+    mockTxState.deleteReturning = [[{ budgetId: "budget-1" }]];
+
+    const response = await POST(makeRequest(VALID_BODY));
+
+    expect(response.status).toBe(200);
+    // Two deletes: the category-grain purge (step 1, empty in this scenario
+    // but still runs), then the cause-line-grain purge (step 2).
+    expect(mockTxState.deleteCalls).toHaveLength(2);
+    expect(mockTxState.deleteCalls[0].table).toBe(ledgerBudgets);
+    expect(mockTxState.deleteCalls[1].table).toBe(ledgerBudgetLines);
+    // The category survives (no third delete against ledgerBudgets) — its
+    // annualAmountCents is recomputed from the two surviving lines instead.
+    expect(mockTxState.updateCalls).toHaveLength(1);
+    expect(mockTxState.updateCalls[0].table).toBe(ledgerBudgets);
+    expect(mockTxState.updateCalls[0].values.annualAmountCents).toBe(3_000);
+  });
+
+  it("Budgeting Page Restructure: a live category whose EVERY cause line was independently pending-delete has its now-childless parent deleted too, mirroring deleteBudgetCauseLine's last-line behavior", async () => {
+    vi.mocked(getBudgetApproval).mockResolvedValue(null);
+    mockTxState.insertReturning = [APPROVAL_ROW];
+    mockTxState.selectResults = [
+      [{ id: "budget-1" }], // surviving budget rows
+      [], // remaining lines under budget-1 after the purge — none left
+    ];
+    mockTxState.deleteReturning = [[{ budgetId: "budget-1" }]];
+
+    const response = await POST(makeRequest(VALID_BODY));
+
+    expect(response.status).toBe(200);
+    // Three deletes: category-grain purge (step 1), cause-line-grain purge
+    // (step 2), then the now-childless parent's own delete (step 3).
+    expect(mockTxState.deleteCalls).toHaveLength(3);
+    expect(mockTxState.deleteCalls[0].table).toBe(ledgerBudgets);
+    expect(mockTxState.deleteCalls[1].table).toBe(ledgerBudgetLines);
+    expect(mockTxState.deleteCalls[2].table).toBe(ledgerBudgets);
+    // No annualAmountCents recompute for a category that no longer exists.
+    expect(mockTxState.updateCalls).toHaveLength(0);
   });
 });

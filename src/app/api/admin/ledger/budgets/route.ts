@@ -34,9 +34,15 @@
  * Errors (both shapes): 400 (bad shape, or both/neither of
  * annualAmountCents/pendingDelete present), 404 (fund/category not found —
  * Shape B also 404s when no budget row exists for the tuple), 409 with
- * { reason: 'locked' | 'has_cause_breakdown' } (Shape B only surfaces
- * `reason` in the body; Shape A's response is unchanged from before this
- * increment).
+ * { reason: 'locked' } (Shape B only surfaces `reason` in the body; Shape A's
+ * response is unchanged from before this increment). Shape A's
+ * `has_cause_breakdown` 409 is unchanged (upsertBudgetLine still guards a
+ * numeric-overwrite/cascade hazard there) — but Shape B no longer 409s with
+ * that reason: the Budgeting Page Restructure (DECISION-054/056) removed
+ * setBudgetLinePendingDelete's own copy of that guard so a category can be
+ * soft-deleted (and restored) even while it's broken down by cause. Its
+ * cause lines are untouched either way — see isCauseLineLive (src/lib/
+ * ledger.ts) for how every read consumer excludes them.
  */
 
 import { NextRequest, NextResponse } from "next/server";

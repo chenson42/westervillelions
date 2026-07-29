@@ -1680,7 +1680,28 @@ export function buildCauseActualsByKey(rows: CauseActualSourceRow[]): Record<str
 }
 
 // ---------------------------------------------------------------------------
-// computeFundLineSums — Budget soft-delete (Increment 2, DECISION-052 item 1)
+// isCauseLineLive — Budgeting Page Restructure (DECISION-054/056)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared OR-exclusion predicate: a cause line is "live" (counts, renders,
+ * survives finalize) iff NEITHER its own `pendingDeleteAt` NOR its parent
+ * category's `pendingDeleteAt` is set. Category-level pending-delete never
+ * cascade-writes a flag onto its children (architect Ruling 4) — this
+ * predicate is what lets every read consumer (live totals, print worksheet,
+ * finalize purge) treat "either flag set" as dead without any of them
+ * reinventing slightly different exclusion logic. Pure, no DB access.
+ */
+export function isCauseLineLive(
+  causeLinePendingDeleteAt: string | null,
+  categoryPendingDeleteAt: string | null,
+): boolean {
+  return causeLinePendingDeleteAt === null && categoryPendingDeleteAt === null;
+}
+
+// ---------------------------------------------------------------------------
+// computeFundLineSums — Budget soft-delete (Increment 2, DECISION-052 item 1;
+// third parameter added by the Budgeting Page Restructure, DECISION-054 item 2)
 // ---------------------------------------------------------------------------
 
 /**
@@ -1698,17 +1719,29 @@ export function buildCauseActualsByKey(rows: CauseActualSourceRow[]): Record<str
  *
  * @param lineValues        `${categoryId}_${flow}` -> live dollar value in cents (guided-budget-setup.tsx's `lineValues[fundId]`).
  * @param pendingDeleteKeys  `${categoryId}_${flow}` -> true if that line is currently marked pending-delete (`pendingDeleteKeys[fundId]`). Missing/false = not pending-delete.
+ * @param causeLinePendingCents  `${categoryId}_${flow}` -> cents to subtract from that
+ *   category's rolled-up total for cause lines that are individually
+ *   pending-delete on their OWN flag (their parent category is still live —
+ *   if the parent were pending-delete too, `pendingDeleteKeys[key]` already
+ *   `continue`s the whole category above, so no double-subtraction).
+ *   `annualAmountCents` is never decremented for a pending cause line
+ *   (architect Ruling 1 — "restore brings the number back exactly by
+ *   construction"), so without this third param a still-live category's
+ *   `lineValues[key]` would silently include a dead cause line's dollars.
+ *   Defaulted to `{}` for backward compatibility with existing callers.
  */
 export function computeFundLineSums(
   lineValues: Record<string, number>,
   pendingDeleteKeys: Record<string, boolean> = {},
+  causeLinePendingCents: Record<string, number> = {},
 ): { incomeCents: number; expenseCents: number } {
   let incomeCents = 0;
   let expenseCents = 0;
   for (const [key, cents] of Object.entries(lineValues)) {
     if (pendingDeleteKeys[key]) continue;
-    if (key.endsWith("_income")) incomeCents += cents;
-    else if (key.endsWith("_expense")) expenseCents += cents;
+    const adjusted = cents - (causeLinePendingCents[key] ?? 0);
+    if (key.endsWith("_income")) incomeCents += adjusted;
+    else if (key.endsWith("_expense")) expenseCents += adjusted;
   }
   return { incomeCents, expenseCents };
 }

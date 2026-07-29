@@ -10,13 +10,26 @@
  * POST /categories) — this route only flips that state.
  *
  * FINALIZE PURGE (DECISION-052/053, Increment 2 of
- * docs/work-log/2026-07-28-budgeting-page-redesign.md): approve/lock is also
- * the one moment any pending-delete budget lines for this (entityId,
- * fiscalYear) actually get removed. The lock-status check, the lock-status
- * write, and the pending-delete purge all run inside ONE db.transaction() —
- * this closes a pre-existing check-then-act race (two concurrent finalize
- * requests could previously both read "unlocked" before either wrote) in the
- * same motion that makes the purge atomic with the lock.
+ * docs/work-log/2026-07-28-budgeting-page-redesign.md; extended by the
+ * Budgeting Page Restructure, DECISION-054/055/056): approve/lock is also
+ * the one moment any pending-delete budget lines/categories for this
+ * (entityId, fiscalYear) actually get removed. The lock-status check, the
+ * lock-status write, the category-grain purge, and the cause-line-grain
+ * purge all run inside ONE db.transaction() — this closes a pre-existing
+ * check-then-act race (two concurrent finalize requests could previously
+ * both read "unlocked" before either wrote) in the same motion that makes
+ * every purge step atomic with the lock. Two purge steps, in order:
+ *   1. Hard-delete every pending-delete ledger_budgets (category) row —
+ *      cascades away its ledger_budget_lines children via ON DELETE CASCADE
+ *      regardless of their own flag.
+ *   2. Hard-delete every pending-delete ledger_budget_lines row that
+ *      survived step 1 (i.e. its parent category was NOT itself
+ *      pending-delete) — a cause line independently removed via Flow 4/5
+ *      while its category stayed live. Every category this step touches has
+ *      its annualAmountCents recomputed from survivors, or — if the purge
+ *      emptied its last surviving cause line — the now-childless category
+ *      is deleted too, mirroring deleteBudgetCauseLine's existing
+ *      "emptying the last line deletes the parent" behavior.
  *
  * Gate: LEDGER_APPROVE
  *
@@ -49,12 +62,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { ledgerBudgetApprovals, ledgerBudgets } from "@/lib/db/schema";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { ledgerBudgetApprovals, ledgerBudgets, ledgerBudgetLines } from "@/lib/db/schema";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getEntityById, getBudgetApproval } from "@/lib/ledger-queries";
-import { validateRequiredTrimmedText, isBudgetLocked } from "@/lib/ledger";
+import { validateRequiredTrimmedText, isBudgetLocked, sumBudgetCauseLines } from "@/lib/ledger";
 
 const BOARD_MINUTE_MAX_LEN = 500;
 
@@ -150,9 +163,9 @@ export async function POST(request: NextRequest) {
       // entityId (not fundId) — approval itself is entity-wide across all of
       // that entity's funds. No history/versioning table: this is a genuine,
       // permanent delete, matching this table's pre-existing hard-delete-on-
-      // remove behavior. Cause-line children can never reach pending-delete
-      // (setBudgetLinePendingDelete's own guard prevents it), so this delete
-      // never triggers an unexpected ledger_budget_lines cascade.
+      // remove behavior. `ledger_budget_lines` rows under a purged category
+      // cascade away via its FK's ON DELETE CASCADE regardless of their own
+      // pendingDeleteAt state — this is the only category-grain purge step.
       await tx
         .delete(ledgerBudgets)
         .where(
@@ -162,6 +175,60 @@ export async function POST(request: NextRequest) {
             isNotNull(ledgerBudgets.pendingDeleteAt),
           ),
         );
+
+      // Budgeting Page Restructure (DECISION-054/055/056): a cause line can
+      // now independently reach pending-delete (Flow 4/5) while its parent
+      // category stays live — that column has no interactive write path
+      // OTHER than setBudgetCauseLinePendingDelete /
+      // setBudgetCauseGroupPendingDelete, neither of which ever touches the
+      // category. The step above already removed every cause line whose
+      // PARENT was purged (via cascade); this second step purges the
+      // remaining case — cause lines pending-delete on their OWN flag under
+      // categories that are still live (surviving the step above).
+      const survivingBudgetRows = await tx
+        .select({ id: ledgerBudgets.id })
+        .from(ledgerBudgets)
+        .where(and(eq(ledgerBudgets.entityId, entityId), eq(ledgerBudgets.fiscalYear, fiscalYear)));
+      const survivingBudgetIds = survivingBudgetRows.map((r) => r.id);
+
+      if (survivingBudgetIds.length > 0) {
+        const purgedLineRows = await tx
+          .delete(ledgerBudgetLines)
+          .where(
+            and(
+              inArray(ledgerBudgetLines.budgetId, survivingBudgetIds),
+              isNotNull(ledgerBudgetLines.pendingDeleteAt),
+            ),
+          )
+          .returning({ budgetId: ledgerBudgetLines.budgetId });
+
+        // Every category this step actually purged lines from needs its
+        // annualAmountCents recomputed from survivors (mirrors
+        // deleteBudgetCauseLine's own per-write recompute, just run again
+        // here for each budgetId this batch touched) — or, if the purge
+        // emptied a category's LAST surviving cause line, the now-childless
+        // parent ledger_budgets row is deleted too, mirroring
+        // deleteBudgetCauseLine's existing "emptying the last line deletes
+        // the parent" behavior exactly, just reached via finalize instead of
+        // a live edit.
+        const affectedBudgetIds = Array.from(new Set(purgedLineRows.map((r) => r.budgetId)));
+        for (const budgetId of affectedBudgetIds) {
+          const remaining = await tx
+            .select({ amountCents: ledgerBudgetLines.amountCents })
+            .from(ledgerBudgetLines)
+            .where(eq(ledgerBudgetLines.budgetId, budgetId));
+
+          if (remaining.length === 0) {
+            await tx.delete(ledgerBudgets).where(eq(ledgerBudgets.id, budgetId));
+          } else {
+            const categoryTotalCents = sumBudgetCauseLines(remaining);
+            await tx
+              .update(ledgerBudgets)
+              .set({ annualAmountCents: categoryTotalCents, updatedAt: new Date() })
+              .where(eq(ledgerBudgets.id, budgetId));
+          }
+        }
+      }
 
       return approvalRow;
     });

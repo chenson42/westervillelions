@@ -823,6 +823,12 @@ export const ledgerBudgetLines = pgTable(
     // existed before this migration ran.
     label: text("label").notNull().default(""),
     amountCents: integer("amount_cents").notNull(),
+    // Soft-delete-until-finalize (DECISION-056). Nullable, no
+    // default: null = normal row; set = marked for removal, purged in the same transaction
+    // as Approve & lock. Mirrors ledgerBudgets.pendingDeleteAt exactly — never written
+    // alongside amountCents, so "restore brings the number back exactly" holds by
+    // construction, not by special-casing (see setBudgetCauseLinePendingDelete).
+    pendingDeleteAt: timestamp("pending_delete_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },

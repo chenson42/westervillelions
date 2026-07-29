@@ -33,7 +33,7 @@
  *         409 { error: string, reason: 'locked' | 'duplicate_cause_label' }
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * `id` present in the body → UPDATE
+ * `id` present in the body, WITHOUT `pendingDelete` → UPDATE
  *
  * A line's cause is fixed at creation — there is no in-place cause change in
  * this increment (DECISION-048 item 2). Moving a line to a different cause is
@@ -46,9 +46,32 @@
  *         409 { error: string, reason: 'locked' | 'duplicate_cause_label' }
  *
  * ─────────────────────────────────────────────────────────────────────────────
+ * `id` AND `pendingDelete` present in the body → soft-delete / restore
+ * (Budgeting Page Restructure, DECISION-054/055/056)
+ *
+ * Line-item removal (Flow 4) is a pendingDeleteAt flag-flip, not a hard
+ * DELETE — the same "recoverable-until-finalize via Restore" property every
+ * other grain (category, cause-group) already has. The client's
+ * delayed-commit Undo holds THIS request until its toast expires; Undo
+ * clicked in time never sends it at all (see setBudgetCauseLinePendingDelete's
+ * doc comment, src/lib/ledger-queries.ts). A later Restore click is the SAME
+ * endpoint with `pendingDelete: false`.
+ *
+ * Body: { id: string; pendingDelete: boolean }
+ * Response 200: { action: 'pending-delete' | 'restored' }
+ * Errors: 400 (bad id/pendingDelete type), 404 (no line with this id),
+ *         409 { error: string, reason: 'locked' }
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  * DELETE /api/admin/ledger/budgets/cause-lines
  *
- * Remove one cause-tagged budget line item, addressed by `id`. Gate: LEDGER_MANAGE
+ * Hard-delete one cause-tagged budget line item, addressed by `id`. Retained
+ * unchanged for a never-saved row's local cancel (no network call happens
+ * there at all) — NOT called by the interactive remove-a-committed-line flow
+ * as of the Budgeting Page Restructure, which uses the PATCH flag-flip above
+ * instead. Left in place rather than removed (a 30-day code-review candidate,
+ * not a Phase 4 task — grep for other callers before touching it).
+ * Gate: LEDGER_MANAGE
  *
  * Body: { id: string }
  * Response 200: { action: 'line_deleted', categoryTotalCents: number }
@@ -63,7 +86,12 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-import { createBudgetCauseLine, updateBudgetCauseLine, deleteBudgetCauseLine } from "@/lib/ledger-queries";
+import {
+  createBudgetCauseLine,
+  updateBudgetCauseLine,
+  deleteBudgetCauseLine,
+  setBudgetCauseLinePendingDelete,
+} from "@/lib/ledger-queries";
 
 const VALID_FLOWS = ["income", "expense"] as const;
 
@@ -82,7 +110,31 @@ export async function PATCH(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id } = body;
+    const { id, pendingDelete } = body;
+
+    // --- SOFT-DELETE / RESTORE: id + pendingDelete present ----------------
+    // Checked before the UPDATE branch below so a flag-flip body (which
+    // carries neither label nor amountCents) never falls into "at least one
+    // of label or amountCents is required".
+    if (id !== undefined && pendingDelete !== undefined) {
+      if (typeof id !== "string" || !id) {
+        return NextResponse.json({ error: "id must be a string" }, { status: 400 });
+      }
+      if (typeof pendingDelete !== "boolean") {
+        return NextResponse.json({ error: "pendingDelete must be a boolean" }, { status: 400 });
+      }
+
+      const result = await setBudgetCauseLinePendingDelete({ id, pendingDelete });
+
+      if (!result.ok) {
+        return NextResponse.json(
+          { error: result.error, ...(result.reason ? { reason: result.reason } : {}) },
+          { status: result.status },
+        );
+      }
+
+      return NextResponse.json({ action: result.action });
+    }
 
     // --- UPDATE: id present ---------------------------------------------
     if (id !== undefined) {

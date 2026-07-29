@@ -92,6 +92,8 @@ import {
   computeCauseSeedForCategory,
   upsertBudgetLine,
   setBudgetLinePendingDelete,
+  setBudgetCauseLinePendingDelete,
+  setBudgetCauseGroupPendingDelete,
   getFundReport,
   getDuesTimingAdjustment,
 } from "./ledger-queries";
@@ -140,11 +142,17 @@ function makeMockTx(opts: {
   selectResults: unknown[][];
   insertReturning?: (unknown[] | PgErrorSentinel)[];
   updateThrows?: (PgErrorSentinel | undefined)[];
+  /** Answered in call order for an update().set().where().returning() chain
+   *  — used by setBudgetCauseGroupPendingDelete's "all N rows flip
+   *  atomically" assertion. Update calls that never invoke .returning() (the
+   *  vast majority of this file's existing coverage) don't consume this. */
+  updateReturning?: unknown[][];
   deleteReturning?: unknown[][];
 }) {
   let si = 0;
   let ii = 0;
   let ui = 0;
+  let uri = 0;
   let di = 0;
   const insertCalls: InsertCall[] = [];
   const updateCalls: UpdateCall[] = [];
@@ -199,14 +207,18 @@ function makeMockTx(opts: {
       set: (values: Record<string, unknown>) => {
         updateCalls.push({ table, values });
         return {
-          where: async () => {
+          where: () => {
             const throwEntry = opts.updateThrows?.[ui++];
             if (throwEntry) {
               const err = new Error("duplicate key value violates unique constraint");
               (err as Error & { code?: string }).code = throwEntry.__pgErrorCode;
-              throw err;
+              return Promise.reject(err);
             }
-            return undefined;
+            const p = Promise.resolve(undefined) as Promise<unknown> & {
+              returning: () => Promise<unknown[]>;
+            };
+            p.returning = () => Promise.resolve(opts.updateReturning?.[uri++] ?? []);
+            return p;
           },
         };
       },
@@ -672,6 +684,205 @@ describe("deleteBudgetCauseLine", () => {
 });
 
 // ---------------------------------------------------------------------------
+// setBudgetCauseLinePendingDelete — Budgeting Page Restructure
+// (DECISION-054/055/056)
+// ---------------------------------------------------------------------------
+
+describe("setBudgetCauseLinePendingDelete", () => {
+  it("soft-delete: sets pending_delete_at, never touching amountCents or the parent's annualAmountCents", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [
+        [{ id: "line-1", budgetId: "budget-1" }], // line lookup
+        [{ id: "budget-1", fundId: "fund-1", fiscalYear: 2026 }], // parent budget lookup
+        [FUND_ROW], // fund lookup
+        UNLOCKED_APPROVAL,
+      ],
+    });
+
+    const result = await setBudgetCauseLinePendingDelete(
+      { id: "line-1", pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "pending-delete" });
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].table).toBe(ledgerBudgetLines);
+    expect(updateCalls[0].values.pendingDeleteAt).toBeInstanceOf(Date);
+    // The whole point of a pure flag-flip: no amount field, and no write to
+    // the parent ledger_budgets row at all.
+    expect(updateCalls[0].values).not.toHaveProperty("amountCents");
+    expect(updateCalls.some((c) => c.table === ledgerBudgets)).toBe(false);
+  });
+
+  it("restore: clears pending_delete_at, again never touching amountCents", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [
+        [{ id: "line-1", budgetId: "budget-1" }],
+        [{ id: "budget-1", fundId: "fund-1", fiscalYear: 2026 }],
+        [FUND_ROW],
+        UNLOCKED_APPROVAL,
+      ],
+    });
+
+    const result = await setBudgetCauseLinePendingDelete(
+      { id: "line-1", pendingDelete: false },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "restored" });
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].values.pendingDeleteAt).toBeNull();
+    expect(updateCalls[0].values).not.toHaveProperty("amountCents");
+  });
+
+  it("404 on an unknown id — no lookup for a parent proceeds", async () => {
+    const { tx, updateCalls } = makeMockTx({ selectResults: [[]] });
+
+    const result = await setBudgetCauseLinePendingDelete(
+      { id: "missing", pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: false, error: "No cause line found for this id", status: 404 });
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("rejects 409 { reason: 'locked' } on a locked budget — for BOTH pendingDelete: true and pendingDelete: false", async () => {
+    for (const pendingDelete of [true, false]) {
+      const { tx, updateCalls } = makeMockTx({
+        selectResults: [
+          [{ id: "line-1", budgetId: "budget-1" }],
+          [{ id: "budget-1", fundId: "fund-1", fiscalYear: 2026 }],
+          [FUND_ROW],
+          LOCKED_APPROVAL,
+        ],
+      });
+
+      const result = await setBudgetCauseLinePendingDelete(
+        { id: "line-1", pendingDelete },
+        tx as never,
+      );
+
+      expect(result).toEqual({
+        ok: false,
+        error: "This budget is locked. Unlock it to make changes.",
+        status: 409,
+        reason: "locked",
+      });
+      expect(updateCalls).toHaveLength(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setBudgetCauseGroupPendingDelete — Budgeting Page Restructure
+// (DECISION-054/055/056)
+// ---------------------------------------------------------------------------
+
+describe("setBudgetCauseGroupPendingDelete", () => {
+  const GROUP_PARAMS = {
+    fundId: "fund-1",
+    fiscalYear: 2026,
+    categoryId: "cat-1",
+    flow: "expense" as const,
+    cause: "Environment",
+  };
+
+  it("soft-delete: happy path on a multi-line group — a single UPDATE flips every matching row atomically (no partial-failure window)", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [{ id: "budget-1" }],
+        UNLOCKED_APPROVAL,
+      ],
+      updateReturning: [[{ id: "line-1" }, { id: "line-2" }, { id: "line-3" }]],
+    });
+
+    const result = await setBudgetCauseGroupPendingDelete(
+      { ...GROUP_PARAMS, pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "pending-delete", lineCount: 3 });
+    // Exactly ONE update call touches all three rows — not three separate calls.
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].table).toBe(ledgerBudgetLines);
+    expect(updateCalls[0].values.pendingDeleteAt).toBeInstanceOf(Date);
+  });
+
+  it("restore: happy path on the same multi-line group, using the same function with pendingDelete: false", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [{ id: "budget-1" }],
+        UNLOCKED_APPROVAL,
+      ],
+      updateReturning: [[{ id: "line-1" }, { id: "line-2" }, { id: "line-3" }]],
+    });
+
+    const result = await setBudgetCauseGroupPendingDelete(
+      { ...GROUP_PARAMS, pendingDelete: false },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "restored", lineCount: 3 });
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].values.pendingDeleteAt).toBeNull();
+  });
+
+  it("404 when the cause has no line items — the UPDATE matched zero rows", async () => {
+    const { tx } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [{ id: "budget-1" }],
+        UNLOCKED_APPROVAL,
+      ],
+      updateReturning: [[]], // zero rows matched
+    });
+
+    const result = await setBudgetCauseGroupPendingDelete(
+      { ...GROUP_PARAMS, pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: false, error: "No line items exist for this cause", status: 404 });
+  });
+
+  it("404 when no budget row exists for this category/flow", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [[FUND_ROW], []],
+    });
+
+    const result = await setBudgetCauseGroupPendingDelete(
+      { ...GROUP_PARAMS, pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: false, error: "No budget row found for this category", status: 404 });
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("rejects 409 { reason: 'locked' } on a locked budget, without flipping any row", async () => {
+    const { tx, updateCalls } = makeMockTx({
+      selectResults: [[FUND_ROW], [{ id: "budget-1" }], LOCKED_APPROVAL],
+    });
+
+    const result = await setBudgetCauseGroupPendingDelete(
+      { ...GROUP_PARAMS, pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "This budget is locked. Unlock it to make changes.",
+      status: 409,
+      reason: "locked",
+    });
+    expect(updateCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // upsertBudgetCauseLineForSeed
 // ---------------------------------------------------------------------------
 
@@ -1116,14 +1327,13 @@ describe("setBudgetLinePendingDelete", () => {
     }
   });
 
-  it("rejects 409 { reason: 'has_cause_breakdown' } for a row with ledger_budget_lines children — defense-in-depth, the UI never renders a soft-delete control for one", async () => {
+  it("Budgeting Page Restructure (DECISION-054/056): succeeds for a category WITH ledger_budget_lines children — Flow 6, 'remove a whole category, lump sum or in breakdown.' The has_cause_breakdown guard was removed from THIS function specifically (upsertBudgetLine's own copy is untouched); only the category's own row is flipped, never its children.", async () => {
     const { tx, updateCalls } = makeMockTx({
       selectResults: [
         [FUND_ROW],
         [CATEGORY_ROW],
         UNLOCKED_APPROVAL,
-        [{ id: "budget-1" }], // row exists
-        [{ id: "line-1" }], // and has a child
+        [{ id: "budget-1" }], // row exists, in breakdown mode
       ],
     });
 
@@ -1132,13 +1342,13 @@ describe("setBudgetLinePendingDelete", () => {
       tx as never,
     );
 
-    expect(result).toEqual({
-      ok: false,
-      error: "This category is broken down by cause — edit its cause lines instead.",
-      status: 409,
-      reason: "has_cause_breakdown",
-    });
-    expect(updateCalls).toHaveLength(0);
+    expect(result).toEqual({ ok: true, action: "pending-delete" });
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].table).toBe(ledgerBudgets);
+    // No cascade write onto children — architect Ruling 4's "no cascade in
+    // either direction," children are excluded at read time via
+    // isCauseLineLive, never by a write this function makes.
+    expect(updateCalls.some((c) => c.table === ledgerBudgetLines)).toBe(false);
   });
 
   it("returns 404 when no ledger_budgets row exists for the (fundId, fiscalYear, categoryId, flow) tuple — there's nothing to soft-delete or restore", async () => {
@@ -1301,8 +1511,8 @@ describe("getFundReport — causeActualsByKey", () => {
     const category = { id: "cat-1", name: "Charitable donation out", flow: "expense", countsAsGiving: true };
     const budgetRow = { id: "budget-1", categoryId: "cat-1", flow: "expense", annualAmountCents: 20_000, pendingDeleteAt: null };
     const budgetLineRows = [
-      { id: "line-1", budgetId: "budget-1", cause: "Hunger & Basic Needs", label: "WARM", amountCents: 12_000 },
-      { id: "line-2", budgetId: "budget-1", cause: "Hunger & Basic Needs", label: "", amountCents: 8_000 },
+      { id: "line-1", budgetId: "budget-1", cause: "Hunger & Basic Needs", label: "WARM", amountCents: 12_000, pendingDeleteAt: null },
+      { id: "line-2", budgetId: "budget-1", cause: "Hunger & Basic Needs", label: "", amountCents: 8_000, pendingDeleteAt: null },
     ];
     const txns = [
       { id: "t1", categoryId: "cat-1", flow: "expense", amountCents: 11_000, status: "posted", txnDate: "2026-08-01", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
@@ -1317,8 +1527,8 @@ describe("getFundReport — causeActualsByKey", () => {
     // budget lines say.
     expect(report!.expense[0].budgetCents).toBe(20_000);
     expect(report!.expense[0].causeLines).toEqual([
-      { id: "line-1", cause: "Hunger & Basic Needs", label: "WARM", amountCents: 12_000 },
-      { id: "line-2", cause: "Hunger & Basic Needs", label: "", amountCents: 8_000 },
+      { id: "line-1", cause: "Hunger & Basic Needs", label: "WARM", amountCents: 12_000, pendingDeleteAt: null },
+      { id: "line-2", cause: "Hunger & Basic Needs", label: "", amountCents: 8_000, pendingDeleteAt: null },
     ]);
 
     // Actual figures — the new, independent aggregation. Deliberately

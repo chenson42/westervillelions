@@ -181,7 +181,18 @@ export default async function AdminLedgerBudgetingPage({
 
       function enrichCauseLines(
         categoryId: string,
-        causeLines: { id: string; cause: string; label: string; amountCents: number }[] | null,
+        causeLines:
+          | {
+              id: string;
+              cause: string;
+              label: string;
+              amountCents: number;
+              /** Budgeting Page Restructure (DECISION-054/055/056) — own-flag
+               *  soft-delete state, threaded straight through from
+               *  getFundReport's widened causeLines[] shape. */
+              pendingDeleteAt: string | null;
+            }[]
+          | null,
       ) {
         if (!causeLines) return null;
         return causeLines.map((cl) => {

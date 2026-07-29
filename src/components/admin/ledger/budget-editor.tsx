@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   isCauseEligibleCategory,
   OTHER_COMMUNITY_SUPPORT_CAUSE,
@@ -10,6 +11,7 @@ import {
   resolveBudgetLineDeleteAction,
 } from "@/lib/ledger";
 import BudgetCauseEditor, {
+  ALL_CAUSES,
   type BudgetCauseLine,
   type ExitBreakdownReason,
 } from "@/components/admin/ledger/budget-cause-editor";
@@ -20,18 +22,19 @@ interface BudgetLine {
   flow: "income" | "expense";
   budgetCents: number | null;
   /**
-   * Sourced from ledgerCategories.countsAsGiving. Drives the "Break down by
-   * cause" affordance's eligibility gate (isCauseEligibleCategory, B-17
-   * Increment A) — optional/defaulted so callers on older pages that haven't
-   * threaded it through yet don't break the type.
+   * Sourced from ledgerCategories.countsAsGiving. Drives the "+ add cause"
+   * affordance's eligibility gate (isCauseEligibleCategory, B-17 Increment A)
+   * — optional/defaulted so callers on older pages that haven't threaded it
+   * through yet don't break the type.
    */
   countsAsGiving?: boolean;
   /**
    * null = lump-sum/no breakdown; a non-empty array = this category is
    * already in cause-breakdown mode server-side. Optional/defaulted for the
    * same reason as countsAsGiving. `id`/`label` widened by Labeled Cause
-   * Budget Lines (DECISION-047/048) — every server-sourced line now carries
-   * both.
+   * Budget Lines (DECISION-047/048); `pendingDeleteAt` widened by the
+   * Budgeting Page Restructure (DECISION-054/055/056) — every server-sourced
+   * line now carries all of them.
    */
   causeLines?: BudgetCauseLine[] | null;
   /**
@@ -51,7 +54,10 @@ interface BudgetLine {
    * finalized (Approve & lock), at which point it's purged server-side.
    * Serialized as an ISO string (or null) at the getFundReport boundary.
    * Optional/defaulted so older callers that haven't threaded this through
-   * don't break the type.
+   * don't break the type. As of the Budgeting Page Restructure this is now
+   * checked FIRST, ahead of the breakdown branch — a category can be both
+   * pendingDeleteAt AND carry causeLines (Flow 6, category remove available
+   * even in breakdown mode), and the deleted treatment must win.
    */
   pendingDeleteAt?: string | null;
 }
@@ -68,6 +74,35 @@ function ReferenceValue({ label, cents }: { label: string; cents: number | null 
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg
+      className="h-4 w-4"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth="1.5"
+      stroke="currentColor"
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+      />
+    </svg>
+  );
+}
+
+/** Standard fix for the blur-vs-click race (Gap 4 / DECISION-054 item 1):
+ *  suppresses the blur-triggered commit on an adjacent input from ever
+ *  queuing when the mousedown target is a control about to consume the
+ *  click, so a mid-flight router.refresh() can't detach the exact node the
+ *  browser is mid-click on. Applied to every add/remove/restore control in
+ *  this file. */
+function preventMouseDownDefault(e: React.MouseEvent) {
+  e.preventDefault();
+}
+
 function parseDollarsToCents(raw: string | undefined): number {
   const trimmed = (raw ?? "").trim();
   if (trimmed === "") return 0;
@@ -79,6 +114,15 @@ interface BudgetEditorProps {
   fundId: string;
   fiscalYear: number;
   lines: BudgetLine[];
+  /**
+   * Single-flow hint (Budgeting Page Restructure — GuidedBudgetSetup now
+   * renders one BudgetEditor per Income/Expense section). When set, the
+   * redundant per-row INCOME/EXPENSE badge is dropped since the whole editor
+   * instance is already scoped to one flow. Optional — callers that render a
+   * mixed-flow list (e.g. [fundSlug]/report/page.tsx) omit it and keep the
+   * per-row badge.
+   */
+  flow?: "income" | "expense";
   /**
    * Optional callback fired on every keystroke (before blur/save), keyed the
    * same way as internal state: `${categoryId}_${flow}`, value is the raw
@@ -118,6 +162,12 @@ interface BudgetEditorProps {
    * every successful commit) reconciles it with server truth afterward.
    */
   onPendingDeleteChange?: (key: string, pendingDelete: boolean) => void;
+  /**
+   * Bubbled straight through to every nested BudgetCauseEditor (Budgeting
+   * Page Restructure) — see that component's own doc comment. Keyed the same
+   * way as onInputChange/onPendingDeleteChange.
+   */
+  onCauseLinePendingDeltaChange?: (key: string, deltaCents: number) => void;
 }
 
 /**
@@ -133,16 +183,27 @@ interface BudgetEditorProps {
  * is the single source of truth both the trash-icon control and the
  * blank-then-blur/Enter gesture route through, so a genuinely never-saved
  * blank row stays a true no-op (no network call).
+ *
+ * Budgeting Page Restructure (DECISION-054/055/056): a giving-eligible
+ * expense category's cause breakdown is now entered via "+ add cause" (a
+ * one-time-per-cause picker on the category row, replacing the old
+ * hard-defaulted "Break down by cause" link) and stays available afterward
+ * to start a second/third group. Category removal is now available even
+ * while a category is in breakdown mode (the has_cause_breakdown guard was
+ * removed server-side) — the render-order fix below (pending-delete checked
+ * BEFORE breakdown) is what makes that state show correctly.
  */
 export default function BudgetEditor({
   fundId,
   fiscalYear,
   lines,
+  flow: singleFlow,
   onInputChange,
   disabled = false,
   showRemoveControl = false,
   labelOptions = [],
   onPendingDeleteChange,
+  onCauseLinePendingDeltaChange,
 }: BudgetEditorProps) {
   const router = useRouter();
   // Track per-line editing state: input value (dollars), saving flag
@@ -159,10 +220,30 @@ export default function BudgetEditor({
   // Local-only override of a category's breakdown/lump-sum rendering mode,
   // keyed the same as `inputs` (`${categoryId}_${flow}`). undefined = defer
   // to the server-sourced `causeLines` field; true/false force one way or
-  // the other while a local pre-fill or a just-completed collapse/empty is
-  // ahead of the next router.refresh(). See DECISION-046 item 1 — entering
+  // the other while a local pre-fill or a just-completed collapse is ahead
+  // of the next router.refresh(). See DECISION-046 item 1 — entering
   // breakdown mode is a client-side pre-fill with no dedicated endpoint.
   const [breakdownOverride, setBreakdownOverride] = useState<Record<string, boolean>>({});
+  // The cause the treasurer picked for a category's FIRST-ever breakdown
+  // group (Budgeting Page Restructure) — used as the pre-fill row's cause
+  // instead of a hard OTHER_COMMUNITY_SUPPORT_CAUSE default. Only consulted
+  // the instant breakdownOverride flips true for a key that had no
+  // server-sourced causeLines yet.
+  const [breakdownInitialCause, setBreakdownInitialCause] = useState<Record<string, string>>({});
+  // Which category row's "+ add cause" picker is currently open (one at a
+  // time, mirrors GuidedBudgetSetup's single-open-add-category-form
+  // convention).
+  const [addCauseKey, setAddCauseKey] = useState<string | null>(null);
+  // Command prop into an already-mounted BudgetCauseEditor: a cause picked
+  // for a category ALREADY in breakdown needs to inject a new pending row
+  // into the existing editor rather than re-entering breakdown (which only
+  // applies to a lump-sum category). Cleared back to null by
+  // BudgetCauseEditor once consumed.
+  const [requestedNewCause, setRequestedNewCause] = useState<Record<string, string | null>>({});
+  // Category-remove-in-breakdown confirm (Flow 6, Chris's decision 2026-07-29):
+  // removing a category that carries causes/line items opens a ConfirmDialog
+  // naming what it takes with it, unlike the unconfirmed lump-sum remove.
+  const [categoryRemoveConfirm, setCategoryRemoveConfirm] = useState<BudgetLine | null>(null);
 
   function handleChange(key: string, value: string) {
     if (disabled) return;
@@ -177,7 +258,10 @@ export default function BudgetEditor({
    * call this directly for a hard delete; `annualAmountCents: null` is no
    * longer sent by this component for any row that ever existed. Fires
    * `onPendingDeleteChange` optimistically (ahead of the round-trip) so
-   * GuidedBudgetSetup's live balance badge updates instantly.
+   * GuidedBudgetSetup's live balance badge updates instantly. Now succeeds
+   * on a category in breakdown mode too (Flow 6) — the server's
+   * has_cause_breakdown guard on this specific write path was removed as
+   * part of the Budgeting Page Restructure.
    */
   async function setPendingDelete(
     categoryId: string,
@@ -196,12 +280,10 @@ export default function BudgetEditor({
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         const message =
-          data.reason === "has_cause_breakdown"
-            ? "This category is broken down by cause — remove its cause lines first."
-            : data.error ||
-              (pendingDelete
-                ? "Could not remove this budget line. Try again."
-                : "Could not restore this budget line. Try again.");
+          data.error ||
+          (pendingDelete
+            ? "Could not remove this budget line. Try again."
+            : "Could not restore this budget line. Try again.");
         throw new Error(message);
       }
       onPendingDeleteChange?.(key, pendingDelete);
@@ -297,9 +379,12 @@ export default function BudgetEditor({
    * Trash-icon control — always resolves through resolveBudgetLineDeleteAction
    * with a blank rawValue (a click is equivalent to blanking the line): an
    * already-persisted row (line.budgetCents !== null) soft-deletes
-   * immediately, no confirm (removal is reversible now — DECISION-052/053).
-   * A never-saved row (e.g. an active category getFundReport surfaces with
-   * no budget set yet) is a true no-op — there's nothing to remove.
+   * immediately, no confirm (removal is reversible now — DECISION-052/053,
+   * and category removal keeps this SAME unconfirmed behavior even in
+   * breakdown mode per the Phase 3 design — the persistent Restore control
+   * is the safety net, not a confirm dialog). A never-saved row (e.g. an
+   * active category getFundReport surfaces with no budget set yet) is a
+   * true no-op — there's nothing to remove.
    */
   function requestRemove(line: BudgetLine) {
     if (disabled) return;
@@ -317,17 +402,38 @@ export default function BudgetEditor({
     void setPendingDelete(line.categoryId, line.flow, false);
   }
 
+  /** Causes not yet used on this category — feeds the "+ add cause" picker.
+   *  Computed from the server-sourced `causeLines` (not any local-only
+   *  uncommitted row), which is the correct source of truth per the Phase 3
+   *  design; a not-yet-committed pre-fill row is rare enough at this grain
+   *  not to warrant threading BudgetCauseEditor's live state back up. */
+  function unusedCauses(line: BudgetLine): string[] {
+    const used = new Set((line.causeLines ?? []).map((cl) => cl.cause));
+    return ALL_CAUSES.filter((c) => !used.has(c));
+  }
+
   /**
-   * "Break down by cause" — flips LOCAL state only, no network call
-   * (DECISION-046 item 1: there is no dedicated "enter breakdown" endpoint).
-   * BudgetCauseEditor is handed a single pre-filled pending row —
-   * `OTHER_COMMUNITY_SUPPORT_CAUSE` at the category's current lump-sum
-   * value — and nothing is persisted until that row commits via its own
-   * blur/Enter path. If the treasurer navigates away first, the original
-   * lump sum is untouched.
+   * Handles a pick from the "+ add cause" control (Budgeting Page
+   * Restructure). If the category is still lump-sum, this IS how it enters
+   * breakdown mode (mirrors the old "Break down by cause" link, just
+   * cause-selected instead of hard-defaulted to
+   * OTHER_COMMUNITY_SUPPORT_CAUSE). If the category is already in
+   * breakdown, the picked cause is handed to the mounted BudgetCauseEditor
+   * via the requestedNewCause command prop, which appends a new pending row
+   * for it.
    */
-  function enterBreakdown(key: string) {
-    if (disabled) return;
+  function pickCause(line: BudgetLine, cause: string) {
+    const key = `${line.categoryId}_${line.flow}`;
+    setAddCauseKey(null);
+    const override = breakdownOverride[key];
+    const serverBreakdown = !!(line.causeLines && line.causeLines.length > 0);
+    const alreadyInBreakdown = override !== undefined ? override : serverBreakdown;
+
+    if (alreadyInBreakdown) {
+      setRequestedNewCause((prev) => ({ ...prev, [key]: cause }));
+      return;
+    }
+    setBreakdownInitialCause((prev) => ({ ...prev, [key]: cause }));
     setBreakdownOverride((prev) => ({ ...prev, [key]: true }));
   }
 
@@ -339,11 +445,13 @@ export default function BudgetEditor({
    *    never touched (a cancel writes nothing; collapse deliberately leaves
    *    annualAmountCents as-is per DECISION-046 item 2) — restore the
    *    line's original budgetCents unchanged.
-   *  - "emptied": the last cause line was removed one at a time, which
-   *    deletes the parent ledger_budgets row entirely — the category now has
-   *    no budget target set, so the input goes blank, not back to the old
-   *    total.
-   * dirtyRef is cleared in all three cases since the restored value already
+   *  - "emptied": retained in the type for BudgetCauseEditor's contract, but
+   *    unreachable as of the Budgeting Page Restructure — line-item removal
+   *    is now a soft-delete flag-flip that never empties (hard-deletes) the
+   *    parent, so this branch has no live caller. Kept defensive (blank
+   *    input) rather than removed, in case a future change reintroduces a
+   *    path that fires it.
+   * dirtyRef is cleared in all cases since the restored value already
    * matches server truth — no redundant PATCH should fire on the next blur.
    */
   function exitBreakdown(line: BudgetLine, reason: ExitBreakdownReason) {
@@ -356,80 +464,107 @@ export default function BudgetEditor({
     onInputChange?.(key, restored);
   }
 
+  /** Shared "+ add cause" control, rendered on a category row regardless of
+   *  breakdown state (Budgeting Page Restructure) — stays visible after use
+   *  (not one-shot), offering only the shrinking set of unused causes;
+   *  hidden entirely once every cause is in use (defensive — ALL_CAUSES is
+   *  finite). */
+  function renderAddCauseControl(line: BudgetLine, key: string) {
+    if (disabled) return null;
+    const eligible = isCauseEligibleCategory({ flow: line.flow, countsAsGiving: line.countsAsGiving });
+    if (!eligible) return null;
+    const unused = unusedCauses(line);
+    const open = addCauseKey === key;
+
+    if (open) {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          {unused.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onMouseDown={preventMouseDownDefault}
+              onClick={() => pickCause(line, c)}
+              className="inline-flex items-center rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:border-lions-blue hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+            >
+              {c}
+            </button>
+          ))}
+          <button
+            type="button"
+            onMouseDown={preventMouseDownDefault}
+            onClick={() => setAddCauseKey(null)}
+            className="text-xs text-gray-500 hover:text-gray-700 rounded px-2 py-2 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-lions-blue"
+          >
+            Cancel
+          </button>
+        </div>
+      );
+    }
+
+    if (unused.length === 0) return null;
+
+    return (
+      <button
+        type="button"
+        onMouseDown={preventMouseDownDefault}
+        onClick={() => setAddCauseKey(key)}
+        className="inline-flex items-center text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-2 min-h-[44px]"
+      >
+        + Add cause
+      </button>
+    );
+  }
+
   return (
     <div className="space-y-1">
       {lines.map((line) => {
         const key = `${line.categoryId}_${line.flow}`;
         const isSaving = saving[key];
-        const eligible = isCauseEligibleCategory({
-          flow: line.flow,
-          countsAsGiving: line.countsAsGiving,
-        });
         const override = breakdownOverride[key];
         const serverBreakdown = !!(line.causeLines && line.causeLines.length > 0);
         const inBreakdown = override !== undefined ? override : serverBreakdown;
 
-        if (inBreakdown) {
-          const initialLines: BudgetCauseLine[] =
-            line.causeLines && line.causeLines.length > 0
-              ? line.causeLines
-              : [
-                  {
-                    id: null,
-                    cause: OTHER_COMMUNITY_SUPPORT_CAUSE,
-                    label: "",
-                    amountCents: parseDollarsToCents(inputs[key]),
-                  },
-                ];
-          return (
-            <div key={key} className="rounded-lg border border-gray-100 p-2">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xs text-gray-500 w-20 uppercase tracking-wide">
-                  {line.flow}
-                </span>
-                <span className="text-sm font-medium text-gray-900 flex-1 truncate">
-                  {line.categoryName}
-                </span>
-              </div>
-              <BudgetCauseEditor
-                fundId={fundId}
-                fiscalYear={fiscalYear}
-                categoryId={line.categoryId}
-                flow={line.flow}
-                initialLines={initialLines}
-                pending={!(line.causeLines && line.causeLines.length > 0)}
-                disabled={disabled}
-                labelOptions={labelOptions}
-                onTotalChange={(value) => handleChange(key, value)}
-                onExitBreakdown={(reason) => exitBreakdown(line, reason)}
-              />
-            </div>
-          );
-        }
-
+        // Render-order fix (Budgeting Page Restructure): pending-delete is
+        // checked BEFORE breakdown. Once the has_cause_breakdown guard came
+        // out server-side, a category can be both pendingDeleteAt AND carry
+        // causeLines (Flow 6) — the deleted treatment must win regardless of
+        // breakdown state, or a removed-in-breakdown category would silently
+        // render its BudgetCauseEditor instead of the Restore-able row.
         if (line.pendingDeleteAt) {
           // Soft-deleted row (DECISION-052/053) — stays visible, clearly
           // "deleted": strikethrough + muted, amount input disabled (this is
           // what prevents an edit-while-pending / re-add collision), trash
           // control replaced by a single-click, no-confirm Restore. Purged
           // for real only when the budget is finalized (Approve & lock).
+          // This same block now also covers a category that was in
+          // breakdown when removed (Flow 6) — its cause lines stay wherever
+          // they are (own pendingDeleteAt untouched, per Ruling 4) and the
+          // "(N cause lines)" hint below tells the treasurer what's riding
+          // along with this removal at finalize time.
+          const causeLineCount = line.causeLines?.length ?? 0;
           return (
             <div
               key={key}
               className="space-y-1 py-1 px-2 -mx-2 rounded-lg bg-gray-50 border-b border-gray-50 last:border-0"
             >
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-gray-400 w-20 uppercase tracking-wide flex-shrink-0">
-                  {line.flow}
-                </span>
+                {!singleFlow && (
+                  <span className="text-xs text-gray-400 w-20 uppercase tracking-wide flex-shrink-0">
+                    {line.flow}
+                  </span>
+                )}
                 <span className="text-sm text-gray-500 line-through flex-1 min-w-0 truncate">
                   {line.categoryName}
                 </span>
                 <span className="inline-flex items-center rounded-lg bg-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-600 whitespace-nowrap">
                   Deleted &mdash; removed when finalized
+                  {causeLineCount > 0
+                    ? ` (${causeLineCount} cause line${causeLineCount === 1 ? "" : "s"})`
+                    : ""}
                 </span>
               </div>
-              <div className="flex items-center gap-2 sm:pl-20">
+              <div className={`flex items-center gap-2 ${singleFlow ? "" : "sm:pl-20"}`}>
                 <div className="grid grid-cols-2 gap-2 flex-1 min-w-0 sm:flex-none sm:w-52">
                   <ReferenceValue label="Prior Budget" cents={line.priorBudgetCents} />
                   <ReferenceValue label="Prior Actual" cents={line.priorActualCents} />
@@ -450,6 +585,7 @@ export default function BudgetEditor({
                 {showRemoveControl && !disabled && (
                   <button
                     type="button"
+                    onMouseDown={preventMouseDownDefault}
                     onClick={() => requestRestore(line)}
                     disabled={isSaving}
                     title={`Restore ${line.categoryName} to this year's budget`}
@@ -464,20 +600,89 @@ export default function BudgetEditor({
           );
         }
 
+        if (inBreakdown) {
+          const fallbackCause = breakdownInitialCause[key] ?? OTHER_COMMUNITY_SUPPORT_CAUSE;
+          const initialLines: BudgetCauseLine[] =
+            line.causeLines && line.causeLines.length > 0
+              ? line.causeLines
+              : [
+                  {
+                    id: null,
+                    cause: fallbackCause,
+                    label: "",
+                    amountCents: parseDollarsToCents(inputs[key]),
+                    pendingDeleteAt: null,
+                  },
+                ];
+          return (
+            <div key={key} className="rounded-lg border border-gray-100 p-2">
+              <div className="flex items-center gap-2 mb-2">
+                {!singleFlow && (
+                  <span className="text-xs text-gray-500 w-20 uppercase tracking-wide">
+                    {line.flow}
+                  </span>
+                )}
+                <span className="text-sm font-medium text-gray-900 flex-1 truncate">
+                  {line.categoryName}
+                </span>
+                {/* Category remove in breakdown mode (Flow 6): unlike the
+                    lump-sum branch, this category carries causes/line items,
+                    so it opens a ConfirmDialog naming what it takes with it
+                    (Chris's decision 2026-07-29). Still reversible via the
+                    Restore row until the budget is finalized. */}
+                {showRemoveControl && !disabled && (
+                  <button
+                    type="button"
+                    onMouseDown={preventMouseDownDefault}
+                    onClick={() => setCategoryRemoveConfirm(line)}
+                    title={`Remove ${line.categoryName} from this year's budget`}
+                    aria-label={`Remove ${line.categoryName} (${line.flow}) from this year's budget`}
+                    className="inline-flex items-center justify-center rounded-lg p-2 text-gray-400 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] min-w-[44px] flex-shrink-0"
+                  >
+                    <TrashIcon />
+                  </button>
+                )}
+              </div>
+              <BudgetCauseEditor
+                fundId={fundId}
+                fiscalYear={fiscalYear}
+                categoryId={line.categoryId}
+                flow={line.flow}
+                initialLines={initialLines}
+                pending={!(line.causeLines && line.causeLines.length > 0)}
+                disabled={disabled}
+                labelOptions={labelOptions}
+                onTotalChange={(value) => handleChange(key, value)}
+                onExitBreakdown={(reason) => exitBreakdown(line, reason)}
+                requestedNewCause={requestedNewCause[key] ?? null}
+                onNewCauseRequestHandled={() =>
+                  setRequestedNewCause((prev) => ({ ...prev, [key]: null }))
+                }
+                onPendingDeltaChange={(deltaCents) =>
+                  onCauseLinePendingDeltaChange?.(key, deltaCents)
+                }
+              />
+              <div className="mt-2 pl-1">{renderAddCauseControl(line, key)}</div>
+            </div>
+          );
+        }
+
         return (
           <div key={key} className="space-y-1 py-1 border-b border-gray-50 last:border-0">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 w-20 uppercase tracking-wide flex-shrink-0">
-                {line.flow}
-              </span>
+              {!singleFlow && (
+                <span className="text-xs text-gray-500 w-20 uppercase tracking-wide flex-shrink-0">
+                  {line.flow}
+                </span>
+              )}
               <span className="text-sm text-gray-700 flex-1 truncate">{line.categoryName}</span>
             </div>
             {/* Prior-year reference columns (read-only) + this year's input.
                 Mobile-first: reference cells share a 2-col grid that shrinks
                 with the viewport instead of forcing horizontal scroll at
                 360px; sm:pl-20 aligns the group under the category name to
-                match the "Break down by cause" row below. */}
-            <div className="flex items-center gap-2 sm:pl-20">
+                match the "+ add cause" row below. */}
+            <div className={`flex items-center gap-2 ${singleFlow ? "" : "sm:pl-20"}`}>
               <div className="grid grid-cols-2 gap-2 flex-1 min-w-0 sm:flex-none sm:w-52">
                 <ReferenceValue label="Prior Budget" cents={line.priorBudgetCents} />
                 <ReferenceValue label="Prior Actual" cents={line.priorActualCents} />
@@ -508,38 +713,18 @@ export default function BudgetEditor({
               {showRemoveControl && !disabled && (
                 <button
                   type="button"
+                  onMouseDown={preventMouseDownDefault}
                   onClick={() => requestRemove(line)}
                   title={`Remove ${line.categoryName} from this year's budget`}
                   aria-label={`Remove ${line.categoryName} (${line.flow}) from this year's budget`}
                   className="inline-flex items-center justify-center rounded-lg p-2 text-gray-400 hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] min-w-[44px] flex-shrink-0"
                 >
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth="1.5"
-                    stroke="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-                    />
-                  </svg>
+                  <TrashIcon />
                 </button>
               )}
             </div>
-            {eligible && !disabled && (
-              <div className="pl-20">
-                <button
-                  type="button"
-                  onClick={() => enterBreakdown(key)}
-                  className="inline-flex items-center text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-2 min-h-[44px]"
-                >
-                  Break down by cause
-                </button>
-              </div>
+            {!disabled && (
+              <div className={singleFlow ? "" : "pl-20"}>{renderAddCauseControl(line, key)}</div>
             )}
           </div>
         );
@@ -549,6 +734,36 @@ export default function BudgetEditor({
           ? "This budget is locked for editing."
           : "Enter amounts in dollars. Press Enter or click away to save. Enter 0 for a $0 budget. Leave blank to remove — removal is reversible until this budget is finalized."}
       </p>
+
+      {/* Flow 6 — confirm before removing a category that carries a cause
+          breakdown (Chris's decision 2026-07-29). The message names how many
+          causes / line items go with it; removal stays reversible (Restore)
+          until finalize. Lump-sum category removal does NOT route here. */}
+      <ConfirmDialog
+        open={categoryRemoveConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setCategoryRemoveConfirm(null);
+        }}
+        title={
+          categoryRemoveConfirm ? `Remove "${categoryRemoveConfirm.categoryName}"?` : ""
+        }
+        description={
+          categoryRemoveConfirm
+            ? (() => {
+                const cls = categoryRemoveConfirm.causeLines ?? [];
+                const causeCount = new Set(cls.map((cl) => cl.cause)).size;
+                const lineCount = cls.length;
+                return `This removes "${categoryRemoveConfirm.categoryName}" and its ${causeCount} cause${causeCount === 1 ? "" : "s"} / ${lineCount} line item${lineCount === 1 ? "" : "s"}. It stays as a Restore-able row until this budget is finalized.`;
+              })()
+            : ""
+        }
+        confirmLabel="Remove"
+        destructive
+        onConfirm={() => {
+          if (categoryRemoveConfirm) requestRemove(categoryRemoveConfirm);
+          setCategoryRemoveConfirm(null);
+        }}
+      />
     </div>
   );
 }

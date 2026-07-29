@@ -129,6 +129,44 @@ can be referenced from work-logs, board minutes, and future sessions.
   6/26/2026 ($60 + $75) were deleted as increment-6a test data during the seed. Their register
   dues ($216 family, 7/19/2025) did import. If the June 2026 rows were genuine FY-2027 dues
   recordings, re-enter them in the Ledger.
+- [ ] **T-25 — Clean up the category catalog and make budget→transaction→report fully traceable.**
+  (added 2026-07-29, from the FY2026 budget-meeting debrief) Review `ledger_categories` across both
+  entities: dedupe/retire unused categories, reconcile inconsistent naming between the Club and
+  Foundation, and confirm every active category is one the treasurer actually budgets and posts
+  against. Goal is **full traceability** — each category (and, once cause breakdowns exist, each
+  cause + line item) should trace cleanly from the budget through posted transactions to the fund
+  report with nothing orphaned or double-counted. Directly supports **B-31** (the mailed printable
+  budget must be traceable) and is the data-hygiene prerequisite that makes **B-30**'s explicit
+  transaction→budget-line link trustworthy. Do this cleanup pass before or alongside B-30 so the
+  link picker isn't offering stale/duplicate categories. **Concrete recommendations now written up in
+  `docs/2026-07-29-budget-actuals-mapping-and-category-cleanup.md` §G** — Rudolph Run income split
+  (race vs. sponsorships/donations), a specific miscategorization-flag table (incl. the $3,655 Rudolph
+  sponsorship filed as Pancake Breakfast, and Wine-With-the-Lions costs filed as Marketing), retiring
+  the near-dead Activity fund, the Misc/Miscellaneous naming, and `Meals`→`Meeting hospitality`.
+- [ ] **T-26 — Post the two genuinely-missing FY2025 checks + fix one fund-misfiling.**
+  (added 2026-07-29, **scoped down after bank reconciliation** — see
+  `docs/2026-07-29-budget-actuals-mapping-and-category-cleanup.md` §F) Bank-CSV reconciliation by
+  check number showed the ledger is **essentially complete** (76/81 Foundation + 22/23 Admin checks
+  present; the bank's cleared-basis FY2025 totals tie to the treasurer's year-end to the penny — the
+  earlier "~$4,375 under-posted" was a checkbook-vs-cleared **timing** artifact, not missing money).
+  Status / to-dos:
+  1. ✅ **DONE 2026-07-29 — checks 8252 & 8253 were NOT missing money.** The register showed both are
+     $500 checks to **Gates At Eight** (the BMX org; memos "Sponsorship" / "Scholarships", written
+     3/7/2026), and the ledger *already had* both — they were just missing their check numbers, which
+     is why the check-# match flagged them. Backfilled `check_number` 8252 (Sponsorship) and 8253
+     (Scholarships) onto the two existing 2026-03-07 Gates At Eight rows (metadata only, no new
+     transactions). **All FY2025 Foundation checks now reconcile to the bank (0 unmatched).**
+  2. ⏸ **Admin check 8002** ($53.98, Jane Enneking, "Bags to Benches / trash bags", cleared the Admin
+     account 7/29/2025) is **already recorded** — filed under the **Activity** fund, not missing.
+     Whether to re-file it to **Administrative** is entangled with **T-25** ("resolve the near-dead
+     Activity fund" — this is that fund's only FY2025 txn) and needs an admin-category choice.
+     **Deferred to the T-25 Activity-fund decision — do not move in isolation.**
+  3. **(Lower priority) Line-match the non-check outflows** (ACH / debit card / billpay, ~$12k of
+     Foundation activity) transaction-by-transaction — the account totals tie out, so this is
+     verification, not a known gap.
+  Source: `Chase2000_..._foundation.csv` / `Chase8338_..._admin.csv`, `WLCF/WLC June 2026 Monthly
+  Report.pdf`, registers at `/Users/cshenso/Documents/Treasurer Transfer Documents 07-2024 to 06-2026`.
+  Net: the ledger is **materially complete**; no missing money was found.
 
 ## Operational / next steps
 

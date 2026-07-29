@@ -43,6 +43,7 @@ import {
   formatBudgetReferenceCents,
   resolveBudgetLineDeleteAction,
   computeFundLineSums,
+  isCauseLineLive,
   causeLineReferenceKey,
   buildCauseActualsByKey,
   computeDuesTimingAdjustment,
@@ -2482,7 +2483,33 @@ describe("resolveBudgetLineDeleteAction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// computeFundLineSums — Budget soft-delete (Increment 2, Phase 3 test #8)
+// isCauseLineLive — Budgeting Page Restructure (DECISION-054/056)
+// ---------------------------------------------------------------------------
+
+describe("isCauseLineLive", () => {
+  it("both flags null -> live", () => {
+    expect(isCauseLineLive(null, null)).toBe(true);
+  });
+
+  it("own flag set, parent null -> dead", () => {
+    expect(isCauseLineLive("2026-07-29T00:00:00.000Z", null)).toBe(false);
+  });
+
+  it("parent flag set, own null -> dead", () => {
+    expect(isCauseLineLive(null, "2026-07-29T00:00:00.000Z")).toBe(false);
+  });
+
+  it("both flags set -> dead", () => {
+    expect(
+      isCauseLineLive("2026-07-29T00:00:00.000Z", "2026-07-28T00:00:00.000Z"),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeFundLineSums — Budget soft-delete (Increment 2, Phase 3 test #8);
+// third parameter added by the Budgeting Page Restructure (DECISION-054
+// item 2)
 // ---------------------------------------------------------------------------
 
 describe("computeFundLineSums", () => {
@@ -2528,6 +2555,35 @@ describe("computeFundLineSums", () => {
       incomeCents: 100,
       expenseCents: 0,
     });
+  });
+
+  it("causeLinePendingCents defaults to {} when omitted — a category with no cause-line-grain pending amounts is unchanged", () => {
+    const result = computeFundLineSums(
+      { cat1_expense: 7_500 },
+      { cat1_expense: false },
+    );
+    expect(result.expenseCents).toBe(7_500);
+  });
+
+  it("subtracts a partial cause-line-grain pending amount from a still-live category's rolled-up total", () => {
+    const result = computeFundLineSums(
+      { cat1_expense: 10_000 },
+      {}, // category itself is NOT pending-delete
+      { cat1_expense: 4_000 }, // one cause line under it, independently pending-delete
+    );
+    expect(result.expenseCents).toBe(6_000);
+  });
+
+  it("a whole-category pendingDeleteKeys exclusion is not double-subtracted when the third param also has an entry for that key — the continue short-circuits before the subtraction line runs", () => {
+    const result = computeFundLineSums(
+      { cat1_expense: 10_000 },
+      { cat1_expense: true }, // whole category is pending-delete
+      { cat1_expense: 4_000 }, // would double-subtract if not short-circuited
+    );
+    // The category is excluded entirely (continue) — expenseCents is 0, not
+    // -4,000 and not 6,000. The cause-line-grain map is irrelevant once the
+    // whole category is already excluded.
+    expect(result.expenseCents).toBe(0);
   });
 });
 

@@ -152,8 +152,15 @@ export type FundReportCategoryLine = {
    *  only ever has one representation (null). `id` is the row's own
    *  primary key — every write path addresses a line by `id`, not by
    *  `(cause)`, now that a cause can have multiple labeled lines. `label`
-   *  is `""` for the generic/unlabeled line. */
-  causeLines: { id: string; cause: string; label: string; amountCents: number }[] | null;
+   *  is `""` for the generic/unlabeled line. `pendingDeleteAt` (Budgeting
+   *  Page Restructure, DECISION-054/056) is an ISO string when that line's
+   *  OWN ledger_budget_lines.pending_delete_at is set, else null — purely
+   *  informational, same as the category-grain field below; a consumer
+   *  excludes a line via isCauseLineLive(cl.pendingDeleteAt,
+   *  line.pendingDeleteAt), never by reading this field alone. */
+  causeLines:
+    | { id: string; cause: string; label: string; amountCents: number; pendingDeleteAt: string | null }[]
+    | null;
   /** Soft-delete-until-finalize (DECISION-052/053, Increment 2 of
    *  docs/work-log/2026-07-28-budgeting-page-redesign.md). ISO string when
    *  the row's ledger_budgets.pending_delete_at is set, else null. PURELY
@@ -583,16 +590,25 @@ export async function getFundReport(
             cause: ledgerBudgetLines.cause,
             label: ledgerBudgetLines.label,
             amountCents: ledgerBudgetLines.amountCents,
+            pendingDeleteAt: ledgerBudgetLines.pendingDeleteAt,
           })
           .from(ledgerBudgetLines)
           .where(inArray(ledgerBudgetLines.budgetId, budgetIds))
       : [];
   const causeLinesByBudgetId = new Map<
     string,
-    { id: string; cause: string; label: string; amountCents: number }[]
+    { id: string; cause: string; label: string; amountCents: number; pendingDeleteAt: string | null }[]
   >();
   for (const row of budgetLineRows) {
-    const line = { id: row.id, cause: row.cause, label: row.label, amountCents: row.amountCents };
+    const line = {
+      id: row.id,
+      cause: row.cause,
+      label: row.label,
+      amountCents: row.amountCents,
+      pendingDeleteAt: row.pendingDeleteAt
+        ? (row.pendingDeleteAt instanceof Date ? row.pendingDeleteAt.toISOString() : row.pendingDeleteAt)
+        : null,
+    };
     const existing = causeLinesByBudgetId.get(row.budgetId);
     if (existing) {
       existing.push(line);
@@ -622,7 +638,7 @@ export async function getFundReport(
   /** null = lump-sum/no breakdown; never [] — see FundReportCategoryLine.causeLines. */
   function causeLinesFor(
     key: string,
-  ): { id: string; cause: string; label: string; amountCents: number }[] | null {
+  ): { id: string; cause: string; label: string; amountCents: number; pendingDeleteAt: string | null }[] | null {
     const budgetId = budgetIdMap.get(key);
     if (!budgetId) return null;
     const lines = causeLinesByBudgetId.get(budgetId);
@@ -1078,19 +1094,30 @@ export type SetBudgetLinePendingDeleteResult =
       ok: false;
       error: string;
       status: 400 | 404 | 409;
-      /** Present on 409s only — mirrors UpsertBudgetLineResult's discriminant
-       *  so PATCH /api/admin/ledger/budgets can surface a distinct reason for
-       *  each 409 cause the same way it already does for the amount path. */
-      reason?: "locked" | "has_cause_breakdown";
+      /** Present on 409s only. As of the Budgeting Page Restructure
+       *  (DECISION-054/056) this function can only 409 with `"locked"` —
+       *  its own copy of the `has_cause_breakdown` guard was removed (Flow
+       *  6: a category must be soft-deletable/restorable even while broken
+       *  down by cause). `upsertBudgetLine`'s SEPARATE copy of that guard
+       *  (Shape A, the amount write) is unaffected and still returns
+       *  `"has_cause_breakdown"` for its own hazard. */
+      reason?: "locked";
     };
 
 /**
  * Soft-delete/restore core for a single `(fundId, fiscalYear, categoryId,
- * flow)` budget line. Runs the SAME guard sequence upsertBudgetLine already
- * runs — fund/category lookup, assertBudgetUnlocked, the cause-line-children
- * guard — but flips ONLY pending_delete_at. annual_amount_cents is never
- * read or written by this function; that is what makes "restore brings the
- * number back exactly" true by construction, not by special-casing.
+ * flow)` budget line. Runs the fund/category lookup and assertBudgetUnlocked
+ * upsertBudgetLine also runs, but flips ONLY pending_delete_at.
+ * annual_amount_cents is never read or written by this function; that is
+ * what makes "restore brings the number back exactly" true by construction,
+ * not by special-casing.
+ *
+ * UNLIKE upsertBudgetLine, this function does NOT run the cause-line-children
+ * guard (removed by the Budgeting Page Restructure, DECISION-054/056 — see
+ * the comment further down in this function's body for the full rationale).
+ * A category can be soft-deleted (and restored) while it's broken down by
+ * cause; its cause lines are excluded from every read consumer at read time
+ * via isCauseLineLive (src/lib/ledger.ts), never via a cascade-written flag.
  *
  * Unlike upsertBudgetLine (which inserts a fresh row when none exists yet),
  * a pending-delete write only ever makes sense against an EXISTING row —
@@ -1180,23 +1207,22 @@ export async function setBudgetLinePendingDelete(
     return { ok: false, error: "No budget line exists for this category to modify.", status: 404 };
   }
 
-  // Cause-line-children guard — identical query upsertBudgetLine already
-  // runs. A category broken down by cause can never be marked pending-delete
-  // (the UI never renders a soft-delete control for one; this is
-  // defense-in-depth against a direct API call).
-  const childRows = await tx
-    .select({ id: ledgerBudgetLines.id })
-    .from(ledgerBudgetLines)
-    .where(eq(ledgerBudgetLines.budgetId, existingId))
-    .limit(1);
-  if (childRows.length > 0) {
-    return {
-      ok: false,
-      error: "This category is broken down by cause — edit its cause lines instead.",
-      status: 409,
-      reason: "has_cause_breakdown",
-    };
-  }
+  // NOTE: unlike upsertBudgetLine, this function does NOT guard against
+  // cause-line children. The Budgeting Page Restructure (DECISION-054/056)
+  // requires a category to be soft-deletable (and restorable) even while it
+  // carries cause lines underneath it — Flow 6, "Remove a whole category,
+  // lump sum or in breakdown." Removing this guard is safe because this
+  // function never cascades a write onto children in either direction: a
+  // pending-delete category's cause lines keep their own, independent
+  // pendingDeleteAt (or lack thereof) untouched. Every read consumer
+  // (getFundReport's callers, the print worksheet, the finalize-purge
+  // transaction) excludes a cause line via isCauseLineLive(cl.pendingDeleteAt,
+  // line.pendingDeleteAt) — an OR over BOTH flags, computed at read time —
+  // rather than relying on a cascade-written child flag. upsertBudgetLine's
+  // OWN copy of the has_cause_breakdown guard (above in this file) is left
+  // untouched: it guards a different hazard (a numeric annualAmountCents
+  // overwrite, or a hard delete-via-cascade, silently desyncing children)
+  // that has nothing to do with this reversible soft-delete path.
 
   // The pure flag-flip. annual_amount_cents is never touched here.
   await tx
@@ -1697,6 +1723,188 @@ export async function deleteBudgetCauseLine(
     .where(eq(ledgerBudgets.id, existingLine.budgetId));
 
   return { ok: true, action: "line_deleted", categoryTotalCents };
+}
+
+// ---------------------------------------------------------------------------
+// setBudgetCauseLinePendingDelete / setBudgetCauseGroupPendingDelete —
+// Budgeting Page Restructure (DECISION-054/055/056)
+// ---------------------------------------------------------------------------
+
+export type SetBudgetCauseLinePendingDeleteParams = {
+  id: string;
+  pendingDelete: boolean;
+};
+
+export type SetBudgetCauseLinePendingDeleteResult =
+  | { ok: true; action: "pending-delete" | "restored" }
+  | { ok: false; error: string; status: 404 | 409; reason?: "locked" };
+
+/**
+ * Soft-delete/restore core for ONE cause-tagged budget line item, addressed
+ * by its own `id` — the cause-line-grain counterpart to
+ * setBudgetLinePendingDelete's category-grain flag-flip (Flow 4, "Remove a
+ * line item," DECISION-055 item 1: line-item removal is a pendingDeleteAt
+ * flag-flip, not a delayed hard DELETE, so it gets the same
+ * recoverable-until-finalize property every other grain now has).
+ *
+ * A PURE single-row flag-flip: NEVER touches amountCents, and NEVER
+ * recomputes the parent's annualAmountCents. This mirrors
+ * setBudgetLinePendingDelete's own "restore brings the number back exactly
+ * by construction, not by special-casing" property one grain down — and per
+ * architect Ruling 1, a pending cause line's amount deliberately stays
+ * counted in the (now stale) parent total until finalize purges it or
+ * Restore clears the flag; computeFundLineSums's third parameter is what
+ * keeps the LIVE UI figure correct in the meantime (src/lib/ledger.ts).
+ *
+ * No has_cause_breakdown-style guard: that guard exists to stop
+ * CATEGORY-grain writes from clobbering line children wholesale; it has no
+ * meaning for a function that operates on exactly one line by its own id,
+ * and never cascades a write onto anything else.
+ *
+ * @param tx  Optional Drizzle transaction client. Defaults to the
+ *            module-level `db` for the standalone PATCH route caller (same
+ *            convention as setBudgetLinePendingDelete).
+ */
+export async function setBudgetCauseLinePendingDelete(
+  params: SetBudgetCauseLinePendingDeleteParams,
+  tx: DrizzleTransaction | typeof db = db,
+): Promise<SetBudgetCauseLinePendingDeleteResult> {
+  const { id, pendingDelete } = params;
+
+  const lineRows = await tx
+    .select({ id: ledgerBudgetLines.id, budgetId: ledgerBudgetLines.budgetId })
+    .from(ledgerBudgetLines)
+    .where(eq(ledgerBudgetLines.id, id))
+    .limit(1);
+  const existingLine = lineRows[0] ?? null;
+  if (!existingLine) {
+    return { ok: false, error: "No cause line found for this id", status: 404 };
+  }
+
+  const budgetRows = await tx
+    .select({ id: ledgerBudgets.id, fundId: ledgerBudgets.fundId, fiscalYear: ledgerBudgets.fiscalYear })
+    .from(ledgerBudgets)
+    .where(eq(ledgerBudgets.id, existingLine.budgetId))
+    .limit(1);
+  const budget = budgetRows[0] ?? null;
+  if (!budget) {
+    // Unreachable in practice — the FK guarantees the parent row exists.
+    return { ok: false, error: "Budget row not found for this line", status: 404 };
+  }
+
+  const fundRows = await tx
+    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId })
+    .from(ledgerFunds)
+    .where(eq(ledgerFunds.id, budget.fundId))
+    .limit(1);
+  const fund = fundRows[0] ?? null;
+  if (!fund) {
+    return { ok: false, error: "Fund not found", status: 404 };
+  }
+
+  // Both directions (pendingDelete: true and false) run the lock check —
+  // restore is lock-guarded too, same as every other pending-delete flip in
+  // this file.
+  const lock = await assertBudgetUnlocked(fund.entityId, budget.fiscalYear, tx);
+  if (!lock.ok) {
+    return { ...lock, reason: "locked" };
+  }
+
+  // The pure flag-flip. amountCents and the parent's annualAmountCents are
+  // never touched here.
+  await tx
+    .update(ledgerBudgetLines)
+    .set({ pendingDeleteAt: pendingDelete ? new Date() : null, updatedAt: new Date() })
+    .where(eq(ledgerBudgetLines.id, id));
+
+  return { ok: true, action: pendingDelete ? "pending-delete" : "restored" };
+}
+
+export type SetBudgetCauseGroupPendingDeleteParams = {
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  flow: "income" | "expense";
+  cause: string;
+  pendingDelete: boolean;
+};
+
+export type SetBudgetCauseGroupPendingDeleteResult =
+  | { ok: true; action: "pending-delete" | "restored"; lineCount: number }
+  | { ok: false; error: string; status: 404 | 409; reason?: "locked" };
+
+/**
+ * Soft-delete/restore an ENTIRE cause group — every ledger_budget_lines row
+ * under one (budgetId, cause) pair — as a single atomic flag-flip (Flow 5,
+ * "Remove *Environment* and its N line items," DECISION-055 item 2). One
+ * `UPDATE ... WHERE budget_id = $1 AND cause = $2`, not N sequential
+ * single-line PATCHes — satisfies the brief's own "must be one transaction,
+ * not N sequential DELETEs that could partially fail" requirement trivially,
+ * since it's a single statement touching every matching row.
+ *
+ * Same non-recompute rule as setBudgetCauseLinePendingDelete: pure flag-flip,
+ * no annualAmountCents touch, no has_cause_breakdown-style guard. Restore
+ * uses this SAME endpoint/function with `pendingDelete: false` — no time
+ * limit, persistent Restore control, matching the uniform
+ * reversible-until-finalize model (distinct from the per-line delayed-commit
+ * toast, which is a client-only holding pattern in front of
+ * setBudgetCauseLinePendingDelete, not this function).
+ *
+ * @param tx  Required — resolves the budget row, then runs the group UPDATE;
+ *            the caller (PATCH /budgets/cause-lines/group) always wraps this
+ *            in db.transaction() for consistency with its sibling write
+ *            paths, even though a single UPDATE statement is already atomic
+ *            on its own.
+ */
+export async function setBudgetCauseGroupPendingDelete(
+  params: SetBudgetCauseGroupPendingDeleteParams,
+  tx: DrizzleTransaction,
+): Promise<SetBudgetCauseGroupPendingDeleteResult> {
+  const { fundId, fiscalYear, categoryId, flow, cause, pendingDelete } = params;
+
+  const fundRows = await tx
+    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId })
+    .from(ledgerFunds)
+    .where(eq(ledgerFunds.id, fundId))
+    .limit(1);
+  const fund = fundRows[0] ?? null;
+  if (!fund) {
+    return { ok: false, error: "Fund not found", status: 404 };
+  }
+
+  const budgetRows = await tx
+    .select({ id: ledgerBudgets.id })
+    .from(ledgerBudgets)
+    .where(
+      and(
+        eq(ledgerBudgets.fundId, fundId),
+        eq(ledgerBudgets.fiscalYear, fiscalYear),
+        eq(ledgerBudgets.categoryId, categoryId),
+        eq(ledgerBudgets.flow, flow),
+      ),
+    )
+    .limit(1);
+  const budget = budgetRows[0] ?? null;
+  if (!budget) {
+    return { ok: false, error: "No budget row found for this category", status: 404 };
+  }
+
+  const lock = await assertBudgetUnlocked(fund.entityId, fiscalYear, tx);
+  if (!lock.ok) {
+    return { ...lock, reason: "locked" };
+  }
+
+  const flipped = await tx
+    .update(ledgerBudgetLines)
+    .set({ pendingDeleteAt: pendingDelete ? new Date() : null, updatedAt: new Date() })
+    .where(and(eq(ledgerBudgetLines.budgetId, budget.id), eq(ledgerBudgetLines.cause, cause)))
+    .returning({ id: ledgerBudgetLines.id });
+
+  if (flipped.length === 0) {
+    return { ok: false, error: "No line items exist for this cause", status: 404 };
+  }
+
+  return { ok: true, action: pendingDelete ? "pending-delete" : "restored", lineCount: flipped.length };
 }
 
 export type UpsertBudgetCauseLineForSeedParams = {

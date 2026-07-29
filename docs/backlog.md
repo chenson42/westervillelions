@@ -454,3 +454,122 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   — `guided-budget-setup.tsx` no longer references either). Also check
   `/admin/ledger/guide#budgeting` (the in-app Treasury User's Guide) for stale
   "seed from last year" instructional copy describing the removed flow.
+
+---
+
+### Budget-improvements program (2026-07-28/29 budget-meeting feedback)
+
+B-29 through B-32 came out of Chris's post-budget-meeting debrief. They interlock,
+so the **sequencing is deliberate: B-29 first, B-30 second, then the star/notes
+feature (`docs/work-log/2026-07-28-budget-star-notes.md`, already Phases 1–2 done)
+third**, with B-31 folded into B-29's PDF work and B-32 as a closing analysis pass.
+Design each with the others in view — decisions in one box in the next.
+
+- [ ] **B-29 — Budgeting page restructure: Income/Expense sections + inline add/remove at every grain.**
+  (added 2026-07-29, priority: high — live meeting pain; needs Phase 1) During the
+  FY2026 budget meeting the treasurer struggled to add and remove lines. Agreed shape:
+  under each fund, split the flat interleaved list into an **Income** section and an
+  **Expense** section, each with a header. `+` affordances at each grain: **section
+  header → add category** (moved up from the bottom, where it was hard to find);
+  **category row → add cause** (giving-eligible expense categories only —
+  `isCauseEligibleCategory`); **cause row → add line item** (inherits that cause, so
+  the per-line cause `<select>` in `budget-cause-editor.tsx` goes away entirely).
+  **Removes must be explicit at every level** (line item / cause / category) and
+  **reliable on the first click** — today there is no cause-level or (in breakdown
+  mode) category-level remove, and the existing trash controls need multiple clicks
+  to register. Root-cause hypothesis for the multi-click bug: a focused amount
+  input's `onBlur` fires a commit + `router.refresh()` that re-renders the trash
+  button out from under the cursor before the click lands ("blur eats the first
+  click") — confirm in Phase 3; fix via mouse-down arming or a non-disruptive
+  commit. Decisions taken with Chris: line-item removal is immediate + Undo; cause
+  and category removal **confirm** (each takes multiple lines with it). Model is
+  **unchanged** — line items always live under a cause. Touches
+  `guided-budget-setup.tsx`, `budget-editor.tsx`, `budget-cause-editor.tsx`, and
+  (per B-31) `budget-print-worksheet.tsx`. Note the label=party autocomplete idea
+  raised mid-discussion is **dropped** if B-30 lands (see B-30).
+
+- [ ] **B-30 — Explicit transaction → budget-line link (retire the fuzzy string-match reconciliation).**
+  (added 2026-07-29, priority: high — redefines what a "line item" is; needs Phase 1)
+  Today budget lines reconcile to actuals by a **soft join on `(category, cause,
+  label==party)`** at report time (`causeLineReferenceKey` in `ledger.ts` —
+  `${categoryId}::${cause}::${normalizedLabel}`; there is NO FK). Chris's insight:
+  the payee is often a poor **description** of the budgeted intent and **drifts year
+  to year**, so string-matching label→party is fragile. Proposed: a **nullable
+  `budget_line_id` FK on `ledger_transactions`**; the transaction entry form gets an
+  optional "applies to budget line" picker that can auto-fill category+cause from the
+  chosen line. Frees the budget **label to be purely descriptive** (this retires
+  B-29's label=party autocomplete). Load-bearing design questions to resolve in
+  Phase 1/2: (1) **hybrid vs replace** — historical books (FY2025/26, Quicken seed)
+  have no links, so prior-year **Actual** columns need the string-match as a
+  fallback; a linked txn must never *also* string-match (double-count). (2) **Not
+  everything has a line** — cause lines exist only under broken-down giving-eligible
+  expense categories; lump-sum categories and all income have no line to point at.
+  (3) **Line lifecycle** — a label edit keeps the line `id` (link survives, the
+  desired win), but collapsing a breakdown deletes lines (`ON DELETE SET NULL`
+  orphans links) — decide whether collapse is even allowed once txns are attached.
+  (4) **Backfill** — forward-only vs a one-time hand-reviewed backfill. (5)
+  **Per-FY scoping** of the picker. Grain confirmed with Chris: link is at the
+  **line-item** grain, transaction → one line, optional.
+
+- [ ] **B-31 — Printable budget as a mailed review document (not just a meeting worksheet).**
+  (added 2026-07-29, priority: high; needs Phase 1) `budget-print-worksheet.tsx`
+  today prints at the **category grain only** — no cause/line-item rows (flagged by
+  the architect in the B-star-notes Phase 2). Chris: the printable version is **what
+  gets mailed to members/board to review**, so it must be presentable, complete, and
+  **fully traceable** — which means rendering the cause + line-item detail (and,
+  per the star/notes feature, any discussion flags/notes) on the PDF. Scope-wise this
+  is the PDF half of B-29 and should be built with it, but it carries its own
+  requirement (external review audience) worth tracking separately. Pairs with T-25
+  (category cleanup/traceability).
+
+- [ ] **B-32 — Post-changes budget analysis pass.**
+  (added 2026-07-29, priority: medium — process) Once B-29/B-30/B-31 and the
+  star/notes feature land, Chris wants a **round of analysis** over the budgeting
+  surface end-to-end: does budget → transaction → report trace cleanly, are the new
+  add/remove flows actually meeting-usable, did the explicit link improve
+  budget-vs-actual, is the mailed PDF review-ready. Run this as an analyst-led review
+  (Phase 6-style shipped-vs-intent across the whole program, not one feature), and
+  feed anything it surfaces back here as new B-items.
+
+- [ ] **B-33 — Decouple "supports cause/line-item breakdown" from `countsAsGiving`.**
+  (added 2026-07-29, from `docs/2026-07-29-budget-actuals-mapping-and-category-cleanup.md` finding #3;
+  priority: medium — needs Phase 1) Today `isCauseEligibleCategory` = `expense && countsAsGiving`,
+  and `countsAsGiving` *also* drives `/members/impact` giving-by-cause (`bucketGivingByCause`). Chris's
+  rule "Rudolph expenses should be for a cause, storage should not" breaks the coupling: Rudolph Run
+  event costs need cause/line-item breakdown (14 vendors, ~$10.8k) but must **not** count as
+  philanthropic giving (that would inflate impact reporting with event-vendor invoices). Add a
+  separate cause-breakdown-eligibility concept (e.g. a `supportsBreakdown`/`causeEligible` column, or
+  make eligibility an explicit per-category opt-in) independent of `countsAsGiving`, so a non-giving
+  expense category can be itemized without appearing in giving reports. Then: Rudolph = eligible +
+  not-giving; Storage/Operations = neither (stays lump-sum); Charitable donation out / Grant out /
+  Scholarships = both. **Cause value for event costs (DECIDED 2026-07-29, Chris):** reinstate a
+  dedicated **"Fundraising / Event Costs"** cause — *not* Community & Civic, which would pollute a
+  real beneficiary cause and muddy `/members/impact`. (The taxonomy had dropped "Fundraising event
+  costs" via `isValidBudgetCause`; this brings back a clean, purpose-named cause for it.) Sequenced
+  with/after B-29 (it only changes *which* categories show "+ add cause", not the restructure
+  mechanics) and feeds B-31 (print) + T-25 (category cleanup). Does not block B-29.
+
+- [ ] **B-34 — Explicit inter-fund transfers (Zeffy pass-through: Club Activity → Foundation).**
+  (added 2026-07-29, from `docs/2026-07-29-budget-actuals-mapping-and-category-cleanup.md` §G6;
+  priority: medium — needs Phase 1) Zeffy is wired to the **Club** bank account, so online public
+  donations land in the Club's **Activity fund** and must transfer to the **Foundation**. Chris wants
+  this modeled **explicitly**, not via `Public donations`/`Misc`. Minimum: dedicated categories
+  `Zeffy Donations` (Activity income), `Transfer to Foundation` (Activity expense — collapse the
+  existing `Donations to Foundation` into it), `Transfer from Club` (Foundation income, NOT
+  `Public donations`). The real design question: whether a transfer is just a **pair of ordinary
+  entries in explicit categories** (simplest) or a **recognized "transfer" type** that auto-pairs the
+  two legs and is **eliminated from any consolidated/org-wide income roll-up** (the same dollar is
+  income in two funds, so a naive total double-counts). Also retroactively re-files the $552
+  "tailtwisting transfer" currently booked as Foundation `Public donations`. Keep the Activity fund
+  as a **zeroed-out balanced pass-through** (don't retire it — corrects an earlier §G3 draft). Pairs
+  with T-25 (category cleanup) and the "no Miscellaneous" cleanup (§G7).
+
+- [ ] **B-35 — Cause-line label lost when amount then label are committed back-to-back.**
+  (added 2026-07-29, found by QA's e2e suite during B-29 verification; priority: medium — real
+  data-loss bug, pre-existing) In `budget-cause-editor.tsx`, filling a new cause line's **amount then
+  label** in natural typing order can **lose the label**: each field commits independently on blur,
+  and the first commit's success handler unconditionally overwrites local row state from the server
+  response, clobbering the label the user typed second. Predates B-29 — originates in B-17 /
+  DECISION-047/048 (Labeled Cause Budget Lines), untouched by the restructure. Fix: on commit-response
+  reconciliation, don't overwrite a field the user has edited since the request fired (track per-field
+  dirty state, or merge rather than replace). Add the e2e case QA already has the harness for.

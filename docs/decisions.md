@@ -28,6 +28,118 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-056: Budgeting Page Restructure — `ledger_budget_lines.pending_delete_at` mirrors `ledger_budgets.pending_delete_at` exactly, one idempotent `ADD COLUMN`, no index/backfill
+
+**Status:** Resolved
+**Date:** 2026-07-29
+
+**Decision:** Add `pendingDeleteAt: timestamp("pending_delete_at")` to `ledgerBudgetLines` in
+`src/lib/db/schema.ts` — same nullable-timestamp shape, no default, as
+`ledgerBudgets.pendingDeleteAt` (DECISION-052/053). One idempotent
+`ALTER TABLE ledger_budget_lines ADD COLUMN IF NOT EXISTS pending_delete_at TIMESTAMP;` in
+`drizzle/migrations/0067_ledger_budget_lines_pending_delete.sql`, matching
+`0066_ledger_budgets_pending_delete.sql` verbatim in shape. No new index — the column is only
+ever filtered alongside `budget_id`, already covered by `ix_ledger_budget_lines_budget`. No
+backfill — every pre-existing row becomes `NULL` (not pending-delete), the correct default with
+zero migration-time write.
+
+**Rationale:** This is the schema half of Q1's resolution (Chris, 2026-07-29 — see
+`docs/work-log/2026-07-29-budgeting-restructure.md`): category removal becomes uniformly
+reversible-until-finalize regardless of breakdown state. Mirroring the existing column exactly,
+rather than inventing a new shape, keeps `setBudgetCauseLinePendingDelete` a pure flag-flip with
+the same "restore brings the number back exactly by construction" property the category-grain
+function already has.
+
+**Impact:** `src/lib/db/schema.ts`, `drizzle/migrations/0067_ledger_budget_lines_pending_delete.sql`.
+Implementer: database-admin.
+
+---
+
+## DECISION-055: Budgeting Page Restructure — line-item removal becomes a `pendingDeleteAt` flag-flip, not a delayed hard `DELETE`; new cause-group route follows the `.../collapse` sibling-route precedent
+
+**Status:** Resolved
+**Date:** 2026-07-29
+
+**Decision:** Three implementation calls closing Phase 3 for
+`docs/work-log/2026-07-29-budgeting-restructure.md`, on top of the architect's Phase 2 rulings:
+
+1. **Single line-item removal (Flow 4) becomes a `PATCH .../cause-lines { id, pendingDelete }`
+   flag-flip, not a delayed hard `DELETE`.** The alternative reading — keep the existing `DELETE`
+   handler as a true hard delete and just hold the client's call to it until the toast expires —
+   was rejected because it would leave `ledger_budget_lines.pendingDeleteAt` (the column Q1 adds)
+   with no interactive write path at all: category-level removal never cascades a write onto
+   children (Ruling 4), so the single-line and cause-group removal flows are the *only* places
+   that column is ever set. A flag-flip also gives line-item removal the same
+   "recoverable-until-finalize via a persistent Restore control" property every other grain now
+   has, which is the uniform mental model Q1 asked for — a delayed-but-still-hard delete would
+   have made line items the one grain that's unrecoverable once the toast closes, an inconsistency
+   the whole feature exists to remove.
+2. **Cause-group cascade delete (Flow 5) gets its own sibling route,
+   `PATCH /api/admin/ledger/budgets/cause-lines/group`**, rather than a fourth body-shape branch
+   on the existing single-line PATCH. Its addressing shape (`fundId, fiscalYear, categoryId, flow,
+   cause`) is structurally different from the single-line route's `{ id }` addressing, the same
+   reasoning that already gave `.../cause-lines/collapse` its own file instead of folding into the
+   main PATCH.
+3. **The existing `DELETE /api/admin/ledger/budgets/cause-lines` handler is left in place,
+   unused by the new UI, rather than deleted.** Removing dead code is a 30-day code-review
+   candidate, not a Phase 4 side quest — deleting it now risks breaking a caller this design
+   pass didn't find.
+
+**Rationale:** Every write path this feature introduces reuses the existing PATCH-with-mutually-
+exclusive-body-shape convention (DECISION-053 item 1) rather than forking new auth/lock-guard
+sequences — the cost of a slightly bigger single-route dispatch is smaller than the cost of N
+routes each re-deriving the same fund/category/lock lookups.
+
+**Impact:** New `setBudgetCauseLinePendingDelete` and `setBudgetCauseGroupPendingDelete` in
+`src/lib/ledger-queries.ts`; extended dispatch in
+`src/app/api/admin/ledger/budgets/cause-lines/route.ts`; new
+`src/app/api/admin/ledger/budgets/cause-lines/group/route.ts`. See the Phase 3 design doc in
+`docs/work-log/2026-07-29-budgeting-restructure.md` for full request/response shapes.
+
+---
+
+## DECISION-054: Budgeting Page Restructure — blur/click race fixed with `onMouseDown` `preventDefault()`; `computeFundLineSums` gains a third cents-to-subtract parameter; one shared `isCauseLineLive` OR-predicate
+
+**Status:** Resolved
+**Date:** 2026-07-29
+
+**Decision:** Two implementation calls closing Phase 3 for
+`docs/work-log/2026-07-29-budgeting-restructure.md`:
+
+1. **The blur-vs-click race (Gap 4) is fixed with `onMouseDown={(e) => e.preventDefault()}` on
+   every add/remove/restore/collapse control** across `budget-editor.tsx` and
+   `budget-cause-editor.tsx`, over the analyst's other two candidate directions. Rejected:
+   guaranteeing "no remount ever happens" across every render path this feature touches (too
+   fragile to future regression, no test would catch a re-break). Rejected: disabling every
+   control during any in-flight commit anywhere on the page (fights the feature's own "reliable on
+   the first click" goal by adding friction to non-racing sequences). Chosen: suppress the
+   blur-triggered commit from ever queuing in the first place when the mousedown target is a
+   control about to consume the click — this is the standard fix for this exact class of bug and
+   needs no assumption about the rest of the tree's remount behavior.
+2. **`computeFundLineSums` (`src/lib/ledger.ts`) gains a third parameter**,
+   `causeLinePendingCents: Record<string, number>` (`${categoryId}_${flow}` → cents to subtract),
+   defaulted to `{}` for backward compatibility. Needed because cause-line-grain pending-delete
+   never touches the parent's `annualAmountCents` (architect Ruling 1) — without this third
+   subtraction, the re-seeded `lineValues` a category's live total is built from would silently
+   include a dead cause line's dollars after every `router.refresh()`, not just between
+   keystrokes.
+3. **One shared pure predicate, `isCauseLineLive(causeLinePendingDeleteAt, categoryPendingDeleteAt)`**,
+   added to `src/lib/ledger.ts` and reused by the print worksheet's data assembly and the
+   `causeLinePendingCents` seed function in `guided-budget-setup.tsx` — the architect's explicit
+   ask that the print worksheet, live-totals helper, and finalize-purge not each reinvent slightly
+   different exclusion logic.
+
+**Rationale:** All three keep the existing Vitest-seam discipline (pure functions, no DB access)
+this feature area already established, and none require a new dependency.
+
+**Impact:** `src/lib/ledger.ts` (`computeFundLineSums` signature change, new `isCauseLineLive`
+export); `src/components/admin/ledger/budget-editor.tsx` and `budget-cause-editor.tsx` (new
+`onMouseDown` handlers); `src/components/admin/ledger/guided-budget-setup.tsx` (new
+`causeLinePendingCents` state, seeded/re-synced alongside the existing `lineValues`/
+`pendingDeleteKeys` pair). See the Phase 3 design doc for full detail.
+
+---
+
 ## DECISION-053: Budget soft-delete (Increment 2) — one PATCH route with a mutually-exclusive body shape, a shared pure client decision function, string-typed `pendingDeleteAt`, and print excludes pending-delete lines
 
 **Status:** Resolved
