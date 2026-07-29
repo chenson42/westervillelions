@@ -564,6 +564,7 @@ export const BUDGET_CAUSES = [
   "Disaster Relief",
   "Lions International Programs",
   "Community & Civic",
+  "Environment",
   "Bags to Benches (Recycling)",
 ] as const;
 

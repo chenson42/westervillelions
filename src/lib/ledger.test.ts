@@ -2274,7 +2274,7 @@ describe("buildCauseActualsByKey", () => {
 // ---------------------------------------------------------------------------
 
 describe("isValidBudgetCause", () => {
-  it("accepts each of the 8 BUDGET_CAUSES values", () => {
+  it("accepts each of the BUDGET_CAUSES values", () => {
     for (const cause of BUDGET_CAUSES) {
       expect(isValidBudgetCause(cause)).toBe(true);
     }

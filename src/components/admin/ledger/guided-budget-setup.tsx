@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -134,6 +134,38 @@ interface GuidedBudgetSetupProps {
   labelOptions?: string[];
 }
 
+/**
+ * Seed the per-fund, per-line live dollar values (cents) from the server-sourced
+ * `funds` prop. Extracted so the useState initializer and the funds-change
+ * re-sync (see the useEffect in GuidedBudgetSetup) build the map identically —
+ * the running Income / Expenses / Banked-used totals are summed from this map,
+ * so it MUST track server truth on every router.refresh(), not just at mount.
+ */
+function seedLineValues(funds: FundSetupItem[]): Record<string, Record<string, number>> {
+  const init: Record<string, Record<string, number>> = {};
+  for (const fund of funds) {
+    const m: Record<string, number> = {};
+    for (const line of fund.budgetEditorLines) {
+      m[`${line.categoryId}_${line.flow}`] = line.budgetCents ?? 0;
+    }
+    init[fund.fundId] = m;
+  }
+  return init;
+}
+
+/** Companion to seedLineValues for the pending-delete flags — same re-sync contract. */
+function seedPendingDeleteKeys(funds: FundSetupItem[]): Record<string, Record<string, boolean>> {
+  const init: Record<string, Record<string, boolean>> = {};
+  for (const fund of funds) {
+    const m: Record<string, boolean> = {};
+    for (const line of fund.budgetEditorLines) {
+      m[`${line.categoryId}_${line.flow}`] = line.pendingDeleteAt !== null;
+    }
+    init[fund.fundId] = m;
+  }
+  return init;
+}
+
 type AddCategoryMode = "existing" | "new";
 
 interface AddCategoryState {
@@ -194,17 +226,9 @@ export default function GuidedBudgetSetup({
 
   // Per-fund, per-line live dollar values (cents), seeded from the current
   // target-FY budget so the balance readout is correct before any typing.
-  const [lineValues, setLineValues] = useState<Record<string, Record<string, number>>>(() => {
-    const init: Record<string, Record<string, number>> = {};
-    for (const fund of funds) {
-      const m: Record<string, number> = {};
-      for (const line of fund.budgetEditorLines) {
-        m[`${line.categoryId}_${line.flow}`] = line.budgetCents ?? 0;
-      }
-      init[fund.fundId] = m;
-    }
-    return init;
-  });
+  const [lineValues, setLineValues] = useState<Record<string, Record<string, number>>>(() =>
+    seedLineValues(funds),
+  );
 
   // Per-fund, per-line pending-delete flags (Increment 2, DECISION-052/053)
   // — keyed identically to lineValues. Initialized from each line's
@@ -212,18 +236,24 @@ export default function GuidedBudgetSetup({
   // onPendingDeleteChange (ahead of the round-trip), reconciled with server
   // truth on the router.refresh() every successful commit already triggers.
   const [pendingDeleteKeys, setPendingDeleteKeys] = useState<Record<string, Record<string, boolean>>>(
-    () => {
-      const init: Record<string, Record<string, boolean>> = {};
-      for (const fund of funds) {
-        const m: Record<string, boolean> = {};
-        for (const line of fund.budgetEditorLines) {
-          m[`${line.categoryId}_${line.flow}`] = line.pendingDeleteAt !== null;
-        }
-        init[fund.fundId] = m;
-      }
-      return init;
-    },
+    () => seedPendingDeleteKeys(funds),
   );
+
+  // Re-sync both maps from `funds` whenever the server sends fresh data. The
+  // useState initializers above run only at mount, but every successful edit
+  // fires router.refresh(), which re-renders the Server Component page and
+  // hands down a new `funds` prop — without this, the running Income /
+  // Expenses / Banked-used totals stay frozen at their mount-time values and
+  // drift after adds, restores, cause-breakdown commits, or any server-
+  // normalized amount. `funds` is a prop from the Server Component, so its
+  // identity changes only on a server re-render (refresh / navigation), never
+  // on this island's own setState — the reseed therefore fires exactly on
+  // refresh/page-load and can't clobber in-flight typing (which only happens
+  // before a commit/refresh).
+  useEffect(() => {
+    setLineValues(seedLineValues(funds));
+    setPendingDeleteKeys(seedPendingDeleteKeys(funds));
+  }, [funds]);
 
   function handleInputChange(fundId: string, key: string, value: string) {
     const trimmed = value.trim();
