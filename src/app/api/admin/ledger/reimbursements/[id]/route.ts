@@ -26,11 +26,22 @@
  *   Sends E-3 email to the submitting member with the rejection reason.
  *
  * pay:
- *   Gate: LEDGER_RECORD. Body: { action: 'pay', fundId: string, paymentDate: string, paymentMethod: string, note?: string }.
+ *   Gate: LEDGER_RECORD. Body: { action: 'pay', fundId: string, categoryId: string,
+ *     paymentDate: string, paymentMethod: string, note?: string, budgetLineId?: string }.
  *   Requires status='approved'.
+ *   categoryId is REQUIRED (B-30, DECISION-061) — the pay action used to create a
+ *     categoryless, cause-less transaction, permanently invisible to every
+ *     budget-vs-actual view; a category is now a mandatory fourth field alongside
+ *     fund/date/method, validated the same way the main transaction POST route
+ *     validates categoryId (exists, fundKind matches, flow='expense').
+ *   budgetLineId is OPTIONAL — server-validated (fund/derived-FY/category must
+ *     match the line's budget row) exactly like the main transaction routes; 400
+ *     on mismatch, 404 on a nonexistent/malformed id.
  *   In a DB transaction:
  *     1. Inserts a ledger_transactions row (flow='expense', status='posted', bypasses
- *        disbApprovalThresholdCents — board already approved).
+ *        disbApprovalThresholdCents — board already approved). categoryId is set;
+ *        beneficiaryCause is carried over from the reimbursement's own (member-
+ *        supplied, optional) beneficiaryCause — not newly collected here.
  *     2. Updates the reimbursement to status='paid', paidAt, ledgerTransactionId, fundId.
  *   Double-pay guard: checks status='approved' atomically using .returning().
  *   Sends E-4 email to the submitting member.
@@ -51,12 +62,18 @@ import {
   ledgerReimbursements,
   ledgerTransactions,
   ledgerFunds,
+  ledgerCategories,
 } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-import { getReimbursementWithMember, getUserEmail } from "@/lib/ledger-queries";
+import {
+  getReimbursementWithMember,
+  getUserEmail,
+  getBudgetLineForLinkValidation,
+} from "@/lib/ledger-queries";
 import { sendEmail } from "@/lib/email";
+import { getFiscalYear } from "@/lib/fiscal-year";
 
 const BOARD_MINUTE_MAX_LEN = 500;
 const REASON_MAX_LEN = 1000;
@@ -299,7 +316,7 @@ export async function PATCH(
 
       // Validate the fund exists and is active
       const fundRows = await db
-        .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId, isActive: ledgerFunds.isActive })
+        .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId, kind: ledgerFunds.kind, isActive: ledgerFunds.isActive })
         .from(ledgerFunds)
         .where(eq(ledgerFunds.id, fundId))
         .limit(1);
@@ -312,6 +329,63 @@ export async function PATCH(
           { error: "The specified fund is not active. Please select an active fund." },
           { status: 400 },
         );
+      }
+
+      // categoryId is REQUIRED (B-30, DECISION-061) — closes the permanent
+      // blind spot where a paid reimbursement's transaction was born with no
+      // category and no way to link a budget line. Validated identically to
+      // the main transaction POST route: exists, fundKind matches, expense-flow.
+      const categoryId = body?.categoryId;
+      if (!categoryId || typeof categoryId !== "string") {
+        return NextResponse.json({ error: "categoryId is required" }, { status: 400 });
+      }
+      const catRows = await db
+        .select({ id: ledgerCategories.id, fundKind: ledgerCategories.fundKind, flow: ledgerCategories.flow })
+        .from(ledgerCategories)
+        .where(eq(ledgerCategories.id, categoryId))
+        .limit(1);
+      const cat = catRows[0];
+      if (!cat) {
+        return NextResponse.json({ error: "Category not found" }, { status: 404 });
+      }
+      if (cat.fundKind !== fund.kind) {
+        return NextResponse.json({ error: "Category does not match fund type" }, { status: 400 });
+      }
+      if (cat.flow !== "expense") {
+        return NextResponse.json(
+          { error: "Category flow does not match transaction flow" },
+          { status: 400 },
+        );
+      }
+
+      // budgetLineId is OPTIONAL — same server-side link-integrity validation
+      // as the main transaction routes (B-30, DECISION-061).
+      const rawBudgetLineId = body?.budgetLineId;
+      let validatedBudgetLineId: string | null = null;
+      if (rawBudgetLineId !== undefined && rawBudgetLineId !== null && rawBudgetLineId !== "") {
+        if (typeof rawBudgetLineId !== "string") {
+          return NextResponse.json({ error: "budgetLineId must be a string" }, { status: 400 });
+        }
+        const derivedFiscalYear = getFiscalYear(new Date(paymentDate + "T00:00:00"));
+        const line = await getBudgetLineForLinkValidation(rawBudgetLineId);
+        if (!line) {
+          return NextResponse.json({ error: "Budget line not found" }, { status: 404 });
+        }
+        if (
+          line.fundId !== fundId ||
+          line.fiscalYear !== derivedFiscalYear ||
+          line.categoryId !== categoryId ||
+          line.flow !== "expense"
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "This budget line does not match the payment's fund, fiscal year, or category.",
+            },
+            { status: 400 },
+          );
+        }
+        validatedBudgetLineId = line.id;
       }
 
       // Atomic DB transaction: insert ledger row + update reimbursement
@@ -328,8 +402,14 @@ export async function PATCH(
             txnDate: paymentDate,
             flow: "expense",
             amountCents: reimb.amountCents,
+            categoryId,
             party: `${reimb.memberFirstName} ${reimb.memberLastName}`.trim(),
             memo: note ?? reimb.description,
+            // Carried over from the reimbursement's own member-supplied
+            // beneficiaryCause — not newly collected at pay time (B-30,
+            // DECISION-061).
+            beneficiaryCause: reimb.beneficiaryCause ?? null,
+            budgetLineId: validatedBudgetLineId,
             paymentMethod: paymentMethod as string,
             status: "posted", // always posted — board already approved the reimbursement
             approvedByUserId: reimb.reviewedByUserId ?? null,

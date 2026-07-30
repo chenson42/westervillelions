@@ -1,4 +1,10 @@
-import { monthBounds, type MonthlyStatement, type MonthlyStatementCategoryLine, type MonthlyStatementTotals } from "@/lib/financial-report-queries";
+import {
+  monthBounds,
+  type MonthlyStatement,
+  type MonthlyStatementCategoryLine,
+  type MonthlyStatementCauseLine,
+  type MonthlyStatementTotals,
+} from "@/lib/financial-report-queries";
 
 /**
  * Server-rendered (no 'use client') three-column Statement of Financial
@@ -75,11 +81,18 @@ export default function MonthlyStatementTable({
   const allLines = [...statement.income, ...statement.expense];
   const hasAnyUncashedCheck = allLines.some((l) => l.hasUncashedCheck);
   const hasDivergence = statement.bookVsCashDivergenceCents !== 0;
+  // B-30/DECISION-061 fold-in: any visible cause-line row sourced via the
+  // fuzzy payee-name-match fallback — drives the shared footnote below (one
+  // per table, not one per row).
+  const hasAnyFuzzyCauseLine = allLines.some((l) =>
+    l.causeLines?.some((cl) => cl.isFuzzyFallback),
+  );
   const hasFootnotes =
     hasAnyUncashedCheck ||
     hasDivergence ||
     statement.usedLegacyReconciledAtFallback ||
-    statement.hasUndatedHistoricalRows;
+    statement.hasUndatedHistoricalRows ||
+    hasAnyFuzzyCauseLine;
 
   return (
     <div className="bg-white rounded-2xl shadow-sm overflow-hidden print:shadow-none print:rounded-none print:border print:border-gray-300">
@@ -184,6 +197,12 @@ export default function MonthlyStatementTable({
             Annual Budget totals.
           </p>
         )}
+        {hasAnyFuzzyCauseLine && (
+          <p>
+            <sup>&dagger;</sup> Amounts marked are matched by payee name and may not capture every
+            transaction — the category total above is fully reconciled regardless.
+          </p>
+        )}
         {!hasFootnotes && (
           <p className="sr-only">No additional disclosures apply to this month&rsquo;s statement.</p>
         )}
@@ -217,26 +236,60 @@ function EmptySectionRow() {
 
 function CategoryRow({ line }: { line: MonthlyStatementCategoryLine }) {
   return (
-    <tr className="hover:bg-gray-50">
-      <td className="px-4 py-2.5 text-gray-800">
-        {line.categoryName}
-        {line.hasUncashedCheck && (
-          <span
-            className="ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-lions-gold/25 text-lions-blue-dark align-middle"
-            aria-label="check outstanding — written but not yet cashed by the bank"
-          >
-            check outstanding
-          </span>
-        )}
+    <>
+      <tr className="hover:bg-gray-50">
+        <td className="px-4 py-2.5 text-gray-800">
+          {line.categoryName}
+          {line.hasUncashedCheck && (
+            <span
+              className="ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-lions-gold/25 text-lions-blue-dark align-middle"
+              aria-label="check outstanding — written but not yet cashed by the bank"
+            >
+              check outstanding
+            </span>
+          )}
+        </td>
+        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800">
+          {formatDollars(line.oneMonthCents)}
+        </td>
+        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800">
+          {formatDollars(line.twelveMonthCents)}
+        </td>
+        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-500">
+          {line.annualBudgetCents === null ? "—" : formatDollars(line.annualBudgetCents)}
+        </td>
+      </tr>
+      {line.causeLines?.map((cl) => (
+        <CauseLineRow key={cl.id} cl={cl} />
+      ))}
+    </>
+  );
+}
+
+/**
+ * Cause/line-item breakdown sub-row (B-30, DECISION-061 — folds in the
+ * fiscal-report cause/line breakdown work) — indented under its category
+ * row, always rendered (never collapsible; this is a printed/read board
+ * document). A fuzzy-fallback row gets a small, non-alarming superscript
+ * marker; the shared footnote explaining it lives once at the bottom of the
+ * table (see hasAnyFuzzyCauseLine above).
+ */
+function CauseLineRow({ cl }: { cl: MonthlyStatementCauseLine }) {
+  const name = cl.label ? `${cl.cause} — ${cl.label}` : cl.cause;
+  return (
+    <tr className="bg-gray-50/50">
+      <td className="pl-8 pr-4 py-1.5 text-xs text-gray-500">
+        {name}
+        {cl.isFuzzyFallback && <sup className="ml-0.5 text-gray-400">&dagger;</sup>}
       </td>
-      <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800">
-        {formatDollars(line.oneMonthCents)}
+      <td className="px-4 py-1.5 text-right tabular-nums whitespace-nowrap text-xs text-gray-500">
+        {formatDollars(cl.oneMonthCents)}
       </td>
-      <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800">
-        {formatDollars(line.twelveMonthCents)}
+      <td className="px-4 py-1.5 text-right tabular-nums whitespace-nowrap text-xs text-gray-500">
+        {formatDollars(cl.twelveMonthCents)}
       </td>
-      <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-500">
-        {line.annualBudgetCents === null ? "—" : formatDollars(line.annualBudgetCents)}
+      <td className="px-4 py-1.5 text-right tabular-nums whitespace-nowrap text-xs text-gray-400">
+        {cl.annualBudgetCents === null ? "—" : formatDollars(cl.annualBudgetCents)}
       </td>
     </tr>
   );

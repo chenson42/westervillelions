@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
@@ -17,12 +18,83 @@ import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
 import BudgetEditor from "@/components/admin/ledger/budget-editor";
 import FundBalanceOverview from "@/components/admin/ledger/fund-balance-overview";
 import type { FundReportCategoryLine } from "@/lib/ledger-queries";
+import { isAllZeroRow, budgetVariance } from "@/lib/ledger";
 
 export const dynamic = "force-dynamic";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
+}
+
+/**
+ * Cause/line-item breakdown row for the admin Fund Report (B-30, DECISION-061
+ * fold-in of the fiscal-report-breakdown work). Reads getFundReport's
+ * already-resolved per-line actualCents/isFuzzyFallback (exact link wins,
+ * fuzzy payee-name match is the flagged fallback) — no re-derivation here.
+ */
+type ReportCauseLine = {
+  id: string;
+  cause: string;
+  label: string;
+  actualCents: number;
+  budgetCents: number | null;
+  varianceStr: string;
+  pctStr: string;
+  isOverBudget: boolean;
+  isFuzzyFallback: boolean;
+  isOtherRow: boolean;
+};
+
+/**
+ * Builds the breakdown for one category line, or null when the category has
+ * no cause breakdown at all (lump-sum / not countsAsGiving). Always includes
+ * a synthesized "Other" row so visible detail foots to the category's own
+ * actualCents — same zero-omission rule as the member Statement, reusing
+ * isAllZeroRow with a fixed oneMonthCents: 0 (this table has no bank-cleared-
+ * date grain — only Actual YTD / Budget).
+ */
+function buildReportCauseLines(line: FundReportCategoryLine): ReportCauseLine[] | null {
+  if (!line.causeLines) return null;
+
+  let namedActualTotal = 0;
+  const named: ReportCauseLine[] = line.causeLines.map((cl) => {
+    namedActualTotal += cl.actualCents;
+    const v = budgetVariance(cl.actualCents, cl.amountCents);
+    return {
+      id: cl.id,
+      cause: cl.cause,
+      label: cl.label,
+      actualCents: cl.actualCents,
+      budgetCents: cl.amountCents,
+      varianceStr: v.varianceCents !== null ? formatDollars(v.varianceCents) : "—",
+      pctStr: v.pct !== null ? `${v.pct >= 0 ? "+" : ""}${v.pct.toFixed(1)}%` : "—",
+      isOverBudget: v.varianceCents !== null && v.varianceCents < 0,
+      isFuzzyFallback: cl.isFuzzyFallback,
+      isOtherRow: false,
+    };
+  });
+
+  const other: ReportCauseLine = {
+    id: "other",
+    cause: "Other",
+    label: "",
+    actualCents: line.actualCents - namedActualTotal,
+    budgetCents: null,
+    varianceStr: "—",
+    pctStr: "—",
+    isOverBudget: false,
+    isFuzzyFallback: false,
+    isOtherRow: true,
+  };
+
+  return [...named, other].filter(
+    (row) => !isAllZeroRow({ oneMonthCents: 0, twelveMonthCents: row.actualCents, annualBudgetCents: row.budgetCents }),
+  );
+}
+
+function causeLineName(row: ReportCauseLine): string {
+  return row.label ? `${row.cause} — ${row.label}` : row.cause;
 }
 
 function varianceDisplay(line: FundReportCategoryLine): {
@@ -100,6 +172,13 @@ export default async function AdminFundReportPage({
   ]);
 
   const basePath = `/admin/ledger/${fundSlug}/report`;
+
+  // B-30/DECISION-061: one shared footnote for the whole table, not one per
+  // row — only rendered when at least one visible cause-line row is sourced
+  // via the fuzzy payee-name-match fallback.
+  const hasAnyFuzzyCauseLine = [...(report?.income ?? []), ...(report?.expense ?? [])].some(
+    (line) => buildReportCauseLines(line)?.some((cl) => cl.isFuzzyFallback),
+  );
 
   // Combine income + expense lines for the budget editor
   const budgetEditorLines = [
@@ -234,38 +313,65 @@ export default async function AdminFundReportPage({
                   ) : (
                     report.income.map((line) => {
                       const { budgetStr, varianceStr, pctStr, isOverBudget } = varianceDisplay(line);
+                      const causeLines = buildReportCauseLines(line);
                       return (
-                        <tr key={line.categoryId} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm text-gray-900">{line.categoryName}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-green-700">
-                            {formatDollars(line.actualCents)}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
-                            {budgetStr}
-                          </td>
-                          <td
-                            className={`whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums ${
-                              line.budgetCents === null
-                                ? "text-gray-400"
-                                : isOverBudget
-                                  ? "text-orange-700 font-medium"
-                                  : "text-gray-700"
-                            }`}
-                          >
-                            {varianceStr}
-                          </td>
-                          <td
-                            className={`whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums ${
-                              line.budgetCents === null
-                                ? "text-gray-400"
-                                : isOverBudget
-                                  ? "text-orange-700 font-medium"
-                                  : "text-gray-700"
-                            }`}
-                          >
-                            {pctStr}
-                          </td>
-                        </tr>
+                        <Fragment key={line.categoryId}>
+                          <tr className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-sm text-gray-900">{line.categoryName}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-green-700">
+                              {formatDollars(line.actualCents)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                              {budgetStr}
+                            </td>
+                            <td
+                              className={`whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums ${
+                                line.budgetCents === null
+                                  ? "text-gray-400"
+                                  : isOverBudget
+                                    ? "text-orange-700 font-medium"
+                                    : "text-gray-700"
+                              }`}
+                            >
+                              {varianceStr}
+                            </td>
+                            <td
+                              className={`whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums ${
+                                line.budgetCents === null
+                                  ? "text-gray-400"
+                                  : isOverBudget
+                                    ? "text-orange-700 font-medium"
+                                    : "text-gray-700"
+                              }`}
+                            >
+                              {pctStr}
+                            </td>
+                          </tr>
+                          {causeLines?.map((cl) => (
+                            <tr key={`${line.categoryId}-${cl.id}`} className="bg-gray-50/50">
+                              <td className="pl-8 pr-4 py-1.5 text-xs text-gray-500">
+                                {causeLineName(cl)}
+                                {cl.isFuzzyFallback && <sup className="ml-0.5 text-gray-400">&dagger;</sup>}
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-1.5 text-right text-xs tabular-nums text-gray-600">
+                                {formatDollars(cl.actualCents)}
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-1.5 text-right text-xs tabular-nums text-gray-400">
+                                {cl.budgetCents === null ? "—" : formatDollars(cl.budgetCents)}
+                              </td>
+                              <td
+                                className={`whitespace-nowrap px-4 py-1.5 text-right text-xs tabular-nums ${cl.isOverBudget ? "text-orange-600" : "text-gray-400"}`}
+                              >
+                                {cl.varianceStr}
+                              </td>
+                              <td
+                                className={`whitespace-nowrap px-4 py-1.5 text-right text-xs tabular-nums ${cl.isOverBudget ? "text-orange-600" : "text-gray-400"}`}
+                              >
+                                {cl.pctStr}
+                              </td>
+                            </tr>
+                          ))}
+                        </Fragment>
                       );
                     })
                   )}
@@ -293,38 +399,65 @@ export default async function AdminFundReportPage({
                   ) : (
                     report.expense.map((line) => {
                       const { budgetStr, varianceStr, pctStr, isOverBudget } = varianceDisplay(line);
+                      const causeLines = buildReportCauseLines(line);
                       return (
-                        <tr key={line.categoryId} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm text-gray-900">{line.categoryName}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900">
-                            {formatDollars(line.actualCents)}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
-                            {budgetStr}
-                          </td>
-                          <td
-                            className={`whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums ${
-                              line.budgetCents === null
-                                ? "text-gray-400"
-                                : isOverBudget
-                                  ? "text-orange-700 font-medium"
-                                  : "text-gray-700"
-                            }`}
-                          >
-                            {varianceStr}
-                          </td>
-                          <td
-                            className={`whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums ${
-                              line.budgetCents === null
-                                ? "text-gray-400"
-                                : isOverBudget
-                                  ? "text-orange-700 font-medium"
-                                  : "text-gray-700"
-                            }`}
-                          >
-                            {pctStr}
-                          </td>
-                        </tr>
+                        <Fragment key={line.categoryId}>
+                          <tr className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-sm text-gray-900">{line.categoryName}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900">
+                              {formatDollars(line.actualCents)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                              {budgetStr}
+                            </td>
+                            <td
+                              className={`whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums ${
+                                line.budgetCents === null
+                                  ? "text-gray-400"
+                                  : isOverBudget
+                                    ? "text-orange-700 font-medium"
+                                    : "text-gray-700"
+                              }`}
+                            >
+                              {varianceStr}
+                            </td>
+                            <td
+                              className={`whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums ${
+                                line.budgetCents === null
+                                  ? "text-gray-400"
+                                  : isOverBudget
+                                    ? "text-orange-700 font-medium"
+                                    : "text-gray-700"
+                              }`}
+                            >
+                              {pctStr}
+                            </td>
+                          </tr>
+                          {causeLines?.map((cl) => (
+                            <tr key={`${line.categoryId}-${cl.id}`} className="bg-gray-50/50">
+                              <td className="pl-8 pr-4 py-1.5 text-xs text-gray-500">
+                                {causeLineName(cl)}
+                                {cl.isFuzzyFallback && <sup className="ml-0.5 text-gray-400">&dagger;</sup>}
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-1.5 text-right text-xs tabular-nums text-gray-600">
+                                {formatDollars(cl.actualCents)}
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-1.5 text-right text-xs tabular-nums text-gray-400">
+                                {cl.budgetCents === null ? "—" : formatDollars(cl.budgetCents)}
+                              </td>
+                              <td
+                                className={`whitespace-nowrap px-4 py-1.5 text-right text-xs tabular-nums ${cl.isOverBudget ? "text-orange-600" : "text-gray-400"}`}
+                              >
+                                {cl.varianceStr}
+                              </td>
+                              <td
+                                className={`whitespace-nowrap px-4 py-1.5 text-right text-xs tabular-nums ${cl.isOverBudget ? "text-orange-600" : "text-gray-400"}`}
+                              >
+                                {cl.pctStr}
+                              </td>
+                            </tr>
+                          ))}
+                        </Fragment>
                       );
                     })
                   )}
@@ -352,6 +485,12 @@ export default async function AdminFundReportPage({
                 </tbody>
               </table>
             </div>
+            {hasAnyFuzzyCauseLine && (
+              <p className="border-t border-gray-100 px-4 py-2 text-xs text-gray-400">
+                <sup>&dagger;</sup> Amounts marked are matched by payee name and may not capture every
+                transaction — the category total above is fully reconciled regardless.
+              </p>
+            )}
           </div>
 
           {/* Budget editor — LEDGER_MANAGE only */}

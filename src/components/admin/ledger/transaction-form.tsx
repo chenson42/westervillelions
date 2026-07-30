@@ -5,7 +5,10 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import ReceiptFileInput from "./receipt-file-input";
+import BudgetLinePicker from "./budget-line-picker";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
+import type { BudgetLineOption } from "@/lib/ledger-queries";
+import { getFiscalYear } from "@/lib/fiscal-year";
 
 // Convenience type for a partial transaction used when editing
 type EditableTransaction = Pick<
@@ -26,6 +29,8 @@ type EditableTransaction = Pick<
   | "receiptWaivedAt"
   | "receiptWaiverReason"
   | "publicNote"
+  | "beneficiaryCause"
+  | "budgetLineId"
 >;
 
 /** The other entity's funds/bank accounts/categories, needed to offer a
@@ -47,6 +52,10 @@ interface TransactionFormProps {
   funds: LedgerFund[];
   categories: LedgerCategory[];
   bankAccounts: LedgerBankAccount[];
+  /** Every expense-flow budget line for this entity, across every fiscal
+   *  year (B-30, DECISION-061) — the picker filters to fund + derived FY
+   *  client-side. */
+  budgetLines: BudgetLineOption[];
   onSuccess: () => void;
   onCancel: () => void;
   /** When provided, form is in edit mode. For a transfer edit, pass the debit row. */
@@ -123,6 +132,7 @@ export default function TransactionForm({
   funds,
   categories,
   bankAccounts,
+  budgetLines,
   onSuccess,
   onCancel,
   initialValues,
@@ -191,8 +201,11 @@ export default function TransactionForm({
   // "let the server default to Public donations."
   const [destCategoryId, setDestCategoryId] = useState("");
   const [sweepConfirmOpen, setSweepConfirmOpen] = useState(false);
-  const [beneficiaryCause, setBeneficiaryCause] = useState("");
+  const [beneficiaryCause, setBeneficiaryCause] = useState(initialValues?.beneficiaryCause ?? "");
   const [publicNote, setPublicNote] = useState(initialValues?.publicNote ?? "");
+  // Explicit budget-line link (B-30, DECISION-061).
+  const [budgetLineId, setBudgetLineId] = useState(initialValues?.budgetLineId ?? "");
+  const [categoryMismatchNotice, setCategoryMismatchNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Receipt (expense-only, DECISION-035) —
@@ -215,10 +228,16 @@ export default function TransactionForm({
   // (which always resolve apiFlow to "income" above) or income rows.
   const showReceiptSection = !isTransferOrSweep && !isEditingTransfer && apiFlow === "expense";
   // Public note (Impact Gift Public Note) — independent conditional from
-  // beneficiaryCause's create-only gate (`!isEdit`). This field's entire
-  // purpose is annotating already-existing transactions, so it must render
-  // on edit too, not just create.
+  // beneficiaryCause's OLD create-only gate. This field's entire purpose is
+  // annotating already-existing transactions, so it must render on edit
+  // too, not just create.
   const showPublicNoteSection = !isTransferOrSweep && !isEditingTransfer && apiFlow === "expense";
+  // Explicit budget-line link (B-30, DECISION-061) — and the fix for the
+  // found bug: beneficiaryCause is now editable on the SAME condition
+  // (previously create-only, `!isEdit`, even though the PATCH API already
+  // accepted edits) since the picker's edit-mode auto-fill needs to write
+  // into it.
+  const showBudgetLineSection = !isTransferOrSweep && !isEditingTransfer && apiFlow === "expense";
 
   // The effective fund kind for category filtering (regular income/expense
   // only — Transfer/Sweep never show the generic category picker below).
@@ -246,6 +265,27 @@ export default function TransactionForm({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fundId, flowMode]);
+
+  // Client-side mirror of the server's auto-clear (B-30, DECISION-061): if
+  // the fund or date change moves the selected budget line's fund/FY out of
+  // range, drop the selection here too rather than letting the picker keep
+  // showing a value no longer in its own candidate list. The server is the
+  // authority (this only prevents submitting a stale value the user can no
+  // longer even see selected).
+  useEffect(() => {
+    if (!budgetLineId) return;
+    const line = budgetLines.find((l) => l.id === budgetLineId);
+    if (!line || line.fundId !== fundId) {
+      setBudgetLineId("");
+      return;
+    }
+    const parsed = new Date(txnDate + "T00:00:00");
+    if (isNaN(parsed.getTime())) return;
+    if (line.fiscalYear !== getFiscalYear(parsed)) {
+      setBudgetLineId("");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fundId, txnDate]);
 
   // Prepopulate memo hint for refunds
   useEffect(() => {
@@ -354,6 +394,17 @@ export default function TransactionForm({
           // expense-only section is showing — omit entirely for transfers/
           // income so the field is never touched outside its own conditional.
           ...(showPublicNoteSection ? { publicNote: publicNote.trim() || null } : {}),
+          // Beneficiary cause + explicit budget-line link (B-30, DECISION-061)
+          // — the bug fix: beneficiaryCause is now sent on edit too (the
+          // PATCH API already accepted it; the form previously never sent
+          // it at all). budgetLineId omitted entirely (rather than sent as
+          // null) when its own section isn't showing, so a transfer/income
+          // edit never touches an existing link some OTHER edit created —
+          // not reachable in practice (only expense rows ever carry a
+          // link), but matches the same defensive pattern as publicNote.
+          ...(showBudgetLineSection
+            ? { beneficiaryCause: beneficiaryCause.trim() || null, budgetLineId: budgetLineId || null }
+            : {}),
           // Receipt (DECISION-035): null removes (Flow D — does NOT waive);
           // a fresh key attaches/replaces (Flow B/C) and the server clears
           // any existing waiver in the same update. Omit entirely when the
@@ -400,6 +451,7 @@ export default function TransactionForm({
           bankAccountId,
           beneficiaryCause: beneficiaryCause.trim() || null,
           publicNote: publicNote.trim() || null,
+          budgetLineId: budgetLineId || null,
           // Receipt (DECISION-035): the opaque key already minted by
           // ReceiptFileInput's upload-on-select flow, if the admin attached
           // one before saving (Flow A). Omitted entirely when none was
@@ -427,6 +479,15 @@ export default function TransactionForm({
         toast.success(`Submitted${fyNote} — awaiting board approval (over the disbursement threshold).`);
       } else {
         toast.success(isEdit ? "Transaction updated." : `Transaction recorded${fyNote}.`);
+      }
+      // B-30/DECISION-061: the server auto-cleared a now-stale budget-line
+      // link (the edit moved the transaction's date/category out of range
+      // of the line it was linked to) rather than rejecting the edit — the
+      // treasurer needs to see this happened, not discover it later.
+      if (data.budgetLineLinkCleared) {
+        toast(
+          "This transaction's budget-line link was cleared because the date or category moved it out of range — re-select it if it still applies.",
+        );
       }
       router.refresh();
       onSuccess();
@@ -655,8 +716,13 @@ export default function TransactionForm({
         />
       </div>
 
-      {/* Beneficiary cause — optional, only for new non-transfer/sweep expenses */}
-      {!isTransferOrSweep && !isEdit && apiFlow === "expense" && (
+      {/* Beneficiary cause — optional, non-transfer/sweep expenses. Editable
+          in BOTH create and edit mode (B-30 bug fix — the PATCH API already
+          accepted edits here; the form just never sent them). Hand-editing
+          this text after picking a budget line below does NOT invalidate
+          the link — only a fund/date/category change that moves the line
+          out of range does (see the picker's own auto-clear notice). */}
+      {showBudgetLineSection && (
         <div>
           <label htmlFor="txn-cause" className="block text-sm font-medium text-gray-700 mb-1">
             Beneficiary cause <span className="text-gray-400 font-normal text-xs">(optional)</span>
@@ -670,6 +736,40 @@ export default function TransactionForm({
             className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             placeholder="e.g., Rudolph Run, Vision Care Fund"
           />
+        </div>
+      )}
+
+      {/* Applies to budget line — explicit transaction<->budget-line link
+          (B-30, DECISION-061). Picking a line auto-fills category + cause
+          above. */}
+      {showBudgetLineSection && (
+        <div>
+          <BudgetLinePicker
+            id="txn-budget-line"
+            budgetLines={budgetLines}
+            fundId={fundId}
+            txnDate={txnDate}
+            value={budgetLineId}
+            onSelect={(line) => {
+              if (!line) {
+                setBudgetLineId("");
+                return;
+              }
+              setBudgetLineId(line.id);
+              setBeneficiaryCause(line.cause);
+              if (categoryId && categoryId !== line.categoryId) {
+                setCategoryMismatchNotice(
+                  `This line belongs to ${line.categoryName} — category will update.`,
+                );
+              } else {
+                setCategoryMismatchNotice(null);
+              }
+              setCategoryId(line.categoryId);
+            }}
+          />
+          {categoryMismatchNotice && (
+            <p className="mt-1 text-xs text-lions-blue">{categoryMismatchNotice}</p>
+          )}
         </div>
       )}
 

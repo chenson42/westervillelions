@@ -1012,9 +1012,39 @@ describe("collapseBudgetCauseLines", () => {
       tx as never,
     );
 
-    expect(result).toEqual({ ok: true, action: "collapsed", annualAmountCents: 5_000 });
+    expect(result).toEqual({
+      ok: true,
+      action: "collapsed",
+      annualAmountCents: 5_000,
+      unlinkedCount: 0,
+    });
     expect(deleteCalls).toHaveLength(1);
     expect(deleteCalls[0].table).toBe(ledgerBudgetLines);
+  });
+
+  it("counts posted transactions linked to the lines about to be deleted (B-30, DECISION-061)", async () => {
+    const { tx, deleteCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [{ id: "budget-1", annualAmountCents: 5_000 }],
+        UNLOCKED_APPROVAL,
+        [{ id: "line-1" }, { id: "line-2" }],
+        [{ c: 3 }],
+      ],
+    });
+
+    const result = await collapseBudgetCauseLines(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense" },
+      tx as never,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      action: "collapsed",
+      annualAmountCents: 5_000,
+      unlinkedCount: 3,
+    });
+    expect(deleteCalls).toHaveLength(1);
   });
 });
 
@@ -1820,6 +1850,10 @@ describe("getFundReport — Budget Star & Notes (DECISION-057)", () => {
         pendingDeleteAt: null,
         starred: true,
         note: "matches last year",
+        linkedActualCents: 0,
+        linkedTransactionCount: 0,
+        actualCents: 0,
+        isFuzzyFallback: false,
       },
     ]);
   });
@@ -2141,8 +2175,28 @@ describe("getFundReport — causeActualsByKey", () => {
     // budget lines say.
     expect(report!.expense[0].budgetCents).toBe(20_000);
     expect(report!.expense[0].causeLines).toEqual([
-      { id: "line-1", cause: "Hunger & Basic Needs", label: "WARM", amountCents: 12_000, pendingDeleteAt: null },
-      { id: "line-2", cause: "Hunger & Basic Needs", label: "", amountCents: 8_000, pendingDeleteAt: null },
+      {
+        id: "line-1",
+        cause: "Hunger & Basic Needs",
+        label: "WARM",
+        amountCents: 12_000,
+        pendingDeleteAt: null,
+        linkedActualCents: 0,
+        linkedTransactionCount: 0,
+        actualCents: 11_000,
+        isFuzzyFallback: true,
+      },
+      {
+        id: "line-2",
+        cause: "Hunger & Basic Needs",
+        label: "",
+        amountCents: 8_000,
+        pendingDeleteAt: null,
+        linkedActualCents: 0,
+        linkedTransactionCount: 0,
+        actualCents: 7_000,
+        isFuzzyFallback: true,
+      },
     ]);
 
     // Actual figures — the new, independent aggregation. Deliberately

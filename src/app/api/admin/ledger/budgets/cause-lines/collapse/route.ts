@@ -6,8 +6,14 @@
  *
  * Body: { fundId: string; fiscalYear: number; categoryId: string; flow: 'income' | 'expense' }
  *
- * Response 200: { action: 'collapsed', annualAmountCents: number }
+ * Response 200: { action: 'collapsed', annualAmountCents: number, unlinkedCount: number }
  * Errors: 404 (no budget row), 409 (locked)
+ *
+ * unlinkedCount (B-30, DECISION-061): count of posted transactions that were
+ * linked (via budgetLineId) to a line just deleted — the FK's ON DELETE SET
+ * NULL performs the actual unlink for free; this count is purely so the
+ * client can toast confirmation matching the pre-action ConfirmDialog's
+ * warning.
  *
  * Server behavior: deletes all ledger_budget_lines children for the category's
  * budget row. The parent's annualAmountCents is NOT recomputed here — per
@@ -70,7 +76,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
 
-    return NextResponse.json({ action: "collapsed", annualAmountCents: result.annualAmountCents });
+    return NextResponse.json({
+      action: "collapsed",
+      annualAmountCents: result.annualAmountCents,
+      unlinkedCount: result.unlinkedCount,
+    });
   } catch (error) {
     console.error("Error collapsing ledger budget cause lines:", error);
     return NextResponse.json({ error: "Failed to collapse budget cause lines" }, { status: 500 });

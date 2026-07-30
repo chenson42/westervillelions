@@ -2010,3 +2010,156 @@ export function resolveDisplayBudgetCents(
   }
   return rawBudgetCents;
 }
+
+// ---------------------------------------------------------------------------
+// Explicit transaction <-> budget-line link (B-30, DECISION-061)
+// docs/work-log/2026-07-30-transaction-budget-line-link.md
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves ONE cause line's actual amount: the exact FK-linked sum wins
+ * outright whenever it's nonzero; the fuzzy `causeLineReferenceKey` match is
+ * a fallback used ONLY when there is no exact link at all. Never both summed
+ * together — this is the single seam that makes "a linked transaction is
+ * excluded from the fuzzy pool" true for the READ side, mirroring how
+ * `isEligibleForFuzzyCauseMatch` makes it true for the pool-membership side.
+ *
+ * Pure — no DB access. Called once per cause line by every consumer
+ * (getFundReport's causeLinesFor, computeOneMonthCashActuals's per-line
+ * bucketing) rather than each re-deriving the same two-branch rule.
+ */
+export function resolveCauseLineActual(
+  linkedCents: number,
+  fallbackCents: number | null,
+): { cents: number; isFuzzyFallback: boolean } {
+  if (linkedCents > 0) return { cents: linkedCents, isFuzzyFallback: false };
+  if (fallbackCents && fallbackCents > 0) return { cents: fallbackCents, isFuzzyFallback: true };
+  return { cents: 0, isFuzzyFallback: false };
+}
+
+/**
+ * A transaction is eligible to feed the fuzzy `causeLineReferenceKey` pool
+ * iff it's a posted-eligible expense with a category AND a non-blank
+ * `beneficiaryCause` AND it does NOT already carry an explicit
+ * `budgetLineId` link. The last condition is what prevents double-counting:
+ * once a transaction is linked, its dollars flow through the exact
+ * `budgetLineId`-keyed aggregation only, never also through the fuzzy
+ * `(categoryId, cause, party)` grouping. Pure — the caller is responsible
+ * for the posted/status filter (this function doesn't see `status`).
+ */
+export function isEligibleForFuzzyCauseMatch(txn: {
+  flow: string;
+  categoryId: string | null;
+  budgetLineId: string | null;
+  beneficiaryCause: string | null;
+}): boolean {
+  return (
+    txn.flow === "expense" &&
+    !!txn.categoryId &&
+    !txn.budgetLineId &&
+    !!txn.beneficiaryCause?.trim()
+  );
+}
+
+/**
+ * True when a transaction's currently-linked budget line no longer applies
+ * given the transaction's EFFECTIVE (post-edit) fiscal year and category —
+ * i.e. the link has gone stale and must be auto-cleared server-side rather
+ * than silently kept (Resolve #1 / DECISION-061 item 3). Only meaningful
+ * when the transaction actually has a link; callers should no-op this check
+ * entirely when `existing.budgetLineId` is null.
+ */
+export function shouldClearBudgetLineLink(
+  linkedLineBudget: { fiscalYear: number; categoryId: string | null },
+  effectiveFiscalYear: number,
+  effectiveCategoryId: string | null,
+): boolean {
+  return (
+    linkedLineBudget.fiscalYear !== effectiveFiscalYear ||
+    linkedLineBudget.categoryId !== effectiveCategoryId
+  );
+}
+
+/**
+ * Zero-omission rule for a report row that carries One-Month / Twelve-Month
+ * / Annual-Budget figures (a `MonthlyStatementCauseLine`, or any row shaped
+ * like one) — true only when ALL THREE are zero/absent, never an OR across
+ * columns. `annualBudgetCents === null` is treated the same as `0` (no
+ * budget row at all reads identically to a deliberately-entered $0 for this
+ * purpose). A nonzero figure in ANY single column keeps the row visible —
+ * e.g. a line budgeted $500 with $0 spent so far must still render. Pure —
+ * used for display filtering only; totals are always summed from the full,
+ * unfiltered row set upstream of this filter.
+ */
+export function isAllZeroRow(row: {
+  oneMonthCents: number;
+  twelveMonthCents: number;
+  annualBudgetCents: number | null;
+}): boolean {
+  return (
+    row.oneMonthCents === 0 &&
+    row.twelveMonthCents === 0 &&
+    (row.annualBudgetCents === null || row.annualBudgetCents === 0)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// matchBudgetLineForTransaction — backfill matcher (B-30, DECISION-061)
+// scripts/backfill-budget-line-links.ts
+// ---------------------------------------------------------------------------
+
+export type BackfillMatchResult =
+  | { status: "matched"; budgetLineId: string }
+  | { status: "unmatched"; reason: "no-match" }
+  | { status: "unmatched"; reason: "ambiguous"; candidateIds: string[] }
+  | { status: "skipped"; reason: "no-category" };
+
+/**
+ * Pure matcher for the one-time historical backfill script. Reuses
+ * `causeLineReferenceKey()`/`normalizeBudgetLineLabel()` EXACTLY — no new
+ * fuzzy logic, no Levenshtein, no guessing (Chris's explicit requirement).
+ * A near-miss (e.g. "Pilot Dogs" vs "Pilot Dogs, Inc.") is reported as
+ * unmatched, never auto-linked.
+ *
+ *   - No `categoryId` at all (pre-fix reimbursement-derived rows) ->
+ *     `skipped`/`no-category` — a DIFFERENT fix path (add a category via the
+ *     edit form first), so the script buckets these separately from a
+ *     genuine label/party mismatch.
+ *   - Blank/whitespace-only `beneficiaryCause` -> `unmatched`/`no-match`
+ *     (nothing to key a lookup on).
+ *   - Exactly one candidate line shares this transaction's
+ *     `causeLineReferenceKey` -> `matched`.
+ *   - Zero candidates share it -> `unmatched`/`no-match`.
+ *   - More than one candidate shares it (shouldn't happen given
+ *     `(budgetId, cause, label)` uniqueness within one budget row, but
+ *     defended against) -> `unmatched`/`ambiguous`, never guesses which one.
+ *
+ * `candidateLines` should already be pre-filtered by the caller to the
+ * transaction's fund + fiscal year (via its budget row) — this function
+ * doesn't see fund/FY itself, only `categoryId`/`cause`/`label` per line.
+ */
+export function matchBudgetLineForTransaction(
+  txn: { categoryId: string | null; beneficiaryCause: string | null; party: string | null },
+  candidateLines: { id: string; cause: string; label: string; categoryId: string }[],
+): BackfillMatchResult {
+  if (!txn.categoryId) {
+    return { status: "skipped", reason: "no-category" };
+  }
+  const cause = (txn.beneficiaryCause ?? "").trim();
+  if (!cause) {
+    return { status: "unmatched", reason: "no-match" };
+  }
+
+  const targetKey = causeLineReferenceKey(txn.categoryId, cause, txn.party);
+  const matches = candidateLines.filter(
+    (line) =>
+      line.categoryId === txn.categoryId &&
+      causeLineReferenceKey(line.categoryId, line.cause, line.label) === targetKey,
+  );
+
+  if (matches.length === 0) return { status: "unmatched", reason: "no-match" };
+  if (matches.length > 1) {
+    return { status: "unmatched", reason: "ambiguous", candidateIds: matches.map((m) => m.id) };
+  }
+  return { status: "matched", budgetLineId: matches[0].id };
+}

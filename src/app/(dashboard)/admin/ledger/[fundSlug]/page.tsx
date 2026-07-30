@@ -12,6 +12,7 @@ import {
   listTransactions,
   listLedgerFiscalYears,
   listAcknowledgmentsSummary,
+  getBudgetLineOptions,
 } from "@/lib/ledger-queries";
 import { currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
@@ -142,7 +143,7 @@ export default async function AdminLedgerFundPage({
     }
   }
 
-  const [bankAccounts, categories, transactions, fiscalYears, ackSummary] = await Promise.all([
+  const [bankAccounts, categories, transactions, fiscalYears, ackSummary, budgetLines] = await Promise.all([
     getBankAccounts(entity.id),
     getCategories(entity.id),
     listTransactions(entity.id, {
@@ -155,6 +156,10 @@ export default async function AdminLedgerFundPage({
     isFoundationEntity && canRecord
       ? listAcknowledgmentsSummary({ pendingOnly: false, includePii: false })
       : Promise.resolve([]),
+    // Explicit budget-line link (B-30, DECISION-061) — every expense-flow
+    // budget line for this entity, threaded to the picker in both the
+    // transaction form and per-row edit actions.
+    getBudgetLineOptions(entity.id),
   ]);
 
   // Build txnId → ack status map for Foundation income rows
@@ -271,6 +276,7 @@ export default async function AdminLedgerFundPage({
               funds={allFunds}
               categories={categories}
               bankAccounts={bankAccounts}
+              budgetLines={budgetLines}
               defaultFundId={fund?.id}
               crossEntityContext={crossEntityContext}
               triggerLabel="Record Transaction"
@@ -509,6 +515,7 @@ export default async function AdminLedgerFundPage({
                             funds={allFunds}
                             categories={categories}
                             bankAccounts={bankAccounts}
+                            budgetLines={budgetLines}
                           />
                         </td>
                       )}

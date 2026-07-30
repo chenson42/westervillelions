@@ -5,7 +5,7 @@ import type {
   LedgerBankAccount,
   LedgerCategory,
 } from "@/lib/db/schema";
-import type { EntityOverview, PendingApprovalRow } from "@/lib/ledger-queries";
+import type { EntityOverview, PendingApprovalRow, BudgetLineOption } from "@/lib/ledger-queries";
 import type { GuardrailFlag } from "@/lib/ledger";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
 import TransactionFormDialog from "@/components/admin/ledger/transaction-form-dialog";
@@ -17,6 +17,8 @@ interface LedgerEntityDetailProps {
   funds: LedgerFund[];
   bankAccounts: LedgerBankAccount[];
   categories: LedgerCategory[];
+  /** Every expense-flow budget line for this entity (B-30, DECISION-061). */
+  budgetLines: BudgetLineOption[];
   overview: EntityOverview | null;
   fiscalYears: number[];
   pendingTxns: PendingApprovalRow[];
@@ -66,6 +68,7 @@ export default function LedgerEntityDetail({
   funds,
   bankAccounts,
   categories,
+  budgetLines,
   overview,
   fiscalYears,
   pendingTxns,
@@ -121,6 +124,7 @@ export default function LedgerEntityDetail({
               funds={funds}
               categories={categories}
               bankAccounts={bankAccounts}
+              budgetLines={budgetLines}
               triggerLabel="Record Transaction"
             />
           )}

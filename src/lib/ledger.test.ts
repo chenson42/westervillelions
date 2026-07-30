@@ -51,6 +51,11 @@ import {
   normalizeBudgetNote,
   MAX_BUDGET_NOTE_LENGTH,
   resolveDisplayBudgetCents,
+  resolveCauseLineActual,
+  isEligibleForFuzzyCauseMatch,
+  shouldClearBudgetLineLink,
+  isAllZeroRow,
+  matchBudgetLineForTransaction,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
@@ -2819,5 +2824,244 @@ describe("resolveDisplayBudgetCents", () => {
   it("a truly un-budgeted category (null in, no row at all) stays null", () => {
     expect(resolveDisplayBudgetCents(null, false, false, null)).toBeNull();
     expect(resolveDisplayBudgetCents(null, false, true, "note")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveCauseLineActual / isEligibleForFuzzyCauseMatch /
+// shouldClearBudgetLineLink / isAllZeroRow — B-30, DECISION-061
+// docs/work-log/2026-07-30-transaction-budget-line-link.md
+// ---------------------------------------------------------------------------
+
+describe("resolveCauseLineActual", () => {
+  it("linked > 0 wins outright — fuzzy fallback is ignored even when also nonzero (never both)", () => {
+    expect(resolveCauseLineActual(10_000, 5_000)).toEqual({ cents: 10_000, isFuzzyFallback: false });
+  });
+
+  it("linked = 0, fallback > 0 — falls back to fuzzy, flagged", () => {
+    expect(resolveCauseLineActual(0, 5_000)).toEqual({ cents: 5_000, isFuzzyFallback: true });
+  });
+
+  it("linked = 0, fallback null — zero, not flagged", () => {
+    expect(resolveCauseLineActual(0, null)).toEqual({ cents: 0, isFuzzyFallback: false });
+  });
+
+  it("linked = 0, fallback 0 — zero, not flagged", () => {
+    expect(resolveCauseLineActual(0, 0)).toEqual({ cents: 0, isFuzzyFallback: false });
+  });
+});
+
+describe("isEligibleForFuzzyCauseMatch", () => {
+  it("a linked transaction is excluded even with cause+category present", () => {
+    expect(
+      isEligibleForFuzzyCauseMatch({
+        flow: "expense",
+        categoryId: "cat-1",
+        budgetLineId: "line-1",
+        beneficiaryCause: "WARM",
+      }),
+    ).toBe(false);
+  });
+
+  it("an unlinked expense with cause+category is eligible", () => {
+    expect(
+      isEligibleForFuzzyCauseMatch({
+        flow: "expense",
+        categoryId: "cat-1",
+        budgetLineId: null,
+        beneficiaryCause: "WARM",
+      }),
+    ).toBe(true);
+  });
+
+  it("an expense with no category is excluded", () => {
+    expect(
+      isEligibleForFuzzyCauseMatch({
+        flow: "expense",
+        categoryId: null,
+        budgetLineId: null,
+        beneficiaryCause: "WARM",
+      }),
+    ).toBe(false);
+  });
+
+  it("income is excluded regardless of other fields", () => {
+    expect(
+      isEligibleForFuzzyCauseMatch({
+        flow: "income",
+        categoryId: "cat-1",
+        budgetLineId: null,
+        beneficiaryCause: "WARM",
+      }),
+    ).toBe(false);
+  });
+
+  it("a blank/whitespace-only cause is excluded", () => {
+    expect(
+      isEligibleForFuzzyCauseMatch({
+        flow: "expense",
+        categoryId: "cat-1",
+        budgetLineId: null,
+        beneficiaryCause: "   ",
+      }),
+    ).toBe(false);
+    expect(
+      isEligibleForFuzzyCauseMatch({
+        flow: "expense",
+        categoryId: "cat-1",
+        budgetLineId: null,
+        beneficiaryCause: null,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldClearBudgetLineLink", () => {
+  it("FY match + category match — false, link stays", () => {
+    expect(
+      shouldClearBudgetLineLink({ fiscalYear: 2026, categoryId: "cat-1" }, 2026, "cat-1"),
+    ).toBe(false);
+  });
+
+  it("FY mismatch alone — true", () => {
+    expect(
+      shouldClearBudgetLineLink({ fiscalYear: 2026, categoryId: "cat-1" }, 2027, "cat-1"),
+    ).toBe(true);
+  });
+
+  it("category mismatch alone — true", () => {
+    expect(
+      shouldClearBudgetLineLink({ fiscalYear: 2026, categoryId: "cat-1" }, 2026, "cat-2"),
+    ).toBe(true);
+  });
+
+  it("both FY and category mismatch — true", () => {
+    expect(
+      shouldClearBudgetLineLink({ fiscalYear: 2026, categoryId: "cat-1" }, 2027, "cat-2"),
+    ).toBe(true);
+  });
+
+  it("category cleared to null while linked — true", () => {
+    expect(
+      shouldClearBudgetLineLink({ fiscalYear: 2026, categoryId: "cat-1" }, 2026, null),
+    ).toBe(true);
+  });
+});
+
+describe("isAllZeroRow", () => {
+  it("all three zero/null — true", () => {
+    expect(isAllZeroRow({ oneMonthCents: 0, twelveMonthCents: 0, annualBudgetCents: null })).toBe(true);
+    expect(isAllZeroRow({ oneMonthCents: 0, twelveMonthCents: 0, annualBudgetCents: 0 })).toBe(true);
+  });
+
+  it("nonzero annualBudgetCents alone (budgeted, $0 spent) — false, must still render", () => {
+    expect(isAllZeroRow({ oneMonthCents: 0, twelveMonthCents: 0, annualBudgetCents: 50_000 })).toBe(false);
+  });
+
+  it("nonzero oneMonthCents alone — false", () => {
+    expect(isAllZeroRow({ oneMonthCents: 1_000, twelveMonthCents: 0, annualBudgetCents: null })).toBe(false);
+  });
+
+  it("nonzero twelveMonthCents alone — false", () => {
+    expect(isAllZeroRow({ oneMonthCents: 0, twelveMonthCents: 1_000, annualBudgetCents: null })).toBe(false);
+  });
+
+  it("annualBudgetCents: 0 is treated the same as null", () => {
+    expect(isAllZeroRow({ oneMonthCents: 0, twelveMonthCents: 0, annualBudgetCents: 0 })).toEqual(
+      isAllZeroRow({ oneMonthCents: 0, twelveMonthCents: 0, annualBudgetCents: null }),
+    );
+  });
+});
+
+describe("matchBudgetLineForTransaction", () => {
+  const candidates = [
+    { id: "line-warm", cause: "Hunger & Basic Needs", label: "WARM", categoryId: "cat-1" },
+    { id: "line-generic", cause: "Hunger & Basic Needs", label: "", categoryId: "cat-1" },
+    { id: "line-other-cat", cause: "Hunger & Basic Needs", label: "WARM", categoryId: "cat-2" },
+  ];
+
+  it("no categoryId at all -> skipped/no-category (reimbursement-derived rows)", () => {
+    expect(
+      matchBudgetLineForTransaction(
+        { categoryId: null, beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+        candidates,
+      ),
+    ).toEqual({ status: "skipped", reason: "no-category" });
+  });
+
+  it("blank/whitespace-only beneficiaryCause -> unmatched/no-match", () => {
+    expect(
+      matchBudgetLineForTransaction(
+        { categoryId: "cat-1", beneficiaryCause: "   ", party: "WARM" },
+        candidates,
+      ),
+    ).toEqual({ status: "unmatched", reason: "no-match" });
+    expect(
+      matchBudgetLineForTransaction(
+        { categoryId: "cat-1", beneficiaryCause: null, party: "WARM" },
+        candidates,
+      ),
+    ).toEqual({ status: "unmatched", reason: "no-match" });
+  });
+
+  it("exactly one candidate shares the causeLineReferenceKey -> matched", () => {
+    expect(
+      matchBudgetLineForTransaction(
+        { categoryId: "cat-1", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+        candidates,
+      ),
+    ).toEqual({ status: "matched", budgetLineId: "line-warm" });
+  });
+
+  it("matches the generic/unlabeled line when party is null/blank", () => {
+    expect(
+      matchBudgetLineForTransaction(
+        { categoryId: "cat-1", beneficiaryCause: "Hunger & Basic Needs", party: null },
+        candidates,
+      ),
+    ).toEqual({ status: "matched", budgetLineId: "line-generic" });
+  });
+
+  it("a genuine label/party mismatch (Pilot Dogs vs Pilot Dogs, Inc.-class) -> unmatched/no-match, never guesses", () => {
+    expect(
+      matchBudgetLineForTransaction(
+        { categoryId: "cat-1", beneficiaryCause: "Hunger & Basic Needs", party: "Pilot Dogs, Inc." },
+        [{ id: "line-pilot", cause: "Hunger & Basic Needs", label: "Pilot Dogs", categoryId: "cat-1" }],
+      ),
+    ).toEqual({ status: "unmatched", reason: "no-match" });
+  });
+
+  it("a candidate in a DIFFERENT category never matches, even with identical cause/party", () => {
+    expect(
+      matchBudgetLineForTransaction(
+        { categoryId: "cat-1", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+        [{ id: "line-wrong-cat", cause: "Hunger & Basic Needs", label: "WARM", categoryId: "cat-2" }],
+      ),
+    ).toEqual({ status: "unmatched", reason: "no-match" });
+  });
+
+  it("more than one candidate sharing the same key -> unmatched/ambiguous, reports every candidate id", () => {
+    const dupCandidates = [
+      { id: "line-a", cause: "Hunger & Basic Needs", label: "WARM", categoryId: "cat-1" },
+      { id: "line-b", cause: "Hunger & Basic Needs", label: "WARM", categoryId: "cat-1" },
+    ];
+    const result = matchBudgetLineForTransaction(
+      { categoryId: "cat-1", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+      dupCandidates,
+    );
+    expect(result.status).toBe("unmatched");
+    expect(result).toMatchObject({ reason: "ambiguous" });
+    if (result.status === "unmatched" && result.reason === "ambiguous") {
+      expect(result.candidateIds.sort()).toEqual(["line-a", "line-b"]);
+    }
+  });
+
+  it("zero candidates at all -> unmatched/no-match", () => {
+    expect(
+      matchBudgetLineForTransaction(
+        { categoryId: "cat-1", beneficiaryCause: "Hunger & Basic Needs", party: "WARM" },
+        [],
+      ),
+    ).toEqual({ status: "unmatched", reason: "no-match" });
   });
 });

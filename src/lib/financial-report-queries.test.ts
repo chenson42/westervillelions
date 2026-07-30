@@ -652,6 +652,7 @@ describe("getMonthlyStatement — exposure projection", () => {
       "annualBudgetCents",
       "categoryId",
       "categoryName",
+      "causeLines",
       "hasUncashedCheck",
       "oneMonthCents",
       "twelveMonthCents",
@@ -665,6 +666,10 @@ describe("getMonthlyStatement — exposure projection", () => {
       expect(line).not.toHaveProperty("id");
       expect(line).not.toHaveProperty("donorId");
       expect(line).not.toHaveProperty("publicNote");
+      // No budget row exists for cat-1 in this test's fixture, so
+      // causeLines must be null (no breakdown) — never an object/array
+      // that could carry a leaked field.
+      expect(line.causeLines).toBeNull();
     }
   });
 });

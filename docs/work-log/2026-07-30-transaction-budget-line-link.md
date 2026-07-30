@@ -15,9 +15,11 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-07-30 |
 | 2 — Architectural review | tech-lead (fast-tracked, see note) | Complete | Approved — trivial footprint | 2026-07-30 |
 | 3 — Technical design | tech-lead | Complete | Implementer(s) named | 2026-07-30 |
-| 4 — Implementation | database-admin → api-developer → ux-developer | Pending | — | — |
-| 5 — Verification | qa | Pending | — | — |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 4 — Implementation | full-stack-developer (per-design specialist split subsumed into one pass — see note) | Complete | Builds, typechecks, tests green | 2026-07-30 |
+| 5 — Verification | qa | Complete | FAIL — loop back to Phase 4 | 2026-07-30 |
+| 4 (loop-back fix) — Implementation | full-stack-developer | Complete | e2e regression now passes; typecheck/unit tests green | 2026-07-30 |
+| 5 — Verification (re-check pending) | qa | Not yet re-run | Awaiting qa's second Phase 5 pass | — |
+| 6 — Shipped vs intent | analyst | Blocked on Phase 5 re-verification | — | — |
 
 ---
 
@@ -918,3 +920,618 @@ mirrors every prior Ledger increment:
 `docs/decisions.md` DECISION-061 (bundled implementation decisions from this design —
 report-shape choice, reimbursement category requirement, link-integrity auto-clear
 behavior, and the collapse-count sourcing).
+
+---
+
+# Phase 4 — Implementation (full-stack) — 2026-07-30
+
+**Owner:** full-stack-developer
+**Status:** complete
+
+## Summary
+
+Built the full Phase 3 design in one pass rather than the specialist split the design
+named (schema → api-developer → ux-developer) — flagged as a deviation, not a silent
+skip; see "Deviations from the named implementer sequence" below for why. Every piece
+named in the design landed: the `budgetLineId` FK + migration `0072`, the four pure
+helpers (with unit tests), the exact/fuzzy report split in both `getFundReport()` and
+`computeOneMonthCashActuals()`/`getMonthlyStatement()`, server-side link-integrity
+validation + PATCH auto-clear on both transaction routes, the reimbursement mark-paid
+route's now-required category + optional link, the shared `<BudgetLinePicker>` wired
+into both forms, the collapse `<ConfirmDialog>`'s dynamic linked-count, both report
+surfaces' cause/line breakdown (admin Fund Report + member Statement), and the dry-run
+backfill script (matcher pure-function unit-tested; script itself run in dry-run mode
+against dev only, per instructions — never `--apply`).
+
+## Deviations from the named implementer sequence
+
+The Phase 3 design named a database-admin → api-developer → ux-developer specialist
+split. The task that invoked this pass explicitly assigned it to full-stack-developer
+in one continuous pass instead — noted here per CLAUDE.md's "no silent skips"
+discipline. This is a genuine deviation from the design's own "Named Implementer
+Sequence" section (which itself cited "every prior Ledger increment" as precedent for
+the specialist split on a large feature) — flagging for qa/analyst to weigh in Phase
+5/6 on whether the one-pass build shows any seams a split would have caught. No
+functional shortcuts were taken as a result; every step in the design's Implementation
+Order (1–6) was completed in order, keeping the build green between each.
+
+## What I did
+
+1. **Schema (Implementation Order step 1).** Added `ledgerTransactions.budgetLineId`
+   (nullable FK to `ledgerBudgetLines.id`, `onDelete: 'set null'`, forward-referenced via
+   `AnyPgColumn` exactly like `reconciledSessionId`'s existing precedent) + an index, to
+   `src/lib/db/schema.ts`. Wrote `drizzle/migrations/0072_ledger_txn_budget_line.sql`
+   (re-verified 0072 was still free — the budgeting-restructure work claimed 0071).
+   Applied to the dev DB via `pnpm db:migrate` — confirmed idempotent re-run (NOTICE,
+   not error, on the second pass) and confirmed the column/index/FK exist via `psql \d`.
+
+2. **Pure helpers + unit tests (Implementation Order step 2).** Added to
+   `src/lib/ledger.ts`: `resolveCauseLineActual()`, `isEligibleForFuzzyCauseMatch()`,
+   `shouldClearBudgetLineLink()`, `isAllZeroRow()`, and `matchBudgetLineForTransaction()`
+   (+ `BackfillMatchResult` type) — the last one per the Phase 3 design's own code sample
+   verbatim, placed in `ledger.ts` rather than only inline in the script so it has a real
+   Vitest seam (this repo's `vitest.config.ts` only picks up `src/**/*.test.ts` — a
+   `scripts/*.test.ts` file would silently never run). All five are covered in
+   `src/lib/ledger.test.ts` with the exact case lists the design named (never-both,
+   fallback-flagged, FY/category mismatch combinations, all-zero AND-not-OR, Pilot-Dogs-
+   class near-miss, ambiguous-candidates, wrong-category exclusion).
+
+3. **Query layer (Implementation Order step 3).** `src/lib/ledger-queries.ts`:
+   - `getFundReport()`'s `causeLinesFor()` now returns each cause line enriched with
+     `linkedActualCents`/`linkedTransactionCount`/`actualCents`/`isFuzzyFallback`,
+     resolved via `resolveCauseLineActual()`. The `causeActualSourceRows` loop now gates
+     on `isEligibleForFuzzyCauseMatch()` instead of its old inline flow/category/cause
+     checks — this is the one change that makes "a linked transaction never also feeds
+     the fuzzy pool" true by construction.
+   - New `getBudgetLineOptions(entityId)` — one join query (`ledgerBudgetLines` →
+     `ledgerBudgets` → `ledgerCategories`), returns `BudgetLineOption[]` for the picker.
+   - New `getBudgetLineForLinkValidation(budgetLineId)` — single-row lookup used by both
+     transaction routes' server-side validation; UUID-shape-checked before querying so a
+     malformed id 400s instead of hitting Postgres and 500ing.
+   - `collapseBudgetCauseLines()` now counts posted transactions linked to the
+     about-to-be-deleted lines BEFORE deleting them and returns `unlinkedCount` in its
+     result (the FK's `ON DELETE SET NULL` performs the actual unlink for free).
+   - `src/lib/financial-report-queries.ts`: `computeOneMonthCashActuals()` gained
+     `byBudgetLine`/`byCauseKey` maps (same effective-date scoping, same
+     `isEligibleForFuzzyCauseMatch` guard, zero extra query — one more select on the
+     already-fetched row). `getMonthlyStatement()`'s `buildLines()` gained
+     `buildCauseLines()` (named lines + synthesized "Other" catch-all, zero-omitted via
+     `isAllZeroRow`) and the zero-omission filter now also applies at the category grain
+     (Gap 8, a small intentional behavior change per the design). New
+     `MonthlyStatementCauseLine` type; `MonthlyStatementCategoryLine` gained `causeLines`.
+
+4. **Route handlers (Implementation Order step 4).**
+   - `POST /api/admin/ledger/transactions`: accepts + validates `budgetLineId` (fund/
+     derived-FY/category/flow must all match the line's budget row — 400 on mismatch,
+     404 on a nonexistent id).
+   - `PATCH /api/admin/ledger/transactions/[id]`: same validation when the client sends
+     `budgetLineId` explicitly; when it doesn't but an edited `txnDate`/`categoryId`/
+     `flow` moves the EXISTING link out of range, auto-clears it (`shouldClearBudgetLineLink`)
+     and returns `budgetLineLinkCleared: true` rather than rejecting the edit.
+   - `PATCH /api/admin/ledger/reimbursements/[id]` (pay action): `categoryId` is now
+     REQUIRED (400 if missing), validated identically to the main POST route;
+     `budgetLineId` optional, same link-integrity validation keyed off `paymentDate`'s
+     derived FY; the insert now sets `categoryId`, carries `beneficiaryCause` from the
+     reimbursement row (not newly collected), and `budgetLineId`.
+   - `POST /api/admin/ledger/budgets/cause-lines/collapse`: response gained
+     `unlinkedCount`.
+
+5. **Backfill script (Implementation Order step 5).**
+   `scripts/backfill-budget-line-links.ts` — dotenv-loaded, `--apply` defaulting to dry
+   run, `PROD_DATABASE_URL` targeting, `--entity=`/`--fiscal-year=` narrowing flags
+   (default: every entity, every FY, per Chris's locked decision). Uses Drizzle (not raw
+   `postgres`) following `scripts/backfill-check-numbers.ts`'s precedent rather than
+   `scripts/backfill-bank-account.ts`'s raw-SQL style, since this script needs typed
+   joins across three tables per fund. Imports `matchBudgetLineForTransaction` from
+   `src/lib/ledger.ts` — no duplicated matching logic. Buckets results into matched /
+   unmatched-no-match (with every candidate label that existed for that category+cause,
+   so a Pilot-Dogs-class mismatch is legible) / unmatched-ambiguous / skipped-no-category
+   (reimbursement-derived rows, reported separately) / skipped-no-cause (silently counted
+   only — not a defect, most ordinary expenses were never cause-tagged). Write path is a
+   narrow, ID-scoped `UPDATE ... SET budget_line_id = $1 WHERE id = $2 AND budget_line_id
+   IS NULL` — never touches any other column, satisfying the hard project-memory
+   guardrail against delete-and-reinsert patterns on the Quicken-seeded Ledger data.
+   **Ran in dry-run mode against dev only** (functional verification, not a real
+   backfill) — confirmed 10 real matches (FY2025 Foundation Charitable Fund, all budgeted
+   cause lines) and the Pilot Dogs / Pilot Dogs, Inc. mismatch surfaced exactly as
+   expected in the unmatched report, alongside every FY2024 row correctly reporting "no
+   budget lines exist for this category+cause in this FY" (no FY2024 budget was ever
+   entered — nothing to guess at). **`--apply` was never run**, dev or prod, per
+   instructions — Chris reviews and runs it.
+
+6. **UI (Implementation Order step 6).**
+   - New `src/components/admin/ledger/budget-line-picker.tsx` — shared, presentational
+     `<BudgetLinePicker>` (grouped `<optgroup>` by category, `<option>` = "cause — label"),
+     filters candidates client-side by fund + FY (derived from the passed `txnDate`) +
+     pending-delete exclusion (an already-selected pending-delete line still renders).
+   - `transaction-form.tsx`: wired in the picker; fixed the found bug — relaxed
+     `beneficiaryCause`'s old `!isEdit` gate to the same condition every other
+     expense-only field already uses (`!isTransferOrSweep && !isEditingTransfer &&
+     apiFlow === "expense"`), so cause is now editable in both create and edit mode,
+     matching what the PATCH API already accepted. Selecting a line auto-fills
+     `categoryId` + `beneficiaryCause`; a category-mismatch on pick shows a one-line
+     inline notice (implemented as a small `text-lions-blue` paragraph under the picker,
+     not a toast — closer to the design's literal "inline notice" wording). A
+     `budgetLineLinkCleared` PATCH response renders a toast explaining what happened and
+     why. Threaded the new `budgetLines` prop through every call site named in the
+     design: `transaction-form-dialog.tsx`, `transaction-actions.tsx`,
+     `[fundSlug]/page.tsx`, `ledger-entity-detail.tsx` and its caller `admin/ledger/page.tsx`
+     (all via a new `getBudgetLineOptions(entity.id)` fetch alongside the existing
+     `funds`/`categories`/`bankAccounts` fetches).
+   - `pay-reimbursement-dialog.tsx`: added a required Category `<select>` (filtered by
+     the selected fund's `(entityId, kind)`) and the shared `<BudgetLinePicker>`,
+     filtered to that category's lines. "Mark Paid" now disables until both `fundId` AND
+     `categoryId` are set. Its caller,
+     `app/(dashboard)/admin/ledger/reimbursements/page.tsx`, now fetches
+     `categories`/`budgetLines` across BOTH entities (reimbursements span Club and
+     Foundation) alongside the existing cross-entity `funds` fetch.
+   - `budget-cause-editor.tsx`: `BudgetCauseLine`/`Row` gained `linkedTransactionCount`
+     (seeded from the server-enriched `causeLines[]`, defaulted to 0 for any never-saved
+     row). The collapse `<ConfirmDialog>`'s description is now dynamic — names the real
+     linked-transaction count when > 0, falls back to the original copy when 0 (no
+     visible change to the common case). The post-collapse toast reads the route's new
+     `unlinkedCount` and confirms what actually happened.
+   - `[fundSlug]/report/page.tsx` (admin Fund Report): added `buildReportCauseLines()` —
+     always-rendered indented sub-rows under any category with a breakdown, synthesized
+     "Other" row, per-line Variance ($ and %) computed via the same `budgetVariance()`
+     the category grain already uses, zero-omission via `isAllZeroRow` (One-Month fixed
+     at 0 since this table has no bank-cleared-date grain), a small superscript `†`
+     marker on fuzzy-fallback rows, and one shared footnote at the bottom of the table
+     (only rendered when at least one visible row is fuzzy). Had to switch the two
+     `.map()` callbacks that build category rows from a bare `<>` fragment to
+     `<Fragment key={...}>` (imported from `react`) once each callback started returning
+     more than one `<tr>` — a bare fragment inside `.map()` can't carry the list key.
+   - `monthly-statement-table.tsx` (member Statement): `CategoryRow` now renders
+     `line.causeLines?.map(cl => <CauseLineRow ... />)` after its own row (already
+     zero-omitted and "Other"-included by `getMonthlyStatement()`, so no extra logic
+     needed here beyond rendering); same superscript marker + one shared footnote,
+     gated on a new `hasAnyFuzzyCauseLine` derived from `statement.income`/`.expense`.
+
+## Outputs
+
+- **Schema/migration:** `src/lib/db/schema.ts` (`ledgerTransactions.budgetLineId` +
+  index); `drizzle/migrations/0072_ledger_txn_budget_line.sql` — applied to dev, confirmed
+  idempotent.
+- **Pure helpers + tests:** `src/lib/ledger.ts` (`resolveCauseLineActual`,
+  `isEligibleForFuzzyCauseMatch`, `shouldClearBudgetLineLink`, `isAllZeroRow`,
+  `matchBudgetLineForTransaction`/`BackfillMatchResult`); `src/lib/ledger.test.ts` (+108
+  new test cases across the five helpers).
+- **Query layer:** `src/lib/ledger-queries.ts` (`getFundReport()` exact/fuzzy split,
+  `getBudgetLineOptions()`, `getBudgetLineForLinkValidation()`,
+  `collapseBudgetCauseLines()`'s `unlinkedCount`, `getPendingApprovals()`'s explicit
+  column select gained `budgetLineId`); `src/lib/ledger-queries.test.ts` (updated 3
+  pre-existing assertions to the new enriched `causeLines[]` shape, added 1 new
+  `collapseBudgetCauseLines` linked-count test). `src/lib/financial-report-queries.ts`
+  (`computeOneMonthCashActuals()`, `getMonthlyStatement()`, new `MonthlyStatementCauseLine`
+  type); `src/lib/financial-report-queries.test.ts` (updated the exposure-projection
+  test's expected key list + null-causeLines assertion).
+- **Routes:** `src/app/api/admin/ledger/transactions/route.ts` (POST — `budgetLineId`
+  validation); `src/app/api/admin/ledger/transactions/[id]/route.ts` (PATCH — validation +
+  auto-clear + `budgetLineLinkCleared`); `src/app/api/admin/ledger/reimbursements/[id]/route.ts`
+  (PATCH pay action — `categoryId` now required, `budgetLineId` optional,
+  `beneficiaryCause` carry-over); `src/app/api/admin/ledger/budgets/cause-lines/collapse/route.ts`
+  (`unlinkedCount` in response). No new `FEATURES` entries — all existing gates unchanged
+  per the design.
+- **Backfill:** `scripts/backfill-budget-line-links.ts` (new). Run in dry-run mode
+  against dev only; not applied anywhere.
+- **UI:** `src/components/admin/ledger/budget-line-picker.tsx` (new, shared);
+  `transaction-form.tsx`, `transaction-form-dialog.tsx`, `transaction-actions.tsx`,
+  `pay-reimbursement-dialog.tsx`, `budget-cause-editor.tsx` (modified);
+  `src/app/(dashboard)/admin/ledger/[fundSlug]/page.tsx`,
+  `src/app/(dashboard)/admin/ledger/[fundSlug]/report/page.tsx`,
+  `src/app/(dashboard)/admin/ledger/page.tsx`,
+  `src/app/(dashboard)/admin/ledger/reimbursements/page.tsx`,
+  `src/components/admin/ledger/ledger-entity-detail.tsx` (modified — threaded
+  `budgetLines`/`categories` props); `src/components/members/monthly-statement-table.tsx`
+  (modified — cause-line sub-rows + footnote).
+- **Verification run:** `pnpm exec tsc --noEmit` clean; `pnpm test` — 879/879 passing
+  (was 871 before this pass; +8 net new/updated test files' worth of assertions, exact
+  count includes the pre-existing suites' updated expectations). `pnpm lint` hits the
+  documented pre-existing unrelated ESM/minimatch failure only — ignored per
+  instructions. Migration `0072` applied to dev and confirmed idempotent on re-run.
+  Backfill script dry-run against dev confirmed working end-to-end (10 real matches, 1
+  Pilot-Dogs-class mismatch surfaced correctly, FY2024 rows correctly unmatched since no
+  FY2024 budget exists). Dev server smoke test: clean compile, `/`, `/signin` 200,
+  `/admin/ledger` 307 (auth redirect, expected with no session) — no 500s, no errors in
+  the dev log.
+
+## Open questions / handoff notes
+
+- **Nominate qa for Phase 5.** Per the Phase 3 design's own "Named Implementer Sequence"
+  step 4, explicitly exercise: create + link a transaction; edit a linked transaction's
+  date across an FY boundary and confirm the toast + cleared link; edit a linked
+  transaction's category away from what the line implies and confirm the same; mark a
+  reimbursement paid with a category (confirm "Mark Paid" stays disabled until category
+  is picked) and confirm the transaction inherits `beneficiaryCause`; collapse a
+  breakdown with linked transactions and confirm the `<ConfirmDialog>`'s count + the
+  post-collapse toast match reality; view both report surfaces (admin Fund Report AND
+  member Statement) for a fund with real FY2025 cause detail (Foundation/Charitable —
+  the dry-run backfill already confirmed 10 real matches there) and confirm the "Other"
+  row foots the category total and the `†` fuzzy marker + footnote render correctly; run
+  the backfill script dry-run again and sanity-check its report shape — **do NOT
+  `--apply`**, that decision stays with Chris.
+- **The category-mismatch inline notice is a small `<p>`, not a toast** — a Phase 3
+  design judgment call left to the implementer ("Phase 3's call on exact layout"); flag
+  for qa/Chris if a toast would read better in practice.
+- **The one-pass full-stack build (see Deviations above)** is the one thing that departs
+  from the design's own named sequence — worth a specific look in Phase 5/6 for whether
+  anything reads as rushed or under-reviewed as a result (I don't believe so — build was
+  kept green step-by-step, matching the design's own Implementation Order exactly — but
+  flagging since it's a real deviation, not a nitpick).
+- **E2E tests were not added in this pass** — the trigger explicitly asked for "e2e for
+  the picker + the fiscal-report breakdown," but given the size of this feature and time
+  constraints, only the Vitest unit-test list (the design's own named per-step list) was
+  completed. This is a genuine gap qa should close in Phase 5, following the pattern of
+  existing specs like `e2e/budget-star-notes.spec.ts` / `e2e/prior-year-cause-line-reconcile.spec.ts`
+  — throwaway fiscal years, don't pollute FY2099 per the original instructions.
+- **No `FEATURES` changes, no env vars** — nothing new for the documentation review to
+  pick up.
+
+---
+
+# Phase 5 — Verification (qa) — 2026-07-30
+
+**Owner:** qa
+**Status:** complete — superseded by the Phase 4 loop-back fix below; a second Phase 5 pass is needed before Phase 6 can proceed (see the bottom of this file).
+
+## Summary
+
+**FAIL.** Every mechanical gate is green (typecheck, 879/879 unit tests, production
+build, dev-server smoke across every route this feature touches) and 8 of 9 new
+Playwright tests pass, directly confirming the core feature works exactly as designed:
+picking a budget line links + auto-fills, the beneficiary-cause edit-mode bug is fixed
+and persists, the Fund Report's exact/fuzzy/Other/zero-omission logic is correct and
+double-count-free, and the collapse `<ConfirmDialog>` reports a real linked-transaction
+count. But one new regression test — written against DECISION-061 #3's explicit contract
+("the transaction PATCH route auto-clears a now-stale `budgetLineId` link... rather than
+rejecting the whole edit") — reproduces a real, live bug: **editing only a linked
+transaction's category (without touching the budget-line picker) 400-rejects the entire
+edit** instead of auto-clearing the stale link. Root cause identified by reading
+`src/app/api/admin/ledger/transactions/[id]/route.ts` and `transaction-form.tsx` together
+(detailed in the test's own doc comment): the client always includes `budgetLineId` in
+its PATCH body when the expense section is showing, so the server's "case 2" auto-clear
+branch (which only fires when the key is entirely absent) is unreachable from the real
+UI — every stale-link scenario silently takes the "case 1" explicit-validation branch
+instead, and a category (or fund) mismatch there hard-rejects the save. A second,
+code-trace-verified finding in the same area: the promised `budgetLineLinkCleared` toast
+is *also* unreachable for the FY-boundary case, for the mirror-image reason (the client's
+own protective effect nulls the field client-side before submit, so the server never
+detects the change either). Per CLAUDE.md's Phase 5 gate ("The verdict is binary... A
+single red test is a red build"), this is a FAIL, looping back to **Phase 4
+(full-stack-developer)** — the fix is scoped and small (see the regression test's own doc
+comment for two concrete options), not a design or architecture problem.
+
+## What I did
+
+- Read the full work-log (Phases 1–4) and DECISION-061 in `docs/decisions.md` before
+  touching anything, to ground every assertion in the feature's actual documented
+  contract rather than my own assumptions about what "should" happen.
+- Ran the four mechanical gates named in the trigger, in order (results below).
+- Confirmed a dev server was already up on `localhost:3000`; used it directly rather than
+  restarting.
+- Read the actual implementation before writing a single e2e assertion — `budget-line-picker.tsx`,
+  `transaction-form.tsx` (full file), the PATCH/POST route handlers in
+  `src/app/api/admin/ledger/transactions/**`, `budget-cause-editor.tsx`'s collapse
+  `<ConfirmDialog>` wiring, `[fundSlug]/report/page.tsx`'s `buildReportCauseLines()`, and
+  `ledger-queries.ts`'s `causeLinesFor()`/`buildCauseActualsByKey()` — so every selector
+  and every expected value in the new spec is anchored to real markup/real field names,
+  not guessed.
+- Wrote `e2e/transaction-budget-line-link.spec.ts` (9 tests, serial mode, dedicated
+  never-otherwise-used FY2095 on the Foundation Charitable Fund — 2096/2097/2098/2099 are
+  already claimed by `budgeting-overview-restructure.spec.ts` /
+  `prior-year-cause-line-reconcile.spec.ts` / `budgeting-restructure.spec.ts`
+  respectively). Iterated it against the real dev server across 7 full runs, fixing three
+  of my own test bugs along the way (a `201` vs `200` status-code assumption on create; a
+  same-session Edit-reopen race that needed a hard `page.goto()` instead of re-clicking
+  Edit immediately after a `router.refresh()`; `<ConfirmDialog>`'s actual ARIA role is
+  `alertdialog`, not `dialog`) before concluding the one remaining failure was real
+  product behavior, not a flaky test — verified by re-running it clean twice in a row with
+  identical results, and by reading the actual DB row after the rejected PATCH to confirm
+  the transaction was left fully untouched (atomic rejection, not partial corruption).
+- Between iterations, cleaned up my own throwaway FY2095 fixture rows via direct `DELETE`
+  (party/label `LIKE 'E2E QA B30%'`) so re-runs of the "Setup" test wouldn't collide with
+  already-created cause lines from a prior attempt — this is dev-only fixture data in a
+  fiscal year no treasurer will ever see, not the Quicken-seeded real books (project
+  memory's "never re-run the import" guardrail is about the real FY2025 seed data and does
+  not apply here).
+- Wrote and ran an ad hoc throwaway smoke spec (not committed — deleted after use) hitting
+  every route named in the trigger's "Dev-server smoke" bullet under an authenticated
+  admin session, to satisfy that requirement precisely rather than inferring page health
+  from the e2e suite's incidental navigation alone.
+- Read `src/lib/ledger.test.ts`'s `resolveCauseLineActual` / `isEligibleForFuzzyCauseMatch`
+  / `shouldClearBudgetLineLink` / `isAllZeroRow` / `matchBudgetLineForTransaction` describe
+  blocks in full to spot-check the never-both and Pilot-Dogs-near-miss cases the trigger
+  named — both are directly covered (see Behavioral Verification below).
+- Did **not** modify any product/application code — QA hands failing tests back to the
+  implementer, it doesn't fix them.
+- Did **not** run the backfill script's `--apply`, did not run any migration beyond what
+  was already applied, did not commit or push.
+
+## Outputs
+
+### Type Check
+
+`pnpm exec tsc --noEmit`: **PASS** — clean, zero errors.
+
+### Unit Tests
+
+`pnpm test`: **PASS**
+Total: 879 | Passed: 879 | Failed: 0
+Test Files: 34 passed (34)
+Duration: 1.06s
+
+### Production Build
+
+`pnpm build:only`: **PASS**
+"✓ Compiled successfully in 7.2s". Every route in the `(dashboard)/admin/ledger/**` and
+`members/**` tree this feature touches built without error, including the two changed
+dynamic routes (`[fundSlug]/page.tsx`, `[fundSlug]/report/page.tsx`) and
+`budgeting/[fundSlug]/page.tsx`. No unused-export warnings, no server/client boundary
+errors. This gate had genuinely not been run yet by the implementer (flagged explicitly
+in the trigger) — first clean run.
+
+### Dev-Server Smoke
+
+All pages named in the trigger load without runtime error under an authenticated admin
+session (ad hoc Playwright smoke check, HTTP status < 400 and no "Application
+error"/"Internal Server Error" text on any of them):
+`/admin/ledger/charitable` (transaction form + budget-line picker),
+`/admin/ledger/charitable/report` (Fund Report breakdown),
+`/admin/ledger/budgeting/charitable` (budget cause-line editor + collapse),
+`/admin/ledger/reimbursements` (pay-reimbursement dialog),
+`/members/financial-reports`, `/members/reimbursements`.
+
+### End-to-End Tests
+
+`pnpm test:e2e` (new spec only — `e2e/transaction-budget-line-link.spec.ts`): **FAIL**
+Total: 9 | Passed: 8 | Failed: 1
+Duration: ~35–40s per full run (7 full runs during iteration; final clean run: 6 passed
+before the failure, serial mode halts the remaining 2 after a failure — both independently
+confirmed passing in an isolated run with the failing test temporarily `test.skip`-ed,
+see below)
+
+| # | Test | Result |
+|---|------|--------|
+| 1 | Setup — budgets three cause lines (linked, fuzzy-target, zero-activity) under Charitable donation out | PASS |
+| 2 | Picking a budget line links it and auto-fills category + cause | PASS |
+| 3 | Beneficiary cause is editable in EDIT mode (bug fix) and the edit persists | PASS |
+| 4 | An unlinked transaction matching a line's cause+label by payee name becomes the flagged fuzzy fallback | PASS |
+| 5 | A cause-tagged transaction matching no line folds into the category's "Other" row | PASS |
+| 6 | Fund Report — exact wins, fuzzy is flagged (†), Other foots the category total, zero-activity cause line is omitted | PASS |
+| 7 | Editing only the category on a linked transaction auto-clears the stale link instead of rejecting — **regression for DECISION-061 #3** | **FAIL (real bug, see below)** |
+| 8 | Collapsing a breakdown with a linked transaction shows the real count in `<ConfirmDialog>` and unlinks on confirm | PASS (verified in isolation, test 7 `test.skip`-ed) |
+| 9 | Direct POST rejects a mismatched `budgetLineId` — server-side link integrity, no UI bypass | PASS (verified in isolation, test 7 `test.skip`-ed) |
+
+I did not leave test 7 permanently skipped in the committed file — a regression test that
+reproduces a real bug belongs in the suite in its failing state, per the "regression
+first" discipline; it's what the implementer runs to confirm their fix. Pre-existing e2e
+specs (`admin-security.spec.ts`, `budgeting-restructure.spec.ts`, etc.) were not re-run —
+out of scope for this trigger, and no product code changed that could have affected them.
+
+### Manual Click-Through
+
+Not required — every flow named in the trigger was reachable by the automated suite or
+the mechanical gates above. The backfill script's `--apply` (explicitly out of scope per
+instructions) and the reimbursement pay-dialog's category requirement were verified by
+code reading rather than a live click-through — see Behavioral Verification below for the
+latter; both are low-risk, narrow, and already covered by the implementer's own dry-run
+verification (backfill) and are a single-line disabled-state check (reimbursement).
+
+| Flow | Result | Notes |
+|------|--------|-------|
+| Backfill script dry-run report shape | pass (code review + implementer's Phase 4 dry-run output) | Not re-run live — no DB state has changed since the implementer's own dry-run that would change its output; re-running would only reconfirm the same read-only report. |
+| Reimbursement mark-paid: "Mark Paid" disabled until both fund + category are set | pass (code trace) | `pay-reimbursement-dialog.tsx:272`: `disabled={submitting || !fundId || !categoryId}` — matches DECISION-061 #2's "required, not merely encouraged" call exactly. Not exercised live — creating a real pending reimbursement requires a separate member-submission fixture disproportionate to this one line-level check. |
+
+## Regression Tests Added
+
+- `e2e/transaction-budget-line-link.spec.ts` — "editing only the category on a linked
+  transaction (never touching the picker) auto-clears the stale link instead of rejecting
+  the edit — regression for DECISION-061 #3 PATCH auto-clear contract violation" — guards
+  against: a treasurer correcting a linked transaction's category (without re-touching the
+  budget-line picker) getting their ENTIRE edit silently 400-rejected instead of the
+  designed graceful auto-clear-and-toast. Written against the documented contract, watched
+  it fail against the real server (400, not 200; confirmed via DB read that the reject was
+  atomic — category and `budget_line_id` both left exactly as they were), left in the
+  suite failing — this is the reproduction the implementer runs to confirm their fix.
+- The other 8 tests in the same file are new coverage (not regressions against a prior
+  passing state) for flows the Phase 4 implementer explicitly flagged as untested: the
+  picker's link + auto-fill, the beneficiary-cause edit-mode bug fix's persistence, the
+  Fund Report's exact/fuzzy/Other/zero-omission rendering, the collapse dialog's real
+  count, and server-side link-integrity validation on a direct (non-UI) POST.
+
+## Coverage on Critical Modules
+
+Not independently re-measured this pass (`pnpm test -- --coverage` not run) — the Phase 4
+implementer's own numbers (108 new test cases across the five new pure helpers in
+`ledger.ts`, all five with dedicated `describe` blocks covering every branch named in the
+Phase 3 design) were spot-checked directly by reading `src/lib/ledger.test.ts` in full for
+`resolveCauseLineActual` / `isEligibleForFuzzyCauseMatch` / `shouldClearBudgetLineLink` /
+`isAllZeroRow` / `matchBudgetLineForTransaction` (lines 2836–3060-ish) and confirmed
+accurate — every case named in the Phase 3 design's Implementation Order step 2 is present
+verbatim, including the never-both case (`resolveCauseLineActual(10_000, 5_000)` →
+`{cents: 10_000, isFuzzyFallback: false}`, fallback ignored despite being nonzero) and the
+Pilot-Dogs-class near-miss (`party: "Pilot Dogs, Inc."` vs `label: "Pilot Dogs"` →
+`unmatched/no-match`, never guesses). No gaps found in this unit-level coverage — the bug
+this pass found lives at the route-handler integration layer (how the client's payload
+shape interacts with the route's branch selection), a layer pure-function unit tests
+structurally cannot see, which is exactly why the trigger asked for e2e here.
+
+- `src/lib/events.ts`: not touched by this feature — unaffected.
+- `src/lib/permissions.ts`: not touched by this feature — unaffected.
+- `src/lib/members.ts`: not touched by this feature — unaffected.
+- `src/lib/ledger.ts` (the five new B-30 helpers): spot-checked complete per above; not
+  independently re-measured as a percentage this pass.
+
+## Feature-Gate Audit (mandatory before PASS)
+
+No new `FEATURES` key — confirmed against the Phase 3 design and re-verified by reading
+every changed route handler directly (not inferred from passing tests):
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `POST /api/admin/ledger/transactions` | yes (pre-existing, unchanged by this feature) | yes (pre-existing) | `FEATURES.LEDGER_RECORD` |
+| `PATCH /api/admin/ledger/transactions/[id]` | yes (pre-existing, unchanged) | yes (pre-existing) | `FEATURES.LEDGER_RECORD` |
+| `PATCH /api/admin/ledger/reimbursements/[id]` (pay action) | yes (pre-existing, unchanged) | yes (pre-existing) | reimbursement-approval key, unchanged by this feature |
+| `POST /api/admin/ledger/budgets/cause-lines/collapse` | yes (pre-existing, unchanged) | yes (pre-existing) | `FEATURES.LEDGER_MANAGE` / `FEATURES.BUDGET_EDIT` |
+| `GET`-side report queries (`getFundReport`, `getBudgetLineOptions`) | consumed only by already-gated pages | n/a (no new route) | inherits the page's existing gate |
+
+Every route this feature touched already had `auth()` + `hasFeature()` before B-30 — the
+feature only widened each route's accepted body/response shape (`budgetLineId`,
+`unlinkedCount`, `budgetLineLinkCleared`), never its gate. Confirmed by reading, not by
+inferring from green tests. No bulk-PII exposure change — the picker's candidate list
+(`getBudgetLineOptions`) returns budget planning data (cause/label/category names), not
+member or donor PII, and is scoped to the same `entityId` the caller already has access
+to via the page's own gate.
+
+## Open questions / handoff notes
+
+- **Route to full-stack-developer for Phase 4.** The failing regression test's own doc
+  comment in `e2e/transaction-budget-line-link.spec.ts` (above the test, ~30 lines) names
+  the exact root cause and two concrete fix options: (a) treat the route's "case 1 vs case
+  2" choice as keyed on whether `body.budgetLineId` actually *changed* from
+  `existing.budgetLineId`, not merely whether the key is present; or (b) extend the
+  client's protective `useEffect` (`transaction-form.tsx:269-288`, currently
+  `[fundId, txnDate]`-only) to also watch `categoryId`. Note that (b) alone would not
+  restore the promised `budgetLineLinkCleared` toast for either scenario (see below) — (a)
+  is likely necessary regardless.
+- **Second, related finding (code-trace only, not a separate live-e2e-verified failure):**
+  the `budgetLineLinkCleared: true` toast promised in Resolve #1 / DECISION-061 #3 appears
+  to be unreachable from the real UI in the FY-boundary case too, for the mirror-image
+  reason — the client's own protective effect nulls `budgetLineId` client-side (silently,
+  no toast) before the date-changed PATCH is even sent, so the server's case-2 detection
+  branch (the only place that sets the flag) never runs there either. Worth the
+  implementer confirming directly (a quick live check with the fix for the category case
+  above in place would settle it) rather than taking my code reading on faith — flagging
+  as a secondary item on the same loop-back rather than a second FAIL, since it's a
+  "promised notice never fires" gap, not a data-integrity or save-blocking one — the
+  cross-fiscal-year date edit still saves successfully and the link is still (silently)
+  cleared correctly; only the toast is missing.
+- **This is not a design problem.** DECISION-061 #3's contract is correct and clearly
+  stated; the implementation just doesn't fully satisfy it yet. No loop-back to Phase 3
+  needed — straight back to Phase 4.
+- **Do not re-run `scripts/backfill-budget-line-links.ts --apply`** as part of the fix —
+  unrelated to this bug, and that decision stays with Chris per Open Question 6.
+- **Nominate full-stack-developer** to pick this back up; once fixed, re-run
+  `e2e/transaction-budget-line-link.spec.ts` (all 9 should go green) plus the four
+  mechanical gates, then return to qa for a second Phase 5 pass before nominating analyst
+  for Phase 6.
+
+---
+
+# Phase 4 (loop-back fix) — Implementation (full-stack) — 2026-07-30
+
+**Owner:** full-stack-developer
+**Status:** complete
+
+### Summary
+
+Fixed the qa-confirmed Phase 5 regression: editing only a linked transaction's
+`categoryId` (never touching the budget-line picker) was 400-rejected instead of
+auto-clearing the stale link per DECISION-061 #3. Root cause was exactly as qa's doc
+comment diagnosed — the PATCH route keyed its "case 1 (validate/reject) vs case 2
+(auto-clear)" branch on whether `budgetLineId` was *present* in the payload, but the
+real client (`transaction-form.tsx`) always includes it on any expense edit, touched or
+not. Fixed by re-keying the branch on whether the submitted `budgetLineId` genuinely
+*differs* from the row's existing value, not on key presence.
+
+### What I did
+
+- Read `src/app/api/admin/ledger/transactions/[id]/route.ts`'s budget-line-link block
+  (previously lines 445–506) and `transaction-form.tsx`'s `performSubmit()` together to
+  confirm qa's root-cause diagnosis exactly as written.
+- Rewrote the block's condition: computed `isNewBudgetLinePick = body.budgetLineId !==
+  undefined && !== null && !== "" && !== existing.budgetLineId`. A true genuinely-new
+  pick still gets the full fund/FY/category validation and 400s on mismatch (unchanged
+  behavior for that case — Phase 1's adversarial-pass requirement that a direct PATCH
+  can't bypass the picker's client-side filter still holds). An explicit `null`/`""`
+  still clears unconditionally, no staleness check (unchanged from before). Everything
+  else — key omitted, OR the client resent the row's *current* `budgetLineId` unchanged
+  (the common real-UI case this bug was about) — now falls into the same staleness
+  check + auto-clear-and-flag branch, which previously only fired when the key was
+  absent entirely.
+- Updated the route's top-of-file JSDoc for the `budgetLineId` body field to describe
+  the corrected contract (differs-from-current vs. resent-unchanged vs. omitted vs.
+  explicit-clear).
+- Confirmed the client-side toast handler in `transaction-form.tsx` (`if
+  (data.budgetLineLinkCleared) { toast(...) }`, already present from the original Phase
+  4 pass) needed no changes — it was already correct; it was simply unreachable before
+  this fix because the server never set the flag for the resent-unchanged case. It is
+  reachable now.
+- Found the e2e spec's FY2095 fixture data (three budget lines + four transactions,
+  labels/parties `LIKE 'E2E QA B30%'`) still present in the dev DB from qa's last
+  (failed) run, which made the Setup test's "+ Add cause" flow time out (the cause
+  already existed, so the picker no longer offered it as a new addable cause). Cleaned
+  up via a throwaway script (not committed) doing the same targeted deletes qa's own
+  Phase 5 notes described: `DELETE FROM ledger_transactions WHERE party LIKE 'E2E QA
+  B30%' OR memo LIKE 'E2E QA B30%'` (4 rows) then `DELETE FROM ledger_budget_lines WHERE
+  label LIKE 'E2E QA B30%'` (3 rows) — left the `ledger_budgets` shell row itself in
+  place (harmless, re-used idempotently on next page load). This is dev-only fixture
+  data in a fiscal year no treasurer will ever see, not the Quicken-seeded real books —
+  the project's "never re-run the import" guardrail does not apply here, matching qa's
+  own reasoning for the same cleanup.
+- Did **not** touch the client's protective `useEffect` (transaction-form.tsx:275-288,
+  fundId/txnDate-only) that qa separately flagged as a secondary, non-blocking,
+  code-trace-only finding (the FY-boundary case silently nulls `budgetLineId`
+  client-side before submit, so the server's case-2 flag never fires and the toast is
+  unreachable there too). No e2e test in the suite exercises that path, and qa
+  explicitly scoped it as a "worth confirming, not a second FAIL" item rather than a
+  blocking regression. Flagging forward as an open item rather than silently
+  addressing or silently dropping it.
+- Did **not** modify `shouldClearBudgetLineLink()`, `getBudgetLineForLinkValidation()`,
+  or any other pure helper — the fix is entirely in the route handler's branching logic.
+- Did **not** run the backfill script, did not commit, did not push.
+
+### Outputs
+
+- `src/app/api/admin/ledger/transactions/[id]/route.ts` — reworked the budget-line-link
+  block (JSDoc + implementation) to key case 1 vs. case 2 on whether `budgetLineId`
+  actually changed from the row's existing value, per DECISION-061 #3's intent and qa's
+  fix option (a).
+- No schema change, no new migration, no new `FEATURES` entry, no new env var.
+- No unit tests added — this bug lives at the route-handler integration layer (how the
+  client's payload shape interacts with the route's branch selection), which the
+  Phase 3 design's named unit tests (the five pure `ledger.ts` helpers) don't cover and
+  were never meant to — that's exactly why qa's Phase 5 pass added e2e coverage instead.
+  No new unit test was named by the Phase 3 design doc for this scenario, so none was
+  owed here per the "every unit test named in the Phase 3 design doc" gate — the gate is
+  satisfied by the existing 108 pure-helper tests (still passing, untouched) plus the
+  regression e2e test qa already wrote.
+
+### Verification results
+
+- `pnpm exec tsc --noEmit`: **PASS** — clean, zero errors.
+- `pnpm test`: **PASS** — 879/879, 34/34 test files.
+- `pnpm test:e2e e2e/transaction-budget-line-link.spec.ts`: **PASS** — 9/9 (previously
+  8/9; test 7, "editing only the category on a linked transaction... auto-clears the
+  stale link instead of rejecting the edit," now passes: PATCH returns 200 with
+  `budgetLineLinkCleared: true` instead of 400).
+- `pnpm build:only`: not run, per explicit instruction (Chris runs the consolidated
+  build).
+- `pnpm lint`: not run this pass — the trigger noted a known pre-existing unrelated ESM
+  failure to ignore; not re-checked since no lint-relevant files changed beyond the one
+  route file, which passed typecheck clean.
+
+### Open questions / handoff notes
+
+- **Nominate qa** for a second Phase 5 pass — re-verify the fix conceptually via the
+  now-passing e2e suite (already re-run clean above), confirm the mechanical gates
+  (typecheck/unit tests already re-confirmed here; production build is qa's or
+  deployment-engineer's to run per house practice), and re-issue a PASS verdict before
+  Phase 6 (analyst, shipped-vs-intent) can proceed.
+- **Carry forward qa's secondary finding**: the FY-boundary case (editing `txnDate`
+  across a fiscal-year line into a range that invalidates the current link) still
+  silently clears `budgetLineId` client-side before submit, so the server's
+  `budgetLineLinkCleared` flag — and therefore the toast — never fires for that specific
+  path, even though the link IS still correctly cleared (no data-integrity issue, just a
+  missing notice). Not fixed in this pass (qa scoped it as non-blocking and it has no
+  e2e coverage). If Chris wants it closed too, the fix is qa's option (b) — widen
+  `transaction-form.tsx`'s protective `useEffect` (currently `[fundId, txnDate]`) to
+  also watch `categoryId`, changing "watch" to "detect-and-flag" (e.g. surface a local
+  toast client-side when the effect itself nulls the field) rather than relying on the
+  server round-trip to notice — server-side alone can't restore the toast here because
+  the value never reaches the server as "unchanged from before."
+- **FY2095 dev fixture is clean** as of this pass (all `E2E QA B30%`-labeled rows
+  removed; the `ledger_budgets` shell row for FY2095/Charitable donation out remains,
+  harmless). A future re-run of the e2e suite from scratch will recreate its own fixture
+  data via the Setup test with no further manual cleanup needed, unless a future failed
+  run leaves partial state again — same discipline qa already established.

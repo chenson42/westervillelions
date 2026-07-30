@@ -1,16 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import type { LedgerFund } from "@/lib/db/schema";
+import type { LedgerFund, LedgerCategory } from "@/lib/db/schema";
+import type { BudgetLineOption } from "@/lib/ledger-queries";
+import BudgetLinePicker from "./budget-line-picker";
+import { getFiscalYear } from "@/lib/fiscal-year";
 
 interface PayReimbursementDialogProps {
   reimbursementId: string;
   memberName: string;
   amount: string;
   funds: LedgerFund[];
+  /** Expense-flow categories across every entity — filtered client-side to
+   *  the selected fund's (entityId, kind) pair. */
+  categories: LedgerCategory[];
+  /** Every expense-flow budget line across every entity (B-30, DECISION-061). */
+  budgetLines: BudgetLineOption[];
   children: React.ReactNode;
 }
 
@@ -32,19 +40,63 @@ export default function PayReimbursementDialog({
   memberName,
   amount,
   funds,
+  categories,
+  budgetLines,
   children,
 }: PayReimbursementDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [fundId, setFundId] = useState(funds[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState("");
+  const [budgetLineId, setBudgetLineId] = useState("");
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const [paymentMethod, setPaymentMethod] = useState("check");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const selectedFund = funds.find((f) => f.id === fundId);
+  // categoryId is REQUIRED (B-30, DECISION-061) — closes the permanent blind
+  // spot where a paid reimbursement's transaction was born with no category
+  // and no way to link a budget line.
+  const filteredCategories = categories.filter(
+    (c) => selectedFund && c.entityId === selectedFund.entityId && c.fundKind === selectedFund.kind,
+  );
+
+  // Reset category (and any budget-line link) when the fund changes and the
+  // current category no longer belongs to it — mirrors transaction-form.tsx's
+  // identical fund/category-reset effect.
+  useEffect(() => {
+    if (categoryId && !filteredCategories.find((c) => c.id === categoryId)) {
+      setCategoryId("");
+      setBudgetLineId("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fundId]);
+
+  // Same client-side mirror as transaction-form.tsx's identical effect: drop
+  // a selected budget line if a payment-date edit moves its FY out of range.
+  useEffect(() => {
+    if (!budgetLineId) return;
+    const line = budgetLines.find((l) => l.id === budgetLineId);
+    if (!line) {
+      setBudgetLineId("");
+      return;
+    }
+    const parsed = new Date(paymentDate + "T00:00:00");
+    if (isNaN(parsed.getTime())) return;
+    if (line.fiscalYear !== getFiscalYear(parsed)) {
+      setBudgetLineId("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentDate]);
+
   async function handlePay() {
     if (!fundId) {
       toast.error("Select a fund before marking this reimbursement paid.");
+      return;
+    }
+    if (!categoryId) {
+      toast.error("Select a category before marking this reimbursement paid.");
       return;
     }
     if (!paymentDate) {
@@ -60,6 +112,8 @@ export default function PayReimbursementDialog({
         body: JSON.stringify({
           action: "pay",
           fundId,
+          categoryId,
+          budgetLineId: budgetLineId || null,
           paymentDate,
           paymentMethod,
           note: note.trim() || undefined,
@@ -117,6 +171,45 @@ export default function PayReimbursementDialog({
                 ))}
               </select>
             </div>
+
+            {/* Category picker — required (B-30, DECISION-061). Reimbursement
+                mark-paid used to create a categoryless, cause-less
+                transaction, permanently invisible to every budget-vs-actual
+                view; category is now a mandatory field alongside fund/date/
+                method. */}
+            <div>
+              <label htmlFor="pay-category" className="block text-sm font-medium text-gray-700 mb-1">
+                Category <span className="text-gray-400 font-normal text-xs">(required)</span>
+              </label>
+              <select
+                id="pay-category"
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                required
+                disabled={!fundId}
+                className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-8 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue disabled:opacity-60"
+              >
+                <option value="">{fundId ? "Select category…" : "Select a fund first"}</option>
+                {filteredCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Applies to budget line — optional (B-30, DECISION-061), same
+                shared picker the main transaction form uses. */}
+            {fundId && categoryId && (
+              <BudgetLinePicker
+                id="pay-budget-line"
+                budgetLines={budgetLines.filter((l) => l.categoryId === categoryId)}
+                fundId={fundId}
+                txnDate={paymentDate}
+                value={budgetLineId}
+                onSelect={(line) => setBudgetLineId(line?.id ?? "")}
+              />
+            )}
 
             {/* Payment date */}
             <div>
@@ -176,7 +269,7 @@ export default function PayReimbursementDialog({
             <button
               type="button"
               onClick={handlePay}
-              disabled={submitting || !fundId}
+              disabled={submitting || !fundId || !categoryId}
               className="bg-lions-blue text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
             >
               {submitting ? "Posting…" : "Mark Paid"}

@@ -23,6 +23,9 @@
  *     // /members/impact; trimmed, capped at 200 chars server-side (400 REJECT
  *     // if over, not truncated), expense-only.
  *   receiptStorageKey?: string;
+ *   budgetLineId?: string;     // explicit budget-line link (B-30, DECISION-061);
+ *     // expense-only; server-validated against fund/derived-FY/category — 400
+ *     // on mismatch, 404 on a nonexistent/malformed id.
  * }
  * Response 201: { id: string; derivedFiscalYear: number }
  *
@@ -57,7 +60,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
-import { getSettings, getEmailsForFeature } from "@/lib/ledger-queries";
+import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
 import { sendEmail } from "@/lib/email";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
@@ -167,6 +170,7 @@ export async function POST(request: NextRequest) {
       beneficiaryCause,
       publicNote,
       receiptStorageKey,
+      budgetLineId,
     } = body;
 
     // Required fields
@@ -304,6 +308,38 @@ export async function POST(request: NextRequest) {
     // Derive fiscal year from txnDate for client feedback
     const derivedFiscalYear = getFiscalYear(new Date(txnDate + "T00:00:00"));
 
+    // Explicit budget-line link (B-30, DECISION-061) — server-validated
+    // regardless of the picker's own client-side filtering (Phase 1
+    // adversarial pass: a direct API call must not be able to bypass it).
+    // Mirrors the categoryId validation above: fetch -> 404 if missing ->
+    // 400 if mismatched.
+    let validatedBudgetLineId: string | null = null;
+    if (budgetLineId !== undefined && budgetLineId !== null && budgetLineId !== "") {
+      if (typeof budgetLineId !== "string") {
+        return NextResponse.json({ error: "budgetLineId must be a string" }, { status: 400 });
+      }
+      const line = await getBudgetLineForLinkValidation(budgetLineId);
+      if (!line) {
+        return NextResponse.json({ error: "Budget line not found" }, { status: 404 });
+      }
+      if (
+        line.fundId !== fundId ||
+        line.fiscalYear !== derivedFiscalYear ||
+        line.categoryId !== (categoryId ?? null) ||
+        line.flow !== "expense" ||
+        flow !== "expense"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "This budget line does not match the transaction's fund, fiscal year, or category.",
+          },
+          { status: 400 },
+        );
+      }
+      validatedBudgetLineId = line.id;
+    }
+
     // Derive status SERVER-SIDE — ignore any client-supplied `status` field.
     // inc2: expense over disbApprovalThresholdCents → 'pending'; transfers always 'posted'.
     // NEVER trust client input for status (adversarial pass from Phase 3 design).
@@ -331,6 +367,7 @@ export async function POST(request: NextRequest) {
         beneficiaryCause: beneficiaryCause?.trim() ?? null,
         publicNote: publicNoteResult.value,
         receiptStorageKey: receiptStorageKey?.trim() ?? null,
+        budgetLineId: validatedBudgetLineId,
         status: derivedStatus,
         recordedByUserId: session.user.id,
       })

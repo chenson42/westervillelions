@@ -59,6 +59,15 @@ export interface BudgetCauseLine {
    */
   starred?: boolean;
   note?: string | null;
+  /**
+   * Explicit transaction<->budget-line link (B-30, DECISION-061) — count of
+   * posted transactions linked to THIS line, already resolved server-side
+   * (getFundReport's causeLinesFor). Optional/defaulted (0) so a never-saved
+   * client-side row (id === null) has nothing linked yet. Feeds the
+   * collapse-to-lump-sum ConfirmDialog's warning count — see
+   * doCollapse/collapseConfirmOpen below.
+   */
+  linkedTransactionCount?: number;
 }
 
 interface Row {
@@ -88,6 +97,8 @@ interface Row {
    *  a committed id (see Edge Cases in the Phase 3 design). */
   starred: boolean;
   note: string | null;
+  /** B-30, DECISION-061 — see BudgetCauseLine's own doc comment. */
+  linkedTransactionCount: number;
 }
 
 /** A row renders "dead" (struck-through, inputs disabled, excluded from every
@@ -355,6 +366,7 @@ export default function BudgetCauseEditor({
       holdingForDelete: false,
       starred: pending ? false : (l.starred ?? false),
       note: pending ? null : (l.note ?? null),
+      linkedTransactionCount: pending ? 0 : (l.linkedTransactionCount ?? 0),
     })),
   );
   const dirtyAmountRef = useRef<boolean[]>(rows.map(() => false));
@@ -844,6 +856,7 @@ export default function BudgetCauseEditor({
         holdingForDelete: false,
         starred: false,
         note: null,
+        linkedTransactionCount: 0,
       },
     ]);
     dirtyAmountRef.current.push(false);
@@ -1073,13 +1086,32 @@ export default function BudgetCauseEditor({
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Could not collapse to lump sum. Try again.");
       }
-      toast.success("Collapsed to a single lump-sum amount.");
+      const data = await res.json().catch(() => ({}));
+      // B-30/DECISION-061: the server confirms how many linked transactions
+      // it actually unlinked (via the FK's ON DELETE SET NULL) — surfaced
+      // here so the treasurer sees confirmation matching the pre-action
+      // warning, not just a generic success toast.
+      const unlinkedCount = typeof data.unlinkedCount === "number" ? data.unlinkedCount : 0;
+      toast.success(
+        unlinkedCount > 0
+          ? `Collapsed to a single lump-sum amount. ${unlinkedCount} linked transaction${unlinkedCount === 1 ? "" : "s"} were unlinked.`
+          : "Collapsed to a single lump-sum amount.",
+      );
       onExitBreakdown("collapsed");
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not collapse to lump sum. Try again.");
     }
   }
+
+  // B-30/DECISION-061: sum of linkedTransactionCount across every row
+  // currently "live" in this breakdown (committed + uncommitted-but-saved —
+  // pending-delete/held rows excluded, same isRowDead exclusion the rest of
+  // this component already uses). Recomputed every render, not stored state,
+  // so it can never go stale relative to `rows`.
+  const linkedTransactionCountInBreakdown = rows
+    .filter((r) => !isRowDead(r))
+    .reduce((sum, r) => sum + r.linkedTransactionCount, 0);
 
   // Group rows by cause, iterated in canonical ALL_CAUSES order (not
   // insertion order) so the grouping is stable across re-renders/reloads.
@@ -1343,7 +1375,11 @@ export default function BudgetCauseEditor({
         open={collapseConfirmOpen}
         onOpenChange={setCollapseConfirmOpen}
         title="Collapse to a single lump sum?"
-        description="This deletes the individual cause line items — the category's dollar total is kept as one lump-sum amount, but the per-cause detail (including every label) is lost and can't be recovered. You can break it down by cause again later, but you'll need to re-enter each line."
+        description={
+          linkedTransactionCountInBreakdown > 0
+            ? `This deletes the individual cause line items — the category's dollar total is kept as one lump-sum amount, but the per-cause detail is lost. ${linkedTransactionCountInBreakdown} transaction${linkedTransactionCountInBreakdown === 1 ? "" : "s"} currently linked to these lines will be unlinked (they'll fall back to the payee-name match, or show as unmatched) and can't be automatically re-linked without re-running the backfill script.`
+            : "This deletes the individual cause line items — the category's dollar total is kept as one lump-sum amount, but the per-cause detail (including every label) is lost and can't be recovered. You can break it down by cause again later, but you'll need to re-enter each line."
+        }
         confirmLabel="Collapse"
         destructive
         onConfirm={() => {

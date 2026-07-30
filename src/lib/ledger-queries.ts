@@ -73,6 +73,10 @@ import {
   MAX_BUDGET_NOTE_LENGTH,
   resolveDisplayBudgetCents,
   buildCauseActualsByKey,
+  causeLineReferenceKey,
+  resolveCauseLineActual,
+  isEligibleForFuzzyCauseMatch,
+  shouldClearBudgetLineLink,
   computeDuesTimingAdjustment,
   type GuardrailFlag,
   type BudgetVarianceResult,
@@ -180,6 +184,27 @@ export type FundReportCategoryLine = {
          *  boundary applies to this cause-line grain. */
         starred: boolean;
         note: string | null;
+        /** Explicit transaction<->budget-line link (B-30, DECISION-061).
+         *  Raw exact sum of posted, expense transactions whose
+         *  `budgetLineId` points at this line — 0 when nothing is linked
+         *  yet. `actualCents` below is the number every consumer should
+         *  RENDER; `linkedActualCents` is exposed mainly so a consumer can
+         *  tell "exact zero" apart from "fuzzy fallback nonzero" without
+         *  re-deriving resolveCauseLineActual's branch itself. */
+        linkedActualCents: number;
+        /** Count of posted, expense transactions linked to this line —
+         *  feeds the collapse-with-links ConfirmDialog's warning count
+         *  (DECISION-061 item 4), zero extra query. */
+        linkedTransactionCount: number;
+        /** The actual to render for this line: resolveCauseLineActual's
+         *  result — linkedActualCents when nonzero, else the fuzzy
+         *  `causeLineReferenceKey` fallback, else 0. */
+        actualCents: number;
+        /** True only when `actualCents` came from the fuzzy fallback path
+         *  (payee-name match), never when it's an exact link. Drives the
+         *  small, non-alarming "approximate match" marker on both report
+         *  surfaces. */
+        isFuzzyFallback: boolean;
       }[]
     | null;
   /** Soft-delete-until-finalize (DECISION-052/053, Increment 2 of
@@ -688,26 +713,6 @@ export async function getFundReport(
     }
   }
 
-  /** null = lump-sum/no breakdown; never [] — see FundReportCategoryLine.causeLines. */
-  function causeLinesFor(
-    key: string,
-  ):
-    | {
-        id: string;
-        cause: string;
-        label: string;
-        amountCents: number;
-        pendingDeleteAt: string | null;
-        starred: boolean;
-        note: string | null;
-      }[]
-    | null {
-    const budgetId = budgetIdMap.get(key);
-    if (!budgetId) return null;
-    const lines = causeLinesByBudgetId.get(budgetId);
-    return lines && lines.length > 0 ? lines : null;
-  }
-
   // Separate posted vs. pending transactions for accurate balance and encumbered figures
   const postedTxns = txns.filter((t) => t.status === "posted");
   const pendingExpenseCents = txns
@@ -722,23 +727,70 @@ export async function getFundReport(
     }
   }
 
+  // Explicit transaction<->budget-line link (B-30, DECISION-061): exact,
+  // FK-keyed aggregation per budget line — same shape as actualMap above,
+  // just keyed by budgetLineId instead of categoryId. A linked transaction
+  // contributes here AND is excluded from the fuzzy pool below (never both).
+  const actualByBudgetLineId = new Map<string, number>();
+  const linkedTxnCountByBudgetLineId = new Map<string, number>();
+  for (const txn of postedTxns) {
+    if (txn.flow === "expense" && txn.budgetLineId) {
+      actualByBudgetLineId.set(
+        txn.budgetLineId,
+        (actualByBudgetLineId.get(txn.budgetLineId) ?? 0) + txn.amountCents,
+      );
+      linkedTxnCountByBudgetLineId.set(
+        txn.budgetLineId,
+        (linkedTxnCountByBudgetLineId.get(txn.budgetLineId) ?? 0) + 1,
+      );
+    }
+  }
+
   // Cause/beneficiary prior-year reference (2026-07-28-causeline-prior-year-
   // reference): group this same FY's posted expense actuals by
   // (categoryId, cause, party) — reuses postedTxns already fetched above, no
   // extra query. See FundReport.causeActualsByKey's doc comment.
+  //
+  // B-30/DECISION-061: gated by isEligibleForFuzzyCauseMatch, which excludes
+  // any transaction that already carries an explicit budgetLineId — this is
+  // the one change that makes "a linked transaction never also feeds the
+  // fuzzy pool" true by construction rather than by convention.
   const causeActualSourceRows: CauseActualSourceRow[] = [];
   for (const txn of postedTxns) {
-    if (txn.flow !== "expense" || !txn.categoryId) continue;
-    const cause = (txn.beneficiaryCause ?? "").trim();
-    if (!cause) continue;
+    if (!isEligibleForFuzzyCauseMatch(txn)) continue;
     causeActualSourceRows.push({
-      categoryId: txn.categoryId,
-      cause,
+      categoryId: txn.categoryId!,
+      cause: (txn.beneficiaryCause ?? "").trim(),
       party: txn.party,
       amountCents: txn.amountCents,
     });
   }
   const causeActualsByKey = buildCauseActualsByKey(causeActualSourceRows);
+
+  /** null = lump-sum/no breakdown; never [] — see FundReportCategoryLine.causeLines. */
+  function causeLinesFor(
+    categoryId: string,
+    key: string,
+  ): FundReportCategoryLine["causeLines"] {
+    const budgetId = budgetIdMap.get(key);
+    if (!budgetId) return null;
+    const rawLines = causeLinesByBudgetId.get(budgetId);
+    if (!rawLines || rawLines.length === 0) return null;
+    return rawLines.map((line) => {
+      const linkedActualCents = actualByBudgetLineId.get(line.id) ?? 0;
+      const linkedTransactionCount = linkedTxnCountByBudgetLineId.get(line.id) ?? 0;
+      const fallbackKey = causeLineReferenceKey(categoryId, line.cause, line.label);
+      const fallbackCents = causeActualsByKey[fallbackKey] ?? null;
+      const resolved = resolveCauseLineActual(linkedActualCents, fallbackCents);
+      return {
+        ...line,
+        linkedActualCents,
+        linkedTransactionCount,
+        actualCents: resolved.cents,
+        isFuzzyFallback: resolved.isFuzzyFallback,
+      };
+    });
+  }
 
   // 6. Collect category IDs that appear in posted actuals but not the active category list
   //    (e.g. category was deactivated after transactions were recorded — still show it)
@@ -770,7 +822,7 @@ export async function getFundReport(
       const key = `${cat.id}_${flowFilter}`;
       const actualCents = actualMap.get(key) ?? 0;
       const rawBudgetCents = budgetMap.get(key) ?? null;
-      const causeLines = causeLinesFor(key);
+      const causeLines = causeLinesFor(cat.id, key);
       const starred = starredMap.get(key) ?? false;
       const note = noteMap.get(key) ?? null;
       // Budget Star & Notes loop-back fix (QA FAIL, DECISION-057; see
@@ -798,7 +850,7 @@ export async function getFundReport(
       if (b.categoryId && b.flow === flowFilter && !seen.has(b.categoryId)) {
         const key = `${b.categoryId}_${flowFilter}`;
         const actualCents = actualMap.get(key) ?? 0;
-        const causeLines = causeLinesFor(key);
+        const causeLines = causeLinesFor(b.categoryId, key);
         const starred = starredMap.get(key) ?? false;
         const note = noteMap.get(key) ?? null;
         // Same annotation-only discriminator as above — see comment there.
@@ -840,6 +892,104 @@ export async function getFundReport(
     pendingExpenseCents,
     causeActualsByKey,
   };
+}
+
+// ---------------------------------------------------------------------------
+// getBudgetLineOptions — Explicit transaction<->budget-line link (B-30,
+// DECISION-061). docs/work-log/2026-07-30-transaction-budget-line-link.md
+// ---------------------------------------------------------------------------
+
+export type BudgetLineOption = {
+  id: string; // ledger_budget_lines.id — the value this feature stores on a transaction
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string;
+  categoryName: string;
+  cause: string;
+  label: string;
+  pendingDeleteAt: string | null;
+};
+
+/**
+ * Every expense-flow budget line across every fiscal year for one entity —
+ * fetched once, server-side, alongside `funds`/`categories` for the
+ * transaction form and the reimbursement mark-paid dialog. Bounded by
+ * however many budget lines an entity has ever had (tens to low hundreds of
+ * rows) — no N+1, and the picker does the fund/FY/pending-delete filtering
+ * client-side (Phase 3 design). `pendingDeleteAt` is surfaced so the picker
+ * can exclude a pending-delete line as a NEW option while still rendering
+ * an already-selected one (Phase 1 Resolve #1's "still counts" reading).
+ */
+export async function getBudgetLineOptions(entityId: string): Promise<BudgetLineOption[]> {
+  const rows = await db
+    .select({
+      id: ledgerBudgetLines.id,
+      fundId: ledgerBudgets.fundId,
+      fiscalYear: ledgerBudgets.fiscalYear,
+      categoryId: ledgerBudgets.categoryId,
+      categoryName: ledgerCategories.name,
+      cause: ledgerBudgetLines.cause,
+      label: ledgerBudgetLines.label,
+      pendingDeleteAt: ledgerBudgetLines.pendingDeleteAt,
+    })
+    .from(ledgerBudgetLines)
+    .innerJoin(ledgerBudgets, eq(ledgerBudgetLines.budgetId, ledgerBudgets.id))
+    .innerJoin(ledgerCategories, eq(ledgerBudgets.categoryId, ledgerCategories.id))
+    .where(and(eq(ledgerBudgets.entityId, entityId), eq(ledgerBudgets.flow, "expense")));
+
+  return rows
+    .filter((r): r is typeof r & { categoryId: string } => r.categoryId !== null)
+    .map((r) => ({
+      id: r.id,
+      fundId: r.fundId,
+      fiscalYear: r.fiscalYear,
+      categoryId: r.categoryId,
+      categoryName: r.categoryName,
+      cause: r.cause,
+      label: r.label,
+      pendingDeleteAt: r.pendingDeleteAt
+        ? r.pendingDeleteAt instanceof Date
+          ? r.pendingDeleteAt.toISOString()
+          : r.pendingDeleteAt
+        : null,
+    }));
+}
+
+export type BudgetLineForLinkValidation = {
+  id: string;
+  fundId: string;
+  fiscalYear: number;
+  categoryId: string | null;
+  flow: string;
+};
+
+/**
+ * Single-row lookup used by the transaction POST/PATCH routes' server-side
+ * link-integrity validation (B-30, DECISION-061, Phase 1 Pass 5 adversarial
+ * finding: client-side filtering alone isn't enough). Returns null for a
+ * missing/malformed id so the caller can 400 instead of 500.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function getBudgetLineForLinkValidation(
+  budgetLineId: string,
+): Promise<BudgetLineForLinkValidation | null> {
+  if (!budgetLineId || typeof budgetLineId !== "string" || !UUID_RE.test(budgetLineId)) {
+    return null;
+  }
+  const rows = await db
+    .select({
+      id: ledgerBudgetLines.id,
+      fundId: ledgerBudgets.fundId,
+      fiscalYear: ledgerBudgets.fiscalYear,
+      categoryId: ledgerBudgets.categoryId,
+      flow: ledgerBudgets.flow,
+    })
+    .from(ledgerBudgetLines)
+    .innerJoin(ledgerBudgets, eq(ledgerBudgetLines.budgetId, ledgerBudgets.id))
+    .where(eq(ledgerBudgetLines.id, budgetLineId))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2451,7 +2601,7 @@ export type CollapseBudgetCauseLinesParams = {
 };
 
 export type CollapseBudgetCauseLinesResult =
-  | { ok: true; action: "collapsed"; annualAmountCents: number }
+  | { ok: true; action: "collapsed"; annualAmountCents: number; unlinkedCount: number }
   | { ok: false; error: string; status: 404 | 409 };
 
 /**
@@ -2463,6 +2613,14 @@ export type CollapseBudgetCauseLinesResult =
  * leaving the parent's number untouched *is* "collapse by summing".
  * Idempotent-safe on an already-lump-sum category (zero children deleted,
  * current amount returned unchanged).
+ *
+ * B-30/DECISION-061 item 4: `unlinkedCount` is the count of posted
+ * transactions linked (via budgetLineId) to any line about to be deleted,
+ * counted BEFORE the delete. The actual unlink happens for free via the
+ * FK's ON DELETE SET NULL — this count exists purely so the caller's
+ * post-action toast can confirm what happened, matching the pre-action
+ * ConfirmDialog's own warning count (sourced from the same report query,
+ * per DECISION-061's "resolve upstream once" reasoning).
  */
 export async function collapseBudgetCauseLines(
   params: CollapseBudgetCauseLinesParams,
@@ -2502,9 +2660,34 @@ export async function collapseBudgetCauseLines(
     return lock;
   }
 
+  const lineRows = await tx
+    .select({ id: ledgerBudgetLines.id })
+    .from(ledgerBudgetLines)
+    .where(eq(ledgerBudgetLines.budgetId, budget.id));
+  const lineIds = lineRows.map((l) => l.id);
+
+  let unlinkedCount = 0;
+  if (lineIds.length > 0) {
+    const linkedRows = await tx
+      .select({ c: count() })
+      .from(ledgerTransactions)
+      .where(
+        and(
+          inArray(ledgerTransactions.budgetLineId, lineIds),
+          eq(ledgerTransactions.status, "posted"),
+        ),
+      );
+    unlinkedCount = Number(linkedRows[0]?.c ?? 0);
+  }
+
   await tx.delete(ledgerBudgetLines).where(eq(ledgerBudgetLines.budgetId, budget.id));
 
-  return { ok: true, action: "collapsed", annualAmountCents: budget.annualAmountCents };
+  return {
+    ok: true,
+    action: "collapsed",
+    annualAmountCents: budget.annualAmountCents,
+    unlinkedCount,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -3477,6 +3660,7 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
       duesPaymentId: ledgerTransactions.duesPaymentId,
       syncStale: ledgerTransactions.syncStale,
       donorId: ledgerTransactions.donorId,
+      budgetLineId: ledgerTransactions.budgetLineId,
       createdAt: ledgerTransactions.createdAt,
       updatedAt: ledgerTransactions.updatedAt,
       // Joined display fields — users.name is the display name (single field, may be null)

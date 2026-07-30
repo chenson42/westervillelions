@@ -12,6 +12,7 @@ import {
   listLedgerFiscalYears,
   getPendingApprovals,
   getDashboard,
+  getBudgetLineOptions,
 } from "@/lib/ledger-queries";
 import { currentFiscalYear } from "@/lib/fiscal-year";
 import LedgerDashboard from "@/components/admin/ledger/ledger-dashboard";
@@ -100,11 +101,12 @@ export default async function AdminLedgerPage({
       getOverview(entity.id, fiscalYear),
       listLedgerFiscalYears(entity.id),
       canApprove ? getPendingApprovals() : Promise.resolve([]),
+      getBudgetLineOptions(entity.id),
     ]);
   } catch {
     return <LoadErrorCard backHref="/admin/ledger" />;
   }
-  const [funds, bankAccounts, categories, overview, fiscalYears, pendingTxns] = data;
+  const [funds, bankAccounts, categories, overview, fiscalYears, pendingTxns, budgetLines] = data;
 
   return (
     <LedgerEntityDetail
@@ -114,6 +116,7 @@ export default async function AdminLedgerPage({
       funds={funds}
       bankAccounts={bankAccounts}
       categories={categories}
+      budgetLines={budgetLines}
       overview={overview}
       fiscalYears={fiscalYears}
       pendingTxns={pendingTxns}

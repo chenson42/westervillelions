@@ -3,12 +3,19 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { hasAnyFeature, hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-import { listReimbursementsForAdmin, getReimbursementStatusCounts, getEntities, getFunds } from "@/lib/ledger-queries";
+import {
+  listReimbursementsForAdmin,
+  getReimbursementStatusCounts,
+  getEntities,
+  getFunds,
+  getCategories,
+  getBudgetLineOptions,
+} from "@/lib/ledger-queries";
 import ApproveReimbursementDialog from "@/components/admin/ledger/approve-reimbursement-dialog";
 import { RejectReimbursementDialog } from "@/components/admin/ledger/reject-dialog";
 import PayReimbursementDialog from "@/components/admin/ledger/pay-reimbursement-dialog";
-import type { ReimbursementWithMember } from "@/lib/ledger-queries";
-import type { LedgerFund } from "@/lib/db/schema";
+import type { ReimbursementWithMember, BudgetLineOption } from "@/lib/ledger-queries";
+import type { LedgerFund, LedgerCategory } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -79,12 +86,22 @@ export default async function AdminLedgerReimbursementsPage({
       ? (tabParam as StatusTab)
       : "submitted";
 
-  // Load all entities' funds for the Pay dialog (treasurer needs to pick a fund)
+  // Load all entities' funds/categories/budget lines for the Pay dialog
+  // (treasurer needs to pick a fund, then a category — B-30, DECISION-061 —
+  // and optionally a budget line, at payment time).
   const entities = await getEntities();
   let allFunds: LedgerFund[] = [];
+  let allCategories: LedgerCategory[] = [];
+  let allBudgetLines: BudgetLineOption[] = [];
   for (const entity of entities) {
-    const entityFunds = await getFunds(entity.id);
+    const [entityFunds, entityCategories, entityBudgetLines] = await Promise.all([
+      getFunds(entity.id),
+      getCategories(entity.id, { flow: "expense" }),
+      getBudgetLineOptions(entity.id),
+    ]);
     allFunds = allFunds.concat(entityFunds);
+    allCategories = allCategories.concat(entityCategories);
+    allBudgetLines = allBudgetLines.concat(entityBudgetLines);
   }
 
   const { reimbursements, total } = await listReimbursementsForAdmin({ status: activeTab });
@@ -296,6 +313,8 @@ export default async function AdminLedgerReimbursementsPage({
                               memberName={memberName}
                               amount={amountStr}
                               funds={allFunds}
+                              categories={allCategories}
+                              budgetLines={allBudgetLines}
                             >
                               <button
                                 type="button"

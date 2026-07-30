@@ -51,6 +51,12 @@ import {
 import { eq, and } from "drizzle-orm";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getFundReport, type FundReportCategoryLine } from "@/lib/ledger-queries";
+import {
+  causeLineReferenceKey,
+  resolveCauseLineActual,
+  isEligibleForFuzzyCauseMatch,
+  isAllZeroRow,
+} from "@/lib/ledger";
 
 // ---------------------------------------------------------------------------
 // Member-exposed fund allowlist (locked Q5 answer, Phase 1)
@@ -77,6 +83,27 @@ const QUICKEN_IMPORT_MARKER = "[quicken-import]";
 // Statement types
 // ---------------------------------------------------------------------------
 
+/**
+ * A cause/line-item breakdown row under a category (B-30, DECISION-061;
+ * folds in the fiscal-report cause/line breakdown work). `id` is the real
+ * ledger_budget_lines id for a named line, or the literal "other" for the
+ * synthesized catch-all row that makes visible detail foot to the category
+ * total. `isFuzzyFallback` is true when EITHER this row's One-Month or
+ * Twelve-Month figure came from the payee-name-match fallback rather than
+ * an explicit link — the small, non-alarming marker both report surfaces
+ * render next to the dollar figure.
+ */
+export type MonthlyStatementCauseLine = {
+  id: string;
+  cause: string;
+  label: string;
+  oneMonthCents: number;
+  twelveMonthCents: number;
+  annualBudgetCents: number | null;
+  isFuzzyFallback: boolean;
+  isOtherRow: boolean;
+};
+
 export type MonthlyStatementCategoryLine = {
   categoryId: string;
   categoryName: string;
@@ -89,6 +116,14 @@ export type MonthlyStatementCategoryLine = {
   /** Yellow-highlight flag: an outstanding (posted, unreconciled) check
    *  written in this category, dated on/before this report month's end. */
   hasUncashedCheck: boolean;
+  /** Cause/line-item breakdown (B-30, DECISION-061) — null when the
+   *  category has no budget cause-line breakdown at all (mirrors
+   *  FundReportCategoryLine.causeLines: null = lump-sum/no breakdown, never
+   *  an empty array). Always includes a synthesized "other" catch-all row
+   *  when non-null, so the visible detail always foots to this line's own
+   *  oneMonthCents/twelveMonthCents. Zero-omission (isAllZeroRow) is
+   *  applied to this array for display — see buildLines() below. */
+  causeLines: MonthlyStatementCauseLine[] | null;
 };
 
 export type MonthlyStatementTotals = {
@@ -411,6 +446,15 @@ export async function isMonthGatedForEntity(
 export type OneMonthCashActuals = {
   /** key = `${categoryId}_${flow}` */
   byCategory: Map<string, number>;
+  /** Explicit transaction<->budget-line link (B-30, DECISION-061) — exact,
+   *  key = budgetLineId. Bank-cleared-date scoped, same as byCategory. */
+  byBudgetLine: Map<string, number>;
+  /** Fuzzy payee-name-match fallback — key = causeLineReferenceKey. Only
+   *  populated from transactions eligible per isEligibleForFuzzyCauseMatch
+   *  (excludes anything already carrying a budgetLineId, so a linked
+   *  transaction never feeds both maps — same "never both" rule
+   *  getFundReport() enforces at the Twelve-Month grain). */
+  byCauseKey: Map<string, number>;
   usedLegacyReconciledAtFallback: boolean;
   hasUndatedHistoricalRows: boolean;
 };
@@ -450,6 +494,9 @@ export async function computeOneMonthCashActuals(
       memo: ledgerTransactions.memo,
       reconciledAt: ledgerTransactions.reconciledAt,
       matchedPostingDate: ledgerBankLines.postingDate,
+      budgetLineId: ledgerTransactions.budgetLineId,
+      beneficiaryCause: ledgerTransactions.beneficiaryCause,
+      party: ledgerTransactions.party,
     })
     .from(ledgerTransactions)
     .leftJoin(
@@ -466,6 +513,8 @@ export async function computeOneMonthCashActuals(
     );
 
   const byCategory = new Map<string, number>();
+  const byBudgetLine = new Map<string, number>();
+  const byCauseKey = new Map<string, number>();
   let usedLegacyReconciledAtFallback = false;
   let hasUndatedHistoricalRows = false;
 
@@ -490,9 +539,35 @@ export async function computeOneMonthCashActuals(
 
     const key = `${row.categoryId}_${row.flow}`;
     byCategory.set(key, (byCategory.get(key) ?? 0) + row.amountCents);
+
+    // B-30/DECISION-061: exact link, keyed by budgetLineId — parallel to
+    // byCategory above, same effective-date scoping, zero extra round-trip.
+    if (row.flow === "expense" && row.budgetLineId) {
+      byBudgetLine.set(row.budgetLineId, (byBudgetLine.get(row.budgetLineId) ?? 0) + row.amountCents);
+    }
+    // Fuzzy fallback, keyed by causeLineReferenceKey — same
+    // isEligibleForFuzzyCauseMatch guard getFundReport() uses at the
+    // Twelve-Month grain, so a linked row never feeds this pool either.
+    if (
+      isEligibleForFuzzyCauseMatch({
+        flow: row.flow,
+        categoryId: row.categoryId,
+        budgetLineId: row.budgetLineId,
+        beneficiaryCause: row.beneficiaryCause,
+      })
+    ) {
+      const causeKey = causeLineReferenceKey(row.categoryId, (row.beneficiaryCause ?? "").trim(), row.party);
+      byCauseKey.set(causeKey, (byCauseKey.get(causeKey) ?? 0) + row.amountCents);
+    }
   }
 
-  return { byCategory, usedLegacyReconciledAtFallback, hasUndatedHistoricalRows };
+  return {
+    byCategory,
+    byBudgetLine,
+    byCauseKey,
+    usedLegacyReconciledAtFallback,
+    hasUndatedHistoricalRows,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -690,22 +765,81 @@ export async function getMonthlyStatement(
     computeUncashedCheckCategoryIds(fund.id, monthEnd),
   ]);
 
+  // Cause/line-item breakdown (B-30, DECISION-061) — built from the SAME
+  // Twelve-Month source line's causeLines (already exact/fuzzy-resolved by
+  // getFundReport) plus the One-Month bucketing computed above. Returns null
+  // when the category has no breakdown at all — never an empty array.
+  function buildCauseLines(
+    line: FundReportCategoryLine,
+    categoryOneMonthCents: number,
+    categoryTwelveMonthCents: number,
+  ): MonthlyStatementCauseLine[] | null {
+    if (!line.causeLines) return null;
+
+    let namedOneMonthTotal = 0;
+    let namedTwelveMonthTotal = 0;
+
+    const named: MonthlyStatementCauseLine[] = line.causeLines.map((cl) => {
+      const oneMonthLinked = oneMonth.byBudgetLine.get(cl.id) ?? 0;
+      const oneMonthFallbackKey = causeLineReferenceKey(line.categoryId, cl.cause, cl.label);
+      const oneMonthFallback = oneMonth.byCauseKey.get(oneMonthFallbackKey) ?? null;
+      const oneMonthResolved = resolveCauseLineActual(oneMonthLinked, oneMonthFallback);
+
+      namedOneMonthTotal += oneMonthResolved.cents;
+      namedTwelveMonthTotal += cl.actualCents;
+
+      return {
+        id: cl.id,
+        cause: cl.cause,
+        label: cl.label,
+        oneMonthCents: oneMonthResolved.cents,
+        twelveMonthCents: cl.actualCents,
+        annualBudgetCents: cl.amountCents,
+        // Flagged whenever EITHER column's figure came from the fallback
+        // path — a row is only fully exact once both are.
+        isFuzzyFallback: oneMonthResolved.isFuzzyFallback || cl.isFuzzyFallback,
+        isOtherRow: false,
+      };
+    });
+
+    const other: MonthlyStatementCauseLine = {
+      id: "other",
+      cause: "Other",
+      label: "",
+      oneMonthCents: categoryOneMonthCents - namedOneMonthTotal,
+      twelveMonthCents: categoryTwelveMonthCents - namedTwelveMonthTotal,
+      // Budget lines already sum to the category's budget by construction
+      // (DECISION-045) — there's never a leftover budget dollar to
+      // attribute to "Other," only leftover actuals.
+      annualBudgetCents: null,
+      isFuzzyFallback: false,
+      isOtherRow: true,
+    };
+
+    return [...named, other].filter((row) => !isAllZeroRow(row));
+  }
+
   function buildLines(
     lines: FundReportCategoryLine[],
     flow: "income" | "expense",
   ): MonthlyStatementCategoryLine[] {
-    return lines.map((line) => ({
-      categoryId: line.categoryId,
-      categoryName: line.categoryName,
-      oneMonthCents: oneMonth.byCategory.get(`${line.categoryId}_${flow}`) ?? 0,
-      twelveMonthCents: line.actualCents,
-      annualBudgetCents: line.budgetCents,
-      hasUncashedCheck: uncashedCategoryIds.has(line.categoryId),
-    }));
+    return lines.map((line) => {
+      const oneMonthCents = oneMonth.byCategory.get(`${line.categoryId}_${flow}`) ?? 0;
+      const twelveMonthCents = line.actualCents;
+      return {
+        categoryId: line.categoryId,
+        categoryName: line.categoryName,
+        oneMonthCents,
+        twelveMonthCents,
+        annualBudgetCents: line.budgetCents,
+        hasUncashedCheck: uncashedCategoryIds.has(line.categoryId),
+        causeLines: buildCauseLines(line, oneMonthCents, twelveMonthCents),
+      };
+    });
   }
 
-  const income = buildLines(currentReport.income, "income");
-  const expense = buildLines(currentReport.expense, "expense");
+  const incomeAll = buildLines(currentReport.income, "income");
+  const expenseAll = buildLines(currentReport.expense, "expense");
 
   function sumTotals(
     lines: MonthlyStatementCategoryLine[],
@@ -718,8 +852,17 @@ export async function getMonthlyStatement(
     };
   }
 
-  const totalRevenue = sumTotals(income, currentReport.income);
-  const totalExpense = sumTotals(expense, currentReport.expense);
+  // Totals are always computed from the FULL, unfiltered row set — the
+  // zero-omission rule (isAllZeroRow) below is a DISPLAY filter only.
+  const totalRevenue = sumTotals(incomeAll, currentReport.income);
+  const totalExpense = sumTotals(expenseAll, currentReport.expense);
+
+  // Zero-omission (Gap 8, carried forward from the fiscal-report-breakdown
+  // work-log): a category row with all three columns at zero/null is
+  // dropped from what's rendered, applied identically to every category —
+  // including ones that never had a cause breakdown before this feature.
+  const income = incomeAll.filter((l) => !isAllZeroRow(l));
+  const expense = expenseAll.filter((l) => !isAllZeroRow(l));
   const net: MonthlyStatementTotals = {
     oneMonthCents: totalRevenue.oneMonthCents - totalExpense.oneMonthCents,
     twelveMonthCents: totalRevenue.twelveMonthCents - totalExpense.twelveMonthCents,

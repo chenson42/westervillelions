@@ -34,8 +34,21 @@
  *     // waive — re-flags the row); non-null attaches/replaces (regex-
  *     // validated, expense-only) and CLEARS any existing waiver in the same
  *     // UPDATE (a real receipt supersedes an administrative excuse).
+ *   budgetLineId?: string | null;  // explicit budget-line link (B-30,
+ *     // DECISION-061); null/empty clears (always valid, no staleness
+ *     // check). A value that DIFFERS from the row's current budgetLineId is
+ *     // treated as a genuinely new pick — server-validated against the
+ *     // effective fund/derived-FY/category (400 on mismatch, 404 on a
+ *     // nonexistent/malformed id). If OMITTED, or resent UNCHANGED from the
+ *     // row's current value (the real client always includes this key on
+ *     // an expense edit, touched or not), but an edited txnDate/categoryId/
+ *     // flow has moved the transaction's EXISTING link out of range, the
+ *     // server auto-clears it rather than rejecting the edit — see
+ *     // budgetLineLinkCleared below.
  * }
- * Response 200: { id: string }
+ * Response 200: { id: string; budgetLineLinkCleared?: true }  // the latter
+ *   only present when an existing budget-line link was auto-cleared by this
+ *   edit (B-30, DECISION-061) — the client should toast this.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * DELETE /api/admin/ledger/transactions/[id]
@@ -61,6 +74,9 @@ import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { RECEIPT_KEY_REGEX, getReceiptStorage } from "@/lib/receipt-storage";
+import { getFiscalYear } from "@/lib/fiscal-year";
+import { getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
+import { shouldClearBudgetLineLink } from "@/lib/ledger";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
@@ -197,6 +213,7 @@ export async function PATCH(
       receiptWaivedByUserId: string | null;
       receiptWaiverReason: string | null;
       donorId: string | null;
+      budgetLineId: string | null;
       updatedAt: Date;
     }>;
 
@@ -429,6 +446,95 @@ export async function PATCH(
       }
     }
 
+    // Explicit budget-line link (B-30, DECISION-061). Two cases, keyed on
+    // whether the payload represents a genuinely NEW pick — NOT merely on
+    // whether the `budgetLineId` key is present. Phase 5 QA finding: the
+    // real client (transaction-form.tsx) always includes `budgetLineId` in
+    // an expense edit's payload, touched or not (`budgetLineId: budgetLineId
+    // || null`), so "key present" alone can't distinguish "the treasurer
+    // just picked/changed the line" from "the picker was never touched and
+    // its current value is simply being resent unchanged." Keying on
+    // presence-of-key made case 2 (auto-clear) unreachable from the real UI
+    // and made a stale-but-unchanged link 400-reject the whole edit.
+    //  1. The submitted budgetLineId genuinely DIFFERS from
+    //     existing.budgetLineId (a new pick, a change to a different line) —
+    //     validate the NEW value against the EFFECTIVE fund (immutable —
+    //     fund is never editable via this route), FY (derived from
+    //     update.txnDate ?? existing.txnDate), and category
+    //     (update.categoryId if being changed, else existing.categoryId).
+    //     Mismatch -> 400 (Phase 1 adversarial pass: a direct PATCH must not
+    //     bypass the picker's client-side filtering).
+    //  2. The submitted budgetLineId is null/empty (explicit clear — always
+    //     valid, no staleness check needed), OR it's UNCHANGED from
+    //     existing.budgetLineId (including the common real-UI case where the
+    //     client resent the same value because the picker itself was never
+    //     touched), OR the key was omitted entirely — in the latter two
+    //     sub-cases, an edited txnDate/categoryId (or a flow change away
+    //     from 'expense') may have moved the transaction's EXISTING link out
+    //     of range. Auto-clear rather than reject (silently-stale would be
+    //     worse; a hard reject would block an otherwise-valid date/category
+    //     correction just because an old link no longer applies —
+    //     DECISION-061 #3). Response flags budgetLineLinkCleared: true so
+    //     the client can toast it.
+    let budgetLineLinkCleared = false;
+    const effectiveTxnDate = update.txnDate ?? existing.txnDate;
+    const effectiveFiscalYear = getFiscalYear(new Date(effectiveTxnDate + "T00:00:00"));
+    const effectiveCategoryId =
+      "categoryId" in update ? (update.categoryId ?? null) : (existing.categoryId ?? null);
+
+    const isNewBudgetLinePick =
+      body.budgetLineId !== undefined &&
+      body.budgetLineId !== null &&
+      body.budgetLineId !== "" &&
+      body.budgetLineId !== existing.budgetLineId;
+
+    if (isNewBudgetLinePick) {
+      if (typeof body.budgetLineId !== "string") {
+        return NextResponse.json({ error: "budgetLineId must be a string" }, { status: 400 });
+      }
+      const line = await getBudgetLineForLinkValidation(body.budgetLineId);
+      if (!line) {
+        return NextResponse.json({ error: "Budget line not found" }, { status: 404 });
+      }
+      if (
+        line.fundId !== existing.fundId ||
+        line.fiscalYear !== effectiveFiscalYear ||
+        line.categoryId !== effectiveCategoryId ||
+        line.flow !== "expense" ||
+        newFlow !== "expense"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "This budget line does not match the transaction's fund, fiscal year, or category.",
+          },
+          { status: 400 },
+        );
+      }
+      update.budgetLineId = line.id;
+    } else if (body.budgetLineId === null || body.budgetLineId === "") {
+      // Explicit clear — always valid, no staleness check needed.
+      update.budgetLineId = null;
+    } else if (existing.budgetLineId) {
+      // Key omitted entirely, or the client resent the row's CURRENT
+      // budgetLineId unchanged — either way, the link itself wasn't touched
+      // by this edit. Check whether it's now stale relative to the
+      // effective FY/category and auto-clear if so.
+      if (newFlow !== "expense") {
+        update.budgetLineId = null;
+        budgetLineLinkCleared = true;
+      } else {
+        const linkedLine = await getBudgetLineForLinkValidation(existing.budgetLineId);
+        if (
+          !linkedLine ||
+          shouldClearBudgetLineLink(linkedLine, effectiveFiscalYear, effectiveCategoryId)
+        ) {
+          update.budgetLineId = null;
+          budgetLineLinkCleared = true;
+        }
+      }
+    }
+
     // For transfer pairs with ?both=true, update both rows symmetrically
     // (amount and date changes are symmetric; category/party/flow changes only apply to requested row)
     if (updateBoth && existing.transferGroupId) {
@@ -516,7 +622,9 @@ export async function PATCH(
       }
     }
 
-    return NextResponse.json({ id });
+    return NextResponse.json(
+      budgetLineLinkCleared ? { id, budgetLineLinkCleared: true } : { id },
+    );
   } catch (error) {
     console.error("Error updating ledger transaction:", error);
     return NextResponse.json({ error: "Failed to update transaction" }, { status: 500 });

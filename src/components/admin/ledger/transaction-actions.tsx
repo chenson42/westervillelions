@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import TransactionFormDialog from "./transaction-form-dialog";
 import SplitTransactionDialog from "./split-transaction-dialog";
 import type { LedgerTransaction, LedgerFund, LedgerCategory, LedgerBankAccount } from "@/lib/db/schema";
+import type { BudgetLineOption } from "@/lib/ledger-queries";
 
 interface TransactionActionsProps {
   transaction: LedgerTransaction;
@@ -16,6 +17,8 @@ interface TransactionActionsProps {
   funds: LedgerFund[];
   categories: LedgerCategory[];
   bankAccounts: LedgerBankAccount[];
+  /** Threaded to the edit dialog's TransactionForm (B-30, DECISION-061). */
+  budgetLines: BudgetLineOption[];
 }
 
 /**
@@ -32,6 +35,7 @@ export default function TransactionActions({
   funds,
   categories,
   bankAccounts,
+  budgetLines,
 }: TransactionActionsProps) {
   const router = useRouter();
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -97,6 +101,8 @@ export default function TransactionActions({
     receiptWaivedAt: transaction.receiptWaivedAt,
     receiptWaiverReason: transaction.receiptWaiverReason,
     publicNote: transaction.publicNote,
+    beneficiaryCause: transaction.beneficiaryCause,
+    budgetLineId: transaction.budgetLineId,
   };
 
   const deleteTitle = isTransfer ? "Delete transfer?" : "Delete transaction?";
@@ -153,6 +159,7 @@ export default function TransactionActions({
         funds={funds}
         categories={categories}
         bankAccounts={bankAccounts}
+        budgetLines={budgetLines}
         open={editOpen}
         onOpenChange={setEditOpen}
         initialValues={editInitialValues}

@@ -4,6 +4,7 @@ import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import TransactionForm from "./transaction-form";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
+import type { BudgetLineOption } from "@/lib/ledger-queries";
 
 interface CrossEntityContext {
   entityId: string;
@@ -31,6 +32,8 @@ type EditableTransaction = Pick<
   | "receiptWaivedAt"
   | "receiptWaiverReason"
   | "publicNote"
+  | "beneficiaryCause"
+  | "budgetLineId"
 >;
 
 interface TransactionFormDialogProps {
@@ -38,6 +41,9 @@ interface TransactionFormDialogProps {
   funds: LedgerFund[];
   categories: LedgerCategory[];
   bankAccounts: LedgerBankAccount[];
+  /** Every expense-flow budget line for this entity (B-30, DECISION-061) —
+   *  threaded straight through to TransactionForm's own picker. */
+  budgetLines: BudgetLineOption[];
   /** Trigger element — a button that opens the dialog. Only pass this from
    *  CLIENT components: elements created in Server Components and passed
    *  across the RSC boundary intermittently fail Radix's asChild slotting
@@ -71,6 +77,7 @@ export default function TransactionFormDialog({
   funds,
   categories,
   bankAccounts,
+  budgetLines,
   trigger,
   triggerLabel,
   initialValues,
@@ -131,6 +138,7 @@ export default function TransactionFormDialog({
             funds={funds}
             categories={categories}
             bankAccounts={bankAccounts}
+            budgetLines={budgetLines}
             onSuccess={() => setOpen(false)}
             onCancel={() => setOpen(false)}
             initialValues={initialValues}

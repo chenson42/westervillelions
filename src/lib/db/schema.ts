@@ -710,6 +710,16 @@ export const ledgerTransactions = pgTable(
       (): AnyPgColumn => ledgerReconciliationSessions.id,
       { onDelete: "set null" },
     ),
+    // Explicit link to a budget line item (B-30, DECISION-061) — nullable, expense-only
+    // at the app layer (only expense-flow, giving-eligible categories have lines to point
+    // at — see isCauseEligibleCategory). onDelete: 'set null' — collapsing a budget
+    // breakdown deletes its ledger_budget_lines rows; a linked transaction survives as
+    // simply un-linked, never orphaned/crashing. The UI warns before that happens (see
+    // the collapse ConfirmDialog change) but the FK itself is the safety net.
+    budgetLineId: uuid("budget_line_id").references(
+      (): AnyPgColumn => ledgerBudgetLines.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -720,6 +730,7 @@ export const ledgerTransactions = pgTable(
     index("ix_ledger_txns_transfer_group").on(t.transferGroupId),
     index("ix_ledger_txns_check_number").on(t.bankAccountId, t.checkNumber),
     index("ix_ledger_txns_reconciled_session").on(t.reconciledSessionId),
+    index("ix_ledger_txns_budget_line").on(t.budgetLineId),
   ],
 );
 
