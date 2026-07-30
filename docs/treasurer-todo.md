@@ -10,6 +10,45 @@ can be referenced from work-logs, board minutes, and future sessions.
 
 ---
 
+## Status at a glance
+
+Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below.) IDs are sparse — completed items are deleted once done and retained in git history.
+
+| ID | Status | Topic |
+|----|:------:|-------|
+| T-01 | ⬜ | Foundation paid for member polos — private-benefit; decide minute vs. reimbursement |
+| T-02 | ⬜ | Two outstanding OLF checks (#8249/#8257) — void & reissue |
+| T-03 | ⬜ | Tailtwisting: admin income or charitable money? |
+| **T-04** | ⬜ | **Activity Fund $84.52 → Foundation sweep** — **Motion 1 drafted** (`board-motions.md`); Sweep tool now shipped |
+| T-05 | ⬜ | Officer bonding — verify, transfer, renewal calendar |
+| T-06 | ⬜ | One PO box or two? |
+| T-07 | ⬜ | Identify the PayPal account (+$563.80) |
+| T-08 | ⬜ | Attribute the $2,344 lump dues deposit |
+| T-10 | ⬜ | Categorize the catch-all Misc rows |
+| T-11 | ⬜ | Re-record the two A J Westlund dues rows if real |
+| T-13 | ⬜ | Reconcile the 24 monthly bank-statement PDFs |
+| T-14 | ⬜ | Upload the Foundation IRS determination letter |
+| T-15 | ⬜ | Scholarship fund accounting decision |
+| T-16 | ⬜ | Earmark multi-year commitments in board minutes |
+| T-17 | ⬜ | Zeffy donations via Activity Fund — fold sweep habit into monthly close |
+| T-19 | ⬜ | Storage unit — decide payer / split |
+| **T-20** | ⬜ | **Petty cash $250** — minute the opening adjustment + **Motion 2 drafted** (donate to Foundation) |
+| T-21 | 🔶 | Fix rows mistagged `check`; Gates At Eight #s + Don Niebling "DEP" pending |
+| T-24 | ⬜ | Standing reference: accounting basis + LCI transparency standard |
+| T-25 | ⬜ | Clean up category catalog / full budget→txn→report traceability |
+| T-26 | 🔶 | FY2025 checks reconciled (8252/8253 done); Admin 8002 refile deferred to T-25 |
+
+**Tooling shipped that affects these items:**
+- **v1.51.0 — Transfers & Sweeps** (`docs/work-log/2026-07-29-ledger-account-transfers.md`): the
+  in-app **Sweep** now executes the T-04 / T-17 Activity → Foundation moves; account-to-account
+  **Transfer** can fund/settle the Petty Cash account (T-20). Note: **Administrative → Foundation is
+  blocked by design**, so Motion 2 (petty-cash donation) needs the one-branch policy flip or two
+  manual entries — see `board-motions.md`.
+- **v1.50.0** — budget permissions + Budget Committee role; bank-account-on-every-transaction (every
+  new posting now carries a bank account, so reconciliation no longer silently loses rows).
+
+---
+
 ## Money & compliance
 
 - [ ] **T-24 — Standing reference: accounting basis + Lions International financial-transparency standard.**
@@ -71,6 +110,9 @@ can be referenced from work-logs, board minutes, and future sessions.
   Foundation account**. After the motion: write the club check / transfer, record it in the Ledger
   (club Activity Fund expense → Foundation Public donations income, both citing the minute), which
   zeroes the fund and clears both club-side guardrail warnings.
+  *2026-07-30: **Motion 1 drafted** in `docs/board-motions.md` (ready to present). The in-app **Sweep**
+  (v1.51.0) now executes this exact move — after the board approves, record it as an Activity→Foundation
+  Sweep citing the minute; no manual two-entry workaround needed.*
 - [ ] **T-05 — Officer bonding: verify, transfer, and track renewals.** Both entities carry fidelity
   bonds at $187/yr: club via CNA Surety from admin (10/2024, 9/2025), Foundation via Western Surety
   from the Foundation account (3/2025, 2/2026). Western Surety is a CNA Surety company; two bonds for
@@ -117,12 +159,6 @@ can be referenced from work-logs, board minutes, and future sessions.
   balance remains in it, and what were the underlying receipts? Parked in admin "Misc" income.
 - [ ] **T-08 — Attribute the $2,344 lump dues deposit** (5/27/2025, no memo) to members if
   per-member dues tie-out is wanted for that year.
-- [x] **T-09 — Resolve two memo/category conflicts on large deposits.** (RESOLVED 2026-07-29 via
-  `scripts/fix-ledger-categories.ts`, confirmed against the Chase deposits + Quicken register.)
-  4/9/2025 $3,655 = **Pancake Breakfast** (Chris confirmed; the "Rudolph Run Sponsorships" was a memo
-  error — party/memo corrected to "Pancake Breakfast Receipts"). 12/20/2025 $14,451.90 = **Rudolph Run
-  Entry Receipts** (registration income; the ledger had mis-imported the memo "Sponsorships" as the
-  party — corrected, and re-filed to the new "Rudolph Run – Registration/Entry Fees" category).
 - [ ] **T-10 — Categorize the catch-all rows.** 16 imported rows landed in Operations /
   Miscellaneous / Misc (itemized in the seed work-log), including two uncategorized 7/31/2024
   purchases (Costco $47.94, Home Depot $249) and a $50 gift card whose memo reads "Wrapped gift
@@ -173,17 +209,6 @@ can be referenced from work-logs, board minutes, and future sessions.
 
 ## Operational / next steps
 
-- [x] **T-12 — Seed production.** ~~The import ran against the local DB only. When ready:
-  `scripts/import-quicken-ledger.ts --apply` with the production `DATABASE_URL` (idempotent —
-  deletes and re-inserts its own `[quicken-import]`-tagged rows).~~ — **2026-07-20 done:** ported
-  from dev via `scripts/port-ledger-dev-to-prod.ts` (not a re-run of the CSV import — dev's
-  already-hardened ledger data was copied over, remapped by natural key). 276 marker transactions,
-  15 dev-only categories, both fund opening balances, and both bank-account renames landed in
-  production; the 7 live dues-auto-post rows were left untouched. All verification numbers matched
-  exactly (club $16,218.64, foundation $4,836.57, per-cause totals, 3 overhead categories). See
-  `docs/work-log/2026-07-20-ledger-quicken-seed.md` Phase 4c for full detail. Also backfilled 14
-  missing dues-ledger rows in the same session via `scripts/backfill-dues-ledger.ts` (see that
-  same work-log entry) — production dues ledger total is now $2,501.00.
 - [ ] **T-13 — Reconcile the 24 monthly bank-statement PDFs** (Jul 2025–Jun 2026, both accounts, in
   the transfer-documents folder) against the imported register; mark discrepancies here.
 - [ ] **T-14 — Upload the Foundation's IRS determination letter** to the Ledger's filings surface
@@ -196,23 +221,6 @@ can be referenced from work-logs, board minutes, and future sessions.
   (v1.26.0) will WARN on the Foundation's balance because its oldest income exceeds the 365-day
   holding period. LCI guidance allows aged public funds when earmarked for specific projects —
   document any such earmarks in board minutes. (In-app earmark support is a tracked feature follow-up.)
-
-- [ ] **T-18 — Structured check numbers in the Ledger.** *(In progress, 2026-07-21 — Bank
-  Reconciliation inc1.)* Original framing below turned out to be wrong on inspection
-  (DECISION-034): memo/party text almost never carries a check number, and the
-  uncashed-checks list has never read memo text for detection (it detects via
-  `paymentMethod='check'` + `flow='expense'` + `reconciled=false`; memo is only
-  ever displayed). The real numbers are recoverable from the original Quicken
-  register CSVs' "Check #" column. Schema (`check_number` text column + index)
-  and the backfill script (`scripts/backfill-check-numbers.ts`) are built and
-  dry-run verified against local dev: 101 of 105 check rows matched
-  unambiguously; 4 are genuinely ambiguous (two same-day/same-amount/same-payee
-  check pairs — see script output) and need manual resolution, not a guess.
-  `--apply` has **not** been run yet — pending treasurer review of the dry-run
-  output. Original (superseded) framing: ~~Check numbers from the register live
-  in free-text memos (e.g. "Check #8249" context only in memo/party text). The
-  Ledger dashboard's uncashed-checks list (2026-07-20 feature, DECISION-031)
-  reads memo text in v1.~~
 
 - [ ] **T-17 — Zeffy donations flow through the Activity Fund (plan revised 2026-07-21).**
   ~~Original plan: open a second Zeffy account so the club account backs the dues form and the
@@ -250,37 +258,6 @@ can be referenced from work-logs, board minutes, and future sessions.
   manual assignment), (c) re-run the backfill against production when this ships (same script,
   production DATABASE_URL) or port via the dev→prod script.*
 
-- [x] **T-23 — Public gift descriptions + Legion reclassification (both DBs).** — **2026-07-21
-  done** (treasurer approved content row-by-row): 51 treasurer-curated public notes applied to
-  local and production after the v1.31.0 deploy (scholarship schools confirmed — Arden=North,
-  Emilie=Central, Imani=South, memos correct as-is; 2025 recipients generic; The Big Bus =
-  mobile-classroom tutoring + school food-pantry drives; OSSBPTS = Ohio State School for the
-  Blind; both $200 Ohio Lions gifts = sensory garden). Both $650 American Legion Post 171 checks
-  (4/2025, 3/2026) reclassified Grant out → Fundraising event costs with matching cause (pancake
-  breakfast venue rental, per treasurer + the books' own $250/$840 hall-rental precedent) —
-  −$1,300 from giving totals. Apply script: idempotent, natural-key matched (kept in session
-  scratchpad; regenerate from this entry if ever needed).
-
-- [x] **T-22 — Mirror local book corrections to production.** — **2026-07-21 done** (treasurer
-  approved): check-number backfill applied to production (100 script-matched rows + 1 direct
-  update for check #8263/Arborfest, whose prod memo lacked the `[quicken-import]` marker so the
-  matcher skipped it); 3 debit-card mistags corrected; the 7 Bags to Benches rows moved to the
-  new non-giving "Program supplies" categories. Verified post-apply: 101 rows with check
-  numbers, Arborfest = 8263, 7 rows in Program supplies (counts_as_giving = false), 5
-  import-marked checks intentionally still blank (4 Gates At Eight + 1 Don Niebling — tracked
-  in T-21). Production and local books now match on all of today's corrections — NOTHING further
-  is owed to production for this item. (Historical record of what was mirrored on 2026-07-21:
-  (1) check-number backfill via `scripts/backfill-check-numbers.ts --apply --fix-payment-method`
-  against production — 101 check numbers written, 3 debit-card mistags corrected; (2) the 7 Bags
-  to Benches supply-reimbursement rows — Jane Enneking, Howard Baum, Costco; $374.53 total,
-  `beneficiary_cause ILIKE '%bag%'` — moved out of "Service projects" into a new non-giving
-  "Program supplies" expense category created in both entities, `counts_as_giving = false`, per
-  treasurer decision, since they were supply reimbursements, not gifts. Both verified live against
-  production 2026-07-28.)
-  Context: 2026-05-18 check #8263 to The City of Westerville ($400) was confirmed as the
-  Autumn Arborfest 2026 sponsorship — already correctly memoed and counted under
-  "Community & Civic"; no change needed.
-
 - [ ] **T-20 — Minute the petty-cash opening adjustment.** 2026-07-21: $250 of petty cash on hand
   (origin predates the books / unknown) was brought onto the books as an opening-balance
   adjustment — club Administrative Fund opening raised $19,090.10 → $19,340.10 in production and
@@ -288,6 +265,13 @@ can be referenced from work-logs, board minutes, and future sessions.
   Checking. Remaining: record one line in the next board minutes ("$250 petty cash on hand brought
   onto the books, opening-balance adjustment"); count the box and confirm it actually holds $250;
   going forward, record cash spent from the box as normal expenses against the Petty Cash account.
+  *2026-07-30: **Motion 2 drafted** in `docs/board-motions.md` — donate the $250 petty cash to the
+  Foundation and close the Petty Cash account (rather than maintain an idle box). **First count the
+  box to confirm it holds $250** (the amount is unverified). This is an **Administrative → Foundation**
+  move, which the transfer/sweep feature blocks by design (deny-by-default) — on approval, either open
+  that direction (one-branch flip in `ledger-transfer-policy.ts`) or record two manual entries citing
+  the minute. Keep the "minute the opening adjustment" note below regardless — the board should record
+  both that the $250 was brought onto the books AND (if passed) that it's being donated out.*
   NOTE for future sessions: `scripts/import-quicken-ledger.ts --apply` hard-codes the register-only
   opening ($19,090.10) and would clobber this adjustment if ever re-run — re-apply the +$250
   afterward (the port script is safe; it copies dev's live values).

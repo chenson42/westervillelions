@@ -591,3 +591,13 @@ Design each with the others in view — decisions in one box in the next.
   resolve its Foundation partner and falls back to a generic "Transfer" label instead of "Sweep." Fix:
   widen the partner lookup to be entity-unscoped (mirror `getPendingApprovals`, which already resolves
   cross-entity partners). Confirmed cosmetic by code trace in the Phase 6 review.
+
+- [ ] **B-37 — Carry forward last year's causes AND cause line-items as a budget starting point.**
+  (added 2026-07-30, from Chris) When building a new fiscal year's budget, pre-populate not just the
+  categories but the prior year's **cause breakdowns and their line items** (labels + amounts) as an
+  editable starting point — today the budgeting page shows a *prior-year reference* column (v1.49) but
+  the treasurer still re-enters each cause/line by hand. Builds on the existing `budgets/seed` route
+  and the B-17/DECISION-047/048 cause-line model. Design questions: seed amounts from prior actuals or
+  prior budget; how it interacts with the "+ Add cause" flow (B-17); whether it's an explicit "copy
+  from FY-1" action vs. automatic on first open of an empty FY. Pairs with B-31 (printable budget) and
+  the guided-budget-setup flow.
