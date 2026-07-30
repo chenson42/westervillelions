@@ -7,7 +7,7 @@
  * and its N line items," one action, one transaction, DECISION-055 item 2).
  * New sibling route, following the existing `.../cause-lines/collapse`
  * precedent (a genuinely different address shape than the single-line PATCH
- * on `.../cause-lines`, so it gets its own file). Gate: LEDGER_MANAGE
+ * on `.../cause-lines`, so it gets its own file). Gate: LEDGER_MANAGE or BUDGET_EDIT
  *
  * Restore uses this SAME endpoint with `pendingDelete: false` — no time
  * limit, a persistent "Restore this group" control, matching the uniform
@@ -33,7 +33,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { setBudgetCauseGroupPendingDelete } from "@/lib/ledger-queries";
 
@@ -49,7 +49,7 @@ export async function PATCH(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

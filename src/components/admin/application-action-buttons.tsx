@@ -61,7 +61,7 @@ export default function ApplicationActionButtons({ id }: { id: string }) {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex flex-col gap-2 sm:flex-row md:flex-col">
           <button
             onClick={() => handleAction("approve")}
             disabled={isPending}

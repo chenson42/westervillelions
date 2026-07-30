@@ -10,6 +10,15 @@
  *   - syncDuesDelete hard-deletes an unreconciled row and sets stale on a reconciled row
  *   - Fund-not-found error returns { syncFailed: true } without throwing
  *   - Postgres serialization errors (40001/40P01) are re-thrown
+ *
+ * docs/work-log/2026-07-29-default-bank-account.md (bug fix) added a Step 3
+ * (bank-account resolution) between the fund lookup and the category lookup —
+ * makeTx's select-call-count table below shifts accordingly (bankAccountRows
+ * is now call #3; catRows/memberRows moved to #4/#5). New coverage:
+ *   - syncDuesCreate sets bankAccountId on the inserted row from the Club
+ *     entity's default account
+ *   - syncDuesCreate returns { syncFailed: true } (no insert) when no default
+ *     bank account is configured for the Club entity
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -24,6 +33,7 @@ import { syncDuesCreate, syncDuesUpdate, syncDuesDelete } from "./dues-ledger-sy
 function makeTx(opts: {
   entityRows?: unknown[];
   fundRows?: unknown[];
+  bankAccountRows?: unknown[];
   catRows?: unknown[];
   memberRows?: unknown[];
   linkedTxnRows?: unknown[];
@@ -39,10 +49,11 @@ function makeTx(opts: {
     }),
   });
 
-  // select() with two .where() calls (entity query has one .where(), funds
-  // query has .where(and(...))) — we need to track call count to return
-  // the right data for each step.
+  // select() call order for syncDuesCreate: 1=entity, 2=fund,
+  // 3=bank account (default-bank-account bug fix), 4=category, 5=member.
+  // Track call count to return the right data for each step.
   let selectCallCount = 0;
+  let insertedValues: unknown;
 
   const tx = {
     select: vi.fn().mockImplementation(() => {
@@ -51,13 +62,15 @@ function makeTx(opts: {
       let rows: unknown[] = [];
       if (c === 1) rows = opts.entityRows ?? [];
       else if (c === 2) rows = opts.fundRows ?? [];
-      else if (c === 3) rows = opts.catRows ?? [];
-      else if (c === 4) rows = opts.memberRows ?? [];
+      else if (c === 3) rows = opts.bankAccountRows ?? [{ id: "default-bank-account-id" }];
+      else if (c === 4) rows = opts.catRows ?? [];
+      else if (c === 5) rows = opts.memberRows ?? [];
       else rows = opts.linkedTxnRows ?? [];
       return selectChain(rows);
     }),
     insert: vi.fn().mockImplementation(() => ({
-      values: () => {
+      values: (v: unknown) => {
+        insertedValues = v;
         if (opts.insertShouldThrow) {
           return Promise.reject(opts.insertShouldThrow);
         }
@@ -79,7 +92,7 @@ function makeTx(opts: {
     })),
   };
 
-  return { tx, getSelectCallCount: () => selectCallCount };
+  return { tx, getSelectCallCount: () => selectCallCount, getInsertedValues: () => insertedValues };
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +121,37 @@ describe("syncDuesCreate", () => {
 
     expect(result).toEqual({});
     expect(tx.insert).toHaveBeenCalledOnce();
+  });
+
+  it("sets bankAccountId on the inserted row from the Club entity's default bank account — default-bank-account bug fix", async () => {
+    const { tx, getInsertedValues } = makeTx({
+      entityRows: [{ id: "club-entity-id" }],
+      fundRows: [{ id: "admin-fund-id" }],
+      bankAccountRows: [{ id: "default-bank-account-id" }],
+      catRows: [{ id: "club-dues-cat-id" }],
+      memberRows: [{ firstName: "Alice", lastName: "Smith" }],
+    });
+
+    const result = await syncDuesCreate(tx as never, validPayment, "user-id-abc");
+
+    expect(result).toEqual({});
+    expect(tx.insert).toHaveBeenCalledOnce();
+    expect(getInsertedValues()).toMatchObject({ bankAccountId: "default-bank-account-id" });
+  });
+
+  it("returns { syncFailed: true } (no insert) when no default bank account is configured for the Club entity — regression for the reconciliation-invisibility bug this fix closes", async () => {
+    const { tx } = makeTx({
+      entityRows: [{ id: "club-entity-id" }],
+      fundRows: [{ id: "admin-fund-id" }],
+      bankAccountRows: [], // no default configured
+      catRows: [{ id: "club-dues-cat-id" }],
+      memberRows: [{ firstName: "Alice", lastName: "Smith" }],
+    });
+
+    const result = await syncDuesCreate(tx as never, validPayment, "user-id-abc");
+
+    expect(result).toEqual({ syncFailed: true });
+    expect(tx.insert).not.toHaveBeenCalled();
   });
 
   it("returns { syncFailed: true } when Club entity is not found — regression for fund-not-found carve-out", async () => {

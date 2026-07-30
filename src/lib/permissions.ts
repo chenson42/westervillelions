@@ -55,6 +55,12 @@ export const FEATURES = {
   LEDGER_MANAGE: "ledger.manage",
   LEDGER_APPROVE: "ledger.approve",  // inc2: approve/reject pending disbursements + reimbursements
 
+  // Budget permissions (Budget Committee role) — additive to LEDGER_MANAGE/
+  // LEDGER_APPROVE on /admin/ledger/budgeting. No budget.approve key exists
+  // by design — lock/approve stays on LEDGER_APPROVE (board-only).
+  BUDGET_VIEW: "budget.view",
+  BUDGET_EDIT: "budget.edit",
+
   // Impact / Philanthropy dashboard (The Ledger — inc5: Impact Dashboard)
   IMPACT_VIEW: "impact.view",  // inc5: view member philanthropy/impact dashboard
 
@@ -122,6 +128,9 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.LEDGER_RECORD]: "Record, edit, and delete ledger transactions",
   [FEATURES.LEDGER_MANAGE]: "Manage funds, budgets, entities, and opening balances",
   [FEATURES.LEDGER_APPROVE]: "Approve and reject pending disbursements and reimbursements",
+
+  [FEATURES.BUDGET_VIEW]: "View budgets",
+  [FEATURES.BUDGET_EDIT]: "Create and edit budget line items",
 
   [FEATURES.IMPACT_VIEW]: "View the member philanthropy and community impact dashboard",
 

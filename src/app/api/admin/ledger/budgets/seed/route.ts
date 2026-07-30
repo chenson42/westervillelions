@@ -3,7 +3,8 @@
  *
  * Guided Budgeting — seeds next year's budget from prior-year actuals (or
  * prior-year budget, per the fund-wide fallback) for one or more funds of an
- * entity. Gate: LEDGER_MANAGE.
+ * entity. Gate: LEDGER_MANAGE OR BUDGET_EDIT (widened additively —
+ * docs/work-log/2026-07-29-budget-permissions.md).
  *
  * Never trusts client-supplied amounts: the proposed lines are recomputed
  * fresh, server-side, inside this request (computeSeedFromPriorYear), then
@@ -81,7 +82,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ledgerCategories } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import {
   getEntityById,
@@ -157,7 +158,10 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+    // Gate widened additively (docs/work-log/2026-07-29-budget-permissions.md)
+    // to accept BUDGET_EDIT alongside the existing LEDGER_MANAGE — nothing
+    // that could write before loses that ability.
+    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

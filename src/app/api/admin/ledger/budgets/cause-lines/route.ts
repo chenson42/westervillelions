@@ -11,7 +11,7 @@
  * breakdown mode" — there is no separate "convert to breakdown" endpoint; the
  * client pre-fills the first row locally and this route commits it like any
  * other (see docs/work-log/2026-07-27-ledger-cause-budget-lines.md Phase 3).
- * Gate: LEDGER_MANAGE
+ * Gate: LEDGER_MANAGE or BUDGET_EDIT
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * No `id` in the body → CREATE
@@ -71,7 +71,7 @@
  * as of the Budgeting Page Restructure, which uses the PATCH flag-flip above
  * instead. Left in place rather than removed (a 30-day code-review candidate,
  * not a Phase 4 task — grep for other callers before touching it).
- * Gate: LEDGER_MANAGE
+ * Gate: LEDGER_MANAGE or BUDGET_EDIT
  *
  * Body: { id: string }
  * Response 200: { action: 'line_deleted', categoryTotalCents: number }
@@ -84,7 +84,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import {
   createBudgetCauseLine,
@@ -105,7 +105,7 @@ export async function PATCH(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -242,7 +242,7 @@ export async function DELETE(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

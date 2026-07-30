@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import TransactionFormDialog from "./transaction-form-dialog";
+import SplitTransactionDialog from "./split-transaction-dialog";
 import type { LedgerTransaction, LedgerFund, LedgerCategory, LedgerBankAccount } from "@/lib/db/schema";
 
 interface TransactionActionsProps {
@@ -35,9 +36,22 @@ export default function TransactionActions({
   const router = useRouter();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const isTransfer = Boolean(transaction.transferGroupId);
+
+  // Split eligibility (base conditions checked client-side; the authoritative
+  // guards — approved, rejected, reconciled, reconciledSessionId,
+  // matched-in-any-reconciliation-session, and transfer-leg — live server-side
+  // on the /split route and surface via toast.error if hit anyway, e.g. a
+  // stale row). Transfer legs are excluded here too: splitting one leg would
+  // break the transfer pair's mirror-sum invariant.
+  const canSplit =
+    transaction.status === "posted" &&
+    !transaction.approvedAt &&
+    !transaction.reconciled &&
+    !isTransfer;
 
   async function handleDelete() {
     setDeleting(true);
@@ -92,7 +106,12 @@ export default function TransactionActions({
 
   return (
     <>
-      <div className="flex items-center gap-2 justify-end">
+      {/* flex-wrap: a third action (Split) doesn't always fit on one line at
+          360px — wrap to a second line rather than clipping or overflowing
+          the cell (unlike the membership-buttons overflow bug). The parent
+          table already scrolls horizontally too, but this keeps the actions
+          cell itself well-behaved regardless. */}
+      <div className="flex flex-wrap items-center gap-2 justify-end">
         <button
           type="button"
           onClick={() => setEditOpen(true)}
@@ -100,6 +119,15 @@ export default function TransactionActions({
         >
           {isTransfer ? "Edit transfer" : "Edit"}
         </button>
+        {canSplit && (
+          <button
+            type="button"
+            onClick={() => setSplitOpen(true)}
+            className="text-xs font-medium text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-2 py-1"
+          >
+            Split
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setDeleteOpen(true)}
@@ -130,6 +158,15 @@ export default function TransactionActions({
         initialValues={editInitialValues}
         transferPartnerId={transferPartner?.id}
       />
+
+      {canSplit && (
+        <SplitTransactionDialog
+          transactionId={transaction.id}
+          currentAmountCents={transaction.amountCents}
+          open={splitOpen}
+          onOpenChange={setSplitOpen}
+        />
+      )}
     </>
   );
 }

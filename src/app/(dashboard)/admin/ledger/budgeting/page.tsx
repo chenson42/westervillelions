@@ -35,22 +35,30 @@ export default async function AdminLedgerBudgetingPage({
 }: {
   searchParams: Promise<{ entity?: string; fy?: string }>;
 }) {
-  // --- Auth: two-tier gate (Ruling 3). Guided setup now serves two distinct
-  // audiences: LEDGER_MANAGE holders who build the budget line-by-line, and
-  // LEDGER_APPROVE holders (e.g. board members) who only need to review and
-  // lock/unlock it — the latter may not hold LEDGER_MANAGE at all. Page
-  // admission is either/or; canManage/canApprove separately gate individual
-  // controls below (mirrors reimbursements/page.tsx L56-73).
+  // --- Auth: two-tier gate (Ruling 3), widened additively by the Budget
+  // Permissions feature (docs/work-log/2026-07-29-budget-permissions.md) to
+  // admit BUDGET_VIEW/BUDGET_EDIT holders (Treasurer, Budget Committee)
+  // alongside the existing LEDGER_MANAGE (builds the budget) and
+  // LEDGER_APPROVE (reviews and locks/unlocks it, e.g. board members who may
+  // not hold LEDGER_MANAGE at all) holders. Page admission is any-of;
+  // canManage/canApprove separately gate individual controls below (mirrors
+  // reimbursements/page.tsx L56-73). No budget.approve key exists by
+  // design — canApprove stays LEDGER_APPROVE-only, untouched.
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
 
   const canAccess = await hasAnyFeature(session.user.id, [
     FEATURES.LEDGER_MANAGE,
     FEATURES.LEDGER_APPROVE,
+    FEATURES.BUDGET_VIEW,
+    FEATURES.BUDGET_EDIT,
   ]);
   if (!canAccess) redirect("/access-pending");
 
-  const canManage = await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE);
+  const canManage = await hasAnyFeature(session.user.id, [
+    FEATURES.LEDGER_MANAGE,
+    FEATURES.BUDGET_EDIT,
+  ]);
   const canApprove = await hasFeature(session.user.id, FEATURES.LEDGER_APPROVE);
 
   // --- Params ---

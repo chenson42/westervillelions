@@ -134,7 +134,16 @@ export default function TransactionForm({
   const [memo, setMemo] = useState(initialValues?.memo ?? "");
   const [paymentMethod, setPaymentMethod] = useState(initialValues?.paymentMethod ?? "check");
   const [checkNumber, setCheckNumber] = useState(initialValues?.checkNumber ?? "");
-  const [bankAccountId, setBankAccountId] = useState(initialValues?.bankAccountId ?? "");
+  // Default/operating account (default-bank-account bug fix): every
+  // transaction must carry a bank account by construction. Pre-fill the
+  // entity's default whenever there's no stored value to fall back to —
+  // covers both new transactions (initialValues undefined) AND editing a
+  // legacy row whose stored bankAccountId is NULL, so opening Edit on one of
+  // those rows is itself a one-click fix.
+  const defaultBankAccountId = bankAccounts.find((a) => a.isDefault)?.id ?? "";
+  const [bankAccountId, setBankAccountId] = useState(
+    initialValues?.bankAccountId ?? defaultBankAccountId
+  );
   const [beneficiaryCause, setBeneficiaryCause] = useState("");
   const [publicNote, setPublicNote] = useState(initialValues?.publicNote ?? "");
   const [submitting, setSubmitting] = useState(false);
@@ -202,6 +211,10 @@ export default function TransactionForm({
       toast.error("Amount exceeds the maximum allowed ($21,474,836.47).");
       return;
     }
+    if (!bankAccountId) {
+      toast.error("Select a bank account before saving this transaction.");
+      return;
+    }
 
     if (isTransfer && !isEdit) {
       // New transfer path
@@ -235,7 +248,7 @@ export default function TransactionForm({
           amountCents,
           txnDate,
           memo: memo || null,
-          bankAccountId: bankAccountId || null,
+          bankAccountId,
           ...(isEditingTransfer
             ? {}
             : {
@@ -271,7 +284,7 @@ export default function TransactionForm({
           txnDate,
           amountCents,
           memo: memo || null,
-          bankAccountId: bankAccountId || null,
+          bankAccountId,
         };
       } else {
         // New regular transaction
@@ -288,7 +301,7 @@ export default function TransactionForm({
           memo: memo || null,
           paymentMethod: paymentMethod || null,
           checkNumber: checkNumber || null,
-          bankAccountId: bankAccountId || null,
+          bankAccountId,
           beneficiaryCause: beneficiaryCause.trim() || null,
           publicNote: publicNote.trim() || null,
           // Receipt (DECISION-035): the opaque key already minted by
@@ -694,19 +707,19 @@ export default function TransactionForm({
         </div>
       )}
 
-      {/* Bank account (optional) */}
+      {/* Bank account (required — default-bank-account bug fix) */}
       {bankAccounts.length > 0 && (
         <div>
           <label htmlFor="txn-bank" className="block text-sm font-medium text-gray-700 mb-1">
-            Bank Account <span className="text-gray-400 font-normal">(optional)</span>
+            Bank Account
           </label>
           <select
             id="txn-bank"
             value={bankAccountId}
             onChange={(e) => setBankAccountId(e.target.value)}
+            required
             className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-8 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
           >
-            <option value="">Not specified</option>
             {bankAccounts.map((acct) => (
               <option key={acct.id} value={acct.id}>
                 {acct.name} {acct.last4 ? `(…${acct.last4})` : ""}

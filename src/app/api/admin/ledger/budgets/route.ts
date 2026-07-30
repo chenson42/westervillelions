@@ -3,7 +3,9 @@
  *
  * Upsert/delete a budget line's amount, OR mark/restore a line as
  * pending-delete-until-finalize (DECISION-052/053, Increment 2 of
- * docs/work-log/2026-07-28-budgeting-page-redesign.md). Gate: LEDGER_MANAGE.
+ * docs/work-log/2026-07-28-budgeting-page-redesign.md). Gate: LEDGER_MANAGE
+ * OR BUDGET_EDIT (widened additively —
+ * docs/work-log/2026-07-29-budget-permissions.md).
  *
  * Two mutually-exclusive request-body shapes for the same
  * (fundId, fiscalYear, categoryId, flow) tuple. Sending both or neither of
@@ -48,7 +50,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { upsertBudgetLine, setBudgetLinePendingDelete } from "@/lib/ledger-queries";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 
 const VALID_FLOWS = ["income", "expense"] as const;
@@ -59,7 +61,10 @@ export async function PATCH(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+    // Gate widened additively (docs/work-log/2026-07-29-budget-permissions.md)
+    // to accept BUDGET_EDIT alongside the existing LEDGER_MANAGE — nothing
+    // that could write before loses that ability.
+    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

@@ -14,7 +14,12 @@ interface NavItem {
   name: string;
   href: string;
   icon: string;
-  requiredFeature?: string;
+  // A single feature (existing items, unchanged) or a list of features where
+  // holding ANY one admits the item — needed once a nav target can be
+  // reached via more than one permission (e.g. Budgeting: LEDGER_MANAGE,
+  // LEDGER_APPROVE, BUDGET_VIEW, or BUDGET_EDIT). See
+  // docs/work-log/2026-07-29-budget-permissions.md.
+  requiredFeature?: string | string[];
 }
 
 interface NavGroup {
@@ -63,7 +68,7 @@ const navigation: NavGroup[] = [
         requiredFeature: FEATURES.ADMIN_ROLES,
       },
       {
-        name: "Membership",
+        name: "Applications",
         href: "/admin/membership",
         icon: "📋",
         requiredFeature: FEATURES.MEMBERSHIP_MANAGE,
@@ -93,7 +98,12 @@ const navigation: NavGroup[] = [
         name: "Budgeting",
         href: "/admin/ledger/budgeting",
         icon: "🧮",
-        requiredFeature: FEATURES.LEDGER_MANAGE,
+        requiredFeature: [
+          FEATURES.LEDGER_MANAGE,
+          FEATURES.LEDGER_APPROVE,
+          FEATURES.BUDGET_VIEW,
+          FEATURES.BUDGET_EDIT,
+        ],
       },
       {
         name: "Reconciliation",
@@ -265,7 +275,10 @@ export default function AdminSidebar({
         ? group.items
         : group.items.filter((item) => {
             if (!item.requiredFeature) return true;
-            return userFeatures.includes(item.requiredFeature);
+            const required = Array.isArray(item.requiredFeature)
+              ? item.requiredFeature
+              : [item.requiredFeature];
+            return required.some((f) => userFeatures.includes(f));
           }),
     }))
     .filter((group) => group.items.length > 0);

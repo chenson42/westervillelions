@@ -1,12 +1,16 @@
 /**
  * Unit tests for PATCH /api/admin/ledger/budgets — the two-shape dispatch
  * added by DECISION-052/053 (Increment 2 of
- * docs/work-log/2026-07-28-budgeting-page-redesign.md). Covers Phase 3
- * design's "Unit Tests to Write in Phase 4" item: the 400 when both/neither
- * of annualAmountCents/pendingDelete are present. The underlying
- * upsertBudgetLine/setBudgetLinePendingDelete guard sequences are covered
- * directly in src/lib/ledger-queries.test.ts — this file only exercises the
- * route's own dispatch/shape-validation logic, mocking both query functions.
+ * docs/work-log/2026-07-28-budgeting-page-redesign.md), plus the permission
+ * gate widened by the Budget Permissions feature
+ * (docs/work-log/2026-07-29-budget-permissions.md) from a single
+ * LEDGER_MANAGE check to hasAnyFeature([LEDGER_MANAGE, BUDGET_EDIT]).
+ * Covers Phase 3 design's "Unit Tests to Write in Phase 4" item: the 400
+ * when both/neither of annualAmountCents/pendingDelete are present. The
+ * underlying upsertBudgetLine/setBudgetLinePendingDelete guard sequences are
+ * covered directly in src/lib/ledger-queries.test.ts — this file only
+ * exercises the route's own dispatch/shape-validation/permission logic,
+ * mocking both query functions.
  *
  * Hermetic: mocks @/lib/auth, @/lib/permissions-server, and
  * @/lib/ledger-queries (importing the real module would pull in @/lib/db,
@@ -18,7 +22,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
-vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
+vi.mock("@/lib/permissions-server", () => ({ hasAnyFeature: vi.fn() }));
 vi.mock("@/lib/ledger-queries", () => ({
   upsertBudgetLine: vi.fn(),
   setBudgetLinePendingDelete: vi.fn(),
@@ -26,7 +30,8 @@ vi.mock("@/lib/ledger-queries", () => ({
 
 import { PATCH } from "./route";
 import { auth } from "@/lib/auth";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { upsertBudgetLine, setBudgetLinePendingDelete } from "@/lib/ledger-queries";
 
 function makeRequest(body: unknown): NextRequest {
@@ -42,9 +47,46 @@ const VALID_SHAPE = {
 
 beforeEach(() => {
   vi.mocked(auth).mockResolvedValue({ user: { id: "user-1" } } as never);
-  vi.mocked(hasFeature).mockResolvedValue(true);
+  vi.mocked(hasAnyFeature).mockResolvedValue(true);
   vi.mocked(upsertBudgetLine).mockReset();
   vi.mocked(setBudgetLinePendingDelete).mockReset();
+});
+
+describe("PATCH /api/admin/ledger/budgets — permission gate (budget-permissions feature)", () => {
+  it("401s when there is no session", async () => {
+    vi.mocked(auth).mockResolvedValueOnce(null as never);
+
+    const response = await PATCH(makeRequest({ ...VALID_SHAPE, annualAmountCents: 5_000 }));
+
+    expect(response.status).toBe(401);
+    expect(hasAnyFeature).not.toHaveBeenCalled();
+    expect(upsertBudgetLine).not.toHaveBeenCalled();
+  });
+
+  it("403s when the caller holds neither LEDGER_MANAGE nor BUDGET_EDIT", async () => {
+    vi.mocked(hasAnyFeature).mockResolvedValueOnce(false);
+
+    const response = await PATCH(makeRequest({ ...VALID_SHAPE, annualAmountCents: 5_000 }));
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toBe("Forbidden");
+    expect(hasAnyFeature).toHaveBeenCalledWith("user-1", [
+      FEATURES.LEDGER_MANAGE,
+      FEATURES.BUDGET_EDIT,
+    ]);
+    expect(upsertBudgetLine).not.toHaveBeenCalled();
+  });
+
+  it("a BUDGET_EDIT-only holder (no LEDGER_MANAGE) can write — hasAnyFeature resolves true", async () => {
+    vi.mocked(hasAnyFeature).mockResolvedValueOnce(true);
+    vi.mocked(upsertBudgetLine).mockResolvedValue({ ok: true, action: "upserted", id: "budget-1" });
+
+    const response = await PATCH(makeRequest({ ...VALID_SHAPE, annualAmountCents: 5_000 }));
+
+    expect(response.status).toBe(200);
+    expect(upsertBudgetLine).toHaveBeenCalled();
+  });
 });
 
 describe("PATCH /api/admin/ledger/budgets — shape dispatch (DECISION-052/053)", () => {

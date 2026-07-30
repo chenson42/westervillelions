@@ -3,7 +3,8 @@
  *
  * Category-grain star/note write for Budget Star & Notes
  * (DECISION-057, docs/work-log/2026-07-28-budget-star-notes.md). Gate:
- * LEDGER_MANAGE.
+ * LEDGER_MANAGE OR BUDGET_EDIT (widened additively —
+ * docs/work-log/2026-07-29-budget-permissions.md).
  *
  * INTENTIONAL: this route never calls assertBudgetUnlocked(). Star/note are
  * working annotations, not budget figures — Phase 1 Decision 6
@@ -40,7 +41,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { setBudgetCategoryAnnotation } from "@/lib/ledger-queries";
 
@@ -56,7 +57,10 @@ export async function PATCH(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+    // Gate widened additively (docs/work-log/2026-07-29-budget-permissions.md)
+    // to accept BUDGET_EDIT alongside the existing LEDGER_MANAGE — nothing
+    // that could write before loses that ability.
+    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

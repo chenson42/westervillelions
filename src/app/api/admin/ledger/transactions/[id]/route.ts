@@ -22,7 +22,7 @@
  *   memo?: string | null;
  *   paymentMethod?: string | null;
  *   checkNumber?: string | null;  // structured check # (T-18); trimmed, capped at 20 chars
- *   bankAccountId?: string | null;
+ *   bankAccountId?: string;  // required if present — null/blank 400s (default-bank-account bug fix); omit to leave unchanged
  *   beneficiaryCause?: string | null;
  *   publicNote?: string | null;  // treasurer-curated, member-facing annotation
  *     // on /members/impact; null clears; non-null trims/caps at 200 chars
@@ -319,8 +319,20 @@ export async function PATCH(
       update.checkNumber = checkNumberResult.value;
     }
 
+    // Bank account is required — every transaction must carry a bank account
+    // by construction (default-bank-account bug fix). Unlike most optional
+    // PATCH fields, an explicit null/blank here is REJECTED, not cleared —
+    // clearing it would silently reintroduce the reconciliation-invisibility
+    // bug this fix exists to close. Omitting the field entirely (not present
+    // in the body) still leaves the existing value untouched, as before.
     if (body.bankAccountId !== undefined) {
-      update.bankAccountId = body.bankAccountId ?? null;
+      if (!body.bankAccountId || typeof body.bankAccountId !== "string") {
+        return NextResponse.json(
+          { error: "Select a bank account before saving this transaction." },
+          { status: 400 },
+        );
+      }
+      update.bankAccountId = body.bankAccountId;
     }
     if (body.beneficiaryCause !== undefined) {
       update.beneficiaryCause =

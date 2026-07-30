@@ -528,6 +528,11 @@ export const ledgerBankAccounts = pgTable("ledger_bank_accounts", {
   accountType: text("account_type").notNull().default("checking"), // 'checking' | 'savings' | 'investment'
   requiredSigners: integer("required_signers").notNull().default(2),
   isActive: boolean("is_active").notNull().default(true),
+  // The entity's default/operating account — every new transaction (manual
+  // entry or dues-sync auto-post) resolves to this account unless the
+  // treasurer explicitly overrides it. At most one true per entityId,
+  // enforced by a partial unique index (see drizzle/migrations/0070_*).
+  isDefault: boolean("is_default").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

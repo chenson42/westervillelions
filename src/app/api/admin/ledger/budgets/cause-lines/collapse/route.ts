@@ -2,7 +2,7 @@
  * POST /api/admin/ledger/budgets/cause-lines/collapse
  *
  * Collapse a category's cause breakdown back into a single lump sum (B-17
- * Increment A, Human Answer 4: sums the line items). Gate: LEDGER_MANAGE
+ * Increment A, Human Answer 4: sums the line items). Gate: LEDGER_MANAGE or BUDGET_EDIT
  *
  * Body: { fundId: string; fiscalYear: number; categoryId: string; flow: 'income' | 'expense' }
  *
@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { collapseBudgetCauseLines } from "@/lib/ledger-queries";
 
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

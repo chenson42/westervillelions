@@ -25,6 +25,7 @@ import {
   ledgerEntities,
   ledgerFunds,
   ledgerCategories,
+  ledgerBankAccounts,
   members,
 } from "@/lib/db/schema";
 import { eq, and, ilike } from "drizzle-orm";
@@ -56,9 +57,12 @@ export type SyncResult = {
  *
  * 1. Resolves Club entity (kind 501c4, slug 'club').
  * 2. Finds the Administrative fund for the Club entity (slug 'administrative').
- * 3. Finds the "Club dues" income category (or proceeds without one — graceful).
- * 4. Resolves member full name.
- * 5. Inserts a ledger_transactions row.
+ * 3. Finds the Club entity's default/operating bank account (isDefault=true) —
+ *    required so the inserted row is never invisible to reconciliation
+ *    (default-bank-account bug fix, docs/work-log/2026-07-29-default-bank-account.md).
+ * 4. Finds the "Club dues" income category (or proceeds without one — graceful).
+ * 5. Resolves member full name.
+ * 6. Inserts a ledger_transactions row.
  *
  * Best-effort: if any step throws (missing fund, missing entity, insert fails for
  * application reasons), catches and returns { syncFailed: true } without re-throwing.
@@ -110,7 +114,30 @@ export async function syncDuesCreate(
       return { syncFailed: true };
     }
 
-    // Step 3: Find the "Club dues" income category (graceful — use null if missing)
+    // Step 3: Find the Club entity's default/operating bank account. Every
+    // ledger transaction must carry a bank account by construction — without
+    // this, the inserted row's bankAccountId is NULL and the reconciliation
+    // candidate query (which filters on bank_account_id = <session account>)
+    // never surfaces it. Follows the existing best-effort carve-out pattern:
+    // if no default is configured, do NOT fall through to inserting NULL —
+    // log + syncFailed, dues payment still commits.
+    const bankAccountRows = await tx
+      .select({ id: ledgerBankAccounts.id })
+      .from(ledgerBankAccounts)
+      .where(
+        and(
+          eq(ledgerBankAccounts.entityId, clubEntity.id),
+          eq(ledgerBankAccounts.isDefault, true),
+        ),
+      )
+      .limit(1);
+    const defaultBankAccount = bankAccountRows[0];
+    if (!defaultBankAccount) {
+      console.error("[dues-ledger-sync] syncDuesCreate: no default bank account configured for Club entity");
+      return { syncFailed: true };
+    }
+
+    // Step 4: Find the "Club dues" income category (graceful — use null if missing)
     const catRows = await tx
       .select({ id: ledgerCategories.id })
       .from(ledgerCategories)
@@ -125,7 +152,7 @@ export async function syncDuesCreate(
       .limit(1);
     const categoryId = catRows[0]?.id ?? null;
 
-    // Step 4: Resolve member full name
+    // Step 5: Resolve member full name
     const memberRows = await tx
       .select({ firstName: members.firstName, lastName: members.lastName })
       .from(members)
@@ -135,10 +162,11 @@ export async function syncDuesCreate(
       ? `${memberRows[0].firstName} ${memberRows[0].lastName}`.trim()
       : "Unknown Member";
 
-    // Step 5: Insert the ledger transaction
+    // Step 6: Insert the ledger transaction
     await tx.insert(ledgerTransactions).values({
       entityId: clubEntity.id,
       fundId: adminFund.id,
+      bankAccountId: defaultBankAccount.id,
       txnDate: payment.paymentDate,
       flow: "income",
       categoryId,

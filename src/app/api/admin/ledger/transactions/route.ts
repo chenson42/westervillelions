@@ -17,7 +17,7 @@
  *   memo?: string;
  *   paymentMethod?: string;    // 'check' | 'cash' | 'zeffy' | 'other'
  *   checkNumber?: string;      // structured check # (T-18); trimmed, capped at 20 chars
- *   bankAccountId?: string;
+ *   bankAccountId: string;     // required — 400 if missing/blank (default-bank-account bug fix)
  *   beneficiaryCause?: string;
  *   publicNote?: string;      // treasurer-curated, member-facing annotation on
  *     // /members/impact; trimmed, capped at 200 chars server-side (400 REJECT
@@ -35,7 +35,7 @@
  *   txnDate: string;
  *   amountCents: number;
  *   memo?: string;
- *   bankAccountId?: string;
+ *   bankAccountId: string;     // required — 400 if missing/blank
  * }
  * Response 201: { transferGroupId: string; derivedFiscalYear: number }
  */
@@ -183,6 +183,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: amountError }, { status: 400 });
     }
 
+    // Bank account is required — every transaction must carry a bank account
+    // by construction (default-bank-account bug fix,
+    // docs/work-log/2026-07-29-default-bank-account.md). The form pre-fills
+    // the entity's default account, so this only rejects a deliberately
+    // cleared selection.
+    if (!bankAccountId || typeof bankAccountId !== "string") {
+      return NextResponse.json(
+        { error: "Select a bank account before saving this transaction." },
+        { status: 400 },
+      );
+    }
+
     // party required for income
     if (flow === "income" && (!party || typeof party !== "string" || !party.trim())) {
       return NextResponse.json(
@@ -302,7 +314,7 @@ export async function POST(request: NextRequest) {
         memo: memo?.trim() ?? null,
         paymentMethod: paymentMethod ?? null,
         checkNumber: checkNumberResult.value,
-        bankAccountId: bankAccountId ?? null,
+        bankAccountId,
         beneficiaryCause: beneficiaryCause?.trim() ?? null,
         publicNote: publicNoteResult.value,
         receiptStorageKey: receiptStorageKey?.trim() ?? null,
@@ -379,6 +391,15 @@ async function handleTransfer(
   const amountError = validateAmount(amountCents);
   if (amountError) {
     return NextResponse.json({ error: amountError }, { status: 400 });
+  }
+
+  // Bank account is required — same construction guarantee as the normal
+  // transaction path above (default-bank-account bug fix).
+  if (!bankAccountId || typeof bankAccountId !== "string") {
+    return NextResponse.json(
+      { error: "Select a bank account before saving this transaction." },
+      { status: 400 },
+    );
   }
 
   // Validate both funds belong to the same entity (cross-entity transfers are rejected)
