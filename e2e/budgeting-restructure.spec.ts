@@ -46,7 +46,14 @@ import { signInAsAdmin } from "./helpers/auth";
 
 const FOUNDATION_ENTITY_SLUG = "foundation";
 const TEST_FISCAL_YEAR = 2099;
-const BUDGETING_URL = `/admin/ledger/budgeting?entity=${FOUNDATION_ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`;
+const CHARITABLE_FUND_SLUG = "charitable";
+// Budgeting Overview/Drill-Down Restructure (2026-07-30): the editor this
+// suite exercises moved off the overview (now read-only) onto a per-fund
+// drill-down route. Every test below that used to navigate to the overview
+// and edit in place now navigates straight to the Charitable Fund's
+// drill-down — same editing mechanics (BudgetEditor/BudgetCauseEditor are
+// unchanged), just a different URL housing them.
+const BUDGETING_URL = `/admin/ledger/budgeting/${CHARITABLE_FUND_SLUG}?entity=${FOUNDATION_ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`;
 const CATEGORY_NAME = "Charitable donation out";
 
 test.describe.configure({ mode: "serial" });
@@ -495,9 +502,17 @@ test.describe("Budgeting page restructure — /admin/ledger/budgeting", () => {
   test("print worksheet renders live cause/line detail compactly and excludes the pending-delete line", async ({
     page,
   }) => {
-    // Arrange
-    await page.goto(BUDGETING_URL);
-    const worksheet = page.locator("h1:has-text('Budget Worksheet')").locator("..").locator("..");
+    // Arrange — the print worksheet moved to the OVERVIEW page (Budgeting
+    // Overview/Drill-Down Restructure, B-31 fold-in): it's built from the
+    // same committed server data as the per-fund drill-down, but only the
+    // overview can produce the all-funds consolidated document, so it's
+    // never rendered on a per-fund drill-down page.
+    const overviewUrl = `/admin/ledger/budgeting?entity=${FOUNDATION_ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`;
+    await page.goto(overviewUrl);
+    const worksheet = page
+      .locator("h1:has-text('Annual Operating Budget')")
+      .locator("..")
+      .locator("..");
 
     // Assert — live detail present (category, both live cause groups, live labels)
     await expect(worksheet).toContainText(CATEGORY_NAME);

@@ -23,11 +23,16 @@ import { signInAsAdmin } from "./helpers/auth";
  * Uses the Activity Fund for every starred/noted fixture and leaves the
  * Administrative Fund (same entity, same FY) completely untouched so it
  * serves as the "zero stars/notes" control for the print-worksheet check.
- * The Club entity's page shows BOTH funds at once (unlike
- * budgeting-restructure.spec.ts's single-fund Foundation page), and several
- * category names (e.g. "Program supplies") exist in both funds' catalogs —
- * every locator below is therefore scoped to its fund's own card/section,
- * never resolved against the whole page.
+ *
+ * Budgeting Overview/Drill-Down Restructure (2026-07-30): editing now
+ * happens on the Activity Fund's own drill-down page (DRILLDOWN_URL, one
+ * fund only — several category names like "Program supplies" still exist in
+ * BOTH funds' catalogs generally, but only Activity Fund's copy is ever on
+ * screen here, so fund-scoping the locators below is now a belt-and-
+ * suspenders habit rather than a strict necessity). Approve & lock / Unlock
+ * and the print worksheet both moved to the overview (OVERVIEW_URL, shows
+ * BOTH funds) — the lock test and the print-worksheet test navigate there
+ * explicitly.
  *
  * Unlike budgeting-restructure.spec.ts, this suite DOES exercise the
  * Approve & lock / Unlock flow (needed to verify Decision 6's lock
@@ -46,7 +51,9 @@ import { signInAsAdmin } from "./helpers/auth";
 
 const ENTITY_SLUG = "club";
 const TEST_FISCAL_YEAR = 2099;
-const BUDGETING_URL = `/admin/ledger/budgeting?entity=${ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`;
+const ACTIVITY_FUND_SLUG = "activity";
+const DRILLDOWN_URL = `/admin/ledger/budgeting/${ACTIVITY_FUND_SLUG}?entity=${ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`;
+const OVERVIEW_URL = `/admin/ledger/budgeting?entity=${ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`;
 
 const LANDMINE_CATEGORY = "Event costs"; // Activity Fund, expense — gets amount + star + note
 const UNBUDGETED_CATEGORY = "Vision screening"; // Activity Fund, expense — star-only, never gets an amount
@@ -120,7 +127,7 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
     page,
   }) => {
     // Arrange
-    await page.goto(BUDGETING_URL);
+    await page.goto(DRILLDOWN_URL);
     const activityFund = fundCard(page, ACTIVITY_FUND_NAME);
     const amountInputs = activityFund.getByLabel(/^Budget for .+ \(expense\)$/);
     const labelsBefore = await amountInputs.evaluateAll((els) =>
@@ -178,7 +185,7 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
     page,
   }) => {
     // Arrange — give the category a real, non-zero budgeted amount first
-    await page.goto(BUDGETING_URL);
+    await page.goto(DRILLDOWN_URL);
     const activityFund = fundCard(page, ACTIVITY_FUND_NAME);
     const row = categoryRow(activityFund, LANDMINE_CATEGORY);
     const amountInput = row.getByLabel(`Budget for ${LANDMINE_CATEGORY} (expense)`);
@@ -271,7 +278,7 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
     // with two committed lines. Fund-scoped throughout: Administrative
     // Fund has its own, unrelated "Program supplies" category on the same
     // page.
-    await page.goto(BUDGETING_URL);
+    await page.goto(DRILLDOWN_URL);
     const activityFund = fundCard(page, ACTIVITY_FUND_NAME);
     const row = categoryRow(activityFund, CAUSE_CATEGORY);
     await row.getByRole("button", { name: "+ Add cause" }).click();
@@ -430,8 +437,11 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
   test("annotation controls stay enabled when the FY budget is Approve-&-locked, while amount inputs are disabled", async ({
     page,
   }) => {
-    // Arrange
-    await page.goto(BUDGETING_URL);
+    // Arrange — Approve & Lock now lives on the OVERVIEW only (Budgeting
+    // Overview/Drill-Down Restructure, Flow 6: the lock is scoped to
+    // (entity, FY), not to a single fund, so the Approve/Unlock panel moved
+    // off the per-fund editor entirely).
+    await page.goto(OVERVIEW_URL);
     await page.getByLabel("Board minute reference").fill("E2E QA lock test — not a real vote");
     await page.getByRole("button", { name: /Approve & lock for FY2099/ }).click();
     const lockDialog = page.getByRole("alertdialog");
@@ -440,6 +450,10 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
     await expect(page.getByText(`FY${TEST_FISCAL_YEAR} budget locked.`)).toBeVisible({
       timeout: 10_000,
     });
+
+    // Act — the editor itself (amount inputs disabled, annotation controls
+    // still enabled) is only checkable on the fund's own drill-down.
+    await page.goto(DRILLDOWN_URL);
 
     // Assert — amount input disabled while locked
     const activityFund = fundCard(page, ACTIVITY_FUND_NAME);
@@ -485,7 +499,8 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
     await expect(textarea).toHaveValue(NOTE_TEXT);
     await page.getByRole("button", { name: "Cancel" }).click();
 
-    // Cleanup — unlock so this doesn't leave FY2099 permanently locked
+    // Cleanup — unlock is back on the OVERVIEW too
+    await page.goto(OVERVIEW_URL);
     await page.getByLabel("Reason for unlocking").fill("E2E QA test cleanup — reopening for QA");
     await page.getByRole("button", { name: "Unlock to amend" }).click();
     const unlockDialog = page.getByRole("alertdialog");
@@ -495,7 +510,8 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
       { timeout: 10_000 },
     );
 
-    // Assert — amount input re-enabled after unlock
+    // Assert — amount input re-enabled after unlock, back on the drill-down
+    await page.goto(DRILLDOWN_URL);
     await expect(
       categoryRow(fundCard(page, ACTIVITY_FUND_NAME), LANDMINE_CATEGORY).getByLabel(
         `Budget for ${LANDMINE_CATEGORY} (expense)`,
@@ -506,8 +522,8 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
   test("print worksheet: star glyph + note render at both grains, and a fund with zero stars/notes prints with no stray rows", async ({
     page,
   }) => {
-    // Arrange
-    await page.goto(BUDGETING_URL);
+    // Arrange — the print worksheet lives on the OVERVIEW (shows both funds).
+    await page.goto(OVERVIEW_URL);
     const activityWorksheet = fundWorksheet(page, ACTIVITY_FUND_NAME);
     const adminWorksheet = fundWorksheet(page, ADMIN_FUND_NAME);
 

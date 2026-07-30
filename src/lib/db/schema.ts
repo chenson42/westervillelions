@@ -894,6 +894,39 @@ export const ledgerBudgetApprovals = pgTable(
 export type LedgerBudgetApproval = typeof ledgerBudgetApprovals.$inferSelect;
 export type NewLedgerBudgetApproval = typeof ledgerBudgetApprovals.$inferInsert;
 
+// Budget-level "Notes & Assumptions" (Budgeting Overview/Drill-Down
+// Restructure, DECISION-060) — one free-text note per (entityId, fiscalYear),
+// INDEPENDENT of ledgerBudgetApprovals. Deliberately a separate table, not a
+// nullable column on ledger_budget_approvals: a draft budget has no approval
+// row at all (getBudgetApproval returns null until the first Approve & lock),
+// so a note written DURING drafting — the primary use case — needs a home
+// that exists before any approval row does. Write path (PATCH
+// /api/admin/ledger/budget-notes) gates on LEDGER_MANAGE/BUDGET_EDIT only and
+// deliberately NEVER checks the budget lock, mirroring the existing
+// category-star/notes precedent (DECISION-057) — commentary isn't a budget
+// figure.
+export const ledgerBudgetNotes = pgTable(
+  "ledger_budget_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    fiscalYear: integer("fiscal_year").notNull(), // start year, e.g. 2026 = FY2026 — same convention as ledgerBudgetApprovals.fiscalYear
+    notes: text("notes").notNull().default(""),
+    updatedByUserId: uuid("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ledger_budget_notes_entity_year_key").on(t.entityId, t.fiscalYear),
+    index("ix_ledger_budget_notes_entity").on(t.entityId),
+  ],
+);
+
+export type LedgerBudgetNote = typeof ledgerBudgetNotes.$inferSelect;
+export type NewLedgerBudgetNote = typeof ledgerBudgetNotes.$inferInsert;
+
 // Settings — singleton row; guards inc1 guardrail checks (reserves threshold, bonded flag)
 export const ledgerSettings = pgTable("ledger_settings", {
   id: uuid("id").primaryKey().defaultRandom(),

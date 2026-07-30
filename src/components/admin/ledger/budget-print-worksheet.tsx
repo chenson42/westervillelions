@@ -1,5 +1,11 @@
 import { Fragment } from "react";
-import { formatBudgetReferenceCents, isCauseLineLive, sumBudgetCauseLines } from "@/lib/ledger";
+import {
+  computeFundPlanSums,
+  formatBudgetReferenceCents,
+  isCauseLineLive,
+  sumBudgetCauseLines,
+} from "@/lib/ledger";
+import type { BudgetApprovalSummary } from "@/components/admin/ledger/budget-approval-panel";
 
 interface PrintCauseLine {
   cause: string;
@@ -10,13 +16,12 @@ interface PrintCauseLine {
    *  isCauseLineLive, never read alone. Optional/defaulted (mirrors
    *  BudgetCauseLine's own field) so this type stays assignable from the
    *  same FundSetupItem.budgetEditorLines[].causeLines the page already
-   *  builds for GuidedBudgetSetup — no separate query for the print path. */
+   *  builds for the drill-down editor — no separate query for the print
+   *  path. */
   pendingDeleteAt?: string | null;
   /** Budget Star & Notes (DECISION-057, docs/work-log/2026-07-28-budget-
    *  star-notes.md). Optional (mirrors pendingDeleteAt?'s convention at this
-   *  grain) so this type stays assignable from the same
-   *  FundSetupItem.budgetEditorLines[].causeLines the page already builds
-   *  for GuidedBudgetSetup. */
+   *  grain). */
   starred?: boolean;
   note?: string | null;
 }
@@ -30,29 +35,20 @@ interface PrintLine {
   priorActualCents: number | null;
   /**
    * Soft-delete/restore-until-finalize (Increment 2, DECISION-052/053).
-   * Non-null lines are excluded entirely from the printout (see FlowTable)
-   * — the worksheet is a forward-looking plan of the budget that will
-   * actually take effect, and a line already marked for removal isn't part
-   * of that plan.
+   * Non-null lines are excluded entirely from the printout — the worksheet
+   * is a forward-looking plan of the budget that will actually take effect,
+   * and a line already marked for removal isn't part of that plan.
    */
   pendingDeleteAt: string | null;
   /**
    * Cause/beneficiary detail (Budgeting Page Restructure — folds in B-31:
    * line items on the printable/mailed budget). null = lump-sum category,
-   * never broken down by cause. Rendered compactly — per-cause subtotal +
-   * per-line label/amount — with the existing blank hand-annotation ruled
-   * lines staying at the category-subtotal grain only (Q4, resolved:
-   * compact), not duplicated per cause or per line.
+   * never broken down by cause.
    */
   causeLines: PrintCauseLine[] | null;
-  /**
-   * Budget Star & Notes (DECISION-057). Non-optional (mirrors
-   * pendingDeleteAt's non-optional convention at this grain — PrintFund is
-   * fed directly from FundSetupItem.budgetEditorLines, which always has both
-   * fields once this ships). Star renders as a "★ " prefix on the category
-   * name; note renders as a compact italic line directly under the row,
-   * only when non-empty.
-   */
+  /** Budget Star & Notes (DECISION-057). Star renders as a "★ " prefix on
+   *  the category name; note renders as a compact italic line directly
+   *  under the row, only when non-empty. */
   starred: boolean;
   note: string | null;
 }
@@ -63,101 +59,311 @@ interface PrintFund {
   budgetEditorLines: PrintLine[];
 }
 
+interface PrintableFund {
+  fund: PrintFund;
+  sums: { incomeCents: number; expenseCents: number };
+  openingCents: number;
+}
+
 /**
- * Print-only budget worksheet (2026-07-28-budgeting-page-redesign,
- * Increment 1, MUST-HAVE for the 2026-07-28 budget meeting). `hidden
- * print:block` — invisible on screen, shown only when the treasurer clicks
- * "Print / Save as PDF" (PrintBudgetButton) and the browser's print dialog
- * opens over this markup instead of the interactive GuidedBudgetSetup UI
- * (which is wrapped in `print:hidden` by the parent page).
+ * Board-presentation / mailed-review budget document (B-31, folded into the
+ * Budgeting Overview/Drill-Down Restructure). Rebuilt from the original
+ * live-meeting annotation sheet ("Budget Worksheet" — category grain, blank
+ * ruled lines, no totals, no balances) into a single, clean, mailable
+ * document per Chris's Locked Decisions (docs/work-log/2026-07-30-printable-
+ * budget-b31.md): a one-page all-funds Consolidated Summary ahead of
+ * page-broken per-fund detail sections carrying Income/Expense Total rows, a
+ * Net Surplus/(Deficit) line, and Beginning/Projected-Ending balance blocks,
+ * plus a three-state DRAFT/APPROVED/Reopened-for-Amendment status stamp and
+ * a reconciliation-completeness footnote.
  *
- * Deliberately a static snapshot built from server-fetched props — NOT the
- * live BudgetEditor `<input>` values — per Phase 1's recommendation (render
- * the current input's value as static text, not a live control, in print).
- * A treasurer who wants the printout to reflect an in-progress edit should
- * let it save (blur/Enter) first, same as any other BudgetEditor consumer.
+ * `hidden print:block` — invisible on screen, shown only when the treasurer
+ * clicks "Print / Save as PDF" and the browser's print dialog opens over
+ * this markup instead of the interactive editor (which is wrapped in
+ * `print:hidden` by the parent page).
  *
- * Each category prints with ~2 blank ruled lines for hand-written
- * additions/subtractions, grouped in its own `<tbody>` with
- * `break-inside-avoid-page` so a category and its blank lines never split
- * across a page boundary (Phase 1 gap note: print pagination).
+ * Deliberately a static snapshot built from server-fetched props — NOT any
+ * live client input — so print never reflects an in-progress, unsaved edit.
  *
- * Pending-delete lines (Increment 2, DECISION-052/053) are excluded entirely
- * — see FlowTable's filter. A line marked for removal isn't part of the
- * forward-looking plan this worksheet exists to print and hand-annotate.
- *
- * Cause/beneficiary detail (Budgeting Page Restructure, folding in B-31):
- * a category broken down by cause prints each LIVE cause group's subtotal
- * and each LIVE line's label/amount underneath the category row, compactly
- * — no prior-year reference columns at this grain, and the blank
- * hand-annotation ruled lines stay at the category-subtotal grain only (Q4,
- * resolved: compact — not duplicated per cause or per line, which would
- * roughly double or triple page count for a heavily-broken-down fund).
- * "Live" is decided by isCauseLineLive(cl.pendingDeleteAt,
- * line.pendingDeleteAt) — the same OR-exclusion predicate the live-totals
- * helper and the finalize-purge transaction use, so this worksheet never
- * reinvents its own exclusion logic.
+ * Totals/balances are computed via computeFundPlanSums (src/lib/ledger.ts,
+ * DECISION-060) — the SAME shared function BudgetOverviewTable calls on the
+ * SAME fund data, so the on-screen summary and this printed document can
+ * never structurally disagree.
  */
 export default function BudgetPrintWorksheet({
   entityName,
   priorFY,
   targetFY,
   funds,
+  locked,
+  approval,
+  openingCentsByFundId,
+  juneNotReconciled,
+  budgetNotes,
 }: {
   entityName: string;
   priorFY: number;
   targetFY: number;
   funds: PrintFund[];
+  locked: boolean;
+  approval: BudgetApprovalSummary | null;
+  openingCentsByFundId: Record<string, number>;
+  juneNotReconciled: boolean;
+  budgetNotes: string | null;
 }) {
+  // Computed once, top-level: every fund's committed sums + opening balance,
+  // filtered to funds with at least one LIVE (non-pending-delete) income or
+  // expense line — the same predicate the per-fund section used to apply on
+  // its own, pulled up here so the Consolidated Summary and the per-fund
+  // detail sections can never disagree about which funds are "in" this
+  // printout (zero-budget funds omitted, as before — Locked Decision).
+  const printableFunds: PrintableFund[] = funds
+    .map((fund) => ({
+      fund,
+      sums: computeFundPlanSums(fund.budgetEditorLines),
+      openingCents: openingCentsByFundId[fund.fundId] ?? 0,
+    }))
+    .filter((pf) =>
+      pf.fund.budgetEditorLines.some((l) => l.pendingDeleteAt === null),
+    );
+
   return (
     <div className="hidden print:block text-gray-900">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">{entityName} — Budget Worksheet</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          FY{targetFY} budget &bull; prior-year reference: FY{priorFY}
-        </p>
-      </div>
+      <DocumentHeader
+        entityName={entityName}
+        priorFY={priorFY}
+        targetFY={targetFY}
+        locked={locked}
+        approval={approval}
+      />
 
-      {funds.map((fund) => (
-        <FundWorksheet key={fund.fundId} fund={fund} priorFY={priorFY} targetFY={targetFY} />
+      <ConsolidatedSummary
+        printableFunds={printableFunds}
+        targetFY={targetFY}
+        juneNotReconciled={juneNotReconciled}
+      />
+
+      {budgetNotes && (
+        <div className="mb-8 break-inside-avoid-page">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-700 border-b border-gray-300 pb-1 mb-2">
+            Notes &amp; Assumptions
+          </h2>
+          <p className="text-sm whitespace-pre-wrap">{budgetNotes}</p>
+        </div>
+      )}
+
+      {printableFunds.map((pf) => (
+        <FundWorksheet key={pf.fund.fundId} pf={pf} priorFY={priorFY} targetFY={targetFY} />
       ))}
     </div>
   );
 }
 
+function DocumentHeader({
+  entityName,
+  priorFY,
+  targetFY,
+  locked,
+  approval,
+}: {
+  entityName: string;
+  priorFY: number;
+  targetFY: number;
+  locked: boolean;
+  approval: BudgetApprovalSummary | null;
+}) {
+  // Three-state status stamp: `locked` can be false even when `approval` is
+  // non-null (a budget approved once, then unlocked to amend) — a bare
+  // "DRAFT" in that case would misleadingly suggest it was never approved.
+  let statusNode: React.ReactNode;
+  if (locked) {
+    statusNode = (
+      <p className="font-semibold">
+        APPROVED — adopted {approval?.approvedAtLabel ?? "—"}
+        {approval?.boardMinute ? `, board minute: ${approval.boardMinute}` : ""}.
+      </p>
+    );
+  } else if (approval) {
+    statusNode = (
+      <>
+        <p className="font-semibold">DRAFT — Reopened for Amendment</p>
+        <p className="mt-1 text-xs font-normal">
+          Previously approved {approval.approvedAtLabel ?? "—"}; reopened{" "}
+          {approval.unlockedAtLabel ?? "—"} by {approval.unlockedByName ?? "Unknown"}
+          {approval.unlockReason ? `: "${approval.unlockReason}"` : ""}.
+        </p>
+      </>
+    );
+  } else {
+    statusNode = <p className="font-semibold">DRAFT — Not Yet Approved by the Board</p>;
+  }
+
+  return (
+    <div className="mb-6">
+      <h1 className="text-2xl font-bold">
+        {entityName} — Annual Operating Budget, FY{targetFY}
+      </h1>
+      <p className="text-sm text-gray-600 mt-1">
+        FY{targetFY} budget &bull; prior-year reference: FY{priorFY}
+      </p>
+      <div className="mt-3 border-2 border-gray-900 rounded px-3 py-2 text-sm inline-block">
+        {statusNode}
+      </div>
+    </div>
+  );
+}
+
+function ConsolidatedSummary({
+  printableFunds,
+  targetFY,
+  juneNotReconciled,
+}: {
+  printableFunds: PrintableFund[];
+  targetFY: number;
+  juneNotReconciled: boolean;
+}) {
+  const totals = printableFunds.reduce(
+    (acc, pf) => {
+      const netCents = pf.sums.incomeCents - pf.sums.expenseCents;
+      return {
+        openingCents: acc.openingCents + pf.openingCents,
+        incomeCents: acc.incomeCents + pf.sums.incomeCents,
+        expenseCents: acc.expenseCents + pf.sums.expenseCents,
+        netCents: acc.netCents + netCents,
+        endingCents: acc.endingCents + pf.openingCents + netCents,
+      };
+    },
+    { openingCents: 0, incomeCents: 0, expenseCents: 0, netCents: 0, endingCents: 0 },
+  );
+
+  return (
+    <div className="mb-8 break-inside-avoid-page">
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr>
+            <th colSpan={6} className="text-left text-xs uppercase tracking-wide text-gray-500 pb-1">
+              Consolidated Summary
+            </th>
+          </tr>
+          <tr className="border-b-2 border-gray-900">
+            <th className="text-left py-1 pr-2 font-semibold">Fund</th>
+            <th className="text-right py-1 px-2 font-semibold">Beginning Balance (7/1)</th>
+            <th className="text-right py-1 px-2 font-semibold">Budgeted Income</th>
+            <th className="text-right py-1 px-2 font-semibold">Budgeted Expense</th>
+            <th className="text-right py-1 px-2 font-semibold">Net Surplus/(Deficit)</th>
+            <th className="text-right py-1 pl-2 font-semibold">Projected Ending Balance (6/30)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {printableFunds.map((pf) => {
+            const netCents = pf.sums.incomeCents - pf.sums.expenseCents;
+            const endingCents = pf.openingCents + netCents;
+            return (
+              <tr key={pf.fund.fundId} className="border-b border-gray-300">
+                <td className="py-1 pr-2">{pf.fund.fundName}</td>
+                <td className="text-right py-1 px-2 tabular-nums">
+                  {formatBudgetReferenceCents(pf.openingCents)}
+                </td>
+                <td className="text-right py-1 px-2 tabular-nums">
+                  {formatBudgetReferenceCents(pf.sums.incomeCents)}
+                </td>
+                <td className="text-right py-1 px-2 tabular-nums">
+                  {formatBudgetReferenceCents(pf.sums.expenseCents)}
+                </td>
+                <td className="text-right py-1 px-2 tabular-nums">
+                  {formatBudgetReferenceCents(netCents)}
+                </td>
+                <td className="text-right py-1 pl-2 tabular-nums font-semibold">
+                  {formatBudgetReferenceCents(endingCents)}
+                </td>
+              </tr>
+            );
+          })}
+          <tr className="border-t-2 border-gray-900 font-bold">
+            <td className="py-1.5 pr-2">All Funds</td>
+            <td className="text-right py-1.5 px-2 tabular-nums">
+              {formatBudgetReferenceCents(totals.openingCents)}
+            </td>
+            <td className="text-right py-1.5 px-2 tabular-nums">
+              {formatBudgetReferenceCents(totals.incomeCents)}
+            </td>
+            <td className="text-right py-1.5 px-2 tabular-nums">
+              {formatBudgetReferenceCents(totals.expenseCents)}
+            </td>
+            <td className="text-right py-1.5 px-2 tabular-nums">
+              {formatBudgetReferenceCents(totals.netCents)}
+            </td>
+            <td className="text-right py-1.5 pl-2 tabular-nums">
+              {formatBudgetReferenceCents(totals.endingCents)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {juneNotReconciled && (
+        <p className="mt-2 text-xs italic text-gray-500">
+          Beginning balances above reflect posted transactions through June 30, {targetFY};
+          reconciliation for that period is not yet complete, and these figures may still change
+          before it closes.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function FundWorksheet({
-  fund,
+  pf,
   priorFY,
   targetFY,
 }: {
-  fund: PrintFund;
+  pf: PrintableFund;
   priorFY: number;
   targetFY: number;
 }) {
-  // Pending-delete lines (Increment 2, DECISION-052/053) are excluded before
-  // the empty-check below, so a fund whose only lines are all marked for
-  // removal is omitted entirely — same "nothing to print" behavior this
-  // check already gave a fund with zero budget lines at all.
-  const income = fund.budgetEditorLines.filter(
+  const income = pf.fund.budgetEditorLines.filter(
     (l) => l.flow === "income" && l.pendingDeleteAt === null,
   );
-  const expense = fund.budgetEditorLines.filter(
+  const expense = pf.fund.budgetEditorLines.filter(
     (l) => l.flow === "expense" && l.pendingDeleteAt === null,
   );
-
-  if (income.length === 0 && expense.length === 0) return null;
+  const netCents = pf.sums.incomeCents - pf.sums.expenseCents;
+  const endingCents = pf.openingCents + netCents;
 
   return (
-    <section className="mb-8">
-      <h2 className="text-lg font-semibold border-b-2 border-gray-900 pb-1 mb-3">
-        {fund.fundName}
+    <section className="mb-8 break-before-page">
+      <h2 className="text-lg font-semibold border-b-2 border-gray-900 pb-1 mb-2">
+        {pf.fund.fundName}
       </h2>
+      <p className="text-sm mb-4">
+        Beginning Fund Balance, July 1, FY{targetFY}:{" "}
+        <span className="font-semibold">{formatBudgetReferenceCents(pf.openingCents)}</span>
+      </p>
+
       {income.length > 0 && (
-        <FlowTable title="Income" lines={income} priorFY={priorFY} targetFY={targetFY} />
+        <FlowTable
+          title="Income"
+          lines={income}
+          priorFY={priorFY}
+          targetFY={targetFY}
+          totalCents={pf.sums.incomeCents}
+        />
       )}
       {expense.length > 0 && (
-        <FlowTable title="Expense" lines={expense} priorFY={priorFY} targetFY={targetFY} />
+        <FlowTable
+          title="Expense"
+          lines={expense}
+          priorFY={priorFY}
+          targetFY={targetFY}
+          totalCents={pf.sums.expenseCents}
+        />
       )}
+
+      <p className="text-sm mt-4">
+        Net Surplus/(Deficit): <span className="font-semibold">{formatBudgetReferenceCents(netCents)}</span>
+      </p>
+      <p className="text-sm mt-1">
+        Projected Ending Balance, June 30, FY{targetFY}:{" "}
+        <span className="font-semibold">{formatBudgetReferenceCents(endingCents)}</span>
+      </p>
     </section>
   );
 }
@@ -167,12 +373,21 @@ function FlowTable({
   lines,
   priorFY,
   targetFY,
+  totalCents,
 }: {
   title: string;
   lines: PrintLine[];
   priorFY: number;
   targetFY: number;
+  totalCents: number;
 }) {
+  // Total row extends the Prior Budget/Prior Actual columns too — nulls
+  // treated as 0 for the sum (a per-line "—" is legitimately "no data for
+  // that one line," but a TOTAL that silently drops missing lines instead of
+  // zero-filling them would understate the prior-year comparison).
+  const priorBudgetTotalCents = lines.reduce((sum, l) => sum + (l.priorBudgetCents ?? 0), 0);
+  const priorActualTotalCents = lines.reduce((sum, l) => sum + (l.priorActualCents ?? 0), 0);
+
   return (
     <table className="w-full text-sm mb-6 border-collapse">
       <thead>
@@ -189,11 +404,6 @@ function FlowTable({
         </tr>
       </thead>
       {lines.map((line) => {
-        // Cause/beneficiary detail (Budgeting Page Restructure, folds in
-        // B-31) — live cause groups only, canonical grouping-by-cause in
-        // insertion order (the printout doesn't need ALL_CAUSES's stable
-        // ordering the interactive editor relies on for reload-stability;
-        // whatever order the report returns is fine for a static snapshot).
         const liveCauseLines = (line.causeLines ?? []).filter((cl) =>
           isCauseLineLive(cl.pendingDeleteAt ?? null, line.pendingDeleteAt),
         );
@@ -263,22 +473,23 @@ function FlowTable({
                 </Fragment>
               );
             })}
-            {/* Spare hand-annotation lines — ~2 per category, per treasurer
-                request. Stay at category-subtotal grain only (Q4, resolved:
-                compact) — not duplicated per cause or per line. */}
-            <tr className="border-b border-dotted border-gray-300">
-              <td colSpan={4} className="h-7">
-                &nbsp;
-              </td>
-            </tr>
-            <tr className="border-b border-dotted border-gray-300">
-              <td colSpan={4} className="h-7">
-                &nbsp;
-              </td>
-            </tr>
           </tbody>
         );
       })}
+      <tbody className="break-inside-avoid-page">
+        <tr className="border-t-2 border-gray-900 font-bold">
+          <td className="py-1.5 pr-2">{title} Total</td>
+          <td className="text-right py-1.5 px-2 tabular-nums">
+            {formatBudgetReferenceCents(priorBudgetTotalCents)}
+          </td>
+          <td className="text-right py-1.5 px-2 tabular-nums">
+            {formatBudgetReferenceCents(priorActualTotalCents)}
+          </td>
+          <td className="text-right py-1.5 pl-2 tabular-nums">
+            {formatBudgetReferenceCents(totalCents)}
+          </td>
+        </tr>
+      </tbody>
     </table>
   );
 }

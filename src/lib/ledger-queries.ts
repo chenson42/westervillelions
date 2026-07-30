@@ -23,6 +23,7 @@ import {
   ledgerBudgets,
   ledgerBudgetLines,
   ledgerBudgetApprovals,
+  ledgerBudgetNotes,
   ledgerSettings,
   ledgerReimbursements,
   ledgerFilings,
@@ -935,6 +936,55 @@ export async function getBudgetApproval(
     )
     .limit(1);
   return rows[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// getBudgetNotes — Budget-level Notes & Assumptions (DECISION-060)
+// ---------------------------------------------------------------------------
+
+export type BudgetNotesResult = {
+  notes: string;
+  updatedByName: string | null;
+  updatedAtLabel: string | null;
+};
+
+/**
+ * Current budget-level "Notes & Assumptions" free text for a given
+ * (entityId, fiscalYear), or null if never written (a draft budget's default
+ * state — the overview renders an empty, editable textarea, not an error).
+ * Sibling read to getBudgetApproval, same shape/style: single SELECT ... WHERE
+ * entityId = ? AND fiscalYear = ? LIMIT 1, join updatedByUserId -> users.name.
+ *
+ * No corresponding GET route — budgeting/page.tsx (a Server Component) calls
+ * this directly, matching how getBudgetApproval is already called with no
+ * internal API round-trip (DECISION-044 precedent).
+ */
+export async function getBudgetNotes(
+  entityId: string,
+  fiscalYear: number,
+): Promise<BudgetNotesResult | null> {
+  const updatedByUser = alias(users, "notesUpdatedByUser");
+  const rows = await db
+    .select({
+      notes: ledgerBudgetNotes.notes,
+      updatedByName: updatedByUser.name,
+      updatedAt: ledgerBudgetNotes.updatedAt,
+    })
+    .from(ledgerBudgetNotes)
+    .leftJoin(updatedByUser, eq(ledgerBudgetNotes.updatedByUserId, updatedByUser.id))
+    .where(
+      and(eq(ledgerBudgetNotes.entityId, entityId), eq(ledgerBudgetNotes.fiscalYear, fiscalYear)),
+    )
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    notes: row.notes,
+    updatedByName: row.updatedByName,
+    updatedAtLabel: row.updatedAt
+      ? row.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

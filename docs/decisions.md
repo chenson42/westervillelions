@@ -28,6 +28,78 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-061: Explicit transaction↔budget-line link (B-30) — enrich `causeLines[]` in place rather than a parallel map; reimbursement mark-paid requires a category; PATCH auto-clears a stale link instead of rejecting; collapse-count sourced from the report already in hand
+
+**Status:** Resolved
+**Date:** 2026-07-30
+
+**Decision:** Four related implementation choices from B-30's Phase 3 design
+(`docs/work-log/2026-07-30-transaction-budget-line-link.md`), logged together since none
+reads sensibly alone:
+
+1. **The exact/fuzzy report aggregation enriches each `FundReportCategoryLine.causeLines[]`
+   item in place** (`linkedActualCents`, `linkedTransactionCount`, `actualCents`,
+   `isFuzzyFallback`, all resolved via a new `resolveCauseLineActual()` pure helper) rather
+   than adding a parallel top-level `actualByBudgetLineId` map to `FundReport` that every
+   consumer would have to re-key against `causeLines[].id` themselves. Every consumer
+   (admin Fund Report table, member Statement, the collapse-warning count) wants the
+   per-line number already resolved, not a raw map to join against a second time.
+2. **The reimbursement mark-paid pay action's new `categoryId` field is REQUIRED, not
+   merely encouraged** — Phase 1 had left this an open lean ("required-or-strongly-
+   encouraged"). Made required because the entire point of this pass is closing the
+   permanent blind spot Phase 1 confirmed (reimbursement-derived transactions invisible to
+   every budget-vs-actual view); an optional field would let the gap persist by default for
+   every treasurer who doesn't notice it.
+3. **The transaction PATCH route auto-clears a now-stale `budgetLineId` link (moving the
+   FY or category out from under it) rather than rejecting the whole edit with a 400.**
+   Silently-stale would be worse (Phase 1's own framing), but a hard rejection would block
+   an otherwise-valid date/category correction just because an old link no longer applies.
+   Auto-clear + a `budgetLineLinkCleared: true` response flag (surfaced as toast microcopy)
+   lets the edit succeed while making the side effect visible, not silent.
+4. **The collapse-with-links `<ConfirmDialog>`'s linked-transaction count is sourced from
+   data the report query already fetches** (`linkedTransactionCount` on each enriched
+   `causeLines[]` item, per decision 1 above) rather than a new endpoint or a live query
+   fired when the treasurer clicks "Collapse." Zero extra round-trip; the count is already
+   sitting in the same props `BudgetCauseEditor` already receives via `causeActualsByKey`'s
+   existing bubble-through path.
+
+**Rationale:** All four are the same underlying call — resolve information as far
+upstream (the query layer) as possible, so every downstream consumer (three report
+surfaces, one confirm dialog, one route handler) reads a value that's already correct
+rather than re-deriving or re-fetching it. This mirrors DECISION-060's own reasoning for
+promoting `computeFundPlanSums` to a shared export: two-plus consumers of the same
+computation should share one source, not reimplement or re-key it.
+
+**Impact:** `src/lib/db/schema.ts` gains `ledgerTransactions.budgetLineId` (nullable FK,
+`onDelete: 'set null'`) + index; `drizzle/migrations/0072_ledger_txn_budget_line.sql`.
+`src/lib/ledger.ts` gains `resolveCauseLineActual()`, `isEligibleForFuzzyCauseMatch()`,
+`shouldClearBudgetLineLink()` (each unit-tested). `src/lib/ledger-queries.ts`'s
+`getFundReport()` and `src/lib/financial-report-queries.ts`'s `computeOneMonthCashActuals()`
+/ `getMonthlyStatement()` gain the exact/fuzzy split described above.
+`src/app/api/admin/ledger/reimbursements/[id]/route.ts`'s pay action gains a required
+`categoryId` body field (behavior change to an existing flow — flagged for qa's
+click-through). `src/app/api/admin/ledger/transactions/[id]/route.ts` gains the auto-clear
+logic + response flag. Full design in `docs/work-log/2026-07-30-transaction-budget-line-link.md`'s
+Phase 3 section.
+
+---
+
+## DECISION-060: Budget-level Notes & Assumptions get their own table; the shared fund-plan-sum helper moves from a print-private function to a `src/lib/ledger.ts` export
+
+**Status:** Resolved
+**Date:** 2026-07-30
+
+**Decision:** Two related implementation choices from the Budgeting Overview/Drill-Down Restructure's Phase 3 design (`docs/work-log/2026-07-30-budgeting-overview-restructure.md`), logged together since neither reads sensibly alone:
+
+1. **`ledger_budget_notes` is a new, separate table** — `(id, entity_id, fiscal_year, notes, updated_by_user_id, updated_at, created_at)`, unique on `(entity_id, fiscal_year)`, mirroring `ledger_budget_approvals`'s shape — rather than a nullable `notes` column added to `ledger_budget_approvals` itself. Write path gates on `LEDGER_MANAGE`/`BUDGET_EDIT` only; it never checks `locked` (mirrors the existing `budgets/annotations` route's category-star/notes precedent, DECISION-057).
+2. **`computeFundPlanSums`** — the pure "sum one fund's committed budget lines into income/expense totals, correctly excluding pending-delete lines/cause-lines" helper — is promoted to a named export in `src/lib/ledger.ts`, beside `computeFundLineSums`. B-31's own Phase 3 design (same work-log, written earlier the same day) had planned this as a private `printFundSums` function inside `budget-print-worksheet.tsx`, reasonable when print was its only consumer.
+
+**Rationale:** (1) A draft budget has no `ledger_budget_approvals` row at all — `getBudgetApproval` returns `null` until the first Approve & Lock — so a nullable column on that table couldn't hold a note written *during* drafting, which is the primary use case (NFF's "notes/assumptions pre-empt board questions," cited in B-31's research). A separate, independently-keyed, lazily-created table is the only shape that supports "write your assumptions down before the row that would host them exists." Gating the write on `LEDGER_MANAGE`/`BUDGET_EDIT` with no lock check mirrors DECISION-057's already-shipped reasoning: commentary isn't a budget figure, and a board that just approved a budget still needs to annotate it. (2) The Budgeting Overview/Drill-Down Restructure's new `BudgetOverviewTable` needs the identical computation B-31 designed for print — same committed `FundSetupItem[]` input, same three-map-then-`computeFundLineSums()` recipe — to derive its on-screen summary rows. Two consumers of one private helper is the exact "don't copy a private helper into a second file" pattern the architect flagged twice in this restructure's Phase 2 review (Rulings 3 and 4, re: `budget-plan-status.tsx` and `LoadErrorCard`); promoting it to a shared export makes "overview screen, drill-down's live editor, and the printed document can never structurally disagree" true by construction — both the overview and print call the same function on the same data — rather than by convention.
+
+**Impact:** `src/lib/db/schema.ts` gains `ledgerBudgetNotes`; `drizzle/migrations/0071_ledger_budget_notes.sql` (idempotent, no seed data); `src/lib/ledger-queries.ts` gains `getBudgetNotes(entityId, fiscalYear)`; new `PATCH /api/admin/ledger/budget-notes` route (inline upsert, mirroring `budget-approvals/route.ts`'s pattern, no `db.transaction()` needed — single-table, single-row). `src/lib/ledger.ts` gains `computeFundPlanSums`, with its own Vitest suite (cause-line-pending-cents case is the one easy-to-drop step, same risk B-31's design already flagged for `printFundSums`). `budget-print-worksheet.tsx`'s rebuild (per B-31's already-written Phase 3 layout/pagination design, unchanged) imports `computeFundPlanSums` from `@/lib/ledger` instead of defining it privately, and gains a `budgetNotes` prop rendered as a front-page "Notes & Assumptions" block. Full component/prop design, migration text, and implementation order are in the Phase 3 section of `docs/work-log/2026-07-30-budgeting-overview-restructure.md`.
+
+---
+
 ## DECISION-059: Deposit-in-transit carve-out — full `flow='income'` symmetry, retiring the 12-day Zeffy window and the check+income exclusion; bundled "unremitted deposits" dashboard view
 
 **Status:** Resolved — supersedes DECISION-051 item 3 and the `payment_method='check'` exclusion locked in `docs/work-log/2026-07-28-report-gate-outstanding-checks.md`

@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { hasAnyFeature, hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
@@ -17,44 +16,9 @@ import {
 import { currentFiscalYear } from "@/lib/fiscal-year";
 import LedgerDashboard from "@/components/admin/ledger/ledger-dashboard";
 import LedgerEntityDetail from "@/components/admin/ledger/ledger-entity-detail";
+import LoadErrorCard from "@/components/admin/ledger/load-error-card";
 
 export const dynamic = "force-dynamic";
-
-/**
- * Shared load-error fallback for this page's three DB-fetching phases
- * (Ledger Dashboard, DECISION-032's error-boundary ruling: inline try/catch,
- * not error.tsx — this codebase has no error.tsx precedent and a static
- * failure card needs no client boundary). "Try again" is a plain server
- * re-navigation, no client JS required.
- */
-function LoadErrorCard() {
-  return (
-    <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500">
-      <svg
-        className="mx-auto h-10 w-10 text-gray-300 mb-3"
-        fill="none"
-        viewBox="0 0 24 24"
-        strokeWidth="1.5"
-        stroke="currentColor"
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-        />
-      </svg>
-      <p className="text-lg font-semibold text-gray-700">Couldn&rsquo;t load the ledger</p>
-      <p className="mt-1 text-sm">Something went wrong loading this page. Please try again.</p>
-      <Link
-        href="/admin/ledger"
-        className="mt-4 inline-block text-lions-blue hover:underline text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
-      >
-        Try again
-      </Link>
-    </div>
-  );
-}
 
 export default async function AdminLedgerPage({
   searchParams,
@@ -80,7 +44,7 @@ export default async function AdminLedgerPage({
   try {
     entities = await getEntities();
   } catch {
-    return <LoadErrorCard />;
+    return <LoadErrorCard backHref="/admin/ledger" />;
   }
   if (entities.length === 0) {
     return (
@@ -110,7 +74,7 @@ export default async function AdminLedgerPage({
         />
       );
     } catch {
-      return <LoadErrorCard />;
+      return <LoadErrorCard backHref="/admin/ledger" />;
     }
   }
 
@@ -119,7 +83,7 @@ export default async function AdminLedgerPage({
   try {
     entity = await getEntity(entityParam!);
   } catch {
-    return <LoadErrorCard />;
+    return <LoadErrorCard backHref="/admin/ledger" />;
   }
   if (!entity) redirect("/admin/ledger"); // outside try — safe; defensive, unreachable in practice
 
@@ -138,7 +102,7 @@ export default async function AdminLedgerPage({
       canApprove ? getPendingApprovals() : Promise.resolve([]),
     ]);
   } catch {
-    return <LoadErrorCard />;
+    return <LoadErrorCard backHref="/admin/ledger" />;
   }
   const [funds, bankAccounts, categories, overview, fiscalYears, pendingTxns] = data;
 

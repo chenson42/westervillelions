@@ -70,7 +70,12 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   `ledger_budget_approvals` lock.
 
 - [ ] **B-18 — Structured cause on transactions & reimbursements (promote free-text `beneficiaryCause` to a controlled type).**
-  (added 2026-07-27, priority: nice-to-have — split out of B-17 Increment A's Phase 1)
+  (added 2026-07-27, priority: nice-to-have — split out of B-17 Increment A's Phase 1;
+  **reshaped by B-30's Phase 1 (2026-07-30)** — kept, but no longer a budget-vs-actual
+  prerequisite: `/members/impact`'s giving-by-cause bucketing reads `beneficiaryCause`
+  directly and stays independent of B-30's explicit link, so B-18's remaining value is
+  narrower — un-linked transactions' fallback-match quality and the impact dashboard's
+  buckets. See `docs/work-log/2026-07-30-transaction-budget-line-link.md`.)
   Today `ledgerTransactions.beneficiaryCause` and `ledgerReimbursements.beneficiaryCause`
   are free `text` with no enum/FK; cause is only ever *derived* at Quicken-import time
   by `deriveCause` (`scripts/import-quicken-ledger.ts`), a controlled ~9-value taxonomy
@@ -83,12 +88,16 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   into "Youth & Education") and the open question of whether Scholarship Fund
   (`ledgerFunds.kind='scholarship'`) expenses get cause-tagged going forward.
 
-- [ ] **B-19 — Cause-level budget-vs-actual (reach the `/members/impact` giving-by-cause grain).**
+- [x] **B-19 — Cause-level budget-vs-actual (reach the `/members/impact` giving-by-cause grain).**
   (added 2026-07-27, priority: nice-to-have — split out of B-17 Increment A's Phase 1;
   **depends on B-17 Increment A + B-18**) The piece that actually delivers B-17's original
   motivation: compare each cause budget line item (from Increment A) against actuals.
   Actuals key on `categoryId` today, so a reliable cause-grain match needs the
   transaction's cause to be structured (B-18) — it cannot be built correctly on free text.
+  **SUPERSEDED by B-30 (2026-07-30):** B-30 delivers this directly, at a finer
+  (line-item, not just cause) grain, via an explicit FK instead of a structured-cause
+  dependency — B-18 is no longer needed as this item's prerequisite. See
+  `docs/work-log/2026-07-30-transaction-budget-line-link.md`.
 
 - [ ] **B-20 — Playwright e2e coverage for the Ledger budgeting module (currently zero specs).**
   (added 2026-07-27, priority: nice-to-have — surfaced in `docs/work-log/2026-07-27-ledger-cause-budget-lines.md`
@@ -489,7 +498,35 @@ Design each with the others in view — decisions in one box in the next.
   raised mid-discussion is **dropped** if B-30 lands (see B-30).
 
 - [ ] **B-30 — Explicit transaction → budget-line link (retire the fuzzy string-match reconciliation).**
-  (added 2026-07-29, priority: high — redefines what a "line item" is; needs Phase 1)
+  (added 2026-07-29, priority: high — redefines what a "line item" is; **Phase 1
+  complete 2026-07-30 (READY WITH NOTES), Phase 2 fast-tracked/approved 2026-07-30
+  (trivial footprint — no new dir/dependency), Phase 3 complete 2026-07-30** — full
+  design in `docs/work-log/2026-07-30-transaction-budget-line-link.md`. **Locked by
+  Chris (2026-07-30):** reimbursements in scope now (mark-paid gains a required
+  category + optional link picker); collapse-with-links warns via `<ConfirmDialog>`
+  with a real linked-transaction count; backfill runs against all historical FYs in
+  one pass, dry-run first. **Named implementer sequence:** database-admin (schema +
+  migration `0072`) → api-developer (pure helpers, report-query exact/fuzzy split,
+  route handlers, backfill script) → ux-developer (shared `<BudgetLinePicker>`, both
+  forms, both report surfaces) → qa. **Subsumes**
+  `docs/work-log/2026-07-30-fiscal-report-cause-breakdown.md`'s Phase 1 in full — that
+  work-log's design (member Statement scope, all-zero omission rule, "Other"
+  catch-all) stands, and now ALSO covers the admin Fund Report as a peer surface
+  (not just a fast-follow); its accuracy-caveat footnote narrows to only the rows
+  still resolved via the fuzzy fallback, footnoted and visually distinct, once
+  B-30's link exists.
+  **Reshapes B-18/B-19:** B-18 (structured cause taxonomy) is **kept**, but at
+  lower urgency — `/members/impact`'s giving-by-cause bucketing reads
+  `beneficiaryCause` directly and stays independent of the link, so B-18 still
+  matters for un-linked transactions and the impact dashboard, just no longer
+  as a budget-vs-actual prerequisite. B-19 (cause-level budget-vs-actual) is
+  **superseded** — B-30 delivers it directly, at a finer (line-item) grain, via
+  an FK instead of a structured-cause dependency. Reimbursement mark-paid
+  transactions were found to carry no `categoryId`/`beneficiaryCause` at all
+  today (confirmed in code) — **now in scope, resolved**: mark-paid gains a
+  required category select + optional budget-line picker; `beneficiaryCause`
+  (already member-supplied at submission) is carried onto the created
+  transaction, which it wasn't before.
   Today budget lines reconcile to actuals by a **soft join on `(category, cause,
   label==party)`** at report time (`causeLineReferenceKey` in `ledger.ts` —
   `${categoryId}::${cause}::${normalizedLabel}`; there is NO FK). Chris's insight:
@@ -512,15 +549,23 @@ Design each with the others in view — decisions in one box in the next.
   **line-item** grain, transaction → one line, optional.
 
 - [ ] **B-31 — Printable budget as a mailed review document (not just a meeting worksheet).**
-  (added 2026-07-29, priority: high; needs Phase 1) `budget-print-worksheet.tsx`
-  today prints at the **category grain only** — no cause/line-item rows (flagged by
-  the architect in the B-star-notes Phase 2). Chris: the printable version is **what
-  gets mailed to members/board to review**, so it must be presentable, complete, and
-  **fully traceable** — which means rendering the cause + line-item detail (and,
-  per the star/notes feature, any discussion flags/notes) on the PDF. Scope-wise this
-  is the PDF half of B-29 and should be built with it, but it carries its own
-  requirement (external review audience) worth tracking separately. Pairs with T-25
-  (category cleanup/traceability).
+  (added 2026-07-29, priority: high; **Phase 1 complete 2026-07-30, verdict READY WITH
+  NOTES** — see `docs/work-log/2026-07-30-printable-budget-b31.md`) `budget-print-worksheet.tsx`
+  now renders cause/line-item detail and star/notes (shipped alongside the Budgeting
+  Page Restructure), but still has **no fund/section totals, no net surplus/(deficit),
+  no beginning/ending balances, no fund-level page breaks, and no draft-vs-approved
+  status** — all required now that Chris is escalating this as **the document used for
+  board presentation**, mailed to people who never see the screen. Phase 1 resolved the
+  July-1 balance source (`getFundReport(fund.id, targetFY).openingCents` — already
+  fetched, no new query, same rolled-forward balance the Statement of Financial
+  Condition treats as canonical) and cited 6 nonprofit board-budget-presentation
+  conventions (income/expense subtotals + net line, prior-year comparison columns,
+  balances as reference-only rather than folded into budget math, fund/functional
+  separation matching Lions' own Administrative/Activities split, notes/assumptions,
+  and formal approval status). Six open questions for Chris before Phase 2 (single vs.
+  dual print mode re: hand-annotation lines, reconciliation caveat on the balance,
+  consolidated all-funds summary page, empty-fund handling, mail audience/PII check,
+  notes roll-up). Pairs with T-25 (category cleanup/traceability).
 
 - [ ] **B-32 — Post-changes budget analysis pass.**
   (added 2026-07-29, priority: medium — process) Once B-29/B-30/B-31 and the

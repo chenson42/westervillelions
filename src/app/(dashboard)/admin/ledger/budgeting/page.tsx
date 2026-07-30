@@ -8,18 +8,23 @@ import {
   getEntity,
   getFunds,
   getFundReport,
-  getCategories,
   getBudgetApproval,
-  getBudgetCauseLineLabels,
+  getBudgetNotes,
 } from "@/lib/ledger-queries";
-import { isBudgetLocked, causeLineReferenceKey } from "@/lib/ledger";
+import { isBudgetLocked, causeLineReferenceKey, computeFundPlanSums } from "@/lib/ledger";
+import { isMonthGatedForEntity } from "@/lib/financial-report-queries";
 import { currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import EntitySwitcher from "@/components/admin/ledger/entity-switcher";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
-import GuidedBudgetSetup, {
-  type FundSetupItem,
+import LoadErrorCard from "@/components/admin/ledger/load-error-card";
+import BudgetOverviewTable, {
+  type BudgetOverviewRow,
+} from "@/components/admin/ledger/budget-overview-table";
+import BudgetApprovalPanel, {
   type BudgetApprovalSummary,
-} from "@/components/admin/ledger/guided-budget-setup";
+} from "@/components/admin/ledger/budget-approval-panel";
+import BudgetNotesEditor from "@/components/admin/ledger/budget-notes-editor";
+import type { FundSetupItem } from "@/components/admin/ledger/budget-fund-editor";
 import PrintBudgetButton from "@/components/admin/ledger/print-budget-button";
 import BudgetPrintWorksheet from "@/components/admin/ledger/budget-print-worksheet";
 
@@ -35,15 +40,9 @@ export default async function AdminLedgerBudgetingPage({
 }: {
   searchParams: Promise<{ entity?: string; fy?: string }>;
 }) {
-  // --- Auth: two-tier gate (Ruling 3), widened additively by the Budget
-  // Permissions feature (docs/work-log/2026-07-29-budget-permissions.md) to
-  // admit BUDGET_VIEW/BUDGET_EDIT holders (Treasurer, Budget Committee)
-  // alongside the existing LEDGER_MANAGE (builds the budget) and
-  // LEDGER_APPROVE (reviews and locks/unlocks it, e.g. board members who may
-  // not hold LEDGER_MANAGE at all) holders. Page admission is any-of;
-  // canManage/canApprove separately gate individual controls below (mirrors
-  // reimbursements/page.tsx L56-73). No budget.approve key exists by
-  // design — canApprove stays LEDGER_APPROVE-only, untouched.
+  // --- Auth: two-tier gate (unchanged from the pre-restructure page) — any
+  // of LEDGER_MANAGE/LEDGER_APPROVE/BUDGET_VIEW/BUDGET_EDIT admits; canManage/
+  // canApprove separately gate individual controls below.
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
 
@@ -64,7 +63,12 @@ export default async function AdminLedgerBudgetingPage({
   // --- Params ---
   const { entity: entityParam, fy: fyParam } = await searchParams;
 
-  const entities = await getEntities();
+  let entities;
+  try {
+    entities = await getEntities();
+  } catch {
+    return <LoadErrorCard backHref="/admin/ledger/budgeting" />;
+  }
   if (entities.length === 0) {
     return (
       <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500">
@@ -74,30 +78,36 @@ export default async function AdminLedgerBudgetingPage({
   }
 
   const validSlugs = entities.map((e) => e.slug);
-  // Unlike reports/report pages, an invalid explicit ?entity= falls back to
-  // the first entity rather than 404 — this is a setup tool, not a permalink.
+  // Unlike a permalink page, an invalid explicit ?entity= falls back to the
+  // first entity rather than 404 — this is a setup tool, not a permalink
+  // (unchanged from the pre-restructure page).
   const resolvedSlug =
     entityParam && validSlugs.includes(entityParam) ? entityParam : entities[0].slug;
 
-  const entity = await getEntity(resolvedSlug);
+  let entity;
+  try {
+    entity = await getEntity(resolvedSlug);
+  } catch {
+    return <LoadErrorCard backHref="/admin/ledger/budgeting" />;
+  }
   if (!entity) notFound();
 
   // Default target FY is the CURRENT fiscal year — clubs budget the year they
-  // are in (the budget is typically set at/near the year's start). Planning a
-  // future year is still one click away via the fiscal-year selector (?fy=).
-  // (Changed 2026-07-28 from currentFY+1: the next-year default kept landing
-  // treasurers on an empty year and hiding the current year's real budget —
-  // see docs/work-log/2026-07-28-budgeting-default-fy.md.)
+  // are in. Planning a future year is still one click away via the
+  // fiscal-year selector (?fy=).
   const currentFY = currentFiscalYear(new Date());
   const parsedFY = fyParam ? parseInt(fyParam, 10) : NaN;
-  const targetFY =
-    !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
+  const targetFY = !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
   const priorFY = targetFY - 1;
-  // Prior / current / next fiscal year — the prior year lets treasurers view the
-  // completed reference budget (e.g. FY2025) that forward-only options hid.
   const fyOptions = [currentFY - 1, currentFY, currentFY + 1];
+  const fyQuery = `?entity=${resolvedSlug}&fy=${targetFY}`;
 
-  const funds = await getFunds(entity.id);
+  let funds;
+  try {
+    funds = await getFunds(entity.id);
+  } catch {
+    return <LoadErrorCard backHref="/admin/ledger/budgeting" />;
+  }
 
   if (funds.length === 0) {
     return (
@@ -124,7 +134,12 @@ export default async function AdminLedgerBudgetingPage({
   // Lock state for (entity, targetFY) — the single source of truth shared
   // with every write-path guard (assertBudgetUnlocked). isBudgetLocked(null)
   // is false, so a never-approved FY renders unlocked by default.
-  const approval = await getBudgetApproval(entity.id, targetFY);
+  let approval;
+  try {
+    approval = await getBudgetApproval(entity.id, targetFY);
+  } catch {
+    return <LoadErrorCard backHref="/admin/ledger/budgeting" />;
+  }
   const locked = isBudgetLocked(approval);
   const approvalSummary: BudgetApprovalSummary | null = approval
     ? {
@@ -137,154 +152,153 @@ export default async function AdminLedgerBudgetingPage({
       }
     : null;
 
-  // Current target-FY budget rows per fund (for BudgetEditor's pre-fill and
-  // the initial, pre-interaction balance readout) — same source
-  // [fundSlug]/report/page.tsx already uses to build budgetEditorLines.
-  // priorReports: same query at priorFY, read-only reuse for the Increment 1
-  // reference columns (Prior Budget / Prior Actual) — no new aggregation,
-  // see docs/work-log/2026-07-28-budgeting-page-redesign.md Phase 1 grounding
-  // note 1. labelOptions is fetched once per page load (entity-scoped,
-  // DECISION-048 item 4), not once per fund — shared across every
-  // BudgetEditor instance this page renders.
-  const [targetReports, priorReports, labelOptions] = await Promise.all([
-    Promise.all(funds.map((f) => getFundReport(f.id, targetFY))),
-    Promise.all(funds.map((f) => getFundReport(f.id, priorFY))),
-    getBudgetCauseLineLabels(entity.id),
-  ]);
+  // Every fund's target-FY + prior-FY report, the budget-level notes row, and
+  // the June-reconciliation-completeness flag (B-31's reconciliation
+  // footnote) — one Promise.all, no serial round-trips. priorReports is still
+  // needed here even though the on-screen summary rows don't render it: the
+  // printed per-fund detail sections need the prior-year reference columns.
+  let targetReports, priorReports, notesRow, juneNotReconciled;
+  try {
+    [targetReports, priorReports, notesRow, juneNotReconciled] = await Promise.all([
+      Promise.all(funds.map((f) => getFundReport(f.id, targetFY))),
+      Promise.all(funds.map((f) => getFundReport(f.id, priorFY))),
+      getBudgetNotes(entity.id, targetFY),
+      isMonthGatedForEntity(entity.id, `${targetFY}-06-30`),
+    ]);
+  } catch {
+    return <LoadErrorCard backHref="/admin/ledger/budgeting" />;
+  }
 
-  const fundItems: FundSetupItem[] = await Promise.all(
-    funds.map(async (fund, i) => {
-      const report = targetReports[i];
-      const priorReport = priorReports[i];
+  // fundItems: same construction as the pre-restructure page (still needed
+  // in full — BudgetPrintWorksheet needs the full line/cause/star/note
+  // detail per architect Ruling 2), EXCEPT unbudgetedCategories is now
+  // ALWAYS empty here (the overview has no "+ Add category" affordance; that
+  // fetch moves to the drill-down) and labelOptions is not fetched at all
+  // (nothing on the overview renders BudgetCauseEditor's <datalist>).
+  const fundItems: FundSetupItem[] = funds.map((fund, i) => {
+    const report = targetReports[i];
+    const priorReport = priorReports[i];
 
-      // Keyed the same way BudgetEditor keys its rows (`${categoryId}_${flow}`)
-      // so lookups below are a single map hit, no per-row scan.
-      const priorByKey = new Map<string, { budgetCents: number | null; actualCents: number }>();
-      for (const l of priorReport?.income ?? []) {
-        priorByKey.set(`${l.categoryId}_income`, { budgetCents: l.budgetCents, actualCents: l.actualCents });
+    const priorByKey = new Map<string, { budgetCents: number | null; actualCents: number }>();
+    for (const l of priorReport?.income ?? []) {
+      priorByKey.set(`${l.categoryId}_income`, { budgetCents: l.budgetCents, actualCents: l.actualCents });
+    }
+    for (const l of priorReport?.expense ?? []) {
+      priorByKey.set(`${l.categoryId}_expense`, { budgetCents: l.budgetCents, actualCents: l.actualCents });
+    }
+
+    const priorCauseBudgetByKey = new Map<string, number>();
+    for (const l of [...(priorReport?.income ?? []), ...(priorReport?.expense ?? [])]) {
+      for (const cl of l.causeLines ?? []) {
+        priorCauseBudgetByKey.set(
+          causeLineReferenceKey(l.categoryId, cl.cause, cl.label),
+          cl.amountCents,
+        );
       }
-      for (const l of priorReport?.expense ?? []) {
-        priorByKey.set(`${l.categoryId}_expense`, { budgetCents: l.budgetCents, actualCents: l.actualCents });
-      }
+    }
+    const priorCauseActualsByKey = priorReport?.causeActualsByKey ?? {};
 
-      // Cause/beneficiary prior-year reference (2026-07-28-causeline-prior-
-      // year-reference — extends the category-grain reference above to the
-      // cause/beneficiary lines inside a category's breakdown). Both maps
-      // are keyed via causeLineReferenceKey(categoryId, cause, label):
-      //   - priorCauseBudgetByKey: the prior FY's OWN cause lines, matched
-      //     (cause, label) -> amountCents. null when FY(priorFY) has no
-      //     budget line for that (cause, label) yet (e.g. no FY2025 budget
-      //     entered at all).
-      //   - priorReport.causeActualsByKey: the prior FY's posted expense
-      //     actuals grouped by (cause, party) — already computed by
-      //     getFundReport from data it fetches anyway, no extra query here.
-      const priorCauseBudgetByKey = new Map<string, number>();
-      for (const l of [...(priorReport?.income ?? []), ...(priorReport?.expense ?? [])]) {
-        for (const cl of l.causeLines ?? []) {
-          priorCauseBudgetByKey.set(
-            causeLineReferenceKey(l.categoryId, cl.cause, cl.label),
-            cl.amountCents,
-          );
-        }
-      }
-      const priorCauseActualsByKey = priorReport?.causeActualsByKey ?? {};
-
-      function enrichCauseLines(
-        categoryId: string,
-        causeLines:
-          | {
-              id: string;
-              cause: string;
-              label: string;
-              amountCents: number;
-              /** Budgeting Page Restructure (DECISION-054/055/056) — own-flag
-               *  soft-delete state, threaded straight through from
-               *  getFundReport's widened causeLines[] shape. */
-              pendingDeleteAt: string | null;
-              /** Budget Star & Notes (DECISION-057) — threaded straight
-               *  through from getFundReport's widened causeLines[] shape. */
-              starred: boolean;
-              note: string | null;
-            }[]
-          | null,
-      ) {
-        if (!causeLines) return null;
-        return causeLines.map((cl) => {
-          const key = causeLineReferenceKey(categoryId, cl.cause, cl.label);
-          return {
-            ...cl,
-            priorBudgetCents: priorCauseBudgetByKey.get(key) ?? null,
-            priorActualCents: priorCauseActualsByKey[key] ?? null,
-          };
-        });
-      }
-
-      const budgetEditorLines = [
-        ...(report?.income ?? []).map((l) => ({
-          categoryId: l.categoryId,
-          categoryName: l.categoryName,
-          flow: "income" as const,
-          budgetCents: l.budgetCents,
-          countsAsGiving: l.countsAsGiving,
-          causeLines: enrichCauseLines(l.categoryId, l.causeLines),
-          priorBudgetCents: priorByKey.get(`${l.categoryId}_income`)?.budgetCents ?? null,
-          priorActualCents: priorByKey.get(`${l.categoryId}_income`)?.actualCents ?? null,
-          pendingDeleteAt: l.pendingDeleteAt,
-          starred: l.starred,
-          note: l.note,
-        })),
-        ...(report?.expense ?? []).map((l) => ({
-          categoryId: l.categoryId,
-          categoryName: l.categoryName,
-          flow: "expense" as const,
-          budgetCents: l.budgetCents,
-          countsAsGiving: l.countsAsGiving,
-          causeLines: enrichCauseLines(l.categoryId, l.causeLines),
-          priorBudgetCents: priorByKey.get(`${l.categoryId}_expense`)?.budgetCents ?? null,
-          priorActualCents: priorByKey.get(`${l.categoryId}_expense`)?.actualCents ?? null,
-          pendingDeleteAt: l.pendingDeleteAt,
-          starred: l.starred,
-          note: l.note,
-        })),
-      ];
-
-      // "+ Add category" needs the fund's active-but-not-yet-a-line
-      // categories per flow (Component Plan / Phase 1 empty-fund gap). In
-      // practice getFundReport already returns every active category as a
-      // line, so this is usually empty — but it's the correct, defensive
-      // source of truth and it's what makes an empty fund (zero categories
-      // at all) show "+ New category…" as its only path forward. Only
-      // fetched when it can actually be used (canManage, unlocked).
-      let unbudgetedCategories: FundSetupItem["unbudgetedCategories"] = {
-        income: [],
-        expense: [],
-      };
-      if (canManage && !locked) {
-        const budgetedKeys = new Set(budgetEditorLines.map((l) => `${l.categoryId}_${l.flow}`));
-        const [incomeCats, expenseCats] = await Promise.all([
-          getCategories(entity.id, { fundKind: fund.kind, flow: "income" }),
-          getCategories(entity.id, { fundKind: fund.kind, flow: "expense" }),
-        ]);
-        unbudgetedCategories = {
-          income: incomeCats
-            .filter((c) => !budgetedKeys.has(`${c.id}_income`))
-            .map((c) => ({ id: c.id, name: c.name })),
-          expense: expenseCats
-            .filter((c) => !budgetedKeys.has(`${c.id}_expense`))
-            .map((c) => ({ id: c.id, name: c.name })),
+    function enrichCauseLines(
+      categoryId: string,
+      causeLines:
+        | {
+            id: string;
+            cause: string;
+            label: string;
+            amountCents: number;
+            pendingDeleteAt: string | null;
+            starred: boolean;
+            note: string | null;
+          }[]
+        | null,
+    ) {
+      if (!causeLines) return null;
+      return causeLines.map((cl) => {
+        const key = causeLineReferenceKey(categoryId, cl.cause, cl.label);
+        return {
+          ...cl,
+          priorBudgetCents: priorCauseBudgetByKey.get(key) ?? null,
+          priorActualCents: priorCauseActualsByKey[key] ?? null,
         };
-      }
+      });
+    }
 
-      return {
-        fundId: fund.id,
-        fundSlug: fund.slug,
-        fundName: fund.name,
-        fundKind: fund.kind,
-        budgetEditorLines,
-        unbudgetedCategories,
-      };
-    }),
-  );
+    const budgetEditorLines = [
+      ...(report?.income ?? []).map((l) => ({
+        categoryId: l.categoryId,
+        categoryName: l.categoryName,
+        flow: "income" as const,
+        budgetCents: l.budgetCents,
+        countsAsGiving: l.countsAsGiving,
+        causeLines: enrichCauseLines(l.categoryId, l.causeLines),
+        priorBudgetCents: priorByKey.get(`${l.categoryId}_income`)?.budgetCents ?? null,
+        priorActualCents: priorByKey.get(`${l.categoryId}_income`)?.actualCents ?? null,
+        pendingDeleteAt: l.pendingDeleteAt,
+        starred: l.starred,
+        note: l.note,
+      })),
+      ...(report?.expense ?? []).map((l) => ({
+        categoryId: l.categoryId,
+        categoryName: l.categoryName,
+        flow: "expense" as const,
+        budgetCents: l.budgetCents,
+        countsAsGiving: l.countsAsGiving,
+        causeLines: enrichCauseLines(l.categoryId, l.causeLines),
+        priorBudgetCents: priorByKey.get(`${l.categoryId}_expense`)?.budgetCents ?? null,
+        priorActualCents: priorByKey.get(`${l.categoryId}_expense`)?.actualCents ?? null,
+        pendingDeleteAt: l.pendingDeleteAt,
+        starred: l.starred,
+        note: l.note,
+      })),
+    ];
+
+    return {
+      fundId: fund.id,
+      fundSlug: fund.slug,
+      fundName: fund.name,
+      fundKind: fund.kind,
+      budgetEditorLines,
+      unbudgetedCategories: { income: [], expense: [] },
+    };
+  });
+
+  // BudgetOverviewTable's rows, BudgetApprovalPanel's fundBalances, and
+  // BudgetPrintWorksheet's openingCentsByFundId all derive from the SAME
+  // fundItems/targetReports pair, via the SAME computeFundPlanSums call —
+  // this is what makes "totals must match across the overview screen and
+  // the printed document" true by construction (DECISION-060).
+  const openingCentsByFundId: Record<string, number> = {};
+  let totalPendingDeleteCount = 0;
+
+  const overviewRows: BudgetOverviewRow[] = fundItems.map((fund, i) => {
+    const openingCents = targetReports[i]?.openingCents ?? 0;
+    openingCentsByFundId[fund.fundId] = openingCents;
+    const sums = computeFundPlanSums(fund.budgetEditorLines);
+    let pendingDeleteCount = 0;
+    for (const line of fund.budgetEditorLines) {
+      if (line.pendingDeleteAt !== null) pendingDeleteCount += 1;
+      for (const cl of line.causeLines ?? []) {
+        if (cl.pendingDeleteAt != null) pendingDeleteCount += 1;
+      }
+    }
+    totalPendingDeleteCount += pendingDeleteCount;
+    return {
+      fundSlug: fund.fundSlug,
+      fundName: fund.fundName,
+      fundKind: fund.fundKind,
+      openingCents,
+      incomeCents: sums.incomeCents,
+      expenseCents: sums.expenseCents,
+      pendingDeleteCount,
+    };
+  });
+
+  const fundBalances = overviewRows.map((row) => ({
+    fundName: row.fundName,
+    fundKind: row.fundKind,
+    incomeCents: row.incomeCents,
+    expenseCents: row.expenseCents,
+  }));
 
   return (
     <div className="space-y-6">
@@ -309,27 +323,37 @@ export default async function AdminLedgerBudgetingPage({
           <PrintBudgetButton />
         </div>
 
-        <GuidedBudgetSetup
+        <BudgetApprovalPanel
           entityId={entity.id}
           targetFiscalYear={targetFY}
-          funds={fundItems}
-          canManage={canManage}
           canApprove={canApprove}
           locked={locked}
           approval={approvalSummary}
-          labelOptions={labelOptions}
+          pendingDeleteCount={totalPendingDeleteCount}
+          fundBalances={fundBalances}
+        />
+
+        <BudgetOverviewTable targetFY={targetFY} fyQuery={fyQuery} rows={overviewRows} />
+
+        <BudgetNotesEditor
+          entityId={entity.id}
+          targetFiscalYear={targetFY}
+          initialNotes={notesRow?.notes ?? ""}
+          canManage={canManage}
         />
       </div>
 
-      {/* Print-only worksheet — hidden on screen, shown only by window.print().
-          Static data snapshot (not the live BudgetEditor inputs) per Phase 1
-          design: category, prior-year budget + actual reference columns, and
-          this year's saved budget value, with spare hand-annotation lines. */}
+      {/* Print-only worksheet — hidden on screen, shown only by window.print(). */}
       <BudgetPrintWorksheet
         entityName={entity.shortName ?? entity.name}
         priorFY={priorFY}
         targetFY={targetFY}
         funds={fundItems}
+        locked={locked}
+        approval={approvalSummary}
+        openingCentsByFundId={openingCentsByFundId}
+        juneNotReconciled={juneNotReconciled}
+        budgetNotes={notesRow?.notes ?? null}
       />
     </div>
   );

@@ -43,6 +43,7 @@ import {
   formatBudgetReferenceCents,
   resolveBudgetLineDeleteAction,
   computeFundLineSums,
+  computeFundPlanSums,
   isCauseLineLive,
   causeLineReferenceKey,
   buildCauseActualsByKey,
@@ -2591,6 +2592,78 @@ describe("computeFundLineSums", () => {
     // -4,000 and not 6,000. The cause-line-grain map is irrelevant once the
     // whole category is already excluded.
     expect(result.expenseCents).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeFundPlanSums — Budgeting Overview/Drill-Down Restructure (DECISION-060)
+// ---------------------------------------------------------------------------
+
+describe("computeFundPlanSums", () => {
+  it("empty lines array returns zero for both totals", () => {
+    expect(computeFundPlanSums([])).toEqual({ incomeCents: 0, expenseCents: 0 });
+  });
+
+  it("sums plain lump-sum categories (no cause breakdown) across income and expense", () => {
+    const result = computeFundPlanSums([
+      { categoryId: "c1", flow: "income", budgetCents: 10_000, pendingDeleteAt: null, causeLines: null },
+      { categoryId: "c2", flow: "income", budgetCents: 5_000, pendingDeleteAt: null, causeLines: null },
+      { categoryId: "c3", flow: "expense", budgetCents: 7_500, pendingDeleteAt: null, causeLines: null },
+    ]);
+    expect(result).toEqual({ incomeCents: 15_000, expenseCents: 7_500 });
+  });
+
+  it("a category with a live cause breakdown (no pending deletes) counts its full budgetCents", () => {
+    const result = computeFundPlanSums([
+      {
+        categoryId: "c1",
+        flow: "expense",
+        budgetCents: 10_000,
+        pendingDeleteAt: null,
+        causeLines: [
+          { pendingDeleteAt: null, amountCents: 6_000 },
+          { pendingDeleteAt: null, amountCents: 4_000 },
+        ],
+      },
+    ]);
+    expect(result.expenseCents).toBe(10_000);
+  });
+
+  it("a still-live category with one cause line individually pending-delete excludes only that cause line's dollars", () => {
+    const result = computeFundPlanSums([
+      {
+        categoryId: "c1",
+        flow: "expense",
+        budgetCents: 10_000,
+        pendingDeleteAt: null,
+        causeLines: [
+          { pendingDeleteAt: null, amountCents: 6_000 },
+          { pendingDeleteAt: "2026-07-30T00:00:00.000Z", amountCents: 4_000 },
+        ],
+      },
+    ]);
+    expect(result.expenseCents).toBe(6_000);
+  });
+
+  it("a whole-category pending-delete excludes the entire line, regardless of cause-line detail underneath", () => {
+    const result = computeFundPlanSums([
+      {
+        categoryId: "c1",
+        flow: "expense",
+        budgetCents: 10_000,
+        pendingDeleteAt: "2026-07-30T00:00:00.000Z",
+        causeLines: [{ pendingDeleteAt: null, amountCents: 10_000 }],
+      },
+      { categoryId: "c2", flow: "expense", budgetCents: 2_000, pendingDeleteAt: null, causeLines: null },
+    ]);
+    expect(result.expenseCents).toBe(2_000);
+  });
+
+  it("null budgetCents on a live line contributes zero, not a thrown error", () => {
+    const result = computeFundPlanSums([
+      { categoryId: "c1", flow: "income", budgetCents: null, pendingDeleteAt: null, causeLines: null },
+    ]);
+    expect(result.incomeCents).toBe(0);
   });
 });
 

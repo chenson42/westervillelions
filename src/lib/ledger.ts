@@ -1757,6 +1757,67 @@ export function computeFundLineSums(
 }
 
 // ---------------------------------------------------------------------------
+// computeFundPlanSums — Budgeting Overview/Drill-Down Restructure (DECISION-060)
+// ---------------------------------------------------------------------------
+
+/** Minimal shape computeFundPlanSums needs from one fund's committed budget
+ *  lines — a structural subset of FundSetupItem['budgetEditorLines'][number]
+ *  (guided-budget-setup.tsx / budget-fund-editor.tsx), so callers can pass
+ *  either type without an explicit cast. */
+export type FundPlanSumLine = {
+  categoryId: string;
+  flow: "income" | "expense";
+  budgetCents: number | null;
+  pendingDeleteAt: string | null;
+  causeLines: { pendingDeleteAt?: string | null; amountCents: number }[] | null;
+};
+
+/**
+ * Sums ONE fund's committed (server-sourced) budget lines into income/expense
+ * totals, correctly excluding pending-delete lines and pending-delete cause
+ * lines under a still-live parent — the same three-step recipe
+ * guided-budget-setup.tsx's seedLineValues/seedPendingDeleteKeys/
+ * seedCauseLinePendingCents build for its LIVE, client-typed maps, ported
+ * here to operate on static server data in one pass.
+ *
+ * DECISION-060: promoted from B-31's originally-planned print-private
+ * `printFundSums` to this shared export specifically so the Budgeting
+ * Overview's on-screen summary rows AND the printed board document derive
+ * from the LITERAL SAME computation, fed the LITERAL SAME committed data
+ * (`fund.budgetEditorLines`) — this is what makes "totals must match across
+ * the overview screen, the drill-down's live editor, and the printed
+ * document" true by construction, not by convention. The drill-down's live
+ * editor (BudgetFundEditor) still computes its OWN sums from its own
+ * live-typed maps via computeFundLineSums directly (different inputs, same
+ * terminal function) — this function is only for STATIC, server-committed
+ * data (the overview and print, never a live-typed client island).
+ *
+ * The cause-line-pending-cents step is the one easy-to-drop step (see this
+ * module's own seedCauseLinePendingCents doc comment): a still-live category
+ * whose budgetCents total includes dollars from an individually-deleted
+ * cause line must NOT count those dollars toward the fund's total.
+ *
+ * Empty `lines` returns `{ incomeCents: 0, expenseCents: 0 }`.
+ */
+export function computeFundPlanSums(
+  lines: FundPlanSumLine[],
+): { incomeCents: number; expenseCents: number } {
+  const lineValues: Record<string, number> = {};
+  const pendingDeleteKeys: Record<string, boolean> = {};
+  const causeLinePendingCents: Record<string, number> = {};
+
+  for (const line of lines) {
+    const key = `${line.categoryId}_${line.flow}`;
+    lineValues[key] = line.budgetCents ?? 0;
+    pendingDeleteKeys[key] = line.pendingDeleteAt !== null;
+    const pending = (line.causeLines ?? []).filter((cl) => cl.pendingDeleteAt != null);
+    causeLinePendingCents[key] = sumBudgetCauseLines(pending);
+  }
+
+  return computeFundLineSums(lineValues, pendingDeleteKeys, causeLinePendingCents);
+}
+
+// ---------------------------------------------------------------------------
 // resolveBudgetLineDeleteAction — Budget soft-delete (Increment 2, DECISION-052/053)
 // ---------------------------------------------------------------------------
 
