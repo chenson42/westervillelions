@@ -1361,8 +1361,8 @@ describe("setBudgetLinePendingDelete", () => {
     expect(updateCalls.some((c) => c.table === ledgerBudgetLines)).toBe(false);
   });
 
-  it("returns 404 when no ledger_budgets row exists for the (fundId, fiscalYear, categoryId, flow) tuple — there's nothing to soft-delete or restore", async () => {
-    const { tx, updateCalls } = makeMockTx({
+  it("restore (pendingDelete: false) still returns 404 when no ledger_budgets row exists for the tuple — there's nothing to restore. NOTE: pendingDelete: true against a missing row used to 404 here too, before the 2026-07-30 bug fix (docs/work-log/2026-07-30-budget-trash-unbudgeted.md) — that direction now lazily creates the row instead; see the tests below.", async () => {
+    const { tx, updateCalls, insertCalls, deleteCalls } = makeMockTx({
       selectResults: [
         [FUND_ROW],
         [CATEGORY_ROW],
@@ -1372,7 +1372,7 @@ describe("setBudgetLinePendingDelete", () => {
     });
 
     const result = await setBudgetLinePendingDelete(
-      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: true },
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: false },
       tx as never,
     );
 
@@ -1382,6 +1382,86 @@ describe("setBudgetLinePendingDelete", () => {
       status: 404,
     });
     expect(updateCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(0);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  // Bug fix, 2026-07-30 (docs/work-log/2026-07-30-budget-trash-unbudgeted.md):
+  // the trash-icon control silently did nothing on a category with no
+  // ledger_budgets row for this FY (budgetCents === null). Root cause:
+  // resolveBudgetLineDeleteAction resolved to "noop" for that case, and this
+  // function 404'd on a missing row for BOTH directions. Fix: pendingDelete:
+  // true now lazily creates the row instead of 404ing; pendingDelete: false
+  // (restore) is unchanged for a missing row (still 404s — untested combo,
+  // covered above).
+
+  it("soft-delete lazily creates a $0 row when no ledger_budgets row exists yet — trash-icon click on an unbudgeted category no longer 404s or no-ops", async () => {
+    const { tx, insertCalls, updateCalls, deleteCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW], // fund lookup
+        [CATEGORY_ROW], // category lookup
+        UNLOCKED_APPROVAL, // assertBudgetUnlocked
+        [], // row-must-exist lookup: no row for this tuple yet
+      ],
+    });
+
+    const result = await setBudgetLinePendingDelete(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: true },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "pending-delete" });
+    expect(insertCalls).toHaveLength(1);
+    expect(insertCalls[0].table).toBe(ledgerBudgets);
+    expect(insertCalls[0].values.annualAmountCents).toBe(0);
+    expect(insertCalls[0].values.pendingDeleteAt).toBeInstanceOf(Date);
+    expect(insertCalls[0].conflictMode).toBe("doUpdate");
+    expect(updateCalls).toHaveLength(0);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("restore hard-deletes a $0 row instead of clearing the flag — leaves no orphan $0 row behind for the lazily-created (or deliberately-$0) case", async () => {
+    const { tx, insertCalls, updateCalls, deleteCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [CATEGORY_ROW],
+        UNLOCKED_APPROVAL,
+        [{ id: "budget-1", annualAmountCents: 0 }], // existing row, $0
+      ],
+    });
+
+    const result = await setBudgetLinePendingDelete(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: false },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "deleted" });
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0].table).toBe(ledgerBudgets);
+    expect(updateCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it("restore of a non-zero row still just clears the flag (unaffected by the $0 orphan-avoidance branch) — the number comes back exactly, byte-for-byte", async () => {
+    const { tx, updateCalls, deleteCalls } = makeMockTx({
+      selectResults: [
+        [FUND_ROW],
+        [CATEGORY_ROW],
+        UNLOCKED_APPROVAL,
+        [{ id: "budget-1", annualAmountCents: 50_000 }],
+      ],
+    });
+
+    const result = await setBudgetLinePendingDelete(
+      { fundId: "fund-1", fiscalYear: 2026, categoryId: "cat-1", flow: "expense", pendingDelete: false },
+      tx as never,
+    );
+
+    expect(result).toEqual({ ok: true, action: "restored" });
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].values.pendingDeleteAt).toBeNull();
+    expect(updateCalls[0].values).not.toHaveProperty("annualAmountCents");
+    expect(deleteCalls).toHaveLength(0);
   });
 });
 

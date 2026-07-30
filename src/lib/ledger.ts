@@ -1767,12 +1767,28 @@ export function computeFundLineSums(
  * (DECISION-053 item 3): everything else in this increment's client logic
  * routes through a server round-trip and gets tested there instead.
  *
- * `"soft-delete"` only when the row already exists server-side AND the
- * committed raw value is blank — that already-persisted row gets
+ * `"soft-delete"` when the row already exists server-side AND the committed
+ * raw value is blank — that already-persisted row gets
  * `PATCH { pendingDelete: true }` (its amount is preserved, not cleared, so
- * Restore brings the number back exactly). Every other combination —
- * including a blank value on a row that was never saved — is `"noop"`: there
- * is nothing to soft-delete, and the caller must not fire a network call.
+ * Restore brings the number back exactly).
+ *
+ * `"create-then-delete"` (bug fix, 2026-07-30 —
+ * docs/work-log/2026-07-30-budget-trash-unbudgeted.md) when the row does NOT
+ * exist yet AND the raw value is blank — a category with no budget row for
+ * this FY. This used to be `"noop"`, which was correct for the blank-then-
+ * blur gesture (nothing was ever entered, so there's nothing to do) but was
+ * ALSO silently swallowing the trash-icon click on an unbudgeted category —
+ * the treasurer-reported bug. `requestRemove` (budget-editor.tsx) treats this
+ * the same as `"soft-delete"` (fires the same `PATCH { pendingDelete: true }`,
+ * which now lazily creates the row server-side — setBudgetLinePendingDelete,
+ * ledger-queries.ts); `commitValue`'s blur/Enter path only branches on
+ * `=== "soft-delete"` and falls through to its own blank-raw-value check for
+ * everything else, so this rename does NOT change the blur gesture's
+ * behavior — it's still a true no-op there, just under a different label.
+ *
+ * `"noop"` for every other combination (non-blank raw value, either
+ * existing-row state) — not a delete gesture at all; the caller proceeds
+ * with an ordinary amount write instead.
  *
  * `hasExistingRow` should be read directly off the line's current
  * `budgetCents !== null` (see budget-editor.tsx), which stays true even for a
@@ -1782,8 +1798,9 @@ export function computeFundLineSums(
 export function resolveBudgetLineDeleteAction(
   hasExistingRow: boolean,
   rawValue: string,
-): "soft-delete" | "noop" {
-  return rawValue.trim() === "" && hasExistingRow ? "soft-delete" : "noop";
+): "soft-delete" | "create-then-delete" | "noop" {
+  if (rawValue.trim() !== "") return "noop";
+  return hasExistingRow ? "soft-delete" : "create-then-delete";
 }
 
 // ---------------------------------------------------------------------------

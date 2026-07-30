@@ -556,6 +556,17 @@ export default function BudgetEditor({
    * on a category in breakdown mode too (Flow 6) — the server's
    * has_cause_breakdown guard on this specific write path was removed as
    * part of the Budgeting Page Restructure.
+   *
+   * Bug fix, 2026-07-30 (docs/work-log/2026-07-30-budget-trash-unbudgeted.md):
+   * restoring a $0 row (lazily-created by the trash-on-unbudgeted-category
+   * fix, or a deliberate $0 budget) HARD-deletes it server-side
+   * (setBudgetLinePendingDelete's orphan-avoidance branch, action:
+   * "deleted") rather than just clearing the flag. Every OTHER
+   * soft-delete/restore never touches `annualAmountCents`, so whatever
+   * `inputs[key]` already holds stays correct after the round trip — but
+   * THIS one direction actually changes the number (0 -> gone), so the
+   * local input must be explicitly blanked to match, or it would keep
+   * showing a stale "0.00" until the next full remount.
    */
   async function setPendingDelete(
     categoryId: string,
@@ -579,6 +590,12 @@ export default function BudgetEditor({
             ? "Could not remove this budget line. Try again."
             : "Could not restore this budget line. Try again.");
         throw new Error(message);
+      }
+      const data = await res.json().catch(() => ({}));
+      if (data.action === "deleted") {
+        setInputs((prev) => ({ ...prev, [key]: "" }));
+        dirtyRef.current[key] = false;
+        onInputChange?.(key, "");
       }
       onPendingDeleteChange?.(key, pendingDelete);
       router.refresh();
@@ -677,8 +694,15 @@ export default function BudgetEditor({
    * and category removal keeps this SAME unconfirmed behavior even in
    * breakdown mode per the Phase 3 design — the persistent Restore control
    * is the safety net, not a confirm dialog). A never-saved row (e.g. an
-   * active category getFundReport surfaces with no budget set yet) is a
-   * true no-op — there's nothing to remove.
+   * active category getFundReport surfaces with no budget set yet) resolves
+   * to `"create-then-delete"` (bug fix, 2026-07-30 —
+   * docs/work-log/2026-07-30-budget-trash-unbudgeted.md): the SAME
+   * `PATCH { pendingDelete: true }` call as the soft-delete branch fires
+   * below, and the server lazily creates a $0 row already marked
+   * pending-delete (setBudgetLinePendingDelete, ledger-queries.ts) — so the
+   * trash icon now works on every category, not just ones with an amount
+   * already entered. Only a non-blank raw value (never true for this
+   * always-blank call) would resolve to a genuine `"noop"`.
    */
   function requestRemove(line: BudgetLine) {
     if (disabled) return;

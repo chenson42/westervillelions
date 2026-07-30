@@ -1,6 +1,6 @@
 {
   "name": "westerville-lions",
-  "version": "1.52.2",
+  "version": "1.52.3",
   "private": true,
   "engines": {
     "node": ">=20.9.0"

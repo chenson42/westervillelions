@@ -2472,8 +2472,12 @@ describe("resolveBudgetLineDeleteAction", () => {
     expect(resolveBudgetLineDeleteAction(true, "   ")).toBe("soft-delete");
   });
 
-  it("blank value + no existing row -> \"noop\" (nothing to soft-delete)", () => {
-    expect(resolveBudgetLineDeleteAction(false, "")).toBe("noop");
+  it("blank value + no existing row -> \"create-then-delete\" (bug fix 2026-07-30: trash on an unbudgeted category must not be a silent no-op)", () => {
+    expect(resolveBudgetLineDeleteAction(false, "")).toBe("create-then-delete");
+  });
+
+  it("whitespace-only value + no existing row -> \"create-then-delete\" (trims before checking, same as the existing-row branch)", () => {
+    expect(resolveBudgetLineDeleteAction(false, "   ")).toBe("create-then-delete");
   });
 
   it("non-blank value + existing row -> \"noop\" (unreachable via the blur handler today, but the contract holds)", () => {

@@ -1169,7 +1169,7 @@ export type SetBudgetLinePendingDeleteParams = {
 };
 
 export type SetBudgetLinePendingDeleteResult =
-  | { ok: true; action: "pending-delete" | "restored" }
+  | { ok: true; action: "pending-delete" | "restored" | "deleted" }
   | {
       ok: false;
       error: string;
@@ -1187,10 +1187,10 @@ export type SetBudgetLinePendingDeleteResult =
 /**
  * Soft-delete/restore core for a single `(fundId, fiscalYear, categoryId,
  * flow)` budget line. Runs the fund/category lookup and assertBudgetUnlocked
- * upsertBudgetLine also runs, but flips ONLY pending_delete_at.
- * annual_amount_cents is never read or written by this function; that is
- * what makes "restore brings the number back exactly" true by construction,
- * not by special-casing.
+ * upsertBudgetLine also runs, but otherwise flips ONLY pending_delete_at on
+ * an existing row; annual_amount_cents is never WRITTEN by this function for
+ * an existing row, which is what makes "restore brings the number back
+ * exactly" true by construction, not by special-casing.
  *
  * UNLIKE upsertBudgetLine, this function does NOT run the cause-line-children
  * guard (removed by the Budgeting Page Restructure, DECISION-054/056 — see
@@ -1199,13 +1199,28 @@ export type SetBudgetLinePendingDeleteResult =
  * cause; its cause lines are excluded from every read consumer at read time
  * via isCauseLineLive (src/lib/ledger.ts), never via a cascade-written flag.
  *
- * Unlike upsertBudgetLine (which inserts a fresh row when none exists yet),
- * a pending-delete write only ever makes sense against an EXISTING row —
- * there's nothing to soft-delete or restore if the category was never
- * budgeted. So this function 404s when no ledger_budgets row matches the
- * tuple (defense-in-depth only: the client-side resolveBudgetLineDeleteAction
- * — ux-developer, src/lib/ledger.ts — never sends this request for a
- * never-saved row).
+ * Bug fix, 2026-07-30 (docs/work-log/2026-07-30-budget-trash-unbudgeted.md):
+ * `pendingDelete: true` (soft-delete) against a category with NO existing
+ * ledger_budgets row now LAZILY CREATES one — `annualAmountCents: 0`,
+ * `pendingDeleteAt` set in the same insert — mirroring
+ * setBudgetCategoryAnnotation's existing lazy-create precedent, instead of
+ * 404ing. This is what makes the trash-icon control work on an unbudgeted
+ * category (previously a silent client-side no-op — the row didn't exist to
+ * flip a flag on). `pendingDelete: false` (restore) still requires an
+ * existing row and 404s otherwise — there is no legitimate "restore a row
+ * that was never removed" gesture reachable via the UI.
+ *
+ * Restore of a row whose `annualAmountCents === 0` HARD-deletes it instead of
+ * clearing the flag — this is what "leaves no orphan $0 rows" means for the
+ * lazily-created case: un-trashing an unbudgeted category must return it to
+ * the true unbudgeted state (no row), not a visible $0 budget the treasurer
+ * never entered. The tradeoff (documented in the work-log): a category a
+ * treasurer deliberately budgeted at exactly $0, then trashed, then
+ * restored, comes back unbudgeted rather than $0 — there's no stored flag
+ * distinguishing "deliberate $0" from "lazily-created $0" without a schema
+ * change, and $0-budgeted vs. unbudgeted are financially equivalent for
+ * reporting purposes, so this was judged an acceptable, rare edge case
+ * rather than one worth a new column for.
  *
  * Both directions (pendingDelete: true and false) run the FULL guard
  * sequence, including the lock check — restore is lock-guarded too
@@ -1267,11 +1282,13 @@ export async function setBudgetLinePendingDelete(
     return { ...lock, reason: "locked" };
   }
 
-  // Row-must-exist check. Unlike upsertBudgetLine (where "no row" just means
-  // "insert one"), pending-delete has no insert branch — there must already
-  // be something to mark or restore.
+  // Row-must-exist check for RESTORE only. Unlike upsertBudgetLine (where "no
+  // row" just means "insert one"), restore has no insert branch — there must
+  // already be something to bring back. Soft-delete (pendingDelete: true)
+  // instead lazily creates the row below when none exists (bug fix,
+  // 2026-07-30 — see the function doc comment above).
   const existingRows = await tx
-    .select({ id: ledgerBudgets.id })
+    .select({ id: ledgerBudgets.id, annualAmountCents: ledgerBudgets.annualAmountCents })
     .from(ledgerBudgets)
     .where(
       and(
@@ -1282,9 +1299,41 @@ export async function setBudgetLinePendingDelete(
       ),
     )
     .limit(1);
-  const existingId = existingRows[0]?.id;
-  if (!existingId) {
-    return { ok: false, error: "No budget line exists for this category to modify.", status: 404 };
+  const existing = existingRows[0] ?? null;
+
+  if (!existing) {
+    if (!pendingDelete) {
+      return { ok: false, error: "No budget line exists for this category to modify.", status: 404 };
+    }
+
+    // Lazy-create-then-soft-delete (bug fix, 2026-07-30): the trash-icon
+    // control on a category with no budget row for this FY. onConflictDoUpdate
+    // (rather than a plain insert) is defensive against a race — a concurrent
+    // write creating the row between our SELECT above and this INSERT — and
+    // mirrors setBudgetCategoryAnnotation's existing lazy-create pattern.
+    // Never touches annualAmountCents on the conflict branch, same reasoning
+    // as that function: if a real amount was written concurrently, this
+    // soft-delete must not clobber it.
+    await tx
+      .insert(ledgerBudgets)
+      .values({
+        entityId: fund.entityId,
+        fundId,
+        fiscalYear,
+        categoryId,
+        flow,
+        annualAmountCents: 0, // ONLY here — used solely when no row exists yet
+        pendingDeleteAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [ledgerBudgets.fundId, ledgerBudgets.fiscalYear, ledgerBudgets.categoryId, ledgerBudgets.flow],
+        set: {
+          pendingDeleteAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+
+    return { ok: true, action: "pending-delete" };
   }
 
   // NOTE: unlike upsertBudgetLine, this function does NOT guard against
@@ -1304,6 +1353,15 @@ export async function setBudgetLinePendingDelete(
   // overwrite, or a hard delete-via-cascade, silently desyncing children)
   // that has nothing to do with this reversible soft-delete path.
 
+  if (!pendingDelete && existing.annualAmountCents === 0) {
+    // Restore of a lazily-created (or deliberately-$0) row — hard-delete
+    // instead of clearing the flag, so an unbudgeted category restores to
+    // truly unbudgeted rather than a visible $0 line nobody entered. See the
+    // function doc comment above for the documented tradeoff.
+    await tx.delete(ledgerBudgets).where(eq(ledgerBudgets.id, existing.id));
+    return { ok: true, action: "deleted" };
+  }
+
   // The pure flag-flip. annual_amount_cents is never touched here.
   await tx
     .update(ledgerBudgets)
@@ -1311,7 +1369,7 @@ export async function setBudgetLinePendingDelete(
       pendingDeleteAt: pendingDelete ? new Date() : null,
       updatedAt: new Date(),
     })
-    .where(eq(ledgerBudgets.id, existingId));
+    .where(eq(ledgerBudgets.id, existing.id));
 
   return { ok: true, action: pendingDelete ? "pending-delete" : "restored" };
 }

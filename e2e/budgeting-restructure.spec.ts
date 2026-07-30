@@ -590,4 +590,103 @@ test.describe("Budgeting page restructure — /admin/ledger/budgeting", () => {
       )
       .toBe(true);
   });
+
+  test("bug fix 2026-07-30: trash on a category with NO budgeted amount marks it pending-delete (Restore-able), not a silent no-op — docs/work-log/2026-07-30-budget-trash-unbudgeted.md", async ({
+    page,
+  }) => {
+    // Uses a freshly created, uniquely-named category rather than an
+    // existing catalog category — this suite's FY2099 fixture is
+    // intentionally never cleaned up between runs (file-level doc comment),
+    // so any pre-existing category could already carry a stray budget row
+    // from an earlier run. Creating a brand-new category (POST to
+    // /api/admin/ledger/categories only — no ledger_budgets row) guarantees
+    // a genuinely unbudgeted (budgetCents === null) starting point every
+    // time, matching the exact bug precondition: before the fix,
+    // resolveBudgetLineDeleteAction resolved a trash click on such a row to
+    // "noop" and requestRemove early-returned — no network call, no visible
+    // change, the treasurer-reported bug.
+    const UNBUDGETED_CATEGORY = `E2E QA Trash Bug ${Date.now()}`;
+
+    // Arrange — create the category (income side, to reuse "+ Add income
+    // category" exactly as the existing "+ Add category" tests do) then
+    // switch flows: this bug isn't flow-specific, so use whichever the add
+    // control creates.
+    await page.goto(BUDGETING_URL);
+    await page.getByRole("button", { name: "+ Add income category" }).click();
+    await page.getByLabel("Category name").fill(UNBUDGETED_CATEGORY);
+    await page.getByRole("button", { name: "Create category" }).click();
+    const amountInput = page.getByLabel(`Budget for ${UNBUDGETED_CATEGORY} (income)`);
+    await expect(amountInput).toBeVisible({ timeout: 10_000 });
+    await expect(amountInput).toHaveValue("");
+
+    // Act — click trash. Waits for the actual PATCH { pendingDelete: true }
+    // round trip so the assertions below prove a real server-side change,
+    // not just local optimistic state.
+    const removeBtn = page.getByRole("button", {
+      name: `Remove ${UNBUDGETED_CATEGORY} (income) from this year's budget`,
+    });
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().endsWith("/api/admin/ledger/budgets") &&
+          r.request().method() === "PATCH" &&
+          r.request().postDataJSON()?.pendingDelete === true,
+      ),
+      removeBtn.click(),
+    ]);
+
+    // Assert — struck-through "Deleted" treatment with a Restore control,
+    // same as an already-budgeted category's soft-delete. No cause lines on
+    // this category, so no "(N cause lines)" suffix.
+    await expect(page.getByText("Deleted — removed when finalized")).toBeVisible();
+    await expect(
+      page.getByLabel(`Budget for ${UNBUDGETED_CATEGORY} (income), marked for removal`),
+    ).toBeVisible();
+    const restoreBtn = page.getByRole("button", {
+      name: `Restore ${UNBUDGETED_CATEGORY} (income) to this year's budget`,
+    });
+    await expect(restoreBtn).toBeVisible();
+
+    // Assert — persisted server-side (the lazily-created row really exists
+    // in ledger_budgets, pending-delete), not just an optimistic client
+    // flip: a full reload still shows the pending-delete/Restore state.
+    await page.reload();
+    await expect(
+      page.getByLabel(`Budget for ${UNBUDGETED_CATEGORY} (income), marked for removal`),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: `Restore ${UNBUDGETED_CATEGORY} (income) to this year's budget`,
+      }),
+    ).toBeVisible();
+
+    // Act — Restore
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().endsWith("/api/admin/ledger/budgets") &&
+          r.request().method() === "PATCH" &&
+          r.request().postDataJSON()?.pendingDelete === false,
+      ),
+      page
+        .getByRole("button", {
+          name: `Restore ${UNBUDGETED_CATEGORY} (income) to this year's budget`,
+        })
+        .click(),
+    ]);
+
+    // Assert — back to the normal, blank, unbudgeted lump-sum row. The
+    // lazily-created $0 row is hard-deleted on restore (setBudgetLinePendingDelete's
+    // orphan-avoidance branch), not left behind as a visible $0 budget line.
+    const restoredInput = page.getByLabel(`Budget for ${UNBUDGETED_CATEGORY} (income)`);
+    await expect(restoredInput).toBeVisible({ timeout: 10_000 });
+    await expect(restoredInput).toHaveValue("");
+
+    // Assert — persisted: a reload confirms it's truly gone again (no
+    // residual $0 row), not just a client-side revert.
+    await page.reload();
+    const restoredAfterReload = page.getByLabel(`Budget for ${UNBUDGETED_CATEGORY} (income)`);
+    await expect(restoredAfterReload).toBeVisible();
+    await expect(restoredAfterReload).toHaveValue("");
+  });
 });
