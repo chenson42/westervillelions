@@ -231,7 +231,10 @@ describe("isMonthGatedForEntity", () => {
   // docs/work-log/2026-07-28-report-gate-outstanding-checks.md). Prod repro:
   // Foundation/Charitable's picker stopped at Feb 2026 solely because of two
   // outstanding checks dated 2026-03-07, even though those months' books were
-  // otherwise correct and the report already footnotes uncashed checks.
+  // otherwise correct and the report already footnotes uncashed checks. The
+  // outstanding-check carve-out itself (isOutstandingCheckRow, flow='expense')
+  // is UNAFFECTED by DECISION-059 — only the check+INCOME exclusion it used
+  // to guard (the test immediately below) is gone.
   // -------------------------------------------------------------------------
 
   it("does NOT gate on an unreconciled OUTSTANDING CHECK (payment_method='check', flow='expense') — the app's one uncashed-check definition, matching getDashboard()'s predicate exactly", async () => {
@@ -246,7 +249,7 @@ describe("isMonthGatedForEntity", () => {
     expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
   });
 
-  it("STILL gates on an unreconciled check+INCOME row (dues paid by paper check) — regression for keying on payment_method alone instead of flow='expense'; this must fail if someone excludes all payment_method='check' rows", async () => {
+  it("does NOT gate on an unreconciled check+INCOME row anymore — full deposit-in-transit symmetry, DECISION-059, supersedes the 2026-07-28 check+income exclusion", async () => {
     mockDbState.queue.push([
       {
         txnDate: "2026-06-24",
@@ -255,7 +258,7 @@ describe("isMonthGatedForEntity", () => {
         flow: "income",
       },
     ]);
-    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
   });
 
   it("STILL gates on an unreconciled non-check expense (e.g. debit_card/bill_pay) dated on/before month-end", async () => {
@@ -271,20 +274,17 @@ describe("isMonthGatedForEntity", () => {
   });
 
   // -------------------------------------------------------------------------
-  // In-transit Zeffy deposit carve-out (2026-07-28 batch reconciliation —
-  // docs/work-log/2026-07-28-zeffy-batch-reconciliation.md, DECISION-051).
-  // Anchored to `asOf` ("today"), NOT `monthEnd` — a recent unremitted batch
-  // doesn't block the month, but a genuinely stale, forgotten batch still
-  // flags it as real time passes. Both scenarios below use the SAME
-  // txnDate ("2026-06-25", inside the June report month) and vary only how
-  // much real time (`asOf`, via fake system time) has passed since then —
-  // this isolates the anchor-to-asOf behavior from the txnDate<=monthEnd
-  // check, which both scenarios already satisfy identically (Phase 3 test 8).
+  // Uncleared-deposit carve-out — full method/age symmetry (DECISION-059,
+  // docs/work-log/2026-07-30-deposit-in-transit-carveout.md), replacing the
+  // retired method-restricted, 12-day-windowed in-transit-Zeffy carve-out
+  // (formerly DECISION-051). The carve-out is flow='income' only,
+  // method-agnostic in both directions — no paymentMethod check, no age
+  // check, mirroring isOutstandingCheckRow()'s own unbounded-age shape.
   // -------------------------------------------------------------------------
 
-  it("does NOT gate on a recent in-transit Zeffy deposit (payment_method='zeffy', flow='income') dated within the 12-day window of `asOf`", async () => {
+  it("does NOT gate on an unreconciled ZEFFY income row of ANY age — the time-bound window is retired", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-01T12:00:00Z")); // 6 days after the row's txnDate
+    vi.setSystemTime(new Date("2026-08-15T12:00:00Z")); // 51 days after the row's txnDate — was "stale" under the retired window
 
     mockDbState.queue.push([
       {
@@ -300,28 +300,33 @@ describe("isMonthGatedForEntity", () => {
     vi.useRealTimers();
   });
 
-  it("STILL gates on the SAME Zeffy deposit once it's stale — more than 12 days have passed since `asOf` moved on (a genuinely neglected/broken sync must still flag)", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-15T12:00:00Z")); // 51 days after the row's txnDate
-
+  it("does NOT gate on an unreconciled CASH income row dated on/before month-end — full method-agnostic symmetry", async () => {
     mockDbState.queue.push([
       {
         txnDate: "2026-06-25",
         fundKind: "administrative",
-        paymentMethod: "zeffy",
+        paymentMethod: "cash",
         flow: "income",
       },
     ]);
 
-    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
-
-    vi.useRealTimers();
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
   });
 
-  it("STILL gates on an unreconciled zeffy EXPENSE row (not income) — the in-transit carve-out is income-deposits only", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-01T12:00:00Z"));
+  it("does NOT gate regardless of paymentMethod value, including null/legacy rows — isUnclearedDepositRow ignores payment method entirely", async () => {
+    mockDbState.queue.push([
+      {
+        txnDate: "2026-06-25",
+        fundKind: "administrative",
+        paymentMethod: null,
+        flow: "income",
+      },
+    ]);
 
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
+  });
+
+  it("STILL gates on an unreconciled zeffy EXPENSE row (not income) — the uncleared-deposit carve-out is flow='income' only, method-agnostic in both directions", async () => {
     mockDbState.queue.push([
       {
         txnDate: "2026-06-25",
@@ -332,17 +337,16 @@ describe("isMonthGatedForEntity", () => {
     ]);
 
     expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
-
-    vi.useRealTimers();
   });
 });
 
 // ---------------------------------------------------------------------------
-// getLatestOpenMonthForEntity — in-transit Zeffy carve-out (Phase 3 test 9)
+// getLatestOpenMonthForEntity — uncleared-deposit carve-out (full symmetry)
+// (Phase 3 test 9)
 // ---------------------------------------------------------------------------
 
-describe("getLatestOpenMonthForEntity — in-transit Zeffy carve-out", () => {
-  it("does not truncate the candidate month solely due to a recent in-transit Zeffy row — mirrors the outstanding-check regression fix, confirms the carve-out is applied in the blockingDates filter too, not just isMonthGatedForEntity", async () => {
+describe("getLatestOpenMonthForEntity — uncleared-deposit carve-out (full symmetry)", () => {
+  it("does not truncate the candidate month solely due to a recent uncleared Zeffy deposit row — mirrors the outstanding-check regression fix, confirms the carve-out is applied in the blockingDates filter too, not just isMonthGatedForEntity", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-05T12:00:00Z"));
 
@@ -369,7 +373,7 @@ describe("getLatestOpenMonthForEntity — in-transit Zeffy carve-out", () => {
     vi.useRealTimers();
   });
 
-  it("DOES truncate the candidate when the same-shaped row is genuinely stale (not in-transit)", async () => {
+  it("does NOT truncate the candidate even when the same-shaped income row is old — the time-bound window is retired, mirrors the outstanding-check carve-out having no age limit either", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T12:00:00Z"));
 
@@ -385,9 +389,12 @@ describe("getLatestOpenMonthForEntity — in-transit Zeffy carve-out", () => {
 
     const result = await getLatestOpenMonthForEntity("entity-1");
 
-    // Stale batch still blocks: candidate falls back to the month before the
-    // row's own month.
-    expect(result).toBe("2026-05");
+    // Full symmetry: age no longer matters, so the row no longer appears in
+    // blockingDates at all, and the candidate resolves all the way to the
+    // calendar ceiling (asOf 2026-08-15 -> ceilingMonth "2026-07", the last
+    // fully-elapsed month) instead of falling back to the month before the
+    // row's own month ("2026-05", the old pre-DECISION-059 result).
+    expect(result).toBe("2026-07");
 
     vi.useRealTimers();
   });

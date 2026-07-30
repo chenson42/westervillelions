@@ -3062,21 +3062,50 @@ export type UncashedCheckRow = {
   ageDays: number; // computed via daysSinceTxnDate()
 };
 
+/**
+ * DECISION-059 (docs/work-log/2026-07-30-deposit-in-transit-carveout.md):
+ * the income-side mirror of UncashedCheckRow — every posted, unreconciled
+ * `flow='income'` row, cross-entity, NO paymentMethod filter (unlike
+ * UncashedCheckRow, which is check-method-only by definition). Ships as the
+ * permanent visibility net for the same-decision gate relaxation in
+ * `isMonthGatedForEntity()`/`getLatestOpenMonthForEntity()`
+ * (financial-report-queries.ts) — full deposit-in-transit symmetry means
+ * uncleared deposits no longer gate a member statement's month, so this
+ * panel is now the only place a stale/never-clearing deposit stays visible,
+ * same role `uncashedChecks` already plays for outstanding checks.
+ */
+export type UnremittedDepositRow = {
+  id: string;
+  entitySlug: string;
+  entityName: string;
+  fundSlug: string;
+  fundName: string;
+  party: string | null;
+  paymentMethod: string | null;
+  amountCents: number;
+  txnDate: string; // 'YYYY-MM-DD'
+  memo: string | null;
+  ageDays: number; // computed via daysSinceTxnDate(), same helper uncashedChecks uses
+};
+
 export type DashboardData = {
   fiscalYear: number; // current FY, computed once and shared by every figure below
   entities: DashboardEntitySummary[];
   /** Merged, entity-tagged, both entities' guardrail flags — feeds the audit-items panel. */
   guardrailFlags: EntityTaggedGuardrailFlag[];
   uncashedChecks: UncashedCheckRow[]; // oldest-first, both entities
+  unremittedDeposits: UnremittedDepositRow[]; // oldest-first, both entities
   syncStaleTxnsTotal: number; // cross-entity sum, for the audit-items panel
   unreconciledPriorMonthTotal: number; // cross-entity sum
 };
 
 /**
  * Composes the two-entity dashboard: parallel getOverview() calls at the
- * current fiscal year (one `now`/FY shared across both entities and the
- * uncashed-checks age computation — DECISION-031), plus one new cross-entity
- * query for unreconciled check-method expense transactions.
+ * current fiscal year (one `now`/FY shared across both entities and both the
+ * uncashed-checks and unremitted-deposits age computations — DECISION-031),
+ * plus two independent cross-entity queries: unreconciled check-method
+ * expense transactions (uncashedChecks) and unreconciled income transactions
+ * of any payment method (unremittedDeposits, DECISION-059).
  *
  * Does NOT fetch pending approvals — the caller (page.tsx) already gates that
  * behind LEDGER_APPROVE and fetches it separately, exactly as the existing
@@ -3169,11 +3198,59 @@ export async function getDashboard(): Promise<DashboardData> {
     };
   });
 
+  // Cross-entity unremitted deposits: posted, unreconciled INCOME rows, no
+  // payment-method filter (DECISION-059) — the permanent visibility net for
+  // the deposit-in-transit gate relaxation in financial-report-queries.ts.
+  // Deliberately a second, independent query rather than folding into
+  // uncashedRows above via an OR-predicate: zero blast radius on the
+  // existing, already-tested uncashedChecks query, and this dashboard is
+  // low-traffic enough that one extra round trip is immaterial.
+  const unremittedRows = await db
+    .select({
+      id: ledgerTransactions.id,
+      entityId: ledgerTransactions.entityId,
+      party: ledgerTransactions.party,
+      paymentMethod: ledgerTransactions.paymentMethod,
+      amountCents: ledgerTransactions.amountCents,
+      txnDate: ledgerTransactions.txnDate,
+      memo: ledgerTransactions.memo,
+      fundSlug: ledgerFunds.slug,
+      fundName: ledgerFunds.name,
+    })
+    .from(ledgerTransactions)
+    .leftJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .where(
+      and(
+        eq(ledgerTransactions.flow, "income"),
+        eq(ledgerTransactions.status, "posted"),
+        eq(ledgerTransactions.reconciled, false),
+      ),
+    )
+    .orderBy(asc(ledgerTransactions.txnDate));
+
+  const unremittedDeposits: UnremittedDepositRow[] = unremittedRows.map((r) => {
+    const entity = entityById.get(r.entityId);
+    return {
+      id: r.id,
+      entitySlug: entity?.slug ?? "",
+      entityName: entity?.shortName ?? entity?.name ?? "Unknown entity",
+      fundSlug: r.fundSlug ?? "",
+      fundName: r.fundName ?? "Unknown fund",
+      party: r.party,
+      paymentMethod: r.paymentMethod,
+      amountCents: r.amountCents,
+      txnDate: r.txnDate,
+      memo: r.memo,
+      ageDays: daysSinceTxnDate(r.txnDate, now),
+    };
+  });
+
   return {
     fiscalYear,
     entities: entitySummaries,
     guardrailFlags,
     uncashedChecks,
+    unremittedDeposits,
     syncStaleTxnsTotal,
     unreconciledPriorMonthTotal,
   };

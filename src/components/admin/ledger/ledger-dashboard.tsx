@@ -1,6 +1,7 @@
 import Link from "next/link";
 import DashboardEntityCard from "@/components/admin/ledger/dashboard-entity-card";
 import UncashedChecksPanel from "@/components/admin/ledger/uncashed-checks-panel";
+import UnremittedDepositsPanel from "@/components/admin/ledger/unremitted-deposits-panel";
 import AuditItemsPanel from "@/components/admin/ledger/audit-items-panel";
 import type { DashboardData } from "@/lib/ledger-queries";
 
@@ -68,6 +69,8 @@ export default function LedgerDashboard({ dashboard, canApprove, pendingCount }:
       )}
 
       <UncashedChecksPanel checks={dashboard.uncashedChecks} />
+
+      <UnremittedDepositsPanel deposits={dashboard.unremittedDeposits} />
 
       <AuditItemsPanel
         guardrailFlags={dashboard.guardrailFlags}

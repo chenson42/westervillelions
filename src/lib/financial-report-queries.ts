@@ -292,49 +292,37 @@ function hasMonthElapsed(monthEnd: string, now: Date = new Date()): boolean {
  * both already narrowed to status='posted' AND reconciled=false by the
  * caller's SQL WHERE clause): a check the club WROTE that the bank hasn't
  * cleared yet. Deliberately keyed on `flow='expense'`, not merely
- * `paymentMethod='check'` alone — a dues payment RECEIVED by paper check
- * (`paymentMethod='check', flow='income'`) is a genuinely-unreconciled
- * deposit, not an outstanding-check carve-out candidate, and must keep
- * gating. See docs/work-log/2026-07-28-report-gate-outstanding-checks.md.
+ * `paymentMethod='check'` alone — the flow split is what distinguishes
+ * "money the club wrote a check for" from "money the club received," which
+ * matters for the outstanding-check carve-out's own rationale (a check the
+ * treasurer WROTE and the report already footnotes). A dues payment
+ * RECEIVED by paper check (`paymentMethod='check', flow='income'`) is
+ * carved out too, but by isUnclearedDepositRow() below, not this function
+ * — see DECISION-059 (docs/work-log/2026-07-30-deposit-in-transit-carveout.md),
+ * which retired the prior (2026-07-28) rule that kept check+income rows
+ * gating. See docs/work-log/2026-07-28-report-gate-outstanding-checks.md
+ * for this function's own original rationale, still current for expenses.
  */
 function isOutstandingCheckRow(r: { paymentMethod: string | null; flow: string }): boolean {
   return r.paymentMethod === "check" && r.flow === "expense";
 }
 
-/** ~one Zeffy weekly-remittance cycle (7 days) plus observed ACH/bank
- *  posting lag (the verified 2026-07-28 case: rows dated 6/24-6/25 cleared
- *  the bank 6/29, a 4-5 day lag) with margin. Long enough that a normal
- *  in-transit batch is never falsely gated; short enough that a batch still
- *  sitting unremitted after ~1.5-2 cycles reliably re-flags as stale
- *  (DECISION-051). */
-const IN_TRANSIT_ZEFFY_DEPOSIT_WINDOW_DAYS = 12;
-
-/** DST-safe day-count between two 'YYYY-MM-DD' calendar-date strings. Both
- *  sides are pinned via Date.UTC() on their own Y/M/D components purely as
- *  an internal arithmetic trick — this is NOT reconciledAtToYMD()'s bug
- *  class (there is no stored wall-clock timestamp being reinterpreted here;
- *  both inputs are already date-only strings, exactly like hasMonthElapsed()'s
- *  local-getter comparisons above). */
-function daysBetween(laterYMD: string, earlierYMD: string): number {
-  const [ly, lm, ld] = laterYMD.split("-").map(Number);
-  const [ey, em, ed] = earlierYMD.split("-").map(Number);
-  return Math.round((Date.UTC(ly, lm - 1, ld) - Date.UTC(ey, em - 1, ed)) / 86_400_000);
-}
-
-/** True iff `r` is a not-yet-remitted Zeffy deposit recent enough to treat
- *  as legitimately in transit rather than "books aren't done." Anchored to
- *  `asOf` (today), NOT to the report's `monthEnd` — a fixed monthEnd-relative
- *  window would exclude a stale, forgotten batch FOREVER as real time moves
- *  forward past it, which fails the treasurer's explicit requirement that a
- *  long-stale un-deposited batch must still flag the month (architect §5,
- *  DECISION-051). */
-function isInTransitZeffyDepositRow(
-  r: { paymentMethod: string | null; flow: string; txnDate: string },
-  asOf: Date = new Date(),
-): boolean {
-  if (r.paymentMethod !== "zeffy" || r.flow !== "income") return false;
-  const asOfYMD = `${asOf.getFullYear()}-${pad2(asOf.getMonth() + 1)}-${pad2(asOf.getDate())}`;
-  return daysBetween(asOfYMD, r.txnDate) <= IN_TRANSIT_ZEFFY_DEPOSIT_WINDOW_DAYS;
+/**
+ * True iff `r` is an uncleared (posted, unreconciled) deposit — the
+ * income-side mirror of isOutstandingCheckRow() above, and the FULL-SYMMETRY
+ * replacement for the retired isInTransitZeffyDepositRow() (DECISION-059,
+ * docs/work-log/2026-07-30-deposit-in-transit-carveout.md). Deliberately has
+ * NO payment-method restriction and NO time bound — every deposit rail
+ * (Zeffy, check-received, cash) waits on the same structural lag (bank
+ * posting + the treasurer's next reconciliation session), so scoping this to
+ * one method or one age window just relocates the bug to whatever's excluded.
+ * This reopens the `payment_method='check', flow='income'` case the
+ * 2026-07-28 fix (docs/work-log/2026-07-28-report-gate-outstanding-checks.md)
+ * deliberately kept gating — see DECISION-059 for the full rationale for why
+ * that distinction no longer holds under checkbook-basis recording (T-24).
+ */
+function isUnclearedDepositRow(r: { flow: string }): boolean {
+  return r.flow === "income";
 }
 
 /**
@@ -345,11 +333,12 @@ function isInTransitZeffyDepositRow(
  *      state; see hasMonthElapsed()'s doc comment for the bug this fixes), OR
  *   2. a posted, unreconciled transaction exists, dated on/before `monthEnd`,
  *      in a fund whose kind is in MEMBER_EXPOSED_FUND_KINDS for this entity —
- *      EXCLUDING outstanding (uncashed) checks (isOutstandingCheckRow()
- *      above). A legitimately-outstanding check the treasurer has already
- *      written and the report already footnotes (bookVsCashDivergenceCents,
- *      hasUncashedCheck per line) is not a "books aren't done" signal, and
- *      letting it gate cascaded to block every later month too — see
+ *      EXCLUDING outstanding (uncashed) checks (isOutstandingCheckRow()) and
+ *      uncleared deposits (isUnclearedDepositRow()) above. A legitimately-
+ *      outstanding check the treasurer has already written and the report
+ *      already footnotes (bookVsCashDivergenceCents, hasUncashedCheck per
+ *      line) is not a "books aren't done" signal, and letting it gate
+ *      cascaded to block every later month too — see
  *      docs/work-log/2026-07-28-report-gate-outstanding-checks.md for the
  *      prod repro (Foundation/Charitable stuck at Feb 2026 solely because of
  *      two outstanding checks dated 2026-03-07).
@@ -359,30 +348,31 @@ function isInTransitZeffyDepositRow(
  * from "before this calendar month" to an arbitrary boundary, scoped to
  * member-exposed funds so a stale unreconciled Activity/Scholarship
  * transaction never blocks the Administrative/Charitable statement from
- * publishing, and now also excluding true outstanding checks and legitimately
- * in-transit Zeffy deposits (isInTransitZeffyDepositRow(), DECISION-051) so
- * neither gates either. A check+income row (dues paid by paper check) is NOT
- * excluded — it's a genuinely-unreconciled deposit and must still gate; nor
- * is a Zeffy deposit older than the in-transit window — a genuinely stale,
- * forgotten batch must still flag the month.
+ * publishing, and now also excluding true outstanding checks AND every
+ * uncleared deposit — full method/age-agnostic symmetry (DECISION-059,
+ * docs/work-log/2026-07-30-deposit-in-transit-carveout.md), replacing the
+ * former method-restricted, 12-day-windowed in-transit-Zeffy carve-out. A
+ * check+income row (dues paid by paper check) is now excluded too — the
+ * 2026-07-28 fix's opposite call on that case is superseded, see
+ * isUnclearedDepositRow()'s doc comment for why.
  *
- * `asOf` (optional, defaults to real "now") is injectable so the in-transit
- * window can be pinned in tests — mirrors hasMonthElapsed()'s own pattern in
- * this file, and is threaded through purely so isInTransitZeffyDepositRow()
- * anchors to "today," never to `monthEnd` (see that function's doc comment
- * for why the anchor choice matters).
+ * No `asOf` param: the retired in-transit-Zeffy carve-out was the only
+ * reason this function ever needed "today" as an input (to anchor its
+ * window) — isUnclearedDepositRow() has no age component, so there's
+ * nothing left for `asOf` to drive here. (hasMonthElapsed() above computes
+ * its own independent "now" via its own default param and was never part of
+ * this carve-out.)
  *
  * The entity/status/reconciled narrowing happens in SQL; the fund-kind,
- * date-threshold, and outstanding-check/in-transit checks happen in JS
- * (mirroring getOverview()'s own unreconciledPriorMonth, which filters its
- * date threshold in JS over an already-fetched row set) — kept this way
+ * date-threshold, and outstanding-check/uncleared-deposit checks happen in
+ * JS (mirroring getOverview()'s own unreconciledPriorMonth, which filters
+ * its date threshold in JS over an already-fetched row set) — kept this way
  * deliberately so the predicate is directly unit-testable against canned
  * rows without needing to introspect generated SQL.
  */
 export async function isMonthGatedForEntity(
   entityId: string,
   monthEnd: string,
-  asOf: Date = new Date(),
 ): Promise<boolean> {
   if (!hasMonthElapsed(monthEnd)) {
     return true;
@@ -410,7 +400,7 @@ export async function isMonthGatedForEntity(
       isMemberExposedKind(r.fundKind) &&
       r.txnDate <= monthEnd &&
       !isOutstandingCheckRow(r) &&
-      !isInTransitZeffyDepositRow(r, asOf),
+      !isUnclearedDepositRow(r),
   );
 }
 
@@ -574,8 +564,8 @@ export async function computeUncashedCheckCategoryIds(
  * candidate turns out not to be genuinely open.
  *
  * blockingDates below excludes outstanding (uncashed) checks via
- * isOutstandingCheckRow() AND legitimately in-transit Zeffy deposits via
- * isInTransitZeffyDepositRow() — the same two carve-outs isMonthGatedForEntity()
+ * isOutstandingCheckRow() AND every uncleared deposit via
+ * isUnclearedDepositRow() — the same two carve-outs isMonthGatedForEntity()
  * applies — so this candidate computation doesn't independently reintroduce
  * the cascading-block bug for either one. Without this, the final re-check
  * against isMonthGatedForEntity() would correctly clear later months, but the
@@ -584,13 +574,16 @@ export async function computeUncashedCheckCategoryIds(
  * repro: Foundation/Charitable stuck offering only through Feb 2026 because
  * of two outstanding checks dated 2026-03-07, even though isMonthGatedForEntity()
  * alone would clear every month through June — DECISION-051 §5 flags this as
- * the exact bug class a recent in-transit Zeffy row would reintroduce if only
- * one of the two functions were updated).
+ * the exact bug class a stale uncleared deposit would reintroduce if only one
+ * of the two functions were updated; DECISION-059 carries the same discipline
+ * forward for the now fully-symmetric deposit carve-out).
  *
- * `asOf` (optional, defaults to real "now") is threaded to BOTH the
- * blockingDates filter above and the final re-check call below — omitting
- * either one would reopen this same truncation bug for the in-transit-Zeffy
- * case specifically.
+ * `asOf` (optional, defaults to real "now") still drives `currentMonthKey`/
+ * `ceilingMonth` below — an independent use that predates the deposit
+ * carve-out and is unrelated to it (see this function's own top-level doc
+ * comment). It is NO LONGER threaded into isUnclearedDepositRow() (which has
+ * no age component) or into the final isMonthGatedForEntity() re-check call
+ * (whose signature dropped the param — see that function's doc comment).
  */
 export async function getLatestOpenMonthForEntity(
   entityId: string,
@@ -621,7 +614,7 @@ export async function getLatestOpenMonthForEntity(
       (r) =>
         isMemberExposedKind(r.fundKind) &&
         !isOutstandingCheckRow(r) &&
-        !isInTransitZeffyDepositRow(r, asOf),
+        !isUnclearedDepositRow(r),
     )
     .map((r) => r.txnDate);
 
@@ -635,7 +628,7 @@ export async function getLatestOpenMonthForEntity(
     candidate = latestOpen < ceilingMonth ? latestOpen : ceilingMonth;
   }
 
-  const stillGated = await isMonthGatedForEntity(entityId, monthBounds(candidate).monthEnd, asOf);
+  const stillGated = await isMonthGatedForEntity(entityId, monthBounds(candidate).monthEnd);
   return stillGated ? null : candidate;
 }
 
