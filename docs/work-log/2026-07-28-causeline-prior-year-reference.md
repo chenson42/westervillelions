@@ -31,8 +31,9 @@ Increment 1's Phase 1 deferred this as "cause-line-grain prior-year reference �
 | 2 — Architectural review | architect | Compressed (accelerated pipeline) | — | 2026-07-28 |
 | 3 — Technical design | tech-lead | Compressed (accelerated pipeline) | — | 2026-07-28 |
 | 4 — Implementation | full-stack-developer | Complete | — | 2026-07-28 |
-| 5 — Verification | qa | Pending | — | — |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 4 (loop-back, bug fix) | ux-developer | Complete — see `2026-07-30-prior-year-line-items.md` | — | 2026-07-30 |
+| 5 — Verification | qa | Pending — see `2026-07-30-prior-year-line-items.md` | — | — |
+| 6 — Shipped vs intent | analyst | Pending — see `2026-07-30-prior-year-line-items.md` | — | — |
 
 ## Accelerated-Pipeline Note (Phases 1–3 compressed)
 
@@ -235,67 +236,39 @@ read-only exactly like `BudgetEditor`'s existing columns.
 
 # Phase 5 — Verification (qa)
 
-**Date:** YYYY-MM-DD
-**Verified by:** qa
+**Status as of 2026-07-30:** Not run in this form. This feature shipped to `main` in v1.45.0 with
+Phases 5 and 6 left as template placeholders (never executed) — flagged as a process gap by the
+2026-07-30 analyst pass in `docs/work-log/2026-07-30-prior-year-line-items.md` ("Bug Finding" section).
+That same pass found and diagnosed a real bug this skipped QA step would have caught: a cause line
+added/edited in the current browser session never picked up its Prior Budget/Prior Actual reference
+values without a hard page reload (see that file's Section 3 for the full root-cause writeup).
 
-## Type Check
+**The bug is now fixed** — see `docs/work-log/2026-07-30-prior-year-line-items.md`, section
+"Bug Fix — Phase 4 Implementation (ux-developer) — 2026-07-30" for the fix itself (a reconciliation
+`useEffect` in `BudgetCauseEditor`), its rationale, and the new e2e regression coverage
+(`e2e/prior-year-cause-line-reconcile.spec.ts`).
 
-`pnpm exec tsc --noEmit`: PASS / FAIL
-
-## Production Build
-
-`pnpm build:only`: PASS / FAIL
-
-## Dev-Server Smoke Test
-
-`pnpm dev` against `.env.local` reaches the routes without runtime error: PASS / FAIL
-Notes: [...]
-
-## Manual Click-Through
-
-| Flow | Result | Notes |
-|------|--------|-------|
-| [user flow] | [pass / fail] | [observation] |
-
-## Regression Notes Added (bug fixes)
-
-- [work-log entry name — guards against: brief description]
+**Next step:** qa should run Phase 5 for real against the fix — `pnpm exec tsc --noEmit`,
+`pnpm build:only`, `pnpm test:e2e -- prior-year-cause-line-reconcile`, and the manual click-through
+named in that section's "Open questions / handoff notes" (add a cause line whose label matches a
+committed prior-FY line, confirm Prior Budget populates on blur with **no reload**) — the exact
+interaction the original Phase 5 never exercised. Do not re-fill this section separately; qa's
+verdict belongs in the 2026-07-30 file's Phase 5 alongside the fix it's verifying.
 
 ## Verdict
 
-[PASS | FAIL]
+Deferred to `docs/work-log/2026-07-30-prior-year-line-items.md` Phase 5 (qa, pending).
 
 ---
 
 # Phase 6 — Shipped vs Intent (analyst)
 
+**Status as of 2026-07-30:** Deferred to `docs/work-log/2026-07-30-prior-year-line-items.md` Phase 6
+(analyst), pending that file's Phase 5 (qa) passing. Once qa signs off on the bug fix, analyst should
+close out BOTH this file's and the 2026-07-30 file's Phase 6 in one pass — the shipped-vs-intent
+question here is now inseparable from "did the loop-back fix actually resolve it," which only that
+file's context (Section 3's root-cause writeup + the Phase 4 fix section) fully carries.
+
 ## VERDICT
 
-[SHIP IT | SHIP WITH NOTES | NEEDS REWORK]
-
-## ONE-LINE TAKE
-
-> [The shipped feature in one honest sentence.]
-
-## What's Working
-
-- [Specific. The flow that works well and why.]
-
-## Intent-vs-Shipped Diff
-
-- Phase 1 said: [X]. Shipped: [Y]. Verdict: [matches | acceptable drift | regression]
-
-## Edge Cases
-
-- Empty state: [pass | fail | not applicable]
-- Failure microcopy: [pass | fail]
-- Permission gate: [pass | fail]
-- Mobile (360px): [pass | fail]
-
-## Follow-Ups (if SHIP WITH NOTES)
-
-- [Concrete, actionable. Each gets its own work-log entry.]
-
-## Red Flags (if NEEDS REWORK)
-
-- [Specific. What has to change before this ships.]
+Deferred — see above.

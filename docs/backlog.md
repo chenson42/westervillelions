@@ -593,11 +593,19 @@ Design each with the others in view — decisions in one box in the next.
   cross-entity partners). Confirmed cosmetic by code trace in the Phase 6 review.
 
 - [ ] **B-37 — Carry forward last year's causes AND cause line-items as a budget starting point.**
-  (added 2026-07-30, from Chris) When building a new fiscal year's budget, pre-populate not just the
-  categories but the prior year's **cause breakdowns and their line items** (labels + amounts) as an
-  editable starting point — today the budgeting page shows a *prior-year reference* column (v1.49) but
-  the treasurer still re-enters each cause/line by hand. Builds on the existing `budgets/seed` route
-  and the B-17/DECISION-047/048 cause-line model. Design questions: seed amounts from prior actuals or
-  prior budget; how it interacts with the "+ Add cause" flow (B-17); whether it's an explicit "copy
-  from FY-1" action vs. automatic on first open of an empty FY. Pairs with B-31 (printable budget) and
-  the guided-budget-setup flow.
+  (added 2026-07-30, from Chris; Phase 1 done 2026-07-30 →
+  `docs/work-log/2026-07-30-prior-year-line-items.md`, READY WITH NOTES) When building a new fiscal
+  year's budget, pre-populate not just the categories but the prior year's **cause breakdowns and
+  their line items** (labels + amounts) as an editable starting point. **Scope correction from Phase
+  1:** prior-budget-per-line and prior-actuals-per-line (the reference *display*) are NOT part of this
+  — they already shipped in v1.45.0 (`2026-07-28-causeline-prior-year-reference.md`); B-37 is
+  carry-forward only. Phase 1 also found (a) a real, confirmed **bug** where a newly-added cause line
+  never picks up its prior reference values in the same browser session even when a match exists (see
+  work-log "Bug Finding" — routed as a loop-back to Phase 4 of the 2026-07-28 work-log, recommended
+  fixed before B-37), and (b) a confirmed real label/party drift case ("Pilot Dogs" vs "Pilot Dogs,
+  Inc.") breaking today's exact-match Prior Actual — tracked separately, not a B-30 prerequisite.
+  Builds on the existing `budgets/seed` category-grain machinery and the B-17/DECISION-047/048
+  cause-line model, but needs a **new** seed function at `(cause, label)` grain — neither existing
+  seed helper (`deriveSeedLinesForFund` nor `computeCauseSeedForCategory`/`deriveCauseSeedLines`)
+  carries forward individual labeled line items today. Pairs with B-31 (printable budget) and the
+  guided-budget-setup flow.

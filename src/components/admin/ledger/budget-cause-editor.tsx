@@ -374,6 +374,51 @@ export default function BudgetCauseEditor({
     };
   }, []);
 
+  // Reconciles each committed row's READ-ONLY prior-year reference fields
+  // (Prior Budget / Prior Actual) against freshly server-computed values —
+  // fixes the 2026-07-30 loop-back bug on 2026-07-28-causeline-prior-year-
+  // reference: `rows` state used to seed priorBudgetCents/priorActualCents
+  // once at mount (see Row's own doc comment) and addRowForCause always
+  // hardcoded null for a brand-new row, with nothing ever recomputing either
+  // — so a line added/edited in THIS session stayed stuck at "—" forever,
+  // even once a matching prior-FY value existed, until a hard full-page
+  // reload re-seeded the component from scratch.
+  //
+  // This fires whenever `initialLines` changes IDENTITY, which only happens
+  // after a `router.refresh()` re-runs the server component tree with fresh
+  // props (see budget-editor.tsx: `initialLines` is `line.causeLines`
+  // straight off BudgetEditor's own `lines` prop, never locally copied, so
+  // its identity is stable across unrelated re-renders — e.g. typing in a
+  // sibling field never re-triggers this). commitCreate/commitUpdate/the
+  // delete-hold/restore paths all already call router.refresh() on success,
+  // so the fresh, server-recomputed prior values arrive here shortly after.
+  //
+  // Matches by committed server `id` only (never by label/value) — a
+  // never-saved row (id === null) has nothing in `initialLines` to match
+  // against yet, which is correct: the server hasn't computed anything for
+  // an unsaved label. Only priorBudgetCents/priorActualCents are touched;
+  // label/value edits are guarded by their own dirty refs (dirtyAmountRef/
+  // dirtyLabelRef) and this effect never reads or writes either, so it can't
+  // clobber an in-progress edit.
+  useEffect(() => {
+    setRows((prev) => {
+      let changed = false;
+      const next = prev.map((r) => {
+        if (r.id === null) return r;
+        const match = initialLines.find((l) => l.id === r.id);
+        if (!match) return r;
+        const nextPriorBudget = match.priorBudgetCents ?? null;
+        const nextPriorActual = match.priorActualCents ?? null;
+        if (nextPriorBudget === r.priorBudgetCents && nextPriorActual === r.priorActualCents) {
+          return r;
+        }
+        changed = true;
+        return { ...r, priorBudgetCents: nextPriorBudget, priorActualCents: nextPriorActual };
+      });
+      return changed ? next : prev;
+    });
+  }, [initialLines]);
+
   // Command-prop consumption for the category-row "+ add cause" control when
   // this category is already in breakdown (see requestedNewCause's doc
   // comment). eslint-disable is required since addRowForCause/

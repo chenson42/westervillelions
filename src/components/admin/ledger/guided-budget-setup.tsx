@@ -900,8 +900,10 @@ export default function GuidedBudgetSetup({
         </div>
       )}
 
-      {/* Per-fund review cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Per-fund review cards — two columns only when there's more than one
+          fund, so a single-fund entity (e.g. the Foundation's lone Charitable
+          Fund) spans full width instead of leaving half the screen empty. */}
+      <div className={`grid grid-cols-1 gap-4 ${funds.length > 1 ? "lg:grid-cols-2" : ""}`}>
         {funds.map((fund) => {
           const sums = fundSums(fund.fundId);
           const balance = computeBudgetBalanceStatus(fund.fundKind, sums.incomeCents, sums.expenseCents);
