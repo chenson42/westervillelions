@@ -5,6 +5,14 @@ import * as Dialog from "@radix-ui/react-dialog";
 import TransactionForm from "./transaction-form";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
 
+interface CrossEntityContext {
+  entityId: string;
+  entityName: string;
+  funds: LedgerFund[];
+  bankAccounts: LedgerBankAccount[];
+  categories: LedgerCategory[];
+}
+
 type EditableTransaction = Pick<
   LedgerTransaction,
   | "id"
@@ -45,6 +53,9 @@ interface TransactionFormDialogProps {
   /** Default fund for a new transaction — e.g. the fund whose page opened this
    *  dialog. Ignored in edit mode. */
   defaultFundId?: string;
+  /** Foundation entity's funds/bank accounts/categories — Club pages only.
+   *  Enables the "Sweep to Foundation" mode (DECISION-058). */
+  crossEntityContext?: CrossEntityContext;
   /** Whether the dialog is controlled externally */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -65,6 +76,7 @@ export default function TransactionFormDialog({
   initialValues,
   transferPartnerId,
   defaultFundId,
+  crossEntityContext,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
 }: TransactionFormDialogProps) {
@@ -124,6 +136,7 @@ export default function TransactionFormDialog({
             initialValues={initialValues}
             transferPartnerId={transferPartnerId}
             defaultFundId={defaultFundId}
+            crossEntityContext={crossEntityContext}
           />
         </Dialog.Content>
       </Dialog.Portal>

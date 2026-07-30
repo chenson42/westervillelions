@@ -21,7 +21,7 @@ import FundManageDialog from "@/components/admin/ledger/fund-manage-dialog";
 import ReconcileToggle, { ReconcileAllButton } from "@/components/admin/ledger/reconcile-toggle";
 import TxnDonorActions from "@/components/admin/ledger/txn-donor-actions";
 import ReceiptWaiverControl from "@/components/admin/ledger/receipt-waiver-control";
-import type { LedgerTransaction } from "@/lib/db/schema";
+import type { LedgerTransaction, LedgerFund, LedgerBankAccount, LedgerCategory } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -109,6 +109,38 @@ export default async function AdminLedgerFundPage({
   const fiscalYear = !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
 
   const isFoundationEntity = entity.donationsDeductible === true;
+
+  // Cross-entity Sweep context (DECISION-058) — the Foundation's funds/bank
+  // accounts/categories, fetched ONLY on Club pages (never Foundation pages)
+  // and only when the viewer can record, since that's the only surface a
+  // Sweep to Foundation is ever legal from. See
+  // docs/work-log/2026-07-29-ledger-account-transfers.md Phase 3 UI plan.
+  let crossEntityContext:
+    | {
+        entityId: string;
+        entityName: string;
+        funds: LedgerFund[];
+        bankAccounts: LedgerBankAccount[];
+        categories: LedgerCategory[];
+      }
+    | undefined;
+  if (!isFoundationEntity && canRecord) {
+    const foundationEntity = entities.find((e) => e.donationsDeductible === true);
+    if (foundationEntity) {
+      const [foundationFunds, foundationBankAccounts, foundationCategories] = await Promise.all([
+        getFunds(foundationEntity.id),
+        getBankAccounts(foundationEntity.id),
+        getCategories(foundationEntity.id, { fundKind: "charitable", flow: "income" }),
+      ]);
+      crossEntityContext = {
+        entityId: foundationEntity.id,
+        entityName: foundationEntity.shortName ?? foundationEntity.name,
+        funds: foundationFunds,
+        bankAccounts: foundationBankAccounts,
+        categories: foundationCategories,
+      };
+    }
+  }
 
   const [bankAccounts, categories, transactions, fiscalYears, ackSummary] = await Promise.all([
     getBankAccounts(entity.id),
@@ -240,6 +272,7 @@ export default async function AdminLedgerFundPage({
               categories={categories}
               bankAccounts={bankAccounts}
               defaultFundId={fund?.id}
+              crossEntityContext={crossEntityContext}
               triggerLabel="Record Transaction"
             />
           )}

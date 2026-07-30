@@ -100,6 +100,7 @@ import {
   getDuesTimingAdjustment,
   setBudgetCategoryAnnotation,
   setBudgetCauseLineAnnotation,
+  getPendingApprovals,
 } from "./ledger-queries";
 import { ledgerFunds, ledgerCategories, ledgerBudgets, ledgerBudgetLines } from "./db/schema";
 import { causeLineReferenceKey } from "./ledger";
@@ -2135,5 +2136,121 @@ describe("getDuesTimingAdjustment", () => {
     const result = await getDuesTimingAdjustment("fund-1", 2026);
     expect(result).toBeNull();
     spy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getPendingApprovals — Transfer/Sweep pair dedup (DECISION-058)
+// ---------------------------------------------------------------------------
+
+describe("getPendingApprovals — Transfer/Sweep pair dedup (DECISION-058)", () => {
+  beforeEach(() => {
+    mockDbState.queue = [];
+  });
+
+  function baseRow(overrides: Record<string, unknown>) {
+    return {
+      id: "txn-default",
+      entityId: "entity-club",
+      fundId: "fund-default",
+      txnDate: "2026-07-29",
+      flow: "expense",
+      amountCents: 1000,
+      categoryId: null,
+      party: null,
+      memo: null,
+      paymentMethod: null,
+      checkNumber: null,
+      bankAccountId: "bank-1",
+      beneficiaryCause: null,
+      publicNote: null,
+      receiptStorageKey: null,
+      receiptWaivedAt: null,
+      receiptWaivedByUserId: null,
+      receiptWaiverReason: null,
+      transferGroupId: null,
+      status: "pending",
+      approvedByUserId: null,
+      approvedAt: null,
+      boardMinute: null,
+      rejectionReason: null,
+      reconciled: false,
+      reconciledAt: null,
+      reconciledSessionId: null,
+      recordedByUserId: "user-1",
+      duesPaymentId: null,
+      syncStale: false,
+      donorId: null,
+      createdAt: new Date("2026-07-29T00:00:00Z"),
+      updatedAt: new Date("2026-07-29T00:00:00Z"),
+      fundName: "Some Fund",
+      recorderDisplayName: "Treasurer Tess",
+      ...overrides,
+    };
+  }
+
+  it("a pending Sweep pair yields exactly one row — the flow='expense' (source) leg", async () => {
+    const sourceLeg = baseRow({
+      id: "txn-source",
+      entityId: "entity-club",
+      fundId: "fund-activity",
+      flow: "expense",
+      transferGroupId: "group-1",
+      fundName: "Activity Fund",
+    });
+    const destLeg = baseRow({
+      id: "txn-dest",
+      entityId: "entity-foundation",
+      fundId: "fund-charitable",
+      flow: "income",
+      transferGroupId: "group-1",
+      fundName: "Charitable Fund",
+    });
+    mockDbState.queue.push([sourceLeg, destLeg]);
+
+    const result = await getPendingApprovals();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("txn-source");
+    expect(result[0].partnerFundId).toBe("fund-charitable");
+    expect(result[0].partnerFundName).toBe("Charitable Fund");
+    expect(result[0].partnerEntityId).toBe("entity-foundation");
+  });
+
+  it("an ordinary pending expense (no transferGroupId) passes through with null partner fields", async () => {
+    const ordinary = baseRow({ id: "txn-ordinary", transferGroupId: null, flow: "expense" });
+    mockDbState.queue.push([ordinary]);
+
+    const result = await getPendingApprovals();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("txn-ordinary");
+    expect(result[0].partnerFundId).toBeNull();
+    expect(result[0].partnerFundName).toBeNull();
+    expect(result[0].partnerEntityId).toBeNull();
+  });
+
+  it("a mix of an ordinary pending expense and a pending Transfer pair returns one row each", async () => {
+    const ordinary = baseRow({ id: "txn-ordinary", transferGroupId: null, flow: "expense" });
+    const sourceLeg = baseRow({
+      id: "txn-source",
+      fundId: "fund-admin-checking-leg",
+      flow: "expense",
+      transferGroupId: "group-2",
+      fundName: "Administrative Fund",
+    });
+    const destLeg = baseRow({
+      id: "txn-dest",
+      fundId: "fund-admin-petty-cash-leg",
+      flow: "income",
+      transferGroupId: "group-2",
+      fundName: "Administrative Fund",
+    });
+    mockDbState.queue.push([ordinary, sourceLeg, destLeg]);
+
+    const result = await getPendingApprovals();
+
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.id).sort()).toEqual(["txn-ordinary", "txn-source"]);
   });
 });

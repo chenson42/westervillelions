@@ -563,6 +563,16 @@ Design each with the others in view — decisions in one box in the next.
   "tailtwisting transfer" currently booked as Foundation `Public donations`. Keep the Activity fund
   as a **zeroed-out balanced pass-through** (don't retire it — corrects an earlier §G3 draft). Pairs
   with T-25 (category cleanup) and the "no Miscellaneous" cleanup (§G7).
+  **Update 2026-07-29 (v1.51.0):** the transfer/**sweep** *mechanism* is now SHIPPED (account-to-account
+  transfer + cross-entity Club Activity→Foundation sweep, deny-by-default directional allow-list,
+  pair-aware over-threshold approval — see `docs/work-log/2026-07-29-ledger-account-transfers.md`,
+  DECISION-058). **Remaining B-34 sub-scope, still open:** (a) dedicated transfer categories
+  (`Zeffy Donations` / `Transfer to Foundation` / `Transfer from Club`) — the shipped sweep defaults the
+  Foundation leg to `Public donations` with an override picker, so this is now a category-catalog task,
+  not a code task; (b) **eliminating paired transfer legs from any consolidated/org-wide income
+  roll-up** (the swept dollar is income in two funds — a naive cross-entity total double-counts; the
+  sweep is a new vector for this and it is NOT handled yet); (c) retroactive re-file of the $552
+  tailtwisting transfer.
 
 - [ ] **B-35 — Cause-line label lost when amount then label are committed back-to-back.**
   (added 2026-07-29, found by QA's e2e suite during B-29 verification; priority: medium — real
@@ -573,3 +583,11 @@ Design each with the others in view — decisions in one box in the next.
   DECISION-047/048 (Labeled Cause Budget Lines), untouched by the restructure. Fix: on commit-response
   reconciliation, don't overwrite a field the user has edited since the request fired (track per-field
   dirty state, or merge rather than replace). Add the e2e case QA already has the harness for.
+
+- [ ] **B-36 — Posted Sweep shows a generic "Transfer" label in the fund register.**
+  (added 2026-07-29, found in Phase 6 of the account-transfers feature; priority: low — cosmetic, no
+  data/amount/category/reconciliation impact) In `src/app/(dashboard)/admin/ledger/[fundSlug]/page.tsx`
+  the per-row partner lookup is entity-scoped, so a **posted** cross-entity Sweep's Club-side leg can't
+  resolve its Foundation partner and falls back to a generic "Transfer" label instead of "Sweep." Fix:
+  widen the partner lookup to be entity-unscoped (mirror `getPendingApprovals`, which already resolves
+  cross-entity partners). Confirmed cosmetic by code trace in the Phase 6 review.

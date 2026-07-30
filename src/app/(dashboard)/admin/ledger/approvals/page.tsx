@@ -143,8 +143,28 @@ export default async function AdminLedgerApprovalsPage() {
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                         {formatDate(txn.txnDate)}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-700">
-                        {txn.fundName ?? <span className="text-gray-400">—</span>}
+                      <td className="px-4 py-3 text-sm text-gray-700 max-w-[220px]">
+                        {txn.partnerFundName ? (
+                          <div className="space-y-0.5">
+                            <span
+                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                                txn.partnerEntityId && txn.partnerEntityId !== txn.entityId
+                                  ? "bg-purple-50 text-purple-700"
+                                  : "bg-blue-50 text-blue-700"
+                              }`}
+                            >
+                              {txn.partnerEntityId && txn.partnerEntityId !== txn.entityId
+                                ? "Sweep"
+                                : "Transfer"}
+                            </span>
+                            <div className="truncate text-gray-600">
+                              {txn.fundName ?? "Unknown Fund"}{" "}
+                              <span className="text-gray-400">&rarr;</span> {txn.partnerFundName}
+                            </div>
+                          </div>
+                        ) : (
+                          txn.fundName ?? <span className="text-gray-400">—</span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900">
                         {amountStr}
@@ -183,6 +203,7 @@ export default async function AdminLedgerApprovalsPage() {
                               transactionId={txn.id}
                               amount={amountStr}
                               party={txn.party ?? ""}
+                              existingBoardMinute={txn.boardMinute}
                             >
                               <button
                                 type="button"

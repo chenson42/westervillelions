@@ -26,31 +26,44 @@
  * }
  * Response 201: { id: string; derivedFiscalYear: number }
  *
- * --- Transfer transaction body ---
+ * --- Transfer / Sweep transaction body (DECISION-058) ---
  * {
  *   transfer: true;
- *   entityId: string;
  *   sourceFundId: string;
  *   destFundId: string;
+ *   sourceBankAccountId: string;   // required — each leg carries its OWN account
+ *   destBankAccountId: string;     // required
  *   txnDate: string;
  *   amountCents: number;
  *   memo?: string;
- *   bankAccountId: string;     // required — 400 if missing/blank
+ *   boardMinute?: string;          // required when checkTransferDirection() says requiresBoardMinute
+ *   destCategoryId?: string;       // optional — Sweep destination (income) leg only;
+ *                                   // defaults to the destination entity's seeded
+ *                                   // "Public donations" income category when omitted
  * }
- * Response 201: { transferGroupId: string; derivedFiscalYear: number }
+ * `entityId` is NOT accepted here — both legs' entities are derived
+ * authoritatively from the sourceFundId/destFundId rows themselves (a client
+ * can no longer influence the fund lookup by supplying an entityId).
+ * Direction is decided by checkTransferDirection() (src/lib/ledger-transfer-policy.ts) —
+ * deny-by-default; blocked directions 403 with a specific policy reason.
+ * Response 201: { transferGroupId: string; derivedFiscalYear: number; status: 'posted' | 'pending' }
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { ledgerTransactions, ledgerFunds, ledgerCategories } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { ledgerTransactions, ledgerFunds, ledgerCategories, ledgerBankAccounts } from "@/lib/db/schema";
+import { eq, and, inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getSettings, getEmailsForFeature } from "@/lib/ledger-queries";
 import { sendEmail } from "@/lib/email";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
+import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
+
+const BOARD_MINUTE_MAX_LEN = 500;
+const PUBLIC_DONATIONS_CATEGORY_NAME = "Public donations";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
@@ -357,27 +370,42 @@ export async function POST(request: NextRequest) {
 }
 
 // ---------------------------------------------------------------------------
-// Transfer handler (two-row atomic insert)
+// Transfer / Sweep handler (two-row atomic insert, DECISION-058)
 // ---------------------------------------------------------------------------
 
 async function handleTransfer(
   body: Record<string, unknown>,
   userId: string,
 ): Promise<NextResponse> {
-  const { entityId, sourceFundId, destFundId, txnDate: rawDate, amountCents, memo, bankAccountId } =
-    body;
+  const {
+    sourceFundId,
+    destFundId,
+    sourceBankAccountId,
+    destBankAccountId,
+    txnDate: rawDate,
+    amountCents,
+    memo,
+    boardMinute: rawBoardMinute,
+    destCategoryId: rawDestCategoryId,
+  } = body;
 
-  if (!entityId || typeof entityId !== "string") {
-    return NextResponse.json({ error: "entityId is required" }, { status: 400 });
-  }
   if (!sourceFundId || typeof sourceFundId !== "string") {
     return NextResponse.json({ error: "sourceFundId is required" }, { status: 400 });
   }
   if (!destFundId || typeof destFundId !== "string") {
     return NextResponse.json({ error: "destFundId is required" }, { status: 400 });
   }
-  if (sourceFundId === destFundId) {
-    return NextResponse.json({ error: "Cannot transfer a fund to itself" }, { status: 400 });
+  if (!sourceBankAccountId || typeof sourceBankAccountId !== "string") {
+    return NextResponse.json(
+      { error: "Select a source bank account before saving this transaction." },
+      { status: 400 },
+    );
+  }
+  if (!destBankAccountId || typeof destBankAccountId !== "string") {
+    return NextResponse.json(
+      { error: "Select a destination bank account before saving this transaction." },
+      { status: 400 },
+    );
   }
 
   const txnDate = parseDate(rawDate);
@@ -393,81 +421,252 @@ async function handleTransfer(
     return NextResponse.json({ error: amountError }, { status: 400 });
   }
 
-  // Bank account is required — same construction guarantee as the normal
-  // transaction path above (default-bank-account bug fix).
-  if (!bankAccountId || typeof bankAccountId !== "string") {
-    return NextResponse.json(
-      { error: "Select a bank account before saving this transaction." },
-      { status: 400 },
-    );
-  }
-
-  // Validate both funds belong to the same entity (cross-entity transfers are rejected)
+  // Fetch both funds by id ALONE — no entity filter. entityId is no longer
+  // client-supplied; both legs' entities are derived authoritatively from
+  // these rows (closes the adversarial-pass trust gap: a client can no
+  // longer influence the fund lookup by supplying an entityId). This is also
+  // what allows the two funds to resolve to DIFFERENT entities, which is
+  // required to represent a cross-entity Sweep at all.
   const fundRows = await db
-    .select({ id: ledgerFunds.id, entityId: ledgerFunds.entityId })
+    .select({ id: ledgerFunds.id, kind: ledgerFunds.kind, entityId: ledgerFunds.entityId })
     .from(ledgerFunds)
-    .where(
-      and(
-        // Use inArray-style with OR is not available; fetch both individually
-        eq(ledgerFunds.entityId, entityId as string),
-      ),
-    );
+    .where(inArray(ledgerFunds.id, [sourceFundId, destFundId]));
 
-  const sourceRow = fundRows.find((f) => f.id === sourceFundId);
-  const destRow = fundRows.find((f) => f.id === destFundId);
+  const sourceFund = fundRows.find((f) => f.id === sourceFundId);
+  const destFund = fundRows.find((f) => f.id === destFundId);
 
-  if (!sourceRow) {
+  if (!sourceFund) {
+    return NextResponse.json({ error: "Source fund not found" }, { status: 404 });
+  }
+  if (!destFund) {
+    return NextResponse.json({ error: "Destination fund not found" }, { status: 404 });
+  }
+
+  // Directional allow-list (DECISION-058) — the single source of truth for
+  // every matrix cell. Enforced here, server-side, regardless of what the
+  // client's UI does or does not offer (defense in depth).
+  const direction = checkTransferDirection(
+    { entityId: sourceFund.entityId, fundId: sourceFund.id, kind: sourceFund.kind },
+    { entityId: destFund.entityId, fundId: destFund.id, kind: destFund.kind },
+  );
+  if (!direction.allowed) {
+    return NextResponse.json({ error: direction.reason }, { status: 403 });
+  }
+
+  // No-op guard, narrowed to the TRUE no-op (Phase 1 resolved #1): same fund
+  // AND same bank account. Same fund + different account is the sanctioned
+  // Account-Transfer case (e.g. Admin Checking -> Petty Cash) and must not
+  // be blocked here — checked separately from checkTransferDirection(),
+  // which never sees bank accounts.
+  if (sourceFundId === destFundId && sourceBankAccountId === destBankAccountId) {
     return NextResponse.json(
-      { error: "Source fund not found or does not belong to the specified entity" },
+      { error: "Select a different bank account, or transfer to a different fund." },
       { status: 400 },
     );
   }
-  if (!destRow) {
+
+  // Mandatory board-minute reference for any direction the policy flags
+  // (today: only the cross-entity Sweep) — required regardless of amount,
+  // reusing the approve-route's trim/cap validation shape.
+  let boardMinute: string | null = null;
+  if (direction.requiresBoardMinute) {
+    if (typeof rawBoardMinute !== "string" || !rawBoardMinute.trim()) {
+      return NextResponse.json(
+        { error: "A board-minute reference is required for a cross-entity sweep." },
+        { status: 400 },
+      );
+    }
+    boardMinute = rawBoardMinute.trim().slice(0, BOARD_MINUTE_MAX_LEN);
+  }
+
+  // Bank-account ownership/active validation — new. Previously implicitly
+  // safe because one bankAccountId was forced onto both legs of a
+  // same-entity pair with no way to select a foreign account; once legs can
+  // diverge, this becomes a required check.
+  const bankAccountRows = await db
+    .select({
+      id: ledgerBankAccounts.id,
+      entityId: ledgerBankAccounts.entityId,
+      isActive: ledgerBankAccounts.isActive,
+    })
+    .from(ledgerBankAccounts)
+    .where(inArray(ledgerBankAccounts.id, [sourceBankAccountId, destBankAccountId]));
+
+  const sourceBankAccount = bankAccountRows.find((b) => b.id === sourceBankAccountId);
+  const destBankAccount = bankAccountRows.find((b) => b.id === destBankAccountId);
+
+  if (!sourceBankAccount) {
+    return NextResponse.json({ error: "Source bank account not found" }, { status: 404 });
+  }
+  if (sourceBankAccount.entityId !== sourceFund.entityId) {
     return NextResponse.json(
-      { error: "Destination fund not found or does not belong to the specified entity" },
+      { error: "Source bank account does not belong to the source fund's entity" },
       { status: 400 },
     );
   }
-  // Both belong to entityId by construction of the query above
+  if (!sourceBankAccount.isActive) {
+    return NextResponse.json({ error: "Source bank account is inactive" }, { status: 400 });
+  }
+
+  if (!destBankAccount) {
+    return NextResponse.json({ error: "Destination bank account not found" }, { status: 404 });
+  }
+  if (destBankAccount.entityId !== destFund.entityId) {
+    return NextResponse.json(
+      { error: "Destination bank account does not belong to the destination fund's entity" },
+      { status: 400 },
+    );
+  }
+  if (!destBankAccount.isActive) {
+    return NextResponse.json({ error: "Destination bank account is inactive" }, { status: 400 });
+  }
+
+  // Destination-leg categorization — Sweep only (real charitable income for
+  // 990 purposes); same-entity Transfer legs stay categoryless, as today.
+  let destCategoryId: string | null = null;
+  if (direction.mode === "sweep") {
+    if (rawDestCategoryId !== undefined && rawDestCategoryId !== null) {
+      if (typeof rawDestCategoryId !== "string") {
+        return NextResponse.json({ error: "destCategoryId must be a string" }, { status: 400 });
+      }
+      const catRows = await db
+        .select({
+          id: ledgerCategories.id,
+          entityId: ledgerCategories.entityId,
+          fundKind: ledgerCategories.fundKind,
+          flow: ledgerCategories.flow,
+        })
+        .from(ledgerCategories)
+        .where(eq(ledgerCategories.id, rawDestCategoryId))
+        .limit(1);
+      const cat = catRows[0];
+      if (!cat) {
+        return NextResponse.json({ error: "Category not found" }, { status: 404 });
+      }
+      if (cat.entityId !== destFund.entityId) {
+        return NextResponse.json(
+          { error: "Category does not belong to the destination fund's entity" },
+          { status: 400 },
+        );
+      }
+      if (cat.fundKind !== destFund.kind) {
+        return NextResponse.json({ error: "Category does not match fund type" }, { status: 400 });
+      }
+      if (cat.flow !== "income") {
+        return NextResponse.json(
+          { error: "Category flow does not match transaction flow" },
+          { status: 400 },
+        );
+      }
+      destCategoryId = cat.id;
+    } else {
+      // Default: the destination entity's seeded "Public donations" income
+      // category (already seeded for both fund kinds — drizzle/migrations/
+      // 0044_ledger_books.sql, 0049_ledger_990_lines.sql — resolved by
+      // name/kind, never a hard-coded UUID).
+      const defaultCatRows = await db
+        .select({ id: ledgerCategories.id })
+        .from(ledgerCategories)
+        .where(
+          and(
+            eq(ledgerCategories.entityId, destFund.entityId),
+            eq(ledgerCategories.fundKind, destFund.kind),
+            eq(ledgerCategories.flow, "income"),
+            eq(ledgerCategories.name, PUBLIC_DONATIONS_CATEGORY_NAME),
+          ),
+        )
+        .limit(1);
+      if (defaultCatRows[0]) {
+        destCategoryId = defaultCatRows[0].id;
+      } else {
+        // Defensive only — confirmed seeded in Phase 3 design. A missing
+        // category is a data problem to fix separately, not a reason to
+        // block a treasurer from recording a real bank movement that
+        // already happened.
+        console.error(
+          `[ledger-transfer] Default "${PUBLIC_DONATIONS_CATEGORY_NAME}" category not found for entity`,
+          destFund.entityId,
+        );
+      }
+    }
+  }
 
   const derivedFiscalYear = getFiscalYear(new Date(txnDate + "T00:00:00"));
   const transferGroupId = crypto.randomUUID();
-
   const cleanMemo = memo && typeof memo === "string" ? memo.trim() || null : null;
-  const cleanBankAccountId =
-    bankAccountId && typeof bankAccountId === "string" ? bankAccountId : null;
 
-  // Atomic two-row insert (DECISION-016)
+  // Over-threshold approval gate, applied ONCE to the pair (DECISION-058) —
+  // closes the "transfers always post" gap. Both legs carry the same
+  // amountCents by construction, so one derivation covers both.
+  const settings = await getSettings();
+  const derivedStatus: "pending" | "posted" =
+    (amountCents as number) > settings.disbApprovalThresholdCents ? "pending" : "posted";
+
+  // Atomic two-row insert (DECISION-016, extended by DECISION-058)
   await db.transaction(async (tx) => {
     await tx.insert(ledgerTransactions).values([
       {
         // Debit row: source fund loses money (flow='expense')
-        entityId: entityId as string,
-        fundId: sourceFundId as string,
+        entityId: sourceFund.entityId,
+        fundId: sourceFundId,
         txnDate,
         flow: "expense",
         amountCents: amountCents as number,
+        categoryId: null,
         transferGroupId,
         memo: cleanMemo,
-        bankAccountId: cleanBankAccountId,
-        status: "posted",
+        bankAccountId: sourceBankAccountId,
+        boardMinute,
+        status: derivedStatus,
         recordedByUserId: userId,
       },
       {
         // Credit row: destination fund gains money (flow='income')
-        entityId: entityId as string,
-        fundId: destFundId as string,
+        entityId: destFund.entityId,
+        fundId: destFundId,
         txnDate,
         flow: "income",
         amountCents: amountCents as number,
+        categoryId: destCategoryId,
         transferGroupId,
         memo: cleanMemo,
-        bankAccountId: cleanBankAccountId,
-        status: "posted",
+        bankAccountId: destBankAccountId,
+        boardMinute,
+        status: derivedStatus,
         recordedByUserId: userId,
       },
     ]);
   });
 
-  return NextResponse.json({ transferGroupId, derivedFiscalYear }, { status: 201 });
+  // E-1: Notify LEDGER_APPROVE holders when a Transfer/Sweep pair is pending
+  // approval — same mechanism as an ordinary over-threshold expense.
+  if (derivedStatus === "pending") {
+    try {
+      const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
+      const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+      const amountDollars = ((amountCents as number) / 100).toFixed(2);
+      const label = direction.mode === "sweep" ? "Sweep" : "Transfer";
+      for (const email of approverEmails) {
+        await sendEmail({
+          to: email,
+          from: fromEmail,
+          subject: `${label} pending your approval — $${amountDollars}`,
+          html: `<p>A ${label.toLowerCase()} requires board approval before it can be posted.</p>
+<ul>
+  <li><strong>Amount:</strong> $${amountDollars}</li>
+  <li><strong>Date:</strong> ${txnDate}</li>
+  ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
+</ul>
+<p>Please review and approve or reject this ${label.toLowerCase()} from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`,
+        });
+      }
+    } catch {
+      // Best-effort — email failure does not block the transaction insert
+    }
+  }
+
+  return NextResponse.json(
+    { transferGroupId, derivedFiscalYear, status: derivedStatus },
+    { status: 201 },
+  );
 }

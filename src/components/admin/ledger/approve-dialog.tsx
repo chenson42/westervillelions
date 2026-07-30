@@ -9,12 +9,23 @@ interface ApproveDialogProps {
   transactionId: string;
   amount: string;
   party: string;
+  /**
+   * The transaction's existing board-minute citation, if any. Cross-entity
+   * Sweeps carry a mandatory board-minute from creation time; pre-filling it
+   * here means the approver sees and preserves the original motion reference
+   * instead of being forced to retype (and silently overwrite) it. When this
+   * is set, a blank submission is allowed — the server preserves the existing
+   * citation ("required only if not already set").
+   */
+  existingBoardMinute?: string | null;
   children: React.ReactNode;
 }
 
 /**
- * Opens a dialog that collects a required board-minute reference, then POSTs
- * to the approve route. Board-minute is required per the Phase 3 design spec.
+ * Opens a dialog that collects a board-minute reference, then POSTs to the
+ * approve route. A board-minute is required when the row doesn't already carry
+ * one; when it does (e.g. a Sweep cited at creation), the field is pre-filled
+ * and a blank submit preserves the original — matching the server's rule.
  *
  * The trigger element is passed as children so the parent controls the button
  * appearance without this component needing to know about it.
@@ -23,16 +34,17 @@ export default function ApproveDialog({
   transactionId,
   amount,
   party,
+  existingBoardMinute,
   children,
 }: ApproveDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [boardMinute, setBoardMinute] = useState("");
+  const [boardMinute, setBoardMinute] = useState(existingBoardMinute ?? "");
   const [submitting, setSubmitting] = useState(false);
 
   async function handleApprove() {
     const trimmed = boardMinute.trim();
-    if (!trimmed) {
+    if (!trimmed && !existingBoardMinute) {
       toast.error("A board-minute reference is required to approve a disbursement.");
       return;
     }
@@ -56,7 +68,7 @@ export default function ApproveDialog({
 
       toast.success("Disbursement approved.");
       setOpen(false);
-      setBoardMinute("");
+      setBoardMinute(existingBoardMinute ?? "");
       router.refresh();
     } catch (err) {
       toast.error(
@@ -86,7 +98,10 @@ export default function ApproveDialog({
                 htmlFor="approve-board-minute"
                 className="block text-sm font-medium text-gray-700 mb-1"
               >
-                Board-minute reference <span className="text-gray-400 font-normal text-xs">(required)</span>
+                Board-minute reference{" "}
+                <span className="text-gray-400 font-normal text-xs">
+                  {existingBoardMinute ? "(pre-filled from the original motion)" : "(required)"}
+                </span>
               </label>
               <input
                 id="approve-board-minute"
@@ -99,7 +114,9 @@ export default function ApproveDialog({
                 autoFocus
               />
               <p className="mt-1 text-xs text-gray-400">
-                Enter the board-meeting minute or motion reference that authorized this disbursement.
+                {existingBoardMinute
+                  ? "This item already cites a board motion (shown above). Leave it as-is to keep the original citation, or edit only to amend it."
+                  : "Enter the board-meeting minute or motion reference that authorized this disbursement."}
               </p>
             </div>
           </div>
@@ -111,7 +128,7 @@ export default function ApproveDialog({
             <button
               type="button"
               onClick={handleApprove}
-              disabled={submitting || !boardMinute.trim()}
+              disabled={submitting || (!boardMinute.trim() && !existingBoardMinute)}
               className="bg-lions-blue text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
             >
               {submitting ? "Approving…" : "Approve"}

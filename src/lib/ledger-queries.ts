@@ -3219,6 +3219,17 @@ export type PendingApprovalRow = LedgerTransaction & {
   fundName: string;
   /** Display name of the user who recorded the transaction (users.name). null if the user record was deleted or has no name set. */
   recorderName: string | null;
+  /**
+   * DECISION-058: for a Transfer/Sweep source (expense) leg, the paired
+   * destination leg's fundId/fundName/entityId — lets the Approvals page
+   * render a From -> To label instead of a single-fund column. null for
+   * ordinary pending expenses/income (transferGroupId === null). The paired
+   * destination (income) leg itself is EXCLUDED from the result set below —
+   * only one row per pending Transfer/Sweep pair is returned.
+   */
+  partnerFundId: string | null;
+  partnerFundName: string | null;
+  partnerEntityId: string | null;
 };
 
 /**
@@ -3227,6 +3238,11 @@ export type PendingApprovalRow = LedgerTransaction & {
  *
  * Ordered by txnDate ascending (oldest pending first — most urgently needs
  * board action).
+ *
+ * DECISION-058: once a Transfer/Sweep pair can be pending together, the flat
+ * query below returns both legs as separate rows. Dedup keeps only the
+ * source (flow='expense') leg per transferGroupId, carrying the paired
+ * destination leg's fund identity for display — see PendingApprovalRow above.
  *
  * Gate: LEDGER_APPROVE (enforced in the route handler, not here).
  *
@@ -3288,11 +3304,44 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
     .where(and(...conditions))
     .orderBy(asc(ledgerTransactions.txnDate), asc(ledgerTransactions.createdAt));
 
-  return rows.map((r) => ({
+  const enriched = rows.map((r) => ({
     ...r,
     fundName: r.fundName ?? "Unknown Fund",
     recorderName: r.recorderDisplayName ?? null,
   }));
+
+  // DECISION-058 dedup: index the destination (income) leg of every pending
+  // pair by transferGroupId, then drop it from the result set once we've
+  // confirmed its expense-leg partner is also present — the two rows
+  // already carry their OWN fund/entity identity (each was joined against
+  // ledgerFunds by its own fundId), so no extra query is needed to attach
+  // the "To" side of the label onto the surviving source leg.
+  const destLegByGroup = new Map<string, (typeof enriched)[number]>();
+  for (const r of enriched) {
+    if (r.transferGroupId && r.flow === "income") {
+      destLegByGroup.set(r.transferGroupId, r);
+    }
+  }
+  const sourceLegGroupIds = new Set(
+    enriched
+      .filter((r) => r.transferGroupId && r.flow === "expense")
+      .map((r) => r.transferGroupId as string),
+  );
+
+  return enriched
+    .filter((r) => !(r.transferGroupId && r.flow === "income" && sourceLegGroupIds.has(r.transferGroupId)))
+    .map((r) => {
+      if (r.transferGroupId && r.flow === "expense") {
+        const partner = destLegByGroup.get(r.transferGroupId);
+        return {
+          ...r,
+          partnerFundId: partner?.fundId ?? null,
+          partnerFundName: partner?.fundName ?? null,
+          partnerEntityId: partner?.entityId ?? null,
+        };
+      }
+      return { ...r, partnerFundId: null, partnerFundName: null, partnerEntityId: null };
+    });
 }
 
 // ---------------------------------------------------------------------------

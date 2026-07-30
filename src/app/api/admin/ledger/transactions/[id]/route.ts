@@ -22,7 +22,10 @@
  *   memo?: string | null;
  *   paymentMethod?: string | null;
  *   checkNumber?: string | null;  // structured check # (T-18); trimmed, capped at 20 chars
- *   bankAccountId?: string;  // required if present — null/blank 400s (default-bank-account bug fix); omit to leave unchanged
+ *   bankAccountId?: string;  // required if present — null/blank 400s (default-bank-account bug fix); omit to leave unchanged.
+ *     // DECISION-058: IGNORED (not 400ed) for any row with a non-null transferGroupId —
+ *     // per-leg bank account is immutable post-creation for a Transfer/Sweep pair;
+ *     // a wrong choice is corrected by delete+recreate.
  *   beneficiaryCause?: string | null;
  *   publicNote?: string | null;  // treasurer-curated, member-facing annotation
  *     // on /members/impact; null clears; non-null trims/caps at 200 chars
@@ -325,7 +328,13 @@ export async function PATCH(
     // clearing it would silently reintroduce the reconciliation-invisibility
     // bug this fix exists to close. Omitting the field entirely (not present
     // in the body) still leaves the existing value untouched, as before.
-    if (body.bankAccountId !== undefined) {
+    //
+    // DECISION-058: per-leg bank account is IMMUTABLE post-creation for any
+    // Transfer/Sweep pair (transferGroupId set) — a wrong choice is corrected
+    // by delete+recreate, not edit. A bankAccountId in the body is silently
+    // ignored for a pair leg (rather than 400ing) so the rest of an
+    // otherwise-valid edit (amount/date/memo) can still go through.
+    if (body.bankAccountId !== undefined && !existing.transferGroupId) {
       if (!body.bankAccountId || typeof body.bankAccountId !== "string") {
         return NextResponse.json(
           { error: "Select a bank account before saving this transaction." },
@@ -456,12 +465,16 @@ export async function PATCH(
         );
       }
 
-      // For symmetric transfer updates, only apply amount and date — not flow/category/party
+      // For symmetric transfer updates, only apply amount and date — not
+      // flow/category/party. bankAccountId is deliberately NOT propagated
+      // (DECISION-058 bug fix) — per-leg bank account is immutable
+      // post-creation for a pair, and `update.bankAccountId` can never be
+      // set here anyway now that the guard above skips it for any row with
+      // a transferGroupId.
       const symmetricUpdate: UpdatePayload = { updatedAt: new Date() };
       if (update.amountCents !== undefined) symmetricUpdate.amountCents = update.amountCents;
       if (update.txnDate !== undefined) symmetricUpdate.txnDate = update.txnDate;
       if (update.memo !== undefined) symmetricUpdate.memo = update.memo;
-      if (update.bankAccountId !== undefined) symmetricUpdate.bankAccountId = update.bankAccountId;
 
       await db.transaction(async (tx) => {
         await tx

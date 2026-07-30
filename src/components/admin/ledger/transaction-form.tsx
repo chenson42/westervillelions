@@ -28,6 +28,20 @@ type EditableTransaction = Pick<
   | "publicNote"
 >;
 
+/** The other entity's funds/bank accounts/categories, needed to offer a
+ *  cross-entity Sweep. Populated ONLY on Club pages (never Foundation pages),
+ *  and only when the viewer can record — see DECISION-058 /
+ *  docs/work-log/2026-07-29-ledger-account-transfers.md Phase 3 UI plan. */
+interface CrossEntityContext {
+  entityId: string;
+  entityName: string;
+  funds: LedgerFund[];
+  bankAccounts: LedgerBankAccount[];
+  /** Pre-filtered by the page to fundKind='charitable' && flow='income' —
+   *  the only categories a Sweep's destination leg is allowed to carry. */
+  categories: LedgerCategory[];
+}
+
 interface TransactionFormProps {
   entityId: string;
   funds: LedgerFund[];
@@ -43,14 +57,19 @@ interface TransactionFormProps {
    *  dialog. Ignored in edit mode (initialValues.fundId wins) and falls back to
    *  the first fund when absent. */
   defaultFundId?: string;
+  /** Foundation entity's funds/bank accounts/categories — only present on Club
+   *  pages. Enables the "Sweep to Foundation" mode. Undefined on Foundation
+   *  pages, where Sweep simply never renders as an option. */
+  crossEntityContext?: CrossEntityContext;
 }
 
-type FlowMode = "income" | "expense" | "transfer" | "income_refund" | "expense_refund";
+type FlowMode = "income" | "expense" | "transfer" | "sweep" | "income_refund" | "expense_refund";
 
 const FLOW_LABELS: Record<FlowMode, string> = {
   income: "Income",
   expense: "Expense",
-  transfer: "Transfer (between funds)",
+  transfer: "Transfer (Move Cash Between Accounts)",
+  sweep: "Sweep to Foundation",
   income_refund: "Income (Refund)",
   expense_refund: "Expense (Refund)",
 };
@@ -63,6 +82,8 @@ const METHOD_LABELS: Record<string, string> = {
   bill_pay: "Bill Pay",
   other: "Other",
 };
+
+const BOARD_MINUTE_MAX_LEN = 500;
 
 function centsToDisplay(cents: number): string {
   return (Math.abs(cents) / 100).toFixed(2);
@@ -82,11 +103,17 @@ function resolveApiFlow(mode: FlowMode): "income" | "expense" {
 /**
  * Form for recording or editing a ledger transaction.
  *
- * Handles three code paths:
+ * Handles four code paths:
  *   1. Regular income/expense (and refund convenience labels)
- *   2. New transfer (two-row atomic insert via transfer:true body)
- *   3. Edit existing (PATCH /api/admin/ledger/transactions/[id])
- *      - transfer rows use ?both=true for symmetric updates
+ *   2. New Transfer — same fund, two of the CURRENT entity's bank accounts
+ *      (e.g. Admin Checking -> Petty Cash). No board minute, no category.
+ *   3. New Sweep — Club Activity Fund -> Foundation Charitable Fund, each leg
+ *      its own entity's bank account. Requires a board-minute reference;
+ *      routes through <ConfirmDialog> since it's two permanent, independent
+ *      transactions on two separate books (DECISION-058).
+ *   4. Edit existing (PATCH /api/admin/ledger/transactions/[id])
+ *      - transfer/sweep rows use ?both=true for symmetric amount/date/memo
+ *        edits; bank account is immutable post-creation for any pair.
  *
  * Amounts are entered in dollars and converted to cents on submit.
  * The server returns derivedFiscalYear so we can display the correct FY in the toast.
@@ -99,19 +126,32 @@ export default function TransactionForm({
   onSuccess,
   onCancel,
   initialValues,
-  transferPartnerId,
   defaultFundId,
+  crossEntityContext,
 }: TransactionFormProps) {
   const router = useRouter();
   const isEdit = Boolean(initialValues);
   const isEditingTransfer = isEdit && Boolean(initialValues?.transferGroupId);
 
-  // Derive initial flow mode for edit
+  // Derive initial flow mode for edit. We can't tell Transfer from Sweep just
+  // from the row itself (both merely carry a transferGroupId) — "transfer" is
+  // a safe generic label for edit mode since the Type selector is hidden for
+  // isEditingTransfer regardless (amount/date/memo are the only editable
+  // fields on a pair; see the PATCH bank-account-immutability fix, DECISION-058).
   function initFlowMode(): FlowMode {
     if (!initialValues) return "income";
     if (initialValues.transferGroupId) return "transfer";
     return initialValues.flow as "income" | "expense";
   }
+
+  // The current entity's Activity fund and the Foundation's Charitable fund —
+  // the only two funds a Sweep ever touches. Undefined/false when either
+  // side is missing, which is what gates the Sweep option out of the Type
+  // selector entirely (never offered as a UI path, not just disabled).
+  const clubActivityFund = funds.find((f) => f.kind === "activity");
+  const foundationCharitableFund = crossEntityContext?.funds.find((f) => f.kind === "charitable");
+  const canSweep = Boolean(crossEntityContext && clubActivityFund && foundationCharitableFund);
+  const canTransfer = bankAccounts.length >= 2;
 
   const [flowMode, setFlowMode] = useState<FlowMode>(initFlowMode);
   const [amount, setAmount] = useState(
@@ -123,12 +163,6 @@ export default function TransactionForm({
   const [fundId, setFundId] = useState(
     initialValues?.fundId ?? defaultFundId ?? (funds[0]?.id ?? "")
   );
-  const [sourceFundId, setSourceFundId] = useState(
-    isEditingTransfer ? (initialValues?.fundId ?? "") : ""
-  );
-  const [destFundId, setDestFundId] = useState(
-    isEditingTransfer && transferPartnerId ? "" : ""
-  );
   const [categoryId, setCategoryId] = useState(initialValues?.categoryId ?? "");
   const [party, setParty] = useState(initialValues?.party ?? "");
   const [memo, setMemo] = useState(initialValues?.memo ?? "");
@@ -139,11 +173,24 @@ export default function TransactionForm({
   // entity's default whenever there's no stored value to fall back to —
   // covers both new transactions (initialValues undefined) AND editing a
   // legacy row whose stored bankAccountId is NULL, so opening Edit on one of
-  // those rows is itself a one-click fix.
+  // those rows is itself a one-click fix. Also doubles as the SOURCE account
+  // for a new Transfer/Sweep (e.g. Admin Checking, where the cash sits).
   const defaultBankAccountId = bankAccounts.find((a) => a.isDefault)?.id ?? "";
   const [bankAccountId, setBankAccountId] = useState(
     initialValues?.bankAccountId ?? defaultBankAccountId
   );
+  // Destination account — Transfer: the current entity's other account
+  // (e.g. Petty Cash). Sweep: the Foundation's account (e.g. Foundation
+  // Checking). Only ever used for a NEW Transfer/Sweep — never on edit,
+  // since bank account is immutable post-creation for any pair.
+  const [destBankAccountId, setDestBankAccountId] = useState("");
+  // Sweep-only: mandatory board-minute reference, mirroring the approve-
+  // dialog's existing trim/cap/required validation shape.
+  const [boardMinute, setBoardMinute] = useState("");
+  // Sweep-only, optional: Foundation income category override. Blank means
+  // "let the server default to Public donations."
+  const [destCategoryId, setDestCategoryId] = useState("");
+  const [sweepConfirmOpen, setSweepConfirmOpen] = useState(false);
   const [beneficiaryCause, setBeneficiaryCause] = useState("");
   const [publicNote, setPublicNote] = useState(initialValues?.publicNote ?? "");
   const [submitting, setSubmitting] = useState(false);
@@ -161,25 +208,35 @@ export default function TransactionForm({
   const [removeReceiptConfirmOpen, setRemoveReceiptConfirmOpen] = useState(false);
 
   const isTransfer = flowMode === "transfer";
-  const apiFlow = isTransfer ? "income" : resolveApiFlow(flowMode);
-  // Receipts only ever apply to expense transactions, never transfers
-  // (transfer rows always resolve apiFlow to "income" above) or income rows.
-  const showReceiptSection = !isTransfer && !isEditingTransfer && apiFlow === "expense";
+  const isSweep = flowMode === "sweep";
+  const isTransferOrSweep = isTransfer || isSweep;
+  const apiFlow = isTransferOrSweep ? "income" : resolveApiFlow(flowMode);
+  // Receipts only ever apply to expense transactions, never transfers/sweeps
+  // (which always resolve apiFlow to "income" above) or income rows.
+  const showReceiptSection = !isTransferOrSweep && !isEditingTransfer && apiFlow === "expense";
   // Public note (Impact Gift Public Note) — independent conditional from
   // beneficiaryCause's create-only gate (`!isEdit`). This field's entire
   // purpose is annotating already-existing transactions, so it must render
   // on edit too, not just create.
-  const showPublicNoteSection = !isTransfer && !isEditingTransfer && apiFlow === "expense";
+  const showPublicNoteSection = !isTransferOrSweep && !isEditingTransfer && apiFlow === "expense";
 
-  // The effective fund kind for category filtering
-  const activeFundId = isTransfer ? destFundId : fundId;
-  const activeFund = funds.find((f) => f.id === activeFundId);
+  // The effective fund kind for category filtering (regular income/expense
+  // only — Transfer/Sweep never show the generic category picker below).
+  const activeFund = funds.find((f) => f.id === fundId);
 
   // Filter categories by active fund kind and api flow
   const filteredCategories = categories.filter(
     (c) =>
       (!activeFund || c.fundKind === activeFund.kind) &&
-      (isTransfer ? false : c.flow === apiFlow)
+      (isTransferOrSweep ? false : c.flow === apiFlow)
+  );
+
+  // Only offer Type options that are actually usable: Sweep requires both
+  // funds to exist; Transfer requires a second bank account to move cash
+  // into. Hiding an unusable mode (rather than offering it and 400ing) is
+  // what makes the wrong direction never a UI path in the first place.
+  const visibleFlowModes = (Object.keys(FLOW_LABELS) as FlowMode[]).filter(
+    (m) => (m !== "sweep" || canSweep) && (m !== "transfer" || canTransfer)
   );
 
   // Reset category if it no longer belongs to the selected fund/flow
@@ -188,7 +245,7 @@ export default function TransactionForm({
       setCategoryId("");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fundId, flowMode, destFundId]);
+  }, [fundId, flowMode]);
 
   // Prepopulate memo hint for refunds
   useEffect(() => {
@@ -200,36 +257,68 @@ export default function TransactionForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowMode]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const amountCents = parseDollars(amount);
-    if (amountCents === null) {
-      toast.error("Enter a valid positive amount.");
-      return;
+  // Default the destination account whenever the mode switches into Transfer
+  // or Sweep (new transactions only — bank account is immutable on edit).
+  useEffect(() => {
+    if (isEdit) return;
+    if (flowMode === "transfer") {
+      const fallback = bankAccounts.find((a) => a.id !== bankAccountId)?.id ?? "";
+      setDestBankAccountId(fallback);
+    } else if (flowMode === "sweep" && crossEntityContext) {
+      const fallback =
+        crossEntityContext.bankAccounts.find((a) => a.isDefault)?.id ??
+        crossEntityContext.bankAccounts[0]?.id ??
+        "";
+      setDestBankAccountId(fallback);
+    } else {
+      setDestBankAccountId("");
+      setBoardMinute("");
+      setDestCategoryId("");
     }
-    if (amountCents > 2_147_483_647) {
-      toast.error("Amount exceeds the maximum allowed ($21,474,836.47).");
-      return;
-    }
-    if (!bankAccountId) {
-      toast.error("Select a bank account before saving this transaction.");
-      return;
-    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowMode]);
 
-    if (isTransfer && !isEdit) {
-      // New transfer path
-      if (!sourceFundId || !destFundId) {
-        toast.error("Select both source and destination funds.");
-        return;
-      }
-      if (sourceFundId === destFundId) {
-        toast.error("Source and destination funds must be different.");
-        return;
-      }
-    } else if (!isTransfer && apiFlow === "income" && !party.trim()) {
-      toast.error("Payer (party) is required for income transactions.");
-      return;
+  // Keep the Transfer "To Account" from silently colliding with a newly
+  // picked "From Account".
+  useEffect(() => {
+    if (isTransfer && destBankAccountId === bankAccountId) {
+      const fallback = bankAccounts.find((a) => a.id !== bankAccountId)?.id ?? "";
+      setDestBankAccountId(fallback);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bankAccountId]);
+
+  /** All client-side validation. Returns an error message, or null if valid. */
+  function validate(): string | null {
+    const amountCents = parseDollars(amount);
+    if (amountCents === null) return "Enter a valid positive amount.";
+    if (amountCents > 2_147_483_647) return "Amount exceeds the maximum allowed ($21,474,836.47).";
+    if (!bankAccountId) return "Select a bank account before saving this transaction.";
+
+    if (!isEdit && isTransfer) {
+      if (!destBankAccountId) return "Select both a source and destination bank account.";
+      if (bankAccountId === destBankAccountId) {
+        return "Select a different bank account, or transfer to a different fund.";
+      }
+    } else if (!isEdit && isSweep) {
+      if (!clubActivityFund || !foundationCharitableFund) {
+        return "Sweep is not available — the Activity Fund or Foundation Charitable Fund could not be found.";
+      }
+      if (!destBankAccountId) return "Select both a source and destination bank account.";
+      if (!boardMinute.trim()) {
+        return "A board-minute reference is required for a cross-entity sweep.";
+      }
+      if (boardMinute.trim().length > BOARD_MINUTE_MAX_LEN) {
+        return `Board-minute reference must be ${BOARD_MINUTE_MAX_LEN} characters or fewer.`;
+      }
+    } else if (!isTransferOrSweep && apiFlow === "income" && !party.trim()) {
+      return "Payer (party) is required for income transactions.";
+    }
+    return null;
+  }
+
+  async function performSubmit() {
+    const amountCents = parseDollars(amount)!;
 
     setSubmitting(true);
     try {
@@ -248,7 +337,10 @@ export default function TransactionForm({
           amountCents,
           txnDate,
           memo: memo || null,
-          bankAccountId,
+          // Bank account is immutable post-creation for any transfer/sweep
+          // pair (DECISION-058) — omit it entirely for those rows rather
+          // than send a value the server will silently ignore anyway.
+          ...(isEditingTransfer ? {} : { bankAccountId }),
           ...(isEditingTransfer
             ? {}
             : {
@@ -272,19 +364,23 @@ export default function TransactionForm({
               ? { receiptStorageKey: pendingReceipt.key }
               : {}),
         };
-      } else if (isTransfer) {
-        // New transfer path
+      } else if (isTransferOrSweep) {
+        // New Transfer or Sweep path (DECISION-058) — one underlying
+        // mechanism, two names. entityId is NOT sent: the server derives
+        // both legs' entities from sourceFundId/destFundId themselves.
         url = "/api/admin/ledger/transactions";
         method = "POST";
         body = {
           transfer: true,
-          entityId,
-          sourceFundId,
-          destFundId,
+          sourceFundId: isSweep ? clubActivityFund!.id : fundId,
+          destFundId: isSweep ? foundationCharitableFund!.id : fundId,
+          sourceBankAccountId: bankAccountId,
+          destBankAccountId,
           txnDate,
           amountCents,
           memo: memo || null,
-          bankAccountId,
+          ...(isSweep ? { boardMinute: boardMinute.trim() } : {}),
+          ...(isSweep && destCategoryId ? { destCategoryId } : {}),
         };
       } else {
         // New regular transaction
@@ -328,7 +424,7 @@ export default function TransactionForm({
       const data = await res.json();
       const fyNote = data.derivedFiscalYear ? ` (FY${data.derivedFiscalYear})` : "";
       if (!isEdit && data.status === "pending") {
-        toast.success(`Disbursement submitted${fyNote} — awaiting board approval.`);
+        toast.success(`Submitted${fyNote} — awaiting board approval (over the disbursement threshold).`);
       } else {
         toast.success(isEdit ? "Transaction updated." : `Transaction recorded${fyNote}.`);
       }
@@ -343,16 +439,33 @@ export default function TransactionForm({
     }
   }
 
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const error = validate();
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    // A Sweep is functionally irreversible — two permanent, independent
+    // transactions on two entities' books — so route it through a confirm
+    // step rather than saving on the first click (Phase 1 Gaps section).
+    if (!isEdit && isSweep) {
+      setSweepConfirmOpen(true);
+      return;
+    }
+    void performSubmit();
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Flow mode selector — hidden for transfer edit (can't change flow on a transfer row) */}
+      {/* Flow mode selector — hidden for transfer/sweep edit (can't change flow on a pair row) */}
       {!isEditingTransfer && (
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Type
           </label>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {(Object.keys(FLOW_LABELS) as FlowMode[]).map((mode) => (
+            {visibleFlowModes.map((mode) => (
               <label
                 key={mode}
                 className={`flex items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium cursor-pointer transition select-none ${
@@ -376,54 +489,35 @@ export default function TransactionForm({
         </div>
       )}
 
-      {/* Transfer: source + dest fund pickers */}
+      {/* Transfer: implied same fund (only Administrative has >1 bank account
+          today) — show which fund is affected as read-only context, then two
+          bank-account pickers. This is the sanctioned way to fund Petty Cash. */}
       {isTransfer && !isEdit && (
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label htmlFor="txn-source-fund" className="block text-sm font-medium text-gray-700 mb-1">
-              From Fund
-            </label>
-            <select
-              id="txn-source-fund"
-              value={sourceFundId}
-              onChange={(e) => setSourceFundId(e.target.value)}
-              required
-              className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-8 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
-            >
-              <option value="">Select fund...</option>
-              {funds.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="txn-dest-fund" className="block text-sm font-medium text-gray-700 mb-1">
-              To Fund
-            </label>
-            <select
-              id="txn-dest-fund"
-              value={destFundId}
-              onChange={(e) => setDestFundId(e.target.value)}
-              required
-              className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-8 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
-            >
-              <option value="">Select fund...</option>
-              {funds
-                .filter((f) => f.id !== sourceFundId)
-                .map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
-                ))}
-            </select>
-          </div>
+        <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-sm text-gray-600">
+          Moving cash within the <span className="font-semibold">{activeFund?.name ?? "selected fund"}</span> —
+          this fund&rsquo;s balance is unaffected; only the bank account holding the cash changes.
         </div>
       )}
 
-      {/* Regular: fund picker */}
-      {!isTransfer && !isEdit && (
+      {/* Sweep: implied Activity -> Charitable, cross-entity — explicit
+          two-books framing per DECISION-058 (never a single reversible entry). */}
+      {isSweep && !isEdit && (
+        <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-900 space-y-1">
+          <p>
+            <span className="font-semibold">From:</span> {clubActivityFund?.name ?? "Activity Fund"} (this entity)
+            {" "}&rarr;{" "}
+            <span className="font-semibold">To:</span> {foundationCharitableFund?.name ?? "Charitable Fund"}
+            {crossEntityContext ? ` (${crossEntityContext.entityName})` : ""}
+          </p>
+          <p className="text-xs text-blue-800">
+            This records two separate, permanent transactions — a Club expense and a Foundation
+            gift/income — both citing the board-minute reference below, on two separate sets of books.
+          </p>
+        </div>
+      )}
+
+      {/* Regular: fund picker (not for transfer/sweep, whose fund is implied) */}
+      {!isTransferOrSweep && !isEdit && (
         <div>
           <label htmlFor="txn-fund" className="block text-sm font-medium text-gray-700 mb-1">
             Fund
@@ -482,8 +576,8 @@ export default function TransactionForm({
         />
       </div>
 
-      {/* Category (not for transfers) */}
-      {!isTransfer && !isEditingTransfer && (
+      {/* Category (not for transfer/sweep) */}
+      {!isTransferOrSweep && !isEditingTransfer && (
         <div>
           <label htmlFor="txn-category" className="block text-sm font-medium text-gray-700 mb-1">
             Category <span className="text-gray-400 font-normal">(optional)</span>
@@ -504,8 +598,8 @@ export default function TransactionForm({
         </div>
       )}
 
-      {/* Party (not for transfers) */}
-      {!isTransfer && !isEditingTransfer && (
+      {/* Party (not for transfer/sweep) */}
+      {!isTransferOrSweep && !isEditingTransfer && (
         <div>
           <label htmlFor="txn-party" className="block text-sm font-medium text-gray-700 mb-1">
             {apiFlow === "income" ? (
@@ -527,8 +621,8 @@ export default function TransactionForm({
         </div>
       )}
 
-      {/* Check # (not for transfers) */}
-      {!isTransfer && !isEditingTransfer && (
+      {/* Check # (not for transfer/sweep) */}
+      {!isTransferOrSweep && !isEditingTransfer && (
         <div>
           <label htmlFor="txn-check-number" className="block text-sm font-medium text-gray-700 mb-1">
             Check # <span className="text-gray-400 font-normal">(optional)</span>
@@ -561,8 +655,8 @@ export default function TransactionForm({
         />
       </div>
 
-      {/* Beneficiary cause — optional, only for new non-transfer expenses */}
-      {!isTransfer && !isEdit && apiFlow === "expense" && (
+      {/* Beneficiary cause — optional, only for new non-transfer/sweep expenses */}
+      {!isTransferOrSweep && !isEdit && apiFlow === "expense" && (
         <div>
           <label htmlFor="txn-cause" className="block text-sm font-medium text-gray-700 mb-1">
             Beneficiary cause <span className="text-gray-400 font-normal text-xs">(optional)</span>
@@ -685,8 +779,8 @@ export default function TransactionForm({
         </div>
       )}
 
-      {/* Payment method (not for transfers) */}
-      {!isTransfer && !isEditingTransfer && (
+      {/* Payment method (not for transfer/sweep) */}
+      {!isTransferOrSweep && !isEditingTransfer && (
         <div>
           <label htmlFor="txn-method" className="block text-sm font-medium text-gray-700 mb-1">
             Payment Method <span className="text-gray-400 font-normal">(optional)</span>
@@ -707,8 +801,10 @@ export default function TransactionForm({
         </div>
       )}
 
-      {/* Bank account (required — default-bank-account bug fix) */}
-      {bankAccounts.length > 0 && (
+      {/* Bank account — regular transactions & edit (transfer/sweep pairs
+          hide this: bank account is immutable post-creation, and NEW
+          transfer/sweep use the two per-leg pickers below instead). */}
+      {bankAccounts.length > 0 && !isTransferOrSweep && (
         <div>
           <label htmlFor="txn-bank" className="block text-sm font-medium text-gray-700 mb-1">
             Bank Account
@@ -727,6 +823,94 @@ export default function TransactionForm({
             ))}
           </select>
         </div>
+      )}
+
+      {/* Transfer / Sweep: per-leg bank-account pickers (new only — immutable on edit) */}
+      {isTransferOrSweep && !isEdit && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="txn-from-account" className="block text-sm font-medium text-gray-700 mb-1">
+              From Account
+            </label>
+            <select
+              id="txn-from-account"
+              value={bankAccountId}
+              onChange={(e) => setBankAccountId(e.target.value)}
+              required
+              className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-8 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            >
+              {bankAccounts.map((acct) => (
+                <option key={acct.id} value={acct.id}>
+                  {acct.name} {acct.last4 ? `(…${acct.last4})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="txn-to-account" className="block text-sm font-medium text-gray-700 mb-1">
+              To Account
+            </label>
+            <select
+              id="txn-to-account"
+              value={destBankAccountId}
+              onChange={(e) => setDestBankAccountId(e.target.value)}
+              required
+              className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-8 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            >
+              <option value="">Select account...</option>
+              {(isSweep ? crossEntityContext?.bankAccounts ?? [] : bankAccounts.filter((a) => a.id !== bankAccountId)).map(
+                (acct) => (
+                  <option key={acct.id} value={acct.id}>
+                    {acct.name} {acct.last4 ? `(…${acct.last4})` : ""}
+                  </option>
+                )
+              )}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Sweep-only: mandatory board-minute + optional Foundation category */}
+      {isSweep && !isEdit && (
+        <>
+          <div>
+            <label htmlFor="txn-board-minute" className="block text-sm font-medium text-gray-700 mb-1">
+              Board-minute reference <span className="text-gray-400 font-normal text-xs">(required)</span>
+            </label>
+            <input
+              id="txn-board-minute"
+              type="text"
+              value={boardMinute}
+              onChange={(e) => setBoardMinute(e.target.value)}
+              maxLength={BOARD_MINUTE_MAX_LEN}
+              placeholder="e.g., Motion passed May 2026 meeting, minute §4"
+              className="block w-full rounded-lg border border-gray-300 py-2 px-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              Enter the board-meeting minute or motion reference that authorized this sweep.
+            </p>
+          </div>
+          {crossEntityContext && crossEntityContext.categories.length > 0 && (
+            <div>
+              <label htmlFor="txn-dest-category" className="block text-sm font-medium text-gray-700 mb-1">
+                Foundation income category <span className="text-gray-400 font-normal text-xs">(optional — defaults to Public donations)</span>
+              </label>
+              <select
+                id="txn-dest-category"
+                value={destCategoryId}
+                onChange={(e) => setDestCategoryId(e.target.value)}
+                className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-8 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+              >
+                <option value="">Public donations (default)</option>
+                {crossEntityContext.categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </>
       )}
 
       {/* Actions */}
@@ -749,9 +933,27 @@ export default function TransactionForm({
               ? "Update Transaction"
               : isTransfer
                 ? "Record Transfer"
-                : "Record Transaction"}
+                : isSweep
+                  ? "Record Sweep"
+                  : "Record Transaction"}
         </button>
       </div>
+
+      {/* Sweep confirm — functionally irreversible (two permanent,
+          independent transactions on two entities' books), so it never saves
+          on the first click (Phase 1 Gaps / DECISION-058). */}
+      <ConfirmDialog
+        open={sweepConfirmOpen}
+        onOpenChange={setSweepConfirmOpen}
+        title="Confirm Sweep to Foundation?"
+        description="This creates two separate, permanent transactions — a Club Activity Fund expense and a Foundation Charitable Fund gift/income — both citing the board-minute reference you entered. This cannot be undone in the Ledger; reversing it requires a new, opposite transaction and a new board decision."
+        confirmLabel="Confirm Sweep"
+        destructive
+        onConfirm={() => {
+          setSweepConfirmOpen(false);
+          void performSubmit();
+        }}
+      />
     </form>
   );
 }

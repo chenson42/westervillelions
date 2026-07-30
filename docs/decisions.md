@@ -28,6 +28,53 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-058: Cross-Entity Sweep / Account-Transfer — directional allow-list isolated in a new pure `ledger-transfer-policy.ts`; extend `handleTransfer` rather than a new route; approve-route `boardMinute` becomes "required only if not already set"
+
+**Status:** Resolved
+**Date:** 2026-07-29
+
+**Decision:** Ship the deny-by-default directional allow-list (`docs/work-log/2026-07-29-ledger-account-transfers.md`)
+as a single pure function, `checkTransferDirection(source, dest)` in a new file
+`src/lib/ledger-transfer-policy.ts` — one `if` branch per matrix cell, no DB import, fully
+unit-testable in isolation. It is called from inside the existing `handleTransfer` in
+`src/app/api/admin/ledger/transactions/route.ts`, which is extended in place (new body fields
+`sourceBankAccountId`/`destBankAccountId` replacing the single `bankAccountId`, plus optional
+`boardMinute`/`destCategoryId`) rather than forked into a new route — the two "modes" (Transfer,
+Sweep) collapse into one allow-list decision and share all existing amount/date validation. The
+over-threshold disbursement-approval check (`disbApprovalThresholdCents`) is now applied once to
+the pair and both legs are inserted with the same derived `status` inside the existing
+transaction-wrapped two-row insert — closing the "transfers always post, bypassing approval" gap.
+`POST .../[id]/approve` and `.../[id]/reject` become pair-aware (fetch the partner leg by
+`transferGroupId`, validate both pending, update both atomically); the approve route's
+`boardMinute` requirement changes from unconditionally-required to **required only when the row
+doesn't already have one** — a Sweep's creation-time board-minute citation survives an
+over-threshold approval instead of being silently overwritten by a blank field. `PATCH
+.../[id]?both=true` is fixed to stop applying an edited `bankAccountId` to both legs of a pair
+(`route.ts:464`) — per-leg bank account becomes immutable post-creation for any transfer/sweep
+pair, correcting a bug the old same-entity/one-bank-account invariant made invisible.
+
+**Rationale:** Isolating the allow-list in its own file (rather than adding it to
+`src/lib/ledger.ts`, which computes DB-derived reporting metrics like `firewallViolations` from an
+already-fetched transaction list) keeps a pre-insert decision gate — primitive inputs, no DB,
+called before any row exists — testable without mocking the database; every cell of the Phase 1
+matrix becomes one direct function call in a unit test. Extending `handleTransfer` instead of
+adding a new route avoids duplicating validation that's already correct and shared. The
+`boardMinute`-preservation fix is a strict generalization of the existing approve-route behavior
+(ordinary expenses, which never have a pre-set `boardMinute`, are unaffected) rather than a new
+special case.
+
+**Impact:** New file `src/lib/ledger-transfer-policy.ts`. Rewrites: `handleTransfer()` in
+`src/app/api/admin/ledger/transactions/route.ts`; `POST .../[id]/approve/route.ts`; `POST
+.../[id]/reject/route.ts`; the `?both=true` branch in `PATCH .../[id]/route.ts`;
+`getPendingApprovals` in `src/lib/ledger-queries.ts` (dedup a pending pair to one row). Client:
+`TransactionForm`'s single `"transfer"` `FlowMode` splits into `"transfer"`/`"sweep"`, with a new
+`crossEntityContext` prop on Club pages only; `[fundSlug]/page.tsx` fetches the Foundation's
+funds/bank-accounts/categories when rendering for the Club entity. No schema changes, no new
+`FEATURES` key. See the Phase 3 design in `docs/work-log/2026-07-29-ledger-account-transfers.md`
+for the full matrix, field-by-field leg construction, edge cases, and the unit-test list.
+
+---
+
 ## DECISION-057: Budget Star & Notes — lazy-create upsert keeps `annualAmountCents` out of the conflict `SET`; star/note routed through two new endpoints that never call `assertBudgetUnlocked()`
 
 **Status:** Resolved
