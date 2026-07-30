@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -242,6 +242,17 @@ interface BudgetEditorProps {
    * meaningful when showAnnotationControls is true.
    */
   onStarChange?: (key: string, starred: boolean) => void;
+  /**
+   * Scroll-to-newly-added-category (Budgeting UX Polish, 2026-07-30) — when
+   * this matches a row rendered by THIS instance (`${categoryId}_${flow}`),
+   * that row is smooth-scrolled into view once the row's ref is attached,
+   * then `onScrolledToKey` fires so GuidedBudgetSetup can clear it.
+   * GuidedBudgetSetup mounts several BudgetEditor instances at once
+   * (income/expense x per-fund); only the instance whose `lines` actually
+   * contains the key acts on it, since category ids are unique.
+   */
+  scrollToKey?: string | null;
+  onScrolledToKey?: () => void;
 }
 
 /**
@@ -280,8 +291,13 @@ export default function BudgetEditor({
   onCauseLinePendingDeltaChange,
   showAnnotationControls = false,
   onStarChange,
+  scrollToKey = null,
+  onScrolledToKey,
 }: BudgetEditorProps) {
   const router = useRouter();
+  // Row DOM refs keyed the same way as `inputs` (`${categoryId}_${flow}`) —
+  // feeds the scrollToKey effect below (Budgeting UX Polish, 2026-07-30).
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   // Track per-line editing state: input value (dollars), saving flag
   const [inputs, setInputs] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -794,6 +810,25 @@ export default function BudgetEditor({
     );
   }
 
+  /**
+   * Scroll-to-newly-added-category (Budgeting UX Polish, 2026-07-30). Fires
+   * whenever `scrollToKey` or `lines` changes (a new category only exists in
+   * `lines` after the router.refresh() the add flow already triggers).
+   * Ref callbacks attach synchronously during the commit that renders the
+   * new row, ahead of this (passive) effect, so `rowRefs.current[key]` is
+   * already populated by the time this runs. No-ops (and leaves
+   * `scrollToKey` set) when this instance doesn't render that key — one of
+   * several BudgetEditor instances mounted at once, only the matching one
+   * scrolls and clears it via onScrolledToKey.
+   */
+  useEffect(() => {
+    if (!scrollToKey) return;
+    const el = rowRefs.current[scrollToKey];
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    onScrolledToKey?.();
+  }, [scrollToKey, lines, onScrolledToKey]);
+
   return (
     <div className="space-y-1">
       {lines.map((line) => {
@@ -824,6 +859,9 @@ export default function BudgetEditor({
           return (
             <div
               key={key}
+              ref={(el) => {
+                rowRefs.current[key] = el;
+              }}
               className="space-y-1 py-1 px-2 -mx-2 rounded-lg bg-gray-50 border-b border-gray-50 last:border-0"
             >
               <div className="flex items-center gap-2 flex-wrap">
@@ -895,7 +933,13 @@ export default function BudgetEditor({
                   },
                 ];
           return (
-            <div key={key} className="rounded-lg border border-gray-100 p-2">
+            <div
+              key={key}
+              ref={(el) => {
+                rowRefs.current[key] = el;
+              }}
+              className="rounded-lg border border-gray-100 p-2"
+            >
               <div className="flex items-center gap-2 mb-2">
                 {!singleFlow && (
                   <span className="text-xs text-gray-500 w-20 uppercase tracking-wide">
@@ -951,7 +995,13 @@ export default function BudgetEditor({
         }
 
         return (
-          <div key={key} className="space-y-1 py-1 border-b border-gray-50 last:border-0">
+          <div
+            key={key}
+            ref={(el) => {
+              rowRefs.current[key] = el;
+            }}
+            className="space-y-1 py-1 border-b border-gray-50 last:border-0"
+          >
             <div className="flex items-center gap-2">
               {!singleFlow && (
                 <span className="text-xs text-gray-500 w-20 uppercase tracking-wide flex-shrink-0">

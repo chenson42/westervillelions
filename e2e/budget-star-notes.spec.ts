@@ -11,7 +11,9 @@ import { signInAsAdmin } from "./helpers/auth";
  * un-budgeted-category lazy-create (no fake $0 shown), the lock-interaction
  * exception (annotation controls stay live and functional while amount
  * inputs are disabled), instant sort-to-top at both grains, a never-saved
- * cause line having no annotation controls until its first commit, a
+ * cause line rendering only the reserved/disabled annotation-control
+ * footprint (Budgeting UX Polish, 2026-07-30 — no layout jump once it
+ * commits) rather than a working star/note pair until its first commit, a
  * soft-deleted/held cause line retaining working controls, and the print
  * worksheet rendering stars/notes compactly with no stray rows for a fund
  * that has none.
@@ -262,7 +264,7 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
     await page.waitForTimeout(300);
   });
 
-  test("cause-line grain: a never-saved row has no annotation controls until its first commit; starring sorts within its own cause group; note persists", async ({
+  test("cause-line grain: a never-saved row renders the reserved/disabled annotation-control footprint until its first commit; starring sorts within its own cause group; note persists", async ({
     page,
   }) => {
     // Arrange — put Program supplies (Activity Fund) into cause breakdown
@@ -297,7 +299,25 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
     // brand-new blank row has none, by design (nothing to PATCH against yet)
     await expect(envGroup.getByRole("button", { name: /^Flag "E2E QA Line/ })).toHaveCount(2);
 
-    // Act — commit the third row; controls should now appear for it
+    // Assert (UX Polish, 2026-07-30) — the blank row still renders a
+    // star/note control PAIR, in the exact same footprint a committed row
+    // uses, just disabled and with a hint — reserved space, not a pop-in
+    // once it commits. Exactly one of each (the one uncommitted row);
+    // Line A/B's own committed buttons use a different (labeled) name so
+    // they don't collide with this generic one.
+    const reservedStar = envGroup.getByRole("button", {
+      name: "Flag for discussion — save this line first",
+    });
+    const reservedNote = envGroup.getByRole("button", {
+      name: "Add note for discussion — save this line first",
+    });
+    await expect(reservedStar).toHaveCount(1);
+    await expect(reservedNote).toHaveCount(1);
+    await expect(reservedStar).toBeDisabled();
+    await expect(reservedNote).toBeDisabled();
+
+    // Act — commit the third row; working controls should now appear for
+    // it, replacing the reserved placeholder with no other layout change.
     await fillAndCommitCauseLine(page, {
       amountLabel: "Amount for Environment",
       amount: "15.00",
@@ -305,6 +325,8 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
       label: "E2E QA Line C",
     });
     await expect(envGroup.getByRole("button", { name: /^Flag "E2E QA Line/ })).toHaveCount(3);
+    await expect(reservedStar).toHaveCount(0);
+    await expect(reservedNote).toHaveCount(0);
 
     // Soft-delete interaction (Decision 7): remove Line C, confirm its
     // annotation controls remain visible AND functional while dead

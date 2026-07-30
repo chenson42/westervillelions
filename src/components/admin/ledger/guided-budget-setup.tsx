@@ -313,6 +313,16 @@ export default function GuidedBudgetSetup({
     () => seedStarOverrides(funds),
   );
 
+  // Scroll-to-newly-added-category (Budgeting UX Polish, 2026-07-30) —
+  // `${categoryId}_${flow}` of the category just added via either "+ Add
+  // category" mode, set the instant the add resolves (before
+  // router.refresh() completes) and cleared by whichever BudgetEditor
+  // instance's row actually matches it (see that component's own
+  // scrollToKey effect). Only one of the several BudgetEditor instances
+  // mounted across funds/flows will ever find a match, since category ids
+  // are unique.
+  const [scrollToKey, setScrollToKey] = useState<string | null>(null);
+
   // Re-sync all three maps from `funds` whenever the server sends fresh data. The
   // useState initializers above run only at mount, but every successful edit
   // fires router.refresh(), which re-renders the Server Component page and
@@ -468,7 +478,9 @@ export default function GuidedBudgetSetup({
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Could not create category. Try again.");
       }
+      const created: { id: string } = await res.json();
       toast.success(`Added "${trimmedName}" as a new ${addCategoryState.flow} category.`);
+      setScrollToKey(`${created.id}_${addCategoryState.flow}`);
       setAddCategoryState(null);
       router.refresh();
     } catch (err) {
@@ -497,6 +509,7 @@ export default function GuidedBudgetSetup({
         throw new Error(data.error || "Could not add category. Try again.");
       }
       toast.success("Category added to this year's budget.");
+      setScrollToKey(`${addCategoryState.existingCategoryId}_${addCategoryState.flow}`);
       setAddCategoryState(null);
       router.refresh();
     } catch (err) {
@@ -588,9 +601,17 @@ export default function GuidedBudgetSetup({
     const addingToThisSection =
       addCategoryState?.fundId === fund.fundId && addCategoryState.flow === flow;
     const sectionLabel = flow === "income" ? "Income" : "Expense";
+    // Distinct, low-saturation section tints (UX Polish, 2026-07-30) so it's
+    // obvious which half of the fund you're in while scrolling/editing.
+    // Income = a faint lions-blue wash (on-brand); expense = a faint warm
+    // gray (stone, not amber — amber is already the "Needs review" balance
+    // badge color elsewhere on this page, so reusing it here would read as
+    // a warning). Nested white boxes (empty state, add-category form) below
+    // get bg-white instead of bg-gray-50 so they still pop against the tint.
+    const sectionTintClass = flow === "income" ? "bg-lions-blue/5" : "bg-stone-50";
 
     return (
-      <div className="pt-3 border-t border-gray-100 space-y-3">
+      <div className={`rounded-xl p-3 space-y-3 ${sectionTintClass}`}>
         <div className="flex items-center justify-between gap-2">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
             {sectionLabel}
@@ -624,9 +645,11 @@ export default function GuidedBudgetSetup({
             labelOptions={labelOptions}
             showAnnotationControls={canManage}
             onStarChange={(key, starred) => handleStarChange(fund.fundId, key, starred)}
+            scrollToKey={scrollToKey}
+            onScrolledToKey={() => setScrollToKey(null)}
           />
         ) : (
-          <div className="bg-gray-50 rounded-2xl p-4 text-center text-sm text-gray-500">
+          <div className="bg-white rounded-2xl p-4 text-center text-sm text-gray-500">
             No {flow} categories yet for this fund
             {canManage && !locked ? " — add the first one above." : "."}
           </div>
@@ -642,7 +665,7 @@ export default function GuidedBudgetSetup({
                 void submitNewCategory(fund);
               }
             }}
-            className="bg-gray-50 rounded-2xl p-4 space-y-3"
+            className="bg-white rounded-2xl p-4 space-y-3"
           >
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-gray-900">

@@ -520,7 +520,37 @@ export default function BudgetCauseEditor({
    *  render branches (Decision 7): a row that's individually pending-delete
    *  or mid-hold still shows and allows editing its own star/note. */
   function renderLineAnnotationControls(row: Row) {
-    if (!showAnnotationControls || row.id === null) return null;
+    if (!showAnnotationControls) return null;
+    if (row.id === null) {
+      // Uncommitted row (Budgeting UX Polish, 2026-07-30) — annotations need
+      // a persisted line id, which doesn't exist yet. Rather than pop the
+      // star/note controls in only after the first commit (a jarring layout
+      // shift once the row gets an id), reserve the EXACT same footprint
+      // here, disabled and muted, with a hint explaining why. Mirrors the
+      // committed branch below: same wrapper classes, same button sizing.
+      return (
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          <button
+            type="button"
+            disabled
+            title="Save the line to star it or add a note"
+            aria-label="Flag for discussion — save this line first"
+            className="inline-flex items-center justify-center rounded-lg min-h-[44px] min-w-[44px] text-gray-200 cursor-not-allowed"
+          >
+            <StarIcon filled={false} />
+          </button>
+          <button
+            type="button"
+            disabled
+            title="Save the line to star it or add a note"
+            aria-label="Add note for discussion — save this line first"
+            className="inline-flex items-center justify-center rounded-lg min-h-[44px] min-w-[44px] text-gray-200 cursor-not-allowed"
+          >
+            <NoteIcon filled={false} />
+          </button>
+        </div>
+      );
+    }
     const hasNote = !!(row.note && row.note.trim() !== "");
     const noteOpen = noteEditRowId === row.id;
     const displayLabel = row.label ? `"${row.label}"` : row.cause;

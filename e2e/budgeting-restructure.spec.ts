@@ -558,4 +558,36 @@ test.describe("Budgeting page restructure — /admin/ledger/budgeting", () => {
       timeout: 10_000,
     });
   });
+
+  test("'+ Add category' scrolls the newly-added category into view (UX Polish, 2026-07-30)", async ({
+    page,
+  }) => {
+    // Arrange — by this point in the serial suite, FY2099's Charitable Fund
+    // card already carries several categories plus this file's own cause
+    // groups/lines, so the page is taller than one viewport and a
+    // newly-appended row starts below the fold without an explicit scroll.
+    await page.goto(BUDGETING_URL);
+    await page.getByRole("button", { name: "+ Add income category" }).click();
+    await page.getByLabel("Category name").fill("E2E QA Scroll Target");
+
+    // Act
+    await page.getByRole("button", { name: "Create category" }).click();
+    const input = page.getByLabel("Budget for E2E QA Scroll Target (income)");
+    await expect(input).toBeVisible({ timeout: 10_000 });
+
+    // Assert — the new row lands within the viewport. scrollIntoView is
+    // smooth (animated), so poll rather than assert immediately or rely on
+    // a fixed sleep.
+    await expect
+      .poll(
+        async () => {
+          const box = await input.boundingBox();
+          const viewport = page.viewportSize();
+          if (!box || !viewport) return false;
+          return box.y >= 0 && box.y + box.height <= viewport.height;
+        },
+        { timeout: 5_000 },
+      )
+      .toBe(true);
+  });
 });
