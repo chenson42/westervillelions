@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { FEATURES } from "@/lib/permissions";
+import { canAccessAdminArea } from "@/lib/permissions";
 import AdminSidebar from "@/components/admin/admin-sidebar";
 
 /**
@@ -24,8 +24,13 @@ export default async function AdminLayout({
   const userRoles = session.user.roles || [];
   const isAdmin = session.user.role === "admin" || userRoles.includes("Admin");
 
-  // Require at least admin dashboard access (admins always pass)
-  if (!isAdmin && !userFeatures.includes(FEATURES.ADMIN_DASHBOARD)) {
+  // Require at least one admin-area feature (admins always pass). Uses the
+  // same rule as the header's Admin link and AdminSidebar's visible sections
+  // — see canAccessAdminArea in src/lib/permissions.ts. A user who holds a
+  // narrower grant (e.g. budget.edit, without admin.dashboard) is admitted
+  // here but is not entitled to the /admin stats page itself — that page has
+  // its own ADMIN_DASHBOARD check and redirects onward.
+  if (!isAdmin && !canAccessAdminArea(userFeatures)) {
     redirect("/access-pending");
   }
 

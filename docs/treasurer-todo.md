@@ -37,6 +37,10 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
 | T-24 | ⬜ | Standing reference: accounting basis + LCI transparency standard |
 | T-25 | ⬜ | Clean up category catalog / full budget→txn→report traceability |
 | T-26 | 🔶 | FY2025 checks reconciled (8252/8253 done); Admin 8002 refile deferred to T-25 |
+| T-27 | ⬜ | Possible duplicate $102.86 posting (2026-06-10, eyeglass collection boxes) |
+| T-28 | ⬜ | WARM budget-vs-actual gap — board to confirm the FY2026 level |
+| T-29 | ⬜ | Duplicate Club categories: Awards / Member recognition, Supplies / Program supplies |
+| T-30 | ⬜ | Husky Hub cause placement — Hunger & Basic Needs or Youth & Education? |
 
 **Tooling shipped that affects these items:**
 - **v1.51.0 — Transfers & Sweeps** (`docs/work-log/2026-07-29-ledger-account-transfers.md`): the
@@ -151,6 +155,13 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
   - [ ] Record the chosen policy in board minutes; apply it at next year's renewal.
 - [ ] **T-06 — One PO box or two?** USPS box rental paid from the Foundation ($256, 12/2024) and
   from admin ($268, 12/2025). If it's one box, pick the account that pays it consistently.
+- [ ] **T-28 — WARM budget-vs-actual gap: board should confirm the level.** (added 2026-08-05, from
+  the FY2026 budget-committee review — see `docs/work-log/2026-08-05-fy2026-budget-committee-review.md`)
+  FY2025 budgeted **$1,000** for WARM but actual giving was **$4,500** — $2,500 for Share Bac a Pac in
+  Aug 2025 plus $2,000 in Jan 2026. WARM had dropped out of the FY2026 draft entirely and has now been
+  restored at **$2,000** on the budget committee's recommendation. That is double last year's budget but
+  well under last year's actual, so the line may still run light. Board to confirm the intended FY2026
+  level before the budget is approved and locked.
 
 ## Data cleanup
 
@@ -206,6 +217,35 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
   Source: `Chase2000_..._foundation.csv` / `Chase8338_..._admin.csv`, `WLCF/WLC June 2026 Monthly
   Report.pdf`, registers at `/Users/cshenso/Documents/Treasurer Transfer Documents 07-2024 to 06-2026`.
   Net: the ledger is **materially complete**; no missing money was found.
+- [ ] **T-27 — Possible duplicate transaction: two identical $102.86 postings on 2026-06-10.** (added
+  2026-08-05, surfaced while reviewing FY2025 Club actuals for the budget-committee review) Both sit in
+  the Club Administrative **"Program supplies"** category, both dated 2026-06-10, both $102.86, both for
+  **used-eyeglass collection boxes**. They differ only in how they were recorded: one carries the party
+  **"Lions Clubs International"**, the other is an ACH bank description naming **James Shively**. That
+  pattern is what a single purchase looks like when it gets entered twice — once from the invoice and
+  once from the bank feed. Verify against the June 2026 bank statement; if only one $102.86 debit
+  cleared, void the duplicate. Note this pair accounts for $102.86 of the $670.64 "Program supplies"
+  FY2025 actual cited in T-29 and in the FY2026 Club Notes & Assumptions, so resolving it changes that
+  figure.
+- [ ] **T-29 — Duplicate/parallel Club categories: decide whether each pair merges, and under which
+  name.** (added 2026-08-05, from the FY2026 budget-committee review) Two Club Administrative pairs
+  where the budgeted category and the spent-against category are different rows:
+  - **"Awards"** — budgeted **$200**, *zero transactions ever*, while **"Member recognition"** spent
+    **$490.48** in FY2025 with nothing budgeted (speaker gifts $55.08, 50-year pins + banner repair
+    $195.80, member polo shirts $239.60).
+  - **"Supplies"** — budgeted **$75**, *zero transactions ever*, while **"Program supplies"** spent
+    **$670.64** in FY2025 with nothing budgeted (banner bag / peace poster kit / pop-up tent $422.12,
+    costume cleaning $42.80, and the two $102.86 eyeglass-box postings under T-27).
+  The treasurer deliberately did **not** merge these — it changes what the board approved and picks a
+  winning name, so it's a board call. Both pairs are annotated on the FY2026 line notes and raised as
+  numbered questions in the Club Notes & Assumptions. This is the Club-side instance of **T-25**'s
+  category-catalog cleanup; decide the two together.
+- [ ] **T-30 — Confirm Husky Hub's cause placement at board review.** (added 2026-08-05, from the FY2026
+  budget-committee review) The new $500 Husky Hub line (Heritage Middle School food bank) is filed under
+  **Hunger & Basic Needs** on the Foundation's *Charitable donation out* budget, matching how last year's
+  $500 gift through the Heritage Middle School PTSA was tagged. The committee noted **Youth & Education**
+  is also defensible. Either is fine, but pick one before the budget locks so the cause breakdown on the
+  fiscal report stays consistent year over year.
 
 ## Operational / next steps
 

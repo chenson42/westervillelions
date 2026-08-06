@@ -1,9 +1,11 @@
 import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { members, events, campaigns, contactSubmissions, membershipApplications, newsletterSubscriptions, suggestions } from "@/lib/db/schema";
 import { sql, gte, eq } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
+import { FEATURES, getFirstAccessibleAdminHref } from "@/lib/permissions";
 
 /**
  * Admin Dashboard
@@ -12,6 +14,20 @@ import Link from "next/link";
  */
 export default async function AdminDashboardPage() {
   const session = await auth();
+
+  // The layout already confirmed this user can access *some* admin section
+  // (canAccessAdminArea) — but this stats page surfaces org-wide figures
+  // (member counts, pending applications, unread contacts) that a narrower
+  // grant like budget.edit shouldn't unlock. Anyone without ADMIN_DASHBOARD
+  // itself gets sent to the first admin section they do hold a feature for,
+  // rather than /access-pending (they DO have admin access) or these stats
+  // (they don't have this specific grant).
+  const userFeatures = session?.user?.features || [];
+  const userRoles = session?.user?.roles || [];
+  const isAdmin = session?.user?.role === "admin" || userRoles.includes("Admin");
+  if (!isAdmin && !userFeatures.includes(FEATURES.ADMIN_DASHBOARD)) {
+    redirect(getFirstAccessibleAdminHref(userFeatures) ?? "/access-pending");
+  }
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);

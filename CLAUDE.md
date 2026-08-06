@@ -176,6 +176,7 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 ### Environment Variables
 - `DATABASE_URL` - PostgreSQL connection string (pooled host)
 - `DB_URL` - Alias for `DATABASE_URL` (some deploy environments use the shorter name)
+- `PROD_DATABASE_URL` - **Scripts only, never read by the app.** The one-off scripts under `scripts/` resolve their target as `PROD_DATABASE_URL || DATABASE_URL || DB_URL` and print a `*** TARGET: PRODUCTION ***` banner when the first is set. They stay dry-run until `--apply`. Because `.env.local` is loaded by every script, setting this there makes production the default target for all of them — including destructive ones like `clear-budget-fy.ts`. Comment it out to make dev the default again.
 - `NEXTAUTH_URL` - Application URL
 - `NEXTAUTH_SECRET` - NextAuth secret key
 - `AUTH_SECRET` - Alias for `NEXTAUTH_SECRET` (fallback used by `src/lib/auth/index.ts`)

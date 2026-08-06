@@ -5,6 +5,9 @@ import {
   FEATURE_CATEGORIES,
   ROLES,
   getFeaturesByCategory,
+  canAccessAdminArea,
+  getFirstAccessibleAdminHref,
+  ADMIN_NAVIGATION,
   type FeatureName,
 } from "./permissions";
 
@@ -165,5 +168,120 @@ describe("ROLES catalog", () => {
     expect(Object.values(ROLES)).toContain("board_member");
     expect(Object.values(ROLES)).toContain("member");
     expect(Object.values(ROLES)).toContain("volunteer");
+  });
+});
+
+// ── canAccessAdminArea ─────────────────────────────────────────────────────────
+// Regression coverage for docs/work-log/2026-08-05-admin-area-gating.md: a
+// budget-committee member (budget.edit, budget.view, ledger.view, events.view,
+// impact.view, members.view — no admin.dashboard) was bounced to
+// /access-pending because the admin layout's hard gate only recognized
+// admin.dashboard. canAccessAdminArea is now the single rule used by the admin
+// layout gate AND the header's Admin link, derived from the same
+// ADMIN_NAVIGATION data AdminSidebar renders from.
+
+describe("canAccessAdminArea", () => {
+  it("admits a user holding admin.dashboard", () => {
+    // Arrange
+    const features = [FEATURES.ADMIN_DASHBOARD];
+
+    // Act + Assert
+    expect(canAccessAdminArea(features)).toBe(true);
+  });
+
+  it("admits a budget-committee member with budget features but no admin.dashboard — regression for the Lori Lampel bug", () => {
+    // Arrange — Lori Lampel's real production feature set (member + budget_committee)
+    const features = [
+      FEATURES.BUDGET_EDIT,
+      FEATURES.BUDGET_VIEW,
+      FEATURES.LEDGER_VIEW,
+      FEATURES.EVENTS_VIEW,
+      FEATURES.IMPACT_VIEW,
+      FEATURES.MEMBERS_VIEW,
+    ];
+
+    // Act + Assert
+    expect(canAccessAdminArea(features)).toBe(true);
+  });
+
+  it("admits a user holding only budget.view (no budget.edit, no admin.dashboard)", () => {
+    // Arrange
+    const features = [FEATURES.BUDGET_VIEW];
+
+    // Act + Assert
+    expect(canAccessAdminArea(features)).toBe(true);
+  });
+
+  it("rejects a plain member with no admin-gating features at all", () => {
+    // Arrange — e.g. MEMBERS_VIEW/EVENTS_VIEW/IMPACT_VIEW gate nothing in
+    // ADMIN_NAVIGATION (only *_EDIT/_MANAGE-style keys do)
+    const features = [FEATURES.MEMBERS_VIEW, FEATURES.EVENTS_VIEW, FEATURES.IMPACT_VIEW];
+
+    // Act + Assert
+    expect(canAccessAdminArea(features)).toBe(false);
+  });
+
+  it("rejects an empty features array", () => {
+    expect(canAccessAdminArea([])).toBe(false);
+  });
+
+  it("rejects undefined features", () => {
+    expect(canAccessAdminArea(undefined)).toBe(false);
+  });
+
+  it("rejects null features", () => {
+    expect(canAccessAdminArea(null)).toBe(false);
+  });
+});
+
+// ── getFirstAccessibleAdminHref ─────────────────────────────────────────────────
+// Used to land a user who passes canAccessAdminArea but lacks admin.dashboard
+// somewhere real instead of the ADMIN_DASHBOARD-gated stats page.
+
+describe("getFirstAccessibleAdminHref", () => {
+  it("returns /admin for a user holding admin.dashboard", () => {
+    expect(getFirstAccessibleAdminHref([FEATURES.ADMIN_DASHBOARD])).toBe("/admin");
+  });
+
+  it("returns the Ledger href for Lori Lampel's feature set (Ledger sorts before Budgeting in ADMIN_NAVIGATION)", () => {
+    // Arrange
+    const features = [
+      FEATURES.BUDGET_EDIT,
+      FEATURES.BUDGET_VIEW,
+      FEATURES.LEDGER_VIEW,
+      FEATURES.EVENTS_VIEW,
+      FEATURES.IMPACT_VIEW,
+      FEATURES.MEMBERS_VIEW,
+    ];
+
+    // Act
+    const href = getFirstAccessibleAdminHref(features);
+
+    // Assert — whatever ADMIN_NAVIGATION's first matching item is; pinned to
+    // /admin/ledger today (Treasury > Ledger, requiredFeature: LEDGER_VIEW)
+    // because Ledger precedes Budgeting in nav order.
+    expect(href).toBe("/admin/ledger");
+  });
+
+  it("returns null for a user with no admin-gating features", () => {
+    expect(getFirstAccessibleAdminHref([FEATURES.MEMBERS_VIEW])).toBeNull();
+  });
+
+  it("returns null for undefined/empty features", () => {
+    expect(getFirstAccessibleAdminHref(undefined)).toBeNull();
+    expect(getFirstAccessibleAdminHref([])).toBeNull();
+  });
+
+  it("only returns hrefs for items that declare a requiredFeature — System items with none can't be the landing target", () => {
+    // Arrange — sanity check on the fixture itself: System group items with no
+    // requiredFeature (Email Queue, Sync Log, Release Notes) must stay
+    // unreachable as a "first accessible" landing target
+    const systemGroup = ADMIN_NAVIGATION.find((g) => g.label === "System");
+    const openItems = systemGroup?.items.filter((i) => !i.requiredFeature) ?? [];
+
+    // Act + Assert — fixture still has at least one such item (otherwise this
+    // test is vacuous)
+    expect(openItems.length).toBeGreaterThan(0);
+    expect(getFirstAccessibleAdminHref([])).not.toBe(openItems[0]?.href);
   });
 });

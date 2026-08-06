@@ -20,9 +20,11 @@ import postgres from "postgres";
 
 const APPLY = process.argv.includes("--apply");
 const FY = 2025;
-const url = process.env.DATABASE_URL || process.env.DB_URL;
-if (!url) throw new Error("DATABASE_URL or DB_URL must be set (.env.local).");
+const usingProd = Boolean(process.env.PROD_DATABASE_URL);
+const url = process.env.PROD_DATABASE_URL || process.env.DATABASE_URL || process.env.DB_URL;
+if (!url) throw new Error("No DB URL (PROD_DATABASE_URL / DATABASE_URL / DB_URL).");
 const sql = postgres(url);
+if (usingProd) console.log("*** TARGET: PRODUCTION (PROD_DATABASE_URL) ***");
 const money = (c: number) => `$${(c / 100).toFixed(2)}`;
 
 // Returns true if a Fundraising-event-costs txn is a Pancake Breakfast cost.

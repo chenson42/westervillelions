@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { SignOutButton } from "./signout-button";
+import { canAccessAdminArea } from "@/lib/permissions";
 
 interface HeaderProps {
   session: any;
@@ -68,7 +69,7 @@ export function Header({ session }: HeaderProps) {
             </Link>
             {session?.user ? (
               <>
-                {session.user.features?.includes("admin.dashboard") && (
+                {canAccessAdminArea(session.user.features) && (
                   <Link
                     href="/admin"
                     className="hidden md:inline-block text-gray-700 hover:text-lions-blue transition font-medium"
@@ -135,7 +136,7 @@ export function Header({ session }: HeaderProps) {
               </Link>
               {session?.user ? (
                 <>
-                  {session.user.features?.includes("admin.dashboard") && (
+                  {canAccessAdminArea(session.user.features) && (
                     <Link
                       href="/admin"
                       onClick={() => setMobileMenuOpen(false)}

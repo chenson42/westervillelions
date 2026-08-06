@@ -147,3 +147,293 @@ export const ROLES = {
 } as const;
 
 export type RoleName = typeof ROLES[keyof typeof ROLES];
+
+// ── Admin navigation & area access ──────────────────────────────────────────
+// Single source of truth for which admin sidebar sections exist and which
+// feature(s) gate each one. AdminSidebar (src/components/admin/admin-sidebar.tsx)
+// renders directly from ADMIN_NAVIGATION so the sidebar's visible sections and
+// the admin-area access gate below can never drift apart — see
+// docs/work-log/2026-08-05-admin-area-gating.md (a budget-committee member with
+// budget.edit/budget.view but no admin.dashboard was bounced to /access-pending
+// because the admin layout gate only recognized admin.dashboard).
+
+export interface AdminNavItem {
+  name: string;
+  href: string;
+  icon: string;
+  // A single feature, or a list where holding ANY one admits the item (e.g.
+  // Budgeting: LEDGER_MANAGE, LEDGER_APPROVE, BUDGET_VIEW, or BUDGET_EDIT).
+  // Omitted entirely for items with no permission of their own (Email Queue,
+  // Sync Log, Release Notes) — those are visible to any non-admin who already
+  // cleared the admin-area gate via some other feature, so they cannot be used
+  // as an admission criterion themselves.
+  requiredFeature?: FeatureName | FeatureName[];
+}
+
+export interface AdminNavGroup {
+  // null = no header rendered (the standalone Dashboard entry)
+  label: string | null;
+  items: AdminNavItem[];
+}
+
+export const ADMIN_NAVIGATION: AdminNavGroup[] = [
+  {
+    label: null,
+    items: [
+      {
+        name: "Dashboard",
+        href: "/admin",
+        icon: "📊",
+        requiredFeature: FEATURES.ADMIN_DASHBOARD,
+      },
+    ],
+  },
+  {
+    label: "People",
+    items: [
+      {
+        name: "Members",
+        href: "/admin/members",
+        icon: "🦁",
+        requiredFeature: FEATURES.MEMBERS_EDIT,
+      },
+      {
+        name: "Users",
+        href: "/admin/users",
+        icon: "👥",
+        requiredFeature: FEATURES.ADMIN_USERS,
+      },
+      {
+        name: "Roles",
+        href: "/admin/roles",
+        icon: "🔑",
+        requiredFeature: FEATURES.ADMIN_ROLES,
+      },
+      {
+        name: "Permissions",
+        href: "/admin/permissions",
+        icon: "🔒",
+        requiredFeature: FEATURES.ADMIN_ROLES,
+      },
+      {
+        name: "Applications",
+        href: "/admin/membership",
+        icon: "📋",
+        requiredFeature: FEATURES.MEMBERSHIP_MANAGE,
+      },
+      {
+        name: "Groups",
+        href: "/admin/groups",
+        icon: "👨‍👩‍👧‍👦",
+        requiredFeature: FEATURES.GROUPS_MANAGE,
+      },
+    ],
+  },
+  {
+    label: "Treasury",
+    // Ordered most-used to least-used for a working treasurer: the Ledger hub
+    // is day-to-day, Reconciliation/Reports/Compliance are the monthly review
+    // cycle, Dues is a one-month-a-year burst so it sits below those, Donors
+    // and Settings are periodic/rare, and the reference guide sits last.
+    items: [
+      {
+        name: "Ledger",
+        href: "/admin/ledger",
+        icon: "📒",
+        requiredFeature: FEATURES.LEDGER_VIEW,
+      },
+      {
+        name: "Budgeting",
+        href: "/admin/ledger/budgeting",
+        icon: "🧮",
+        requiredFeature: [
+          FEATURES.LEDGER_MANAGE,
+          FEATURES.LEDGER_APPROVE,
+          FEATURES.BUDGET_VIEW,
+          FEATURES.BUDGET_EDIT,
+        ],
+      },
+      {
+        name: "Reconciliation",
+        href: "/admin/ledger/reconciliation",
+        icon: "🏦",
+        requiredFeature: FEATURES.LEDGER_VIEW,
+      },
+      {
+        name: "Dues",
+        href: "/admin/dues",
+        icon: "💵",
+        requiredFeature: FEATURES.DUES_VIEW,
+      },
+      {
+        name: "Reports",
+        href: "/admin/ledger/reports",
+        icon: "📊",
+        requiredFeature: FEATURES.LEDGER_VIEW,
+      },
+      {
+        name: "Compliance",
+        href: "/admin/ledger/compliance",
+        icon: "📋",
+        requiredFeature: FEATURES.LEDGER_VIEW,
+      },
+      {
+        name: "Donors",
+        href: "/admin/ledger/donors",
+        icon: "🤝",
+        requiredFeature: FEATURES.LEDGER_RECORD,
+      },
+      {
+        name: "Ledger Settings",
+        href: "/admin/ledger/settings",
+        icon: "⚙️",
+        requiredFeature: FEATURES.LEDGER_MANAGE,
+      },
+      {
+        name: "User's Guide",
+        href: "/admin/ledger/guide",
+        icon: "📖",
+        requiredFeature: FEATURES.LEDGER_VIEW,
+      },
+    ],
+  },
+  {
+    label: "Engagement",
+    items: [
+      {
+        name: "Events",
+        href: "/admin/events",
+        icon: "📅",
+        requiredFeature: FEATURES.EVENTS_EDIT,
+      },
+      {
+        name: "Campaigns",
+        href: "/admin/campaigns",
+        icon: "💰",
+        requiredFeature: FEATURES.CAMPAIGNS_MANAGE,
+      },
+      {
+        name: "Announcements",
+        href: "/admin/announcements",
+        icon: "📣",
+        requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
+      },
+      {
+        name: "Testimonials",
+        href: "/admin/testimonials",
+        icon: "💬",
+        requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
+      },
+      {
+        name: "Programs",
+        href: "/admin/programs",
+        icon: "👓",
+        requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
+      },
+      {
+        name: "Newsletter",
+        href: "/admin/subscriptions",
+        icon: "📧",
+        requiredFeature: FEATURES.CONTACT_VIEW,
+      },
+    ],
+  },
+  {
+    label: "Inbox",
+    items: [
+      {
+        name: "Contact",
+        href: "/admin/contact",
+        icon: "✉️",
+        requiredFeature: FEATURES.CONTACT_VIEW,
+      },
+      {
+        name: "Suggestions",
+        href: "/admin/suggestions",
+        icon: "💡",
+        requiredFeature: FEATURES.SUGGESTIONS_VIEW,
+      },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      {
+        name: "Email Queue",
+        href: "/admin/email-queue",
+        icon: "📨",
+      },
+      {
+        name: "Sync Log",
+        href: "/admin/sync-log",
+        icon: "🔄",
+      },
+      {
+        name: "Security",
+        href: "/admin/security",
+        icon: "🛡️",
+        requiredFeature: FEATURES.ADMIN_SECURITY_VIEW,
+      },
+      {
+        name: "Release Notes",
+        href: "/admin/release-notes",
+        icon: "📝",
+      },
+    ],
+  },
+];
+
+// Every feature that gates at least one admin nav item — i.e., the complete set
+// of features that can unlock the admin area (including ADMIN_DASHBOARD itself,
+// via the Dashboard item).
+function getAdminGateFeatures(): FeatureName[] {
+  const seen = new Set<FeatureName>();
+  for (const group of ADMIN_NAVIGATION) {
+    for (const item of group.items) {
+      if (!item.requiredFeature) continue;
+      const required = Array.isArray(item.requiredFeature)
+        ? item.requiredFeature
+        : [item.requiredFeature];
+      required.forEach((f) => seen.add(f));
+    }
+  }
+  return Array.from(seen);
+}
+
+/**
+ * True if the user should be able to enter the admin area at all — i.e., they
+ * hold at least one feature that gates some admin sidebar section (which
+ * includes ADMIN_DASHBOARD, via the Dashboard item itself). This is the single
+ * rule used by the admin layout's hard gate and by the header's Admin link, so
+ * the two can never disagree about who gets in.
+ *
+ * Does NOT mean the user can see the /admin stats dashboard specifically —
+ * that page has its own narrower ADMIN_DASHBOARD check. See
+ * getFirstAccessibleAdminHref for where to send someone who passes this check
+ * but doesn't hold ADMIN_DASHBOARD.
+ */
+export function canAccessAdminArea(features?: string[] | null): boolean {
+  const userFeatures = features ?? [];
+  if (userFeatures.length === 0) return false;
+  return getAdminGateFeatures().some((f) => userFeatures.includes(f));
+}
+
+/**
+ * The href of the first admin nav item (in ADMIN_NAVIGATION order) the user
+ * holds the feature for. Used to land a user who can access the admin area
+ * but lacks ADMIN_DASHBOARD somewhere real, instead of the stats dashboard or
+ * /access-pending.
+ */
+export function getFirstAccessibleAdminHref(features?: string[] | null): string | null {
+  const userFeatures = features ?? [];
+  for (const group of ADMIN_NAVIGATION) {
+    for (const item of group.items) {
+      if (!item.requiredFeature) continue;
+      const required = Array.isArray(item.requiredFeature)
+        ? item.requiredFeature
+        : [item.requiredFeature];
+      if (required.some((f) => userFeatures.includes(f))) return item.href;
+    }
+  }
+  return null;
+}
