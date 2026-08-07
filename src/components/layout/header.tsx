@@ -29,7 +29,11 @@ export function Header({ session }: HeaderProps) {
   const isActive = (href: string) => pathname === href;
 
   return (
-    <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
+    // print:hidden mirrors Footer — site chrome must never appear in a printed
+    // document. Without it the nav (logo, Donate, Admin, Sign Out) rendered on
+    // page 1 of every print surface: the member directory, the board-ready
+    // budget worksheet, and the monthly financial statements.
+    <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50 print:hidden">
       <nav className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-8">

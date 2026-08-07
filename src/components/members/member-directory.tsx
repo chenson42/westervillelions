@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { ShadowAvatar } from "./shadow-avatar";
+import { formatCityStateZip, hasAnyAddress } from "@/lib/member-address";
 
 interface GroupTag {
   groupId: string;
@@ -16,6 +17,10 @@ interface Member {
   lastName: string;
   email: string | null;
   phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
   branch: string | null;
   memberNumber: number | null;
   joinDate: Date | null;
@@ -296,6 +301,32 @@ export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps)
                   <a href={`tel:${member.phone}`} className="hover:text-lions-blue">
                     {member.phone}
                   </a>
+                </p>
+              )}
+              {hasAnyAddress(member) && (
+                <p className="text-sm text-gray-600 mb-1 flex items-start gap-2">
+                  <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M17.657 16.657L13.414 20.9a2 2 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                  <span>
+                    {member.address && <span className="block">{member.address}</span>}
+                    {formatCityStateZip(member.city, member.state, member.zip) && (
+                      <span className="block">
+                        {formatCityStateZip(member.city, member.state, member.zip)}
+                      </span>
+                    )}
+                  </span>
                 </p>
               )}
               <div className="flex items-center justify-between mt-3">

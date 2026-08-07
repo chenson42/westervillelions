@@ -3,7 +3,11 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { members, groups, groupMemberships } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { MemberDirectory } from "@/components/members/member-directory";
+import { MemberDirectoryPrint } from "@/components/members/member-directory-print";
+import PrintDirectoryButton from "@/components/members/print-directory-button";
 import { SuggestionBoxLauncher } from "@/components/suggestion-box-launcher";
 
 export default async function MembersPage() {
@@ -11,6 +15,16 @@ export default async function MembersPage() {
 
   if (!session?.user) {
     redirect("/signin");
+  }
+
+  // Printable Member Directory (2026-08-07): this page had no permission
+  // gate at all — any signed-in session, including a zero-role account
+  // `/access-pending` exists to catch, could read every member's contact
+  // details. Enforced here, before any DB query, per the Phase 1 analyst
+  // review's verified-safe finding (all 52 users with any role already hold
+  // members.view).
+  if (!(await hasFeature(session.user.id, FEATURES.MEMBERS_VIEW))) {
+    redirect("/access-pending");
   }
 
   const allMembers = await db.query.members.findMany({
@@ -72,13 +86,29 @@ export default async function MembersPage() {
     lastName: member.lastName,
     email: member.email,
     phone: member.phone,
+    address: member.address,
+    city: member.city,
+    state: member.state,
+    zip: member.zip,
     branch: member.branch,
     memberNumber: member.memberNumber,
     joinDate: member.joinDate,
     profilePicture: member.profilePicture,
     membershipStatus: member.membershipStatus as "active" | "prospective" | "ended",
+    boardPosition: member.boardPosition,
     groupTags: memberTagsMap.get(member.id) ?? [],
   }));
+
+  // Printable Member Directory (2026-08-07): active members only, in the
+  // same last-name/first-name order the DB query already returned — a
+  // printed sheet is kept for months, so a prospective member (who may
+  // never join) doesn't belong on it. See Treasurer Decision #2.
+  const printMembers = membersWithTags.filter((m) => m.membershipStatus === "active");
+  const generatedOn = new Date().toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
 
   // Groups available as filters (those that have at least one member)
   const filterGroups = directoryGroups.map((g) => ({ id: g.id, name: g.name, color: g.color }));
@@ -110,7 +140,7 @@ export default async function MembersPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-12">
+      <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-12 print:hidden">
         <div className="container mx-auto px-4 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-4xl font-bold mb-2">Member Portal</h1>
@@ -123,7 +153,7 @@ export default async function MembersPage() {
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-12">
+      <div className="container mx-auto px-4 py-12 print:hidden">
         <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 mb-12">
           <a
             href="/members"
@@ -231,8 +261,13 @@ export default async function MembersPage() {
           </div>
         )}
 
+        <div className="flex justify-end mb-4">
+          <PrintDirectoryButton />
+        </div>
         <MemberDirectory members={membersWithTags} filterGroups={filterGroups} />
       </div>
+
+      <MemberDirectoryPrint members={printMembers} generatedOn={generatedOn} />
     </div>
   );
 }
