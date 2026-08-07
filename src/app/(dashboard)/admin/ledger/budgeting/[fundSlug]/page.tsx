@@ -16,6 +16,7 @@ import { isBudgetLocked, causeLineReferenceKey } from "@/lib/ledger";
 import { fiscalYearLabel, currentFiscalYear } from "@/lib/fiscal-year";
 import LoadErrorCard from "@/components/admin/ledger/load-error-card";
 import BudgetFundEditor, { type FundSetupItem } from "@/components/admin/ledger/budget-fund-editor";
+import RowHighlighter from "@/components/admin/ledger/row-highlighter";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ export default async function AdminLedgerBudgetingFundPage({
   searchParams,
 }: {
   params: Promise<{ fundSlug: string }>;
-  searchParams: Promise<{ entity?: string; fy?: string }>;
+  searchParams: Promise<{ entity?: string; fy?: string; highlight?: string }>;
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
@@ -51,7 +52,7 @@ export default async function AdminLedgerBudgetingFundPage({
   ]);
 
   const { fundSlug } = await params;
-  const { entity: entityParam, fy: fyParam } = await searchParams;
+  const { entity: entityParam, fy: fyParam, highlight: highlightParam } = await searchParams;
 
   let entities;
   try {
@@ -223,6 +224,16 @@ export default async function AdminLedgerBudgetingFundPage({
 
   return (
     <div className="space-y-6">
+      {/* Deep-link handler for ?highlight=<budgetLineId> (Ledger & Budget
+          Search, DECISION-062/063) — scrolls-to and flashes the matching
+          cause line, no auto-open. Renders nothing. A budget line only ever
+          renders in the DOM when its category is in cause-breakdown mode,
+          which is guaranteed here since a search-matched line always has a
+          real ledgerBudgetLines row (see BudgetEditor's serverBreakdown
+          check) — mounted once at the page level so it finds the row
+          regardless of which category's BudgetCauseEditor rendered it. */}
+      <RowHighlighter targetId={highlightParam} idPrefix="budget-line-" />
+
       <div>
         <Link
           href={overviewHref}

@@ -22,6 +22,7 @@ import FundManageDialog from "@/components/admin/ledger/fund-manage-dialog";
 import ReconcileToggle, { ReconcileAllButton } from "@/components/admin/ledger/reconcile-toggle";
 import TxnDonorActions from "@/components/admin/ledger/txn-donor-actions";
 import ReceiptWaiverControl from "@/components/admin/ledger/receipt-waiver-control";
+import RowHighlighter from "@/components/admin/ledger/row-highlighter";
 import type { LedgerTransaction, LedgerFund, LedgerBankAccount, LedgerCategory } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -66,7 +67,7 @@ export default async function AdminLedgerFundPage({
   searchParams,
 }: {
   params: Promise<{ fundSlug: string }>;
-  searchParams: Promise<{ entity?: string; fy?: string; receipt?: string }>;
+  searchParams: Promise<{ entity?: string; fy?: string; receipt?: string; highlight?: string }>;
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
@@ -82,7 +83,12 @@ export default async function AdminLedgerFundPage({
   const canManage = await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE);
 
   const { fundSlug } = await params;
-  const { entity: entityParam, fy: fyParam, receipt: receiptParam } = await searchParams;
+  const {
+    entity: entityParam,
+    fy: fyParam,
+    receipt: receiptParam,
+    highlight: highlightParam,
+  } = await searchParams;
 
   // Validate entity
   const entities = await getEntities();
@@ -226,6 +232,11 @@ export default async function AdminLedgerFundPage({
 
   return (
     <div className="space-y-6">
+      {/* Deep-link handler for ?highlight=<txnId> (Ledger & Budget Search,
+          DECISION-062/063) — scrolls-to and flashes the matching row, no
+          auto-open. Renders nothing. */}
+      <RowHighlighter targetId={highlightParam} idPrefix="txn-" />
+
       {/* Breadcrumb */}
       <div>
         <Link
@@ -390,7 +401,7 @@ export default async function AdminLedgerFundPage({
                     : "hover:bg-gray-50";
 
                   return (
-                    <tr key={txn.id} className={rowClass}>
+                    <tr key={txn.id} id={`txn-${txn.id}`} className={rowClass}>
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                         {txn.txnDate}
                       </td>

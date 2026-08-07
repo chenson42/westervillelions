@@ -77,3 +77,23 @@ export function deriveCauseFyPills(
 
   return { fixed, more };
 }
+
+/**
+ * Returns the inclusive start date (Jul 1 of `fy`) and exclusive end date
+ * (Jul 1 of `fy + 1`) as ISO strings suitable for Drizzle date column
+ * comparisons.
+ *
+ * Relocated from a private helper in `ledger-queries.ts` (2026-08-06, The
+ * Ledger & Budget Search feature, DECISION-063) — pure date math with zero
+ * DB dependency belongs alongside `getFiscalYear`/`currentFiscalYear`, not
+ * duplicated into every query module that needs an FY→date-range. Every
+ * existing call site in `ledger-queries.ts` now imports this instead of a
+ * local copy; behavior is unchanged.
+ */
+export function fyBounds(fy: number): { start: string; end: string } {
+  // Jul 1 of the starting year; exclusive Jul 1 of next year
+  return {
+    start: `${fy}-07-01`,
+    end: `${fy + 1}-07-01`,
+  };
+}

@@ -2138,6 +2138,32 @@ export type BackfillMatchResult =
  * transaction's fund + fiscal year (via its budget row) — this function
  * doesn't see fund/FY itself, only `categoryId`/`cause`/`label` per line.
  */
+// ---------------------------------------------------------------------------
+// escapeIlikeTerm — Ledger & Budget Search (2026-08-06, DECISION-063)
+// ---------------------------------------------------------------------------
+
+/**
+ * Escapes Postgres `LIKE`/`ILIKE` wildcard characters (`%`, `_`) and the
+ * escape character itself (`\`) in a raw user-typed search term, so a term
+ * containing them is matched literally rather than acting as a wildcard once
+ * wrapped in `%…%` by the caller. Postgres's default `LIKE`/`ILIKE` escape
+ * character is already `\`, so no explicit `ESCAPE` clause is needed at the
+ * call site — escaping the term before wrapping it is sufficient.
+ *
+ * Order matters: backslash must be escaped first, or a term like `50%` would
+ * become `50\%` and then have its new backslash re-escaped into `50\\%`,
+ * corrupting the intended literal-percent match.
+ *
+ * No existing `ILIKE` call site in this codebase escapes its search term
+ * today (`listTransactions()`'s `search` opt, `listDonors()`) — this is the
+ * first ILIKE surface exposed to a treasurer typing an arbitrary term at
+ * real volume, so it gets the escaping the others arguably should have too.
+ * Retrofitting those is a separate, lower-priority follow-up.
+ */
+export function escapeIlikeTerm(term: string): string {
+  return term.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 export function matchBudgetLineForTransaction(
   txn: { categoryId: string | null; beneficiaryCause: string | null; party: string | null },
   candidateLines: { id: string; cause: string; label: string; categoryId: string }[],

@@ -3,6 +3,7 @@ import DashboardEntityCard from "@/components/admin/ledger/dashboard-entity-card
 import UncashedChecksPanel from "@/components/admin/ledger/uncashed-checks-panel";
 import UnremittedDepositsPanel from "@/components/admin/ledger/unremitted-deposits-panel";
 import AuditItemsPanel from "@/components/admin/ledger/audit-items-panel";
+import LedgerSearchBox from "@/components/admin/ledger/ledger-search-box";
 import type { DashboardData } from "@/lib/ledger-queries";
 
 interface LedgerDashboardProps {
@@ -53,6 +54,12 @@ export default function LedgerDashboard({ dashboard, canApprove, pendingCount }:
           </svg>
           Treasurer&rsquo;s Guide
         </Link>
+      </div>
+
+      {/* Quick search (Ledger & Budget Search, DECISION-062/063) — plain GET
+          form, zero JS, submits straight to /admin/ledger/search?q=... */}
+      <div className="bg-white rounded-2xl shadow-sm overflow-hidden p-4">
+        <LedgerSearchBox />
       </div>
 
       {/* Entity cards */}

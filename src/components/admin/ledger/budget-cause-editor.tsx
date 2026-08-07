@@ -1199,6 +1199,7 @@ export default function BudgetCauseEditor({
                   return (
                     <div
                       key={index}
+                      id={row.id ? `budget-line-${row.id}` : undefined}
                       className="space-y-1 py-1 px-2 -mx-2 rounded-lg bg-gray-100"
                     >
                       <div className="grid grid-cols-2 gap-2 max-w-xs">
@@ -1244,7 +1245,11 @@ export default function BudgetCauseEditor({
                 }
 
                 return (
-                  <div key={index} className="space-y-1">
+                  <div
+                    key={index}
+                    id={row.id ? `budget-line-${row.id}` : undefined}
+                    className="space-y-1 rounded-lg"
+                  >
                     {/* Prior-year reference columns (read-only) — same
                         grid-cols-2 pattern as BudgetEditor's category-grain
                         columns, so it stacks cleanly at 360px too. */}

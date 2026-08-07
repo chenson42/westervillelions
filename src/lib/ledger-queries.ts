@@ -46,7 +46,7 @@ import {
 } from "@/lib/db/schema";
 import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, ne, sql, count, getTableColumns } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { getFiscalYear, currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
+import { getFiscalYear, currentFiscalYear, fiscalYearLabel, fyBounds } from "@/lib/fiscal-year";
 import {
   fundBalanceCents,
   rolledForwardOpeningCents,
@@ -94,18 +94,6 @@ import {
 // ---------------------------------------------------------------------------
 // FY bound helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Returns the inclusive start date (Jul 1 of `fy`) and exclusive end date
- * (Jul 1 of `fy + 1`) as ISO strings suitable for Drizzle date column comparisons.
- */
-function fyBounds(fy: number): { start: string; end: string } {
-  // Jul 1 of the starting year; exclusive Jul 1 of next year
-  return {
-    start: `${fy}-07-01`,
-    end: `${fy + 1}-07-01`,
-  };
-}
 
 /**
  * Adds one calendar day to a 'YYYY-MM-DD' string via plain integer

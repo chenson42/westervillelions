@@ -56,6 +56,7 @@ import {
   shouldClearBudgetLineLink,
   isAllZeroRow,
   matchBudgetLineForTransaction,
+  escapeIlikeTerm,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
@@ -3063,5 +3064,41 @@ describe("matchBudgetLineForTransaction", () => {
         [],
       ),
     ).toEqual({ status: "unmatched", reason: "no-match" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// escapeIlikeTerm — Ledger & Budget Search (2026-08-06, DECISION-063,
+// Phase 3 design's Unit Test #1)
+// ---------------------------------------------------------------------------
+
+describe("escapeIlikeTerm", () => {
+  it("escapes % to \\%", () => {
+    expect(escapeIlikeTerm("50%")).toBe("50\\%");
+  });
+
+  it("escapes _ to \\_", () => {
+    expect(escapeIlikeTerm("check_1")).toBe("check\\_1");
+  });
+
+  it("escapes a literal backslash to a doubled backslash", () => {
+    expect(escapeIlikeTerm("C:\\funds")).toBe("C:\\\\funds");
+  });
+
+  it("round-trips a term containing all three special characters in one string", () => {
+    // Raw input: back\slash, 100%, under_score
+    const raw = "back\\slash 100% under_score";
+    // Expected: backslash escaped first (so the escaping backslashes below
+    // are NOT themselves re-escaped), then % and _.
+    expect(escapeIlikeTerm(raw)).toBe("back\\\\slash 100\\% under\\_score");
+  });
+
+  it("leaves a plain alphanumeric term unchanged", () => {
+    expect(escapeIlikeTerm("WARM")).toBe("WARM");
+    expect(escapeIlikeTerm("Check 1234")).toBe("Check 1234");
+  });
+
+  it("leaves an empty string unchanged", () => {
+    expect(escapeIlikeTerm("")).toBe("");
   });
 });

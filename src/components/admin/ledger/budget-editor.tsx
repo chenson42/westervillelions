@@ -880,9 +880,18 @@ export default function BudgetEditor({
           // "(N cause lines)" hint below tells the treasurer what's riding
           // along with this removal at finalize time.
           const causeLineCount = line.causeLines?.length ?? 0;
+          // `budget-line-${key}` (Fix 1, Ledger & Budget Search's 2026-08-07
+          // Phase 4 loop-back): RowHighlighter's ?highlight= deep-link needs
+          // a DOM id for a lump-sum category's search result to land on —
+          // this branch covers a pending-delete category regardless of
+          // whether it was in breakdown, so the id belongs here too (a
+          // pending-delete WITH cause lines is highlighted here rather than
+          // in BudgetCauseEditor, since this branch replaces that editor
+          // while pending-delete).
           return (
             <div
               key={key}
+              id={`budget-line-${key}`}
               ref={(el) => {
                 rowRefs.current[key] = el;
               }}
@@ -1018,9 +1027,16 @@ export default function BudgetEditor({
           );
         }
 
+        // Plain lump-sum row (not in breakdown, not pending-delete).
+        // `budget-line-${key}` (Fix 1, Ledger & Budget Search's 2026-08-07
+        // Phase 4 loop-back): the anchor a lump-sum search result's
+        // ?highlight= link targets — search-results-budget-lines.tsx builds
+        // that same `${categoryId}_${flow}` string since a lump sum has no
+        // ledger_budget_lines row id to point at instead.
         return (
           <div
             key={key}
+            id={`budget-line-${key}`}
             ref={(el) => {
               rowRefs.current[key] = el;
             }}
