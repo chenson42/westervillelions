@@ -39,7 +39,7 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
 | T-26 | 🔶 | FY2025 checks reconciled (8252/8253 done); Admin 8002 refile deferred to T-25 |
 | T-27 | ⬜ | Possible duplicate $102.86 posting (2026-06-10, eyeglass collection boxes) |
 | T-28 | ⬜ | WARM budget-vs-actual gap — board to confirm the FY2026 level |
-| T-29 | ⬜ | Duplicate Club categories: Awards / Member recognition, Supplies / Program supplies |
+| T-29 | ✅ | Duplicate Club categories merged (2026-08-06) — Member recognition $200, Program supplies $700 |
 | T-30 | ⬜ | Husky Hub cause placement — Hunger & Basic Needs or Youth & Education? |
 
 **Tooling shipped that affects these items:**
@@ -227,7 +227,7 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
   cleared, void the duplicate. Note this pair accounts for $102.86 of the $670.64 "Program supplies"
   FY2025 actual cited in T-29 and in the FY2026 Club Notes & Assumptions, so resolving it changes that
   figure.
-- [ ] **T-29 — Duplicate/parallel Club categories: decide whether each pair merges, and under which
+- [x] **T-29 — Duplicate/parallel Club categories: decide whether each pair merges, and under which
   name.** (added 2026-08-05, from the FY2026 budget-committee review) Two Club Administrative pairs
   where the budgeted category and the spent-against category are different rows:
   - **"Awards"** — budgeted **$200**, *zero transactions ever*, while **"Member recognition"** spent
@@ -236,10 +236,22 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
   - **"Supplies"** — budgeted **$75**, *zero transactions ever*, while **"Program supplies"** spent
     **$670.64** in FY2025 with nothing budgeted (banner bag / peace poster kit / pop-up tent $422.12,
     costume cleaning $42.80, and the two $102.86 eyeglass-box postings under T-27).
-  The treasurer deliberately did **not** merge these — it changes what the board approved and picks a
-  winning name, so it's a board call. Both pairs are annotated on the FY2026 line notes and raised as
-  numbered questions in the Club Notes & Assumptions. This is the Club-side instance of **T-25**'s
-  category-catalog cleanup; decide the two together.
+  **RESOLVED 2026-08-06** — the treasurer merged both pairs for FY2026, keeping the name the money
+  actually posts to: **Awards $200 → Member recognition $200**, and **Supplies $75 → Program supplies
+  $700** (raised to cover the $670.64 actually spent). Done as a *move* of each FY2026 `ledger_budgets`
+  row onto the existing destination category, not a rename — the destinations already existed, so a
+  rename would have collided on the category unique key and orphaned the FY2025 transactions. See
+  `scripts/merge-club-budget-categories.ts`.
+
+  **FY2025 was deliberately left alone** — it still reads "Awards $200" and "Supplies $75" because
+  that is what the board approved for that year. The two now-unused source categories were kept for
+  the same reason: FY2025's budget rows still reference them. Club Administrative expense total moved
+  $13,130 → $13,755, and the Club Notes & Assumptions were rewritten to match.
+
+  Note the remaining open questions this surfaced, now carried in the Club Notes & Assumptions rather
+  than here: whether $200 covers member recognition (FY2025 actual $490.48), web hosting ($200
+  budgeted vs $645 spent), and per-capita tax ($3,000 budgeted vs $3,508.86 paid). This was the
+  Club-side instance of **T-25**'s category-catalog cleanup — the Foundation side of T-25 is still open.
 - [ ] **T-30 — Confirm Husky Hub's cause placement at board review.** (added 2026-08-05, from the FY2026
   budget-committee review) The new $500 Husky Hub line (Heritage Middle School food bank) is filed under
   **Hunger & Basic Needs** on the Foundation's *Charitable donation out* budget, matching how last year's

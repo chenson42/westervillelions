@@ -62,19 +62,17 @@ const LABEL_MAX = 120;
 const NOTES_MAX = 4000;
 
 const BENCH_NOTE =
-  "Bags to Benches — plaques and plastic bags for the bench recycling program. " +
-  "The category was renamed from the generic “Program supplies” so the line reads for what it is; " +
-  "every transaction ever posted to it is Bags to Benches. FY2025: budgeted $200, actual $146.38.";
+  "Plaques and plastic bags for the Bags to Benches recycling program. " +
+  "FY2025: budgeted $200, actual $146.38.";
 
 const WARM_NOTE =
-  "Restored at the budget committee's recommendation — WARM was missing from this draft. " +
-  "Worth a board look: FY2025 carried a $1,000 line but actual giving was $4,500 " +
-  "($2,500 Share Bac a Pac in Aug 2025 plus $2,000 in Jan 2026), so $2,000 may still run light.";
+  "Westerville Area Resource Ministry, under Hunger & Basic Needs. FY2025 budgeted $1,000, but " +
+  "actual giving was $4,500 ($2,500 Share Bac a Pac in Aug 2025 plus $2,000 in Jan 2026) — so $2,000 " +
+  "may still run light.";
 
 const HUSKY_NOTE =
-  "New $500 donation recommended by the budget committee. Husky Hub is the Heritage Middle School " +
-  "food bank — FY2025 gave $500 through the Heritage Middle School PTSA, tagged Hunger & Basic Needs. " +
-  "It could reasonably sit under Youth & Education instead — board's call.";
+  "The Heritage Middle School food bank. FY2025 gave $500 through the Heritage Middle School PTSA, " +
+  "tagged Hunger & Basic Needs. It could reasonably sit under Youth & Education instead — board's call.";
 
 const OLF_NOTE =
   "Reduced from $1,000 to $500. The District listing describes the OLF Eye Care Fund as doing the same " +
@@ -107,33 +105,17 @@ const FOUNDATION_NOTES = `## Compared to the prior-year approved budget
 
 **Revenue $38,900** — up ~$6,400. Pizza Challenge ($4,000) replaces Pancake Breakfast as the spring fundraiser, White Cane rises $1,000 to $2,500, and a $5,000 transfer from the Club is earmarked for the Fouse/McVay Cabin Educational Center.
 
-**Expenses $45,512** — up $3,450. Adds Pizza Challenge ($1,500) and the $5,000 cabin gift (a cause line under Charitable donation out), restores WARM ($2,000), and adds Husky Hub ($500). Drops Pancake Breakfast expenses, the general Operations line ($2,200), and Contingency. Scholarships ($7,500) and Rudolph Run ($10,000) are unchanged.
+**Expenses $45,512** — up $3,450. Adds Pizza Challenge ($1,500) and the $5,000 cabin gift (a cause line under Charitable donation out). WARM rises from $1,000 to $2,000 and Husky Hub joins at $500, both under Hunger & Basic Needs. Drops Pancake Breakfast expenses, the general Operations line ($2,200), and Contingency. Scholarships ($7,500) and Rudolph Run ($10,000) are unchanged.
 
 **Planned net -$6,612** (prior year -$9,562) — still a smaller drawdown than last year.
 
 > The $5,000 Club transfer nets to ~$0 here: received as income, spent on the cabin. A combined Club + Foundation total should exclude it to avoid double-counting.
 
-## Budget-committee review — August 5, 2026
+## Eye care giving
 
-Changes made, and background for the board.
+Last year we budgeted $1,000 to the **OLF Eye Care Fund** and $1,000 to **Local Eyecare Assistance**. We no longer work directly with providers — anyone needing an exam or glasses is referred to **Prevent Blindness Ohio** — so that $1,000 now goes to PBO by name, and OLF Eye Care is set at $500 because the District describes it as doing that same referral work.
 
-### Eye care
-
-Last year we budgeted $1,000 to the **OLF Eye Care Fund** and $1,000 to **Local Eyecare Assistance**. We no longer work directly with providers — anyone needing an exam or glasses is referred to **Prevent Blindness Ohio** — so the Local Eyecare Assistance $1,000 now goes to PBO by name, and OLF Eye Care drops to $500 because the District describes it as doing that same referral work.
-
-*The OLF Eye Care Fund is not the Ohio Lions Eye Research Fund* — that is a separate organization, funded on its own $750 line.
-
-### WARM — restored at $2,000
-
-Under Hunger & Basic Needs; it had dropped out of this draft. The board may want to revisit the amount: FY2025 budgeted $1,000, but we actually gave $4,500.
-
-### Husky Hub — added at $500
-
-Under Hunger & Basic Needs — the Heritage Middle School food bank, matching last year's $500 gift. It could reasonably sit under Youth & Education instead.
-
-### Bags to Benches
-
-The $200 that previously read as "Program supplies" is the benches program — plaques and plastic bags. The category has been renamed so it is findable in the budget.`;
+*The OLF Eye Care Fund is not the Ohio Lions Eye Research Fund* — that is a separate organization, funded on its own $750 line.`;
 
 const CLUB_NOTES = `## Compared to the prior-year approved budget
 
@@ -143,9 +125,7 @@ const CLUB_NOTES = `## Compared to the prior-year approved budget
 
 **Planned net -$6,732** (prior year -$4,793) — the larger operating drawdown is essentially the $5,000 cabin pass-through to the Foundation.
 
-## Budget-committee review — August 5, 2026
-
-Two open questions for the board. **No amounts were changed.**
+## Open questions for the board
 
 ### 1. Member recognition — should we budget it?
 
