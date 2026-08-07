@@ -90,3 +90,14 @@ Filed in `docs/treasurer-todo.md`:
 - **T-30** — Husky Hub cause placement (Hunger & Basic Needs vs. Youth & Education).
 
 Related: **T-25** (category-catalog cleanup) covers the same family of problem on the Foundation side — T-29 is the Club-side instance and should be decided alongside it.
+
+
+---
+
+## Loop closed
+
+**2026-08-07** — the treasurer confirmed the response back to Lori is handled. No reply to the
+budget committee is outstanding from this work. The substantive follow-ups it raised remain tracked
+independently in `docs/treasurer-todo.md` as T-27 (possible duplicate $102.86 posting), T-28 (WARM
+budget-vs-actual level), and T-30 (Husky Hub cause placement); T-29 was resolved on 2026-08-06 by
+merging the duplicate Club categories.
