@@ -28,6 +28,32 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-064: `membershipType` — snake_case token taxonomy stored in `src/lib/members.ts` (not `ledger.ts`); gated by `MEMBERS_EDIT` (not `DUES_MANAGE`); edited on the existing member-form, not a dedicated sub-route; no admin member-list column in this increment
+
+**Status:** Resolved
+**Date:** 2026-08-07
+
+**Decision:** Four implementation calls closing the Phase 3 design for `docs/work-log/2026-08-07-membership-categories.md`, left open by Phase 1 (analyst):
+
+1. **Token format:** stored values are lowercase `snake_case` tokens (`active`, `member_at_large`, `honorary`, `privileged`, `life_member`, `associate_member`, `affiliate_member`), paired with a `{ value, label }` options array for display — not literal display strings (`"Life Member"`) stored directly.
+2. **Const location:** the taxonomy array and `isValidMembershipType()` live in `src/lib/members.ts`, next to `MembershipStatus`/`isActiveForStatus()` — not in `src/lib/ledger.ts` next to `BUDGET_CAUSES`.
+3. **Permission gate:** writes go through the existing `FEATURES.MEMBERS_EDIT` gate on `PATCH /api/admin/members/[id]`, not a new `DUES_MANAGE`-gated sub-route mirroring `dues-category-control.tsx`.
+4. **UI surface:** the control is a new `<select>` on the existing `member-form.tsx`, next to the Membership Status field — not a new admin members-list table column.
+
+**Rationale:**
+
+(1) This app has two existing enum-taxonomy precedents that point opposite directions: `membershipStatus`/`duesCategory` store bare single-word snake_case tokens compared via `===`/`.includes()` in code (`isActiveForStatus()`, dues-rate lookups); `BUDGET_CAUSES` stores full display strings verbatim (`"Vision & Eye Care"`). The `BUDGET_CAUSES` shape exists for a specific, non-repeating reason — those values must stay byte-identical to `deriveCause()`'s historical CSV-derived output (docs comment in `ledger.ts:46-53`) — a constraint `membershipType` doesn't share (fresh backfill, no historical free text to match). Phase 1's own stated payoff for this field is a future per-capita *count-and-bucket* derivation, which favors stable, code-shaped tokens over prose strings with spaces/ampersands that need normalization before comparison. Three of the seven LCI type labels are inherently multi-word ("Life Member," "Associate Member," "Affiliate Member"); the token keeps the "Member" suffix (`life_member`, not `life`) so the raw DB value is unambiguous without a label lookup, avoiding exactly the status/type collision risk Phase 1 flagged for the word "Active" — `member_type = 'life_member'` reads unambiguously next to `membership_status = 'active'` in a raw query or CSV export, where `member_type = 'life'` would not.
+
+(2) `src/lib/ledger.ts` is a Ledger-specific module (budgets, transactions, causes) and this feature is explicitly barred from touching the Ledger (Treasurer Decision 1: "must NOT be wired into any dues run... or billing surface"). `src/lib/members.ts` already holds the sibling `MembershipStatus` type and its pure, DB-call-free, unit-tested helpers (`src/lib/members.test.ts`) — the same shape this taxonomy needs (a closed-list type + a pure validator), and the file this field is most conceptually adjacent to.
+
+(3) Phase 1 flagged this as an open question and recommended `MEMBERS_EDIT`, noting `duesCategory` uses the narrower `DUES_MANAGE` because it has direct billing consequences. Treasurer Decision 1 resolves the open question by removing the premise: `membershipType` is explicitly walled off from dues/billing in this increment ("Dues are unaffected... must NOT be wired into any dues run"), so the rationale that justified `duesCategory`'s narrower gate doesn't apply here. `membershipType` is a general membership-record attribute edited by the same people, on the same form, as `membershipStatus` — `MEMBERS_EDIT` is the correct precedent to follow. If a future increment wires `membershipType` into billing/per-capita, that increment should revisit this gate then, not preemptively narrow it now against a use case explicitly out of scope.
+
+(4) `duesCategory` gets its own route+component (`dues-category-control.tsx`, `/admin/dues/[memberId]`) because it's edited from the *dues* workflow by treasurer staff working the dues module, independent of the member-edit flow. `membershipType` has no equivalent standalone workflow — Phase 1 Flow 1 names the entry point as the existing member edit page, and Treasurer Decision 2 keeps it admin-only with no new surface implied. Adding it to `member-form.tsx` next to `membershipStatus` matches Phase 1's explicit labeling-discipline requirement ("admin list/detail views must show both fields adjacent to each other... so nobody edits one thinking they set the other") more directly than a separate page would. The admin members list table already carries 7 columns (name, email, branch, status, dues status, group, actions per `page.tsx:229-255`); Phase 1's Pass 1 mentions "detail/list view" but Treasurer Decision 2 only commits to admin visibility, not a specific surface. Deferring the list column keeps this increment additive-only on a page that's already dense, at the cost of requiring a click into a member's edit page to see their type — an acceptable tradeoff for a field the treasurer expects to consult rarely (Phase 1 Pass 1: "rare... only on a status milestone"). Revisit if usage shows the list column is needed.
+
+**Impact:** `src/lib/db/schema.ts` (new `membershipType` column), `drizzle/migrations/0073_members_membership_type.sql`, `src/lib/members.ts` (`MEMBERSHIP_TYPES`, `MembershipType`, `isValidMembershipType()`), `src/components/admin/member-form.tsx` (new field + `TYPE_OPTIONS`), `src/app/api/admin/members/[id]/route.ts` and `route.ts` (validate + persist), `src/app/(dashboard)/admin/members/[id]/page.tsx` (pass `membershipType` into `MemberFormData`). No change to `src/lib/ledger.ts`, `dues-queries.ts`, or any dues/billing route.
+
+---
+
 ## DECISION-063: Ledger & Budget Search — subtotals split by flow (never netted); inapplicable transaction-only filters are ignored-and-noted on the Budget lines section rather than forcing zero; missing-permission sections are omitted entirely (opposite rule); `?highlight=` scrolls-and-flashes only, no auto-open; lump-sum `ledgerBudgets` rows out of scope for increment 1
 
 **Status:** Resolved

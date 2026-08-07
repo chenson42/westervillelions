@@ -9,7 +9,9 @@ import {
   provisionUserForMember,
   isActiveForStatus,
   shouldProvisionOnMemberCreate,
+  isValidMembershipType,
   type MembershipStatus,
+  type MembershipType,
 } from "@/lib/members";
 import { sql } from "drizzle-orm";
 
@@ -100,6 +102,18 @@ export async function POST(request: NextRequest) {
       ? data.membershipStatus
       : "active";
 
+    // membershipType — a THIRD, orthogonal axis (LCI membership type: Active,
+    // Life Member, Honorary, etc.) alongside membershipStatus (club standing)
+    // and duesCategory (billing rate). See DECISION-064. On create, an
+    // omitted or off-taxonomy value defaults to "active" rather than
+    // rejecting — mirrors the schema column's own default so POST never
+    // fails purely on this field.
+    const membershipType: MembershipType = isValidMembershipType(
+      data.membershipType
+    )
+      ? data.membershipType
+      : "active";
+
     // Create member
     const [newMember] = await db
       .insert(members)
@@ -125,6 +139,7 @@ export async function POST(request: NextRequest) {
             : null,
         isActive: isActiveForStatus(membershipStatus),
         membershipStatus,
+        membershipType,
       })
       .returning();
 

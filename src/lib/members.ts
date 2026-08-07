@@ -57,6 +57,41 @@ export function shouldProvisionOnMemberUpdate(input: {
   return input.emailChanged || becameActive;
 }
 
+// ---------------------------------------------------------------------------
+// Membership type — pure helpers (no DB calls; unit-testable)
+//
+// Invariant (DECISION-064 / Phase 3 design, docs/work-log/2026-08-07-membership-categories.md):
+// membershipType is a THIRD, orthogonal axis alongside membershipStatus (club standing) and
+// duesCategory (billing rate). It is NEVER derived from either — an admin sets it directly, and no
+// status/dues transition may reset or infer it. Values are lowercase snake_case tokens (not the
+// literal LCI display label) — see DECISION-064 item 1 for why this diverges from the
+// BUDGET_CAUSES precedent in src/lib/ledger.ts.
+// ---------------------------------------------------------------------------
+
+export type MembershipType =
+  | "active"
+  | "member_at_large"
+  | "honorary"
+  | "privileged"
+  | "life_member"
+  | "associate_member"
+  | "affiliate_member";
+
+export const MEMBERSHIP_TYPES: { value: MembershipType; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "member_at_large", label: "Member at Large" },
+  { value: "honorary", label: "Honorary" },
+  { value: "privileged", label: "Privileged" },
+  { value: "life_member", label: "Life Member" },
+  { value: "associate_member", label: "Associate Member" },
+  { value: "affiliate_member", label: "Affiliate Member" },
+];
+
+/** Server-side gate for any membershipType value written to members.membership_type. */
+export function isValidMembershipType(value: string): value is MembershipType {
+  return (MEMBERSHIP_TYPES as { value: string }[]).some((t) => t.value === value);
+}
+
 /**
  * joinDate rule (decision #8): set at transition-to-active if still null.
  * An explicit admin-submitted joinDate always wins. `now` is injectable for tests.

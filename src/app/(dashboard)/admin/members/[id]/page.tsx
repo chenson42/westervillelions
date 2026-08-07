@@ -42,6 +42,7 @@ export default async function EditMemberPage({
     joinDate: member.joinDate ? member.joinDate.toISOString().split("T")[0] : null,
     membershipEndedDate: member.membershipEndedDate ?? null,
     membershipStatus: member.membershipStatus as MemberFormData["membershipStatus"],
+    membershipType: member.membershipType as MemberFormData["membershipType"],
   };
 
   return (

@@ -11,10 +11,23 @@ import {
   isActiveForStatus,
   shouldProvisionOnMemberUpdate,
   resolveJoinDate,
+  isValidMembershipType,
+  MEMBERSHIP_TYPES,
   type MembershipStatus,
+  type MembershipType,
 } from "@/lib/members";
 
 const VALID_MEMBERSHIP_STATUSES: MembershipStatus[] = ["prospective", "active", "ended"];
+
+// membershipType — a THIRD, orthogonal axis (LCI membership type) alongside
+// membershipStatus (club standing) and duesCategory (billing rate). See
+// DECISION-064. Unlike membershipStatus below (which falls back to the
+// existing value on an invalid submission because it protects the derived
+// isActive invariant), membershipType has no derived sibling to protect —
+// an invalid or omitted value is a hard 400, never a silent fallback.
+const MEMBERSHIP_TYPE_ERROR = `membershipType must be one of: ${MEMBERSHIP_TYPES.map(
+  (t) => t.value
+).join(", ")}`;
 
 /**
  * PATCH /api/admin/members/[id]
@@ -69,6 +82,19 @@ export async function PATCH(
       );
     }
 
+    // Validate membershipType before touching the row — hard 400 on an
+    // off-taxonomy (or missing) value, no fallback to the existing value.
+    // Keep this check ahead of any db.update so an invalid submission never
+    // mutates the row (including membershipStatus/isActive derived above).
+    const membershipTypeInput = data.membershipType;
+    if (!isValidMembershipType(membershipTypeInput)) {
+      return NextResponse.json(
+        { error: MEMBERSHIP_TYPE_ERROR },
+        { status: 400 }
+      );
+    }
+    const membershipType: MembershipType = membershipTypeInput;
+
     const existingStatus = existing.membershipStatus as MembershipStatus;
 
     // membershipStatus is client-submitted; isActive is always server-derived
@@ -107,6 +133,7 @@ export async function PATCH(
         membershipEndedDate: data.membershipEndedDate || null,
         isActive: newIsActive,
         membershipStatus: newStatus,
+        membershipType,
         updatedAt: new Date(),
       })
       .where(eq(members.id, id))

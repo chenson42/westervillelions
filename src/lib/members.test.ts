@@ -25,7 +25,10 @@ import {
   shouldProvisionOnMemberCreate,
   shouldProvisionOnMemberUpdate,
   resolveJoinDate,
+  isValidMembershipType,
+  MEMBERSHIP_TYPES,
   type MembershipStatus,
+  type MembershipType,
 } from "./members";
 
 // ── isActiveForStatus ───────────────────────────────────────────────────────
@@ -213,3 +216,60 @@ describe("resolveJoinDate", () => {
 // be assignable to MembershipStatus.
 const _statuses: MembershipStatus[] = ["prospective", "active", "ended"];
 void _statuses;
+
+// ── isValidMembershipType ────────────────────────────────────────────────────
+//
+// Taxonomy and validator per DECISION-064 / docs/work-log/2026-08-07-membership-categories.md.
+
+describe("isValidMembershipType", () => {
+  it("accepts every taxonomy value", () => {
+    for (const { value } of MEMBERSHIP_TYPES) {
+      expect(isValidMembershipType(value)).toBe(true);
+    }
+  });
+
+  it("has a display label for every stored value (no orphaned tokens)", () => {
+    const values = MEMBERSHIP_TYPES.map((t) => t.value);
+    // Every taxonomy entry has both a value and a non-empty label.
+    for (const entry of MEMBERSHIP_TYPES) {
+      expect(entry.label.length).toBeGreaterThan(0);
+    }
+    // No duplicate stored values.
+    expect(new Set(values).size).toBe(values.length);
+  });
+
+  it("rejects an empty string", () => {
+    expect(isValidMembershipType("")).toBe(false);
+  });
+
+  it("rejects the un-suffixed near-miss 'life' (must be 'life_member')", () => {
+    expect(isValidMembershipType("life")).toBe(false);
+  });
+
+  it("rejects the display-label form 'Life Member' instead of the token 'life_member'", () => {
+    expect(isValidMembershipType("Life Member")).toBe(false);
+  });
+
+  it("rejects the misspelling 'priviledged' (LCI's correct term is 'privileged')", () => {
+    expect(isValidMembershipType("priviledged")).toBe(false);
+  });
+
+  it("rejects non-string input coerced to string", () => {
+    expect(isValidMembershipType(String(undefined))).toBe(false);
+    expect(isValidMembershipType(String(null))).toBe(false);
+  });
+
+  it("rejects an arbitrary garbage string", () => {
+    expect(isValidMembershipType("not_a_real_type")).toBe(false);
+  });
+
+  it("'active' IS valid for isValidMembershipType — the intentional overlap with membershipStatus's 'active' token, made visible on purpose so a future reader doesn't 'fix' it as a bug", () => {
+    expect(isValidMembershipType("active")).toBe(true);
+    // Same literal token, different column/meaning — membershipStatus's 'active' means
+    // "currently in good standing"; membershipType's 'active' means "LCI base/default type."
+    // They are never compared to each other in code (see schema.ts comment on membership_type).
+    const statusActive: MembershipStatus = "active";
+    const typeActive: MembershipType = "active";
+    expect(statusActive).toBe(typeActive as string);
+  });
+});

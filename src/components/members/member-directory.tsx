@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import PrintDirectoryButton from "@/components/members/print-directory-button";
 import { ShadowAvatar } from "./shadow-avatar";
 import { formatCityStateZip, hasAnyAddress } from "@/lib/member-address";
 
@@ -101,7 +102,7 @@ export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps)
   }, [members, searchQuery, filterBranch, filterGroupId]);
 
   return (
-    <div className="bg-white rounded-xl shadow-lg p-8">
+    <div className="bg-white rounded-2xl shadow-lg p-8">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Member Directory</h2>
@@ -109,6 +110,7 @@ export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps)
             {filteredMembers.length} of {members.length} members
           </p>
         </div>
+        <PrintDirectoryButton />
       </div>
 
       {/* Search and Filters */}
@@ -224,7 +226,7 @@ export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps)
             return (
               <div
                 key={member.id}
-                className="border border-gray-200 rounded-xl p-5 hover:shadow-lg transition transform hover:-translate-y-1"
+                className="border border-gray-200 rounded-2xl p-5 hover:shadow-lg transition transform hover:-translate-y-1"
               >
                 <div className="flex items-start gap-3 mb-3">
                   {/* Avatar */}

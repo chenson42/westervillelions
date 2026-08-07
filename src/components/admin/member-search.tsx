@@ -4,23 +4,28 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 type Group = { id: string; name: string; color: string | null };
+type MembershipTypeOption = { value: string; label: string };
 
 interface MemberSearchProps {
   branches: string[];
   groups: Group[];
+  membershipTypes: MembershipTypeOption[];
   currentSearch: string;
   currentBranch: string;
   currentStatus: string;
   currentGroup: string;
+  currentType: string;
 }
 
 export default function MemberSearch({
   branches,
   groups,
+  membershipTypes,
   currentSearch,
   currentBranch,
   currentStatus,
   currentGroup,
+  currentType,
 }: MemberSearchProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -28,13 +33,21 @@ export default function MemberSearch({
   const [branch, setBranch] = useState(currentBranch);
   const [status, setStatus] = useState(currentStatus);
   const [group, setGroup] = useState(currentGroup);
+  const [type, setType] = useState(currentType);
 
-  function applyFilters(newSearch: string, newBranch: string, newStatus: string, newGroup: string) {
+  function applyFilters(
+    newSearch: string,
+    newBranch: string,
+    newStatus: string,
+    newGroup: string,
+    newType: string
+  ) {
     const params = new URLSearchParams();
     if (newSearch) params.set("search", newSearch);
     if (newBranch) params.set("branch", newBranch);
     if (newStatus && newStatus !== "active") params.set("status", newStatus);
     if (newGroup) params.set("group", newGroup);
+    if (newType) params.set("type", newType);
     startTransition(() => {
       router.push(`/admin/members${params.size > 0 ? `?${params}` : ""}`);
     });
@@ -42,17 +55,22 @@ export default function MemberSearch({
 
   function handleBranchChange(value: string) {
     setBranch(value);
-    applyFilters(search, value, status, group);
+    applyFilters(search, value, status, group, type);
   }
 
   function handleStatusChange(value: string) {
     setStatus(value);
-    applyFilters(search, branch, value, group);
+    applyFilters(search, branch, value, group, type);
   }
 
   function handleGroupChange(value: string) {
     setGroup(value);
-    applyFilters(search, branch, status, value);
+    applyFilters(search, branch, status, value, type);
+  }
+
+  function handleTypeChange(value: string) {
+    setType(value);
+    applyFilters(search, branch, status, group, value);
   }
 
   function handleClear() {
@@ -60,21 +78,22 @@ export default function MemberSearch({
     setBranch("");
     setStatus("active");
     setGroup("");
+    setType("");
     startTransition(() => router.push("/admin/members"));
   }
 
-  const hasFilters = search || branch || status !== "active" || group;
+  const hasFilters = search || branch || status !== "active" || group || type;
 
   return (
     <div className={`rounded-lg border border-gray-200 bg-white p-4 ${isPending ? "opacity-70" : ""}`}>
-      <div className="grid gap-4 sm:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-6">
         {/* Search input */}
-        <div className="sm:col-span-2" onBlur={() => applyFilters(search, branch, status, group)}>
+        <div className="sm:col-span-2" onBlur={() => applyFilters(search, branch, status, group, type)}>
           <label htmlFor="search" className="sr-only">Search members</label>
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              applyFilters(search, branch, status, group);
+              applyFilters(search, branch, status, group, type);
             }}
           >
             <div className="relative">
@@ -124,6 +143,24 @@ export default function MemberSearch({
             <option value="">All Groups</option>
             {groups.map((g) => (
               <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* LCI membership type filter — for the treasurer's correction pass
+            (DECISION-064 / Phase 6 follow-up #1). Reuses MEMBERSHIP_TYPES
+            passed down from the server component; no second taxonomy copy. */}
+        <div>
+          <label htmlFor="membershipTypeFilter" className="sr-only">Filter by LCI membership type</label>
+          <select
+            id="membershipTypeFilter"
+            value={type}
+            onChange={(e) => handleTypeChange(e.target.value)}
+            className="block w-full rounded-md border border-gray-300 py-2 pl-3 pr-10 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+          >
+            <option value="">All LCI Types</option>
+            {membershipTypes.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
         </div>

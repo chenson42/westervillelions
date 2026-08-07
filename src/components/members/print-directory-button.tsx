@@ -12,7 +12,7 @@ export default function PrintDirectoryButton() {
     <button
       type="button"
       onClick={() => window.print()}
-      className="inline-flex items-center justify-center gap-2 border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue print:hidden"
+      className="inline-flex items-center justify-center gap-2 text-lions-blue px-3 py-2 rounded-lg font-semibold hover:bg-lions-blue/5 hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue print:hidden"
     >
       <span aria-hidden="true">🖨️</span>
       Print Directory / Save as PDF

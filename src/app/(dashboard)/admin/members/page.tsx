@@ -12,6 +12,7 @@ import SyncClubButton from "@/components/admin/sync-club-button";
 import DuesStatusBadge from "@/components/admin/dues-status-badge";
 import { listMemberDuesStatus, getActiveFiscalYear } from "@/lib/dues-queries";
 import type { DuesStatus } from "@/lib/dues";
+import { MEMBERSHIP_TYPES } from "@/lib/members";
 
 export default async function MembersPage({
   searchParams,
@@ -22,6 +23,7 @@ export default async function MembersPage({
     status?: string;
     group?: string;
     duesStatus?: string;
+    type?: string;
   }>;
 }) {
   const session = await auth();
@@ -38,6 +40,7 @@ export default async function MembersPage({
     status = "active",
     group: groupFilter = "",
     duesStatus = "",
+    type: typeFilter = "",
   } = await searchParams;
 
   // Build conditions
@@ -65,6 +68,13 @@ export default async function MembersPage({
     conditions.push(eq(members.membershipStatus, "prospective"));
   } else if (status === "ended") {
     conditions.push(eq(members.membershipStatus, "ended"));
+  }
+
+  // LCI membership TYPE filter — orthogonal to membershipStatus above (see
+  // docs/decisions.md DECISION-064). Falls out of the same URL-param filter
+  // pattern the branch/group/status filters already use.
+  if (typeFilter) {
+    conditions.push(eq(members.membershipType, typeFilter));
   }
 
   // Group filter: get member IDs in that group first
@@ -181,10 +191,12 @@ export default async function MembersPage({
       <MemberSearch
         branches={branches.map((b) => b.branch || "").filter(Boolean)}
         groups={allGroups}
+        membershipTypes={MEMBERSHIP_TYPES}
         currentSearch={search}
         currentBranch={branch}
         currentStatus={status}
         currentGroup={groupFilter}
+        currentType={typeFilter}
       />
 
       {/* Dues status filter — only when viewer has DUES_VIEW */}
@@ -197,6 +209,7 @@ export default async function MembersPage({
             if (branch) params.set("branch", branch);
             if (status !== "active") params.set("status", status);
             if (groupFilter) params.set("group", groupFilter);
+            if (typeFilter) params.set("type", typeFilter);
             if (opt.value) params.set("duesStatus", opt.value);
             const href = `/admin/members${params.size > 0 ? `?${params}` : ""}`;
             const isActive = effectiveDuesStatus === opt.value;
@@ -243,6 +256,9 @@ export default async function MembersPage({
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                 Status
               </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                LCI Type
+              </th>
               {canViewDues && (
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Dues
@@ -256,7 +272,7 @@ export default async function MembersPage({
           <tbody className="divide-y divide-gray-200 bg-white">
             {filteredMembers.length === 0 ? (
               <tr>
-                <td colSpan={canViewDues ? 7 : 6} className="px-6 py-12 text-center">
+                <td colSpan={canViewDues ? 8 : 7} className="px-6 py-12 text-center">
                   <div className="text-gray-500">
                     <p className="text-lg font-medium">No members found</p>
                     <p className="mt-1 text-sm">Try adjusting your search or filters</p>
@@ -312,6 +328,20 @@ export default async function MembersPage({
                           : member.membershipStatus === "prospective"
                           ? "Prospective"
                           : "Ended"}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4">
+                      {/*
+                        Reference info for the treasurer's LCI-type correction pass — deliberately
+                        NOT styled as a pill/badge like Status above, so "Active" here can never be
+                        mistaken for the Status pill that also reads "Active" (DECISION-064 /
+                        Phase 6 follow-up #1). The column header ("LCI Type" vs "Status") carries
+                        the label distinction; plain muted text vs. a colored rounded-full badge
+                        carries the visual distinction.
+                      */}
+                      <span className="text-sm text-gray-500">
+                        {MEMBERSHIP_TYPES.find((t) => t.value === member.membershipType)?.label ??
+                          member.membershipType}
                       </span>
                     </td>
                     {canViewDues && (

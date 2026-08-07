@@ -7,7 +7,6 @@ import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { MemberDirectory } from "@/components/members/member-directory";
 import { MemberDirectoryPrint } from "@/components/members/member-directory-print";
-import PrintDirectoryButton from "@/components/members/print-directory-button";
 import { SuggestionBoxLauncher } from "@/components/suggestion-box-launcher";
 
 export default async function MembersPage() {
@@ -157,56 +156,56 @@ export default async function MembersPage() {
         <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 mb-12">
           <a
             href="/members"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Member Directory</h3>
             <p className="text-gray-700">View contact information for all club members</p>
           </a>
           <a
             href="/members/events"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Events</h3>
             <p className="text-gray-700">View and RSVP to upcoming club events</p>
           </a>
           <a
             href="/members/groups"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Groups</h3>
             <p className="text-gray-700">Browse committees, service teams, and branches</p>
           </a>
           <a
             href="/members/profile"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Profile</h3>
             <p className="text-gray-700">Update your contact information and preferences</p>
           </a>
           <a
             href="/members/dues"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Dues</h3>
             <p className="text-gray-700">View your annual membership dues status and payment history</p>
           </a>
           <a
             href="/members/reimbursements"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Reimbursements</h3>
             <p className="text-gray-700">Request reimbursement for out-of-pocket club expenses</p>
           </a>
           <a
             href="/members/impact"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Our Impact</h3>
             <p className="text-gray-700">See how the Lions Club serves our community</p>
           </a>
           <a
             href="/members/financial-reports"
-            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Financial Statements</h3>
             <p className="text-gray-700">View the club&rsquo;s monthly Statement of Financial Condition</p>
@@ -214,7 +213,7 @@ export default async function MembersPage() {
         </div>
 
         {birthdaysThisMonth.length > 0 && (
-          <div className="mb-10 rounded-xl border border-lions-gold/40 bg-lions-gold/5 p-6">
+          <div className="mb-10 rounded-2xl border border-lions-gold/40 bg-lions-gold/5 p-6">
             <h2 className="text-lg font-bold text-gray-900 mb-4">
               Birthdays in {monthName}
             </h2>
@@ -261,9 +260,6 @@ export default async function MembersPage() {
           </div>
         )}
 
-        <div className="flex justify-end mb-4">
-          <PrintDirectoryButton />
-        </div>
         <MemberDirectory members={membersWithTags} filterGroups={filterGroups} />
       </div>
 

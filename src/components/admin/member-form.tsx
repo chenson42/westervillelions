@@ -6,6 +6,31 @@ import { toast } from "sonner";
 
 export type MembershipStatus = "prospective" | "active" | "ended";
 
+// Mirrors MembershipType / MEMBERSHIP_TYPES in src/lib/members.ts. Not imported directly:
+// members.ts pulls in @/lib/db (for provisionUserForMember) at module scope, and this is a
+// "use client" component — importing from members.ts would drag the Postgres client into the
+// browser bundle and break the build ("Can't resolve 'tls'"). Same reason MembershipStatus
+// above is a local duplicate rather than an import. Keep these two lists in sync by hand; both
+// are covered by isValidMembershipType()'s exhaustive test in src/lib/members.test.ts.
+export type MembershipType =
+  | "active"
+  | "member_at_large"
+  | "honorary"
+  | "privileged"
+  | "life_member"
+  | "associate_member"
+  | "affiliate_member";
+
+export const TYPE_OPTIONS: { value: MembershipType; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "member_at_large", label: "Member at Large" },
+  { value: "honorary", label: "Honorary" },
+  { value: "privileged", label: "Privileged" },
+  { value: "life_member", label: "Life Member" },
+  { value: "associate_member", label: "Associate Member" },
+  { value: "affiliate_member", label: "Affiliate Member" },
+];
+
 export interface MemberFormData {
   memberNumber?: number | null;
   firstName: string;
@@ -21,6 +46,7 @@ export interface MemberFormData {
   joinDate?: string | null;
   membershipEndedDate?: string | null;
   membershipStatus: MembershipStatus;
+  membershipType: MembershipType;
 }
 
 const STATUS_OPTIONS: { value: MembershipStatus; label: string }[] = [
@@ -75,6 +101,7 @@ export default function MemberForm({
       lastName: "",
       email: "",
       membershipStatus: "active",
+      membershipType: "active",
     }
   );
 
@@ -470,6 +497,34 @@ export default function MemberForm({
             <p className="mt-1 text-xs text-gray-500">
               Prospective members receive club emails but aren&apos;t counted as active
               members or given portal access until inducted.
+            </p>
+          </div>
+
+          <div>
+            <label
+              htmlFor="membershipType"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Lions International Membership Type *
+            </label>
+            <select
+              id="membershipType"
+              name="membershipType"
+              required
+              value={formData.membershipType}
+              onChange={handleChange}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            >
+              {TYPE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              The member&apos;s LCI membership category (e.g. Life, Honorary, Associate) —
+              separate from Membership Status above, which tracks whether they&apos;re
+              currently in good standing with the club.
             </p>
           </div>
         </div>

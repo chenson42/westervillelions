@@ -42,6 +42,14 @@ export const members = pgTable("members", {
   // No DB CHECK constraint — consistent with ledger_transactions.status pattern (DECISION-041).
   membershipStatus: text("membership_status").notNull().default("active"),
   duesCategory: text("dues_category").notNull().default("individual"), // 'individual' | 'family'
+  // LCI membership TYPE (Active, Member at Large, Honorary, Privileged, Life Member, Associate
+  // Member, Affiliate Member) — see MEMBERSHIP_TYPES in src/lib/members.ts. This is NOT club
+  // standing (that's membershipStatus, above) and NOT a billing rate (that's duesCategory, above).
+  // A member can be type 'life_member' with status 'active', or type 'active' with status 'ended'
+  // (an ordinary member who resigned) — the two fields vary independently. No DB CHECK constraint —
+  // app-layer enforcement only via isValidMembershipType(), consistent with membershipStatus and
+  // duesCategory on this same table (DECISION-041).
+  membershipType: text("membership_type").notNull().default("active"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
