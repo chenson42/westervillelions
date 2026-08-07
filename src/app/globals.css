@@ -17,3 +17,16 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
     Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
 }
+
+@media print {
+  /* Toasts are transient screen feedback and must never appear in a printed
+     document. Printing the budget worksheet shortly after saving otherwise put
+     "Budget notes saved." at the top of the board's printout, because sonner
+     renders its container fixed-position at the top of the viewport and nothing
+     excluded it from print. Targeted at sonner's own data attribute rather than
+     a className prop so it holds regardless of how <Toaster> is configured in
+     src/app/layout.tsx. */
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+}
