@@ -101,6 +101,7 @@ import {
   setBudgetCategoryAnnotation,
   setBudgetCauseLineAnnotation,
   getPendingApprovals,
+  listPendingAcknowledgments,
 } from "./ledger-queries";
 import { ledgerFunds, ledgerCategories, ledgerBudgets, ledgerBudgetLines } from "./db/schema";
 import { causeLineReferenceKey } from "./ledger";
@@ -2386,5 +2387,70 @@ describe("getPendingApprovals — Transfer/Sweep pair dedup (DECISION-058)", () 
 
     expect(result).toHaveLength(2);
     expect(result.map((r) => r.id).sort()).toEqual(["txn-ordinary", "txn-source"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listPendingAcknowledgments — ackId/ackSentAt carried through to the row
+// shape (docs/work-log/2026-08-08-acknowledgment-donor-link.md, second
+// increment). Regression test: the SELECT already fetched ackId/ackSentAt
+// (see the select() below), but the old .map() dropped both before
+// returning — AckQueue had no way to tell "no ack yet" apart from "ack
+// exists, unsent" and always rendered "Record acknowledgment", which 409'd
+// on the latter. This pins that the mapped row exposes both fields
+// byte-for-byte from the query.
+// ---------------------------------------------------------------------------
+describe("listPendingAcknowledgments — ackId/ackSentAt row-shape regression", () => {
+  beforeEach(() => {
+    mockDbState.queue = [];
+  });
+
+  const TXN = {
+    id: "txn-1",
+    entityId: "entity-foundation",
+    fundId: "fund-charitable",
+    txnDate: "2026-08-01",
+    flow: "income",
+    amountCents: 50000,
+    status: "posted",
+    donorId: null,
+  };
+
+  it("a row with no acknowledgment yet carries ackId: null and ackSentAt: null through to the returned row", async () => {
+    mockDbState.queue.push([
+      {
+        txn: TXN,
+        fundName: "Charitable Fund",
+        entityName: "Foundation",
+        ackId: null,
+        ackSentAt: null,
+        donor: null,
+      },
+    ]);
+
+    const rows = await listPendingAcknowledgments();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ackId).toBeNull();
+    expect(rows[0].ackSentAt).toBeNull();
+  });
+
+  it("a row with an unsent acknowledgment carries the ack's id through — this is the row AckQueue must offer Mark Sent for, not Record", async () => {
+    mockDbState.queue.push([
+      {
+        txn: TXN,
+        fundName: "Charitable Fund",
+        entityName: "Foundation",
+        ackId: "ack-99",
+        ackSentAt: null,
+        donor: { id: "donor-1", name: "Trucco Construction Co" },
+      },
+    ]);
+
+    const rows = await listPendingAcknowledgments();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ackId).toBe("ack-99");
+    expect(rows[0].ackSentAt).toBeNull();
   });
 });

@@ -13,6 +13,20 @@
  *   6. deriveAckType must return non-null unless typeOverride is supplied
  *   7. quidProQuoValueCents required when type='quid_pro_quo_75'
  *
+ * POST side effect: when donorId is provided, ledger_transactions.donor_id is
+ * set to match in the SAME db.transaction() as the acknowledgment insert, so
+ * the two links cannot diverge (2026-08-08 bug: creating an acknowledgment
+ * left ledger_transactions.donor_id NULL, so getDonor() and
+ * listPendingAcknowledgments() — both keyed off the transaction's donor_id —
+ * couldn't find the donor even though the acknowledgment record had one).
+ * This overwrites any donor already linked to the transaction — the ack
+ * dialog's donor field is pre-filled from the transaction's current link
+ * (see TxnDonorActions), so an explicit different selection here is the same
+ * kind of explicit re-link the standalone "Link Donor" dialog already allows.
+ * Omitting donorId (left blank) leaves the transaction's existing link
+ * untouched — "leave blank to record without linking a donor" must not clear
+ * a link that's already there.
+ *
  * PATCH (mark-sent) validates:
  *   1. Acknowledgment exists for this transaction
  *   2. ack.sentAt IS NULL — 409 if already sent
@@ -183,20 +197,34 @@ export async function POST(
       );
     }
 
-    // Insert the acknowledgment — amountCents and txnDate copied from transaction (DECISION-026)
-    const [ack] = await db
-      .insert(ledgerAcknowledgments)
-      .values({
-        donationTxnId: txnId,
-        donorId: donorId ?? null,
-        amountCents: txn.amountCents, // immutable copy from transaction
-        txnDate: txn.txnDate,         // immutable copy from transaction
-        type: ackType,
-        quidProQuoValueCents: qpqCents,
-        sentAt: null,
-        recordedByUserId: session.user.id,
-      })
-      .returning();
+    // Insert the acknowledgment — amountCents and txnDate copied from transaction (DECISION-026).
+    // When a donor is provided, also set it on the transaction itself, in the
+    // same db.transaction() so ledger_acknowledgments.donor_id and
+    // ledger_transactions.donor_id cannot diverge (see file header).
+    const ack = await db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(ledgerAcknowledgments)
+        .values({
+          donationTxnId: txnId,
+          donorId: donorId ?? null,
+          amountCents: txn.amountCents, // immutable copy from transaction
+          txnDate: txn.txnDate,         // immutable copy from transaction
+          type: ackType,
+          quidProQuoValueCents: qpqCents,
+          sentAt: null,
+          recordedByUserId: session.user.id,
+        })
+        .returning();
+
+      if (donorId) {
+        await tx
+          .update(ledgerTransactions)
+          .set({ donorId, updatedAt: new Date() })
+          .where(eq(ledgerTransactions.id, txnId));
+      }
+
+      return inserted;
+    });
 
     return NextResponse.json(ack, { status: 201 });
   } catch (error) {

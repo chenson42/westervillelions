@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { PendingAcknowledgmentRow } from "@/lib/ledger-queries";
+import { ackQueueRowAction } from "@/lib/ack-queue-ui";
 import AcknowledgeDialog from "./acknowledge-dialog";
 import MarkSentDialog from "./mark-sent-dialog";
 
@@ -24,14 +25,21 @@ function formatDate(d: Date | string | null): string {
 
 /**
  * Pending acknowledgment queue — Foundation income >= $250 without a sent ack.
- * For each row the treasurer can:
- *  1. Create the acknowledgment (POST .../acknowledge) via AcknowledgeDialog
- *  2. Mark it sent (PATCH .../acknowledge) via MarkSentDialog — if ack already exists but unsent
+ * Each row is in exactly one of two states (see `ackQueueRowAction()` in
+ * `@/lib/ack-queue-ui`), and only one action is ever offered per row —
+ * offering the wrong one 409s server-side:
+ *  1. No acknowledgment yet → "Record acknowledgment" (POST .../acknowledge)
+ *     via AcknowledgeDialog.
+ *  2. Acknowledgment recorded but not sent → "Mark Sent"
+ *     (PATCH .../acknowledge) via MarkSentDialog.
+ * (2026-08-08, second increment: previously this always rendered "Record
+ * acknowledgment" for every row, so state (2) had no reachable Mark Sent
+ * control on this screen.)
  */
 export default function AckQueue({ rows, canRecord }: AckQueueProps) {
-  // Track which row's dialog is open: { type: 'acknowledge' | 'mark-sent', txnId }
+  // Track which row's dialog is open, by txnId.
   const [acknowledgeFor, setAcknowledgeFor] = useState<string | null>(null);
-  const [markSentFor, setMarkSentFor] = useState<PendingAcknowledgmentRow | null>(null);
+  const [markSentFor, setMarkSentFor] = useState<string | null>(null);
 
   if (rows.length === 0) {
     return (
@@ -90,12 +98,11 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
               {rows.map((row) => {
-                // Determine ack state: no ack row at all, or ack exists but unsent
-                const hasAck = Boolean(row.txn.donorId !== undefined); // ack existence is shown by checking acknowledgment data
-                // We detect "has pending ack" from the query shape: PendingAcknowledgmentRow has the txn + donor.
-                // The ack queue includes rows WITH no ack OR with an unsent ack.
-                // We don't have ack.id directly here — need to use link to acknowledge or mark-sent.
-                // Simplification: always show "Record acknowledgment" (the server handles 409 if ack exists).
+                // "record" = no acknowledgment exists yet; "mark-sent" = an
+                // acknowledgment was already recorded but not yet sent. These
+                // are genuinely different states — offering the wrong action
+                // 409s (see ack-queue-ui.ts).
+                const action = ackQueueRowAction(row.ackId);
 
                 return (
                   <tr key={row.txn.id} className="hover:bg-gray-50">
@@ -122,20 +129,36 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
                       +{formatDollars(row.txn.amountCents)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      <span className="inline-flex items-center rounded-lg px-2.5 py-0.5 text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                        Pending
-                      </span>
+                      {action === "mark-sent" ? (
+                        <span className="inline-flex items-center rounded-lg px-2.5 py-0.5 text-xs font-semibold bg-blue-50 text-lions-blue border border-blue-200">
+                          Acknowledged — not sent
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-lg px-2.5 py-0.5 text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          Pending
+                        </span>
+                      )}
                     </td>
                     {canRecord && (
                       <td className="whitespace-nowrap px-4 py-3">
                         <div className="flex items-center gap-2 justify-end">
-                          <button
-                            type="button"
-                            onClick={() => setAcknowledgeFor(row.txn.id)}
-                            className="bg-lions-blue text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px]"
-                          >
-                            Record acknowledgment
-                          </button>
+                          {action === "mark-sent" ? (
+                            <button
+                              type="button"
+                              onClick={() => setMarkSentFor(row.txn.id)}
+                              className="bg-lions-blue text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px]"
+                            >
+                              Mark Sent
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setAcknowledgeFor(row.txn.id)}
+                              className="bg-lions-blue text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px]"
+                            >
+                              Record acknowledgment
+                            </button>
+                          )}
                         </div>
                       </td>
                     )}
@@ -156,10 +179,11 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
         />
       )}
 
-      {/* Mark-sent dialog */}
+      {/* Mark-sent dialog — reachable directly from the pending queue when a
+          row already has an unsent acknowledgment (2026-08-08 fix). */}
       {markSentFor && (
         <MarkSentDialog
-          txnId={markSentFor.txn.id}
+          txnId={markSentFor}
           open={true}
           onOpenChange={(open) => { if (!open) setMarkSentFor(null); }}
         />

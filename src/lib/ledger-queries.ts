@@ -4924,6 +4924,21 @@ export async function getDonor(donorId: string): Promise<DonorWithGivingHistory 
 export type PendingAcknowledgmentRow = {
   txn: LedgerTransaction & { fundName: string; entityName: string };
   donor: LedgerDonor | null;
+  /**
+   * The acknowledgment row's id, or null when no acknowledgment has been
+   * recorded yet. This is what distinguishes "un-acknowledged" from
+   * "acknowledged but not yet sent" — both states appear in this pending
+   * queue (see WHERE clause below), but only the latter has a control that
+   * can reach Mark Sent. See `ackQueueRowAction()` in `@/lib/ack-queue-ui`.
+   */
+  ackId: string | null;
+  /**
+   * Always null for every row this query returns — the WHERE clause below
+   * only admits rows where `sentAt IS NULL` (or no ack exists at all).
+   * Carried through anyway so the row shape is self-describing rather than
+   * relying on a caller remembering that invariant.
+   */
+  ackSentAt: Date | null;
 };
 
 export type AcknowledgmentSummaryRow = {
@@ -4991,6 +5006,8 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
       entityName: r.entityName ?? "Unknown Entity",
     },
     donor: r.donor ?? null,
+    ackId: r.ackId ?? null,
+    ackSentAt: r.ackSentAt ?? null,
   }));
 }
 
