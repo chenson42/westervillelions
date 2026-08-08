@@ -156,3 +156,35 @@ describe("POST .../[id]/acknowledge — donor_id sync (2026-08-08 bug)", () => {
     expect(mockDbState.txnUpdates[0].set.donorId).toBe("donor-1");
   });
 });
+
+describe("POST .../[id]/acknowledge — quidProQuoDescription (Acknowledgment Letter Generation, 2026-08-08)", () => {
+  it("persists a provided quidProQuoDescription on the acknowledgment row", async () => {
+    const res = await POST(
+      makeRequest({ quidProQuoValueCents: 10000, quidProQuoDescription: "one Rudolph Run 5K entry" }),
+      makeParams("txn-1"),
+    );
+    expect(res.status).toBe(201);
+    expect(mockDbState.ackInsertValues).toHaveLength(1);
+    expect(mockDbState.ackInsertValues[0].quidProQuoDescription).toBe("one Rudolph Run 5K entry");
+  });
+
+  it("defaults quidProQuoDescription to null when omitted", async () => {
+    const res = await POST(makeRequest({}), makeParams("txn-1"));
+    expect(res.status).toBe(201);
+    expect(mockDbState.ackInsertValues).toHaveLength(1);
+    expect(mockDbState.ackInsertValues[0].quidProQuoDescription).toBeNull();
+  });
+
+  it("400s when quidProQuoDescription is not a string", async () => {
+    const res = await POST(makeRequest({ quidProQuoDescription: 12345 }), makeParams("txn-1"));
+    expect(res.status).toBe(400);
+  });
+
+  it("400s when quidProQuoDescription exceeds 500 characters", async () => {
+    const res = await POST(
+      makeRequest({ quidProQuoDescription: "x".repeat(501) }),
+      makeParams("txn-1"),
+    );
+    expect(res.status).toBe(400);
+  });
+});

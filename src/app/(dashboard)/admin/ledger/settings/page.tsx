@@ -66,6 +66,31 @@ export default async function AdminLedgerSettingsPage() {
         </svg>
       </Link>
 
+      {/* Acknowledgment letter template nav card */}
+      <Link
+        href="/admin/ledger/settings/acknowledgment-letter"
+        className="group flex items-center justify-between gap-4 bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-6 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+      >
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Acknowledgment Letter Template</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Write the greeting, thank-you message, and signature used on donor gift
+            acknowledgment letters. The IRS-required substantiation text is generated
+            automatically and cannot be edited here.
+          </p>
+        </div>
+        <svg
+          className="h-5 w-5 shrink-0 text-lions-blue transition group-hover:translate-x-0.5"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth="1.5"
+          stroke="currentColor"
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+        </svg>
+      </Link>
+
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <LedgerSettingsForm settings={settings} />
       </div>

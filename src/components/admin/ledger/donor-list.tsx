@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
 import DonorForm from "./donor-form";
 import type { LedgerDonor } from "@/lib/db/schema";
+import { formatEmailList } from "@/lib/utils";
 
 interface DonorListProps {
   donors: LedgerDonor[];
@@ -37,7 +38,7 @@ export default function DonorList({ donors: initialDonors, canRecord, canManage 
     ? initialDonors.filter(
         (d) =>
           d.name.toLowerCase().includes(search.toLowerCase()) ||
-          (d.email ?? "").toLowerCase().includes(search.toLowerCase()),
+          d.emails.some((e) => e.toLowerCase().includes(search.toLowerCase())),
       )
     : initialDonors;
 
@@ -178,7 +179,7 @@ export default function DonorList({ donors: initialDonors, canRecord, canManage 
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">
-                      {donor.email ?? <span className="text-gray-300">—</span>}
+                      {formatEmailList(donor.emails, 1) ?? <span className="text-gray-300">—</span>}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
                       {formatDate(donor.createdAt)}

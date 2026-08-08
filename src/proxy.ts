@@ -81,6 +81,25 @@ export async function proxy(request: NextRequest) {
       pattern: /^\/admin\/groups/,
       requiredFeatures: [FEATURES.GROUPS_MANAGE],
     },
+    // The Ledger admits anyone holding ANY ledger or budget feature. This rule MUST
+    // precede the /^\/admin/ catch-all below, which requires ADMIN_DASHBOARD — without
+    // it, a budget-committee member (budget.view/budget.edit, deliberately NOT
+    // admin.dashboard) is bounced here before the page's own gate ever runs. That is
+    // exactly the bug v1.55.0 set out to fix: that release corrected the admin layout
+    // and the header nav but missed this layer, so the reported user stayed locked out
+    // of the budget she had been asked to review. Each Ledger page still enforces its
+    // own finer-grained requirement; this rule only decides who may reach the area.
+    {
+      pattern: /^\/admin\/ledger/,
+      requiredFeatures: [
+        FEATURES.LEDGER_VIEW,
+        FEATURES.LEDGER_RECORD,
+        FEATURES.LEDGER_MANAGE,
+        FEATURES.LEDGER_APPROVE,
+        FEATURES.BUDGET_VIEW,
+        FEATURES.BUDGET_EDIT,
+      ],
+    },
     {
       pattern: /^\/admin/,
       requiredFeatures: [FEATURES.ADMIN_DASHBOARD],

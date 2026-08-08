@@ -654,3 +654,18 @@ Design each with the others in view — decisions in one box in the next.
   seed helper (`deriveSeedLinesForFund` nor `computeCauseSeedForCategory`/`deriveCauseSeedLines`)
   carries forward individual labeled line items today. Pairs with B-31 (printable budget) and the
   guided-budget-setup flow.
+
+- [ ] **B-38 — Publish the club constitution and by-laws on the site.** (added 2026-08-08, from Chris;
+  **partially answered 2026-08-08** — member-portal placement and format decided, see
+  `docs/work-log/2026-08-08-meeting-minutes.md` ADDENDUM 2: folded into the renamed Minutes tile,
+  scan hosted as-is. What remains open here: whether it is ALSO published publicly, and OCR/transcription
+  so it becomes searchable and linkable by article.)
+  Make the club's governing documents available rather than living in someone's files. Open questions
+  for whoever picks this up: **public or members-only** — Lions International's own constitution and
+  by-laws are public documents and many clubs post theirs openly, but the board may prefer
+  members-only; **format** — a rendered page (searchable, linkable by article/section, consistent with
+  the site) versus a PDF upload (matches the printed document the board approved and is what gets
+  amended); and **amendment history**, since a constitution is amended by vote and the version in
+  force on a given date can matter. Pairs naturally with the meeting-minutes work
+  (`docs/work-log/2026-08-08-meeting-minutes.md`) — amendments are adopted *in* minutes, so the two
+  records reference each other, and both are governance documents with retention expectations.

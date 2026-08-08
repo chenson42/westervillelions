@@ -18,14 +18,43 @@ interface DonorFormProps {
  * Renders inline — the parent wraps it in a modal.
  * Gate: LEDGER_RECORD (caller must enforce).
  */
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function DonorForm({ donor, onClose, onSuccess }: DonorFormProps) {
   const isEdit = Boolean(donor);
   const router = useRouter();
 
   const [name, setName] = useState(donor?.name ?? "");
-  const [email, setEmail] = useState(donor?.email ?? "");
+  const [emails, setEmails] = useState<string[]>(donor?.emails ?? []);
+  const [emailInput, setEmailInput] = useState("");
   const [address, setAddress] = useState(donor?.address ?? "");
   const [submitting, setSubmitting] = useState(false);
+
+  function addEmail() {
+    const trimmed = emailInput.trim().toLowerCase();
+    if (!trimmed) return;
+    if (!EMAIL_REGEX.test(trimmed)) {
+      toast.error("Enter a valid email address.");
+      return;
+    }
+    if (emails.includes(trimmed)) {
+      toast.error("This donor already has that email address.");
+      return;
+    }
+    setEmails((prev) => [...prev, trimmed]);
+    setEmailInput("");
+  }
+
+  function removeEmail(target: string) {
+    setEmails((prev) => prev.filter((e) => e !== target));
+  }
+
+  function handleEmailKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addEmail();
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,11 +66,6 @@ export default function DonorForm({ donor, onClose, onSuccess }: DonorFormProps)
     }
     if (trimmedName.length > 200) {
       toast.error("Donor name must be 200 characters or fewer.");
-      return;
-    }
-    const trimmedEmail = email.trim();
-    if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      toast.error("Enter a valid email address.");
       return;
     }
     const trimmedAddress = address.trim();
@@ -56,9 +80,9 @@ export default function DonorForm({ donor, onClose, onSuccess }: DonorFormProps)
         ? `/api/admin/ledger/donors/${donor!.id}`
         : `/api/admin/ledger/donors`;
       const method = isEdit ? "PATCH" : "POST";
-      const body: Record<string, string | undefined> = {
+      const body: Record<string, string | string[] | undefined> = {
         name: trimmedName,
-        email: trimmedEmail || undefined,
+        emails,
         address: trimmedAddress || undefined,
       };
 
@@ -110,20 +134,50 @@ export default function DonorForm({ donor, onClose, onSuccess }: DonorFormProps)
         />
       </div>
 
-      {/* Email */}
+      {/* Email addresses — flat list, all equal (no primary/alternate) */}
       <div>
         <label htmlFor="donor-email" className="block text-sm font-medium text-gray-700 mb-1">
-          Email <span className="text-gray-400 font-normal">(optional)</span>
+          Email Addresses <span className="text-gray-400 font-normal">(optional — add as many as needed)</span>
         </label>
-        <input
-          id="donor-email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          maxLength={254}
-          className="block w-full rounded-lg border border-gray-300 py-2 px-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
-          placeholder="jane@example.com"
-        />
+        {emails.length > 0 && (
+          <ul className="mb-2 flex flex-wrap gap-2">
+            {emails.map((e) => (
+              <li
+                key={e}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-gray-100 pl-3 pr-1.5 py-1 text-sm text-gray-700"
+              >
+                {e}
+                <button
+                  type="button"
+                  onClick={() => removeEmail(e)}
+                  aria-label={`Remove ${e}`}
+                  className="rounded-lg p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-lions-blue transition"
+                >
+                  &times;
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex gap-2">
+          <input
+            id="donor-email"
+            type="email"
+            value={emailInput}
+            onChange={(e) => setEmailInput(e.target.value)}
+            onKeyDown={handleEmailKeyDown}
+            maxLength={254}
+            className="block w-full rounded-lg border border-gray-300 py-2 px-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            placeholder="jane@example.com"
+          />
+          <button
+            type="button"
+            onClick={addEmail}
+            className="whitespace-nowrap rounded-lg border-2 border-lions-blue px-3 py-2 text-sm font-semibold text-lions-blue hover:bg-lions-blue/5 focus:outline-none focus:ring-2 focus:ring-lions-blue transition"
+          >
+            Add
+          </button>
+        </div>
       </div>
 
       {/* Address */}

@@ -126,7 +126,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
 
   [FEATURES.LEDGER_VIEW]: "View ledger overview, fund reports, and transaction history",
   [FEATURES.LEDGER_RECORD]: "Record, edit, and delete ledger transactions",
-  [FEATURES.LEDGER_MANAGE]: "Manage funds, budgets, entities, and opening balances",
+  [FEATURES.LEDGER_MANAGE]:
+    "Manage funds, budgets, entities, opening balances, and acknowledgment letter templates",
   [FEATURES.LEDGER_APPROVE]: "Approve and reject pending disbursements and reimbursements",
 
   [FEATURES.BUDGET_VIEW]: "View budgets",

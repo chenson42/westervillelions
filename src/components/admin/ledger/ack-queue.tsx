@@ -143,13 +143,23 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
                       <td className="whitespace-nowrap px-4 py-3">
                         <div className="flex items-center gap-2 justify-end">
                           {action === "mark-sent" ? (
-                            <button
-                              type="button"
-                              onClick={() => setMarkSentFor(row.txn.id)}
-                              className="bg-lions-blue text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px]"
-                            >
-                              Mark Sent
-                            </button>
+                            <>
+                              {row.ackId && (
+                                <Link
+                                  href={`/admin/ledger/donors/letters?ackId=${row.ackId}`}
+                                  className="border-2 border-lions-blue text-lions-blue px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px] inline-flex items-center"
+                                >
+                                  Generate Letter
+                                </Link>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setMarkSentFor(row.txn.id)}
+                                className="bg-lions-blue text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px]"
+                              >
+                                Mark Sent
+                              </button>
+                            </>
                           ) : (
                             <button
                               type="button"

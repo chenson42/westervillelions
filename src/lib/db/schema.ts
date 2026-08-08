@@ -684,7 +684,14 @@ export type NewLedgerAuditLog = typeof ledgerAuditLog.$inferInsert;
 export const ledgerDonors = pgTable("ledger_donors", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),      // max 200 chars enforced at app layer
-  email: text("email"),              // nullable; standard email format
+  // Zero or more email addresses, all equal (no labels/primary — treasurer
+  // explicitly wants a flat list, not a contact-management model). Replaced
+  // the single nullable `email` column (migration 0077, 2026-08-08,
+  // docs/work-log/2026-08-08-donor-multiple-emails.md). Each entry is
+  // trimmed + lowercased and standard-email-format-validated at the app
+  // layer; the array itself has no uniqueness constraint at the DB level
+  // (enforced per-donor at the app layer instead).
+  emails: text("emails").array().notNull().default([]),
   address: text("address"),          // nullable; max 500 chars at app layer
   memberId: uuid("member_id")
     .references(() => members.id, { onDelete: "set null" }),
@@ -838,6 +845,16 @@ export const ledgerAcknowledgments = pgTable(
     type: text("type").notNull(),
     // Fair-market value of goods/services given to donor; required when type='quid_pro_quo_75'
     quidProQuoValueCents: integer("quid_pro_quo_value_cents"),
+    // What the donor received in exchange (e.g. "one Rudolph Run 5K entry").
+    // IRS Pub. 1771's quid-pro-quo disclosure requires a DESCRIPTION of the
+    // goods/services provided, not just their fair-market value —
+    // quidProQuoValueCents alone can't name what was given. Nullable: NULL
+    // for legacy rows and for any written_ack_250 ack (no goods/services
+    // involved); composeAcknowledgmentLetter() falls back to the generic
+    // phrase "goods or services" when null — still accurate, just less
+    // specific. See docs/decisions.md DECISION-073 and docs/work-log/
+    // 2026-08-08-acknowledgment-letter-generation.md Phase 3.
+    quidProQuoDescription: text("quid_pro_quo_description"),
     // null = pending acknowledgment; set to now() when treasurer marks sent
     sentAt: timestamp("sent_at"),
     // Opaque Blob storage key for the uploaded letter file; pattern: acknowledgments/<uuid>/<filename>
@@ -860,6 +877,56 @@ export const ledgerAcknowledgments = pgTable(
 
 export type LedgerAcknowledgment = typeof ledgerAcknowledgments.$inferSelect;
 export type NewLedgerAcknowledgment = typeof ledgerAcknowledgments.$inferInsert;
+
+// Acknowledgment letter template — singleton row, mirrors the ledgerSettings
+// singleton pattern (DECISION-072 §1).
+//
+// The five columns below are named "warmth" slots — greeting, thank-you
+// body, closing, and signature. They are the ENTIRE writable surface this
+// table exposes, and the ENTIRE allowlist the PATCH
+// /api/admin/ledger/acknowledgments/letter-template endpoint accepts. That
+// is deliberate and load-bearing, not an oversight: this table has NO
+// column for the IRS Pub. 1771-required substantiation text (entity name,
+// EIN, gift amount, gift date, the no-goods-or-services statement, or the
+// quid-pro-quo FMV/deductible-amount statement). That text is never
+// treasurer-authored — it is generated fresh at letter-composition time by
+// an unexported helper inside src/lib/ledger-acknowledgment-letter.ts from
+// ledgerEntities/ledgerAcknowledgments data, a function the template's
+// writable columns cannot reach or influence in any way. A treasurer with
+// full write access to every column here — including setting all five to
+// empty strings — cannot produce a letter missing the required legal
+// content, because that content was never stored as editable data to begin
+// with. See DECISION-072 §2 and DECISION-073.
+//
+// No entityId/type column: one shell whose generated section adapts to
+// written_ack_250 vs quid_pro_quo_75 at composition time (Treasurer
+// Decision 4, 2026-08-08) — not a per-type or per-entity template. No
+// version-history table: ledgerAcknowledgments.letterText already snapshots
+// the fully-merged letter at generation time (DECISION-026 lineage) and is
+// never re-derived from this row after the fact, so editing the template
+// cannot retroactively change a letter that was already sent.
+export const ledgerLetterTemplates = pgTable("ledger_letter_templates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  greeting: text("greeting").notNull().default("Dear {{donorName}},"),
+  bodyText: text("body_text").notNull().default(
+    "On behalf of the Westerville Lions Club Foundation, thank you for your generous gift. " +
+      "Your support helps us carry out our mission of serving the Westerville community and " +
+      "beyond — from youth scholarships to hunger relief to disaster response. Gifts like yours " +
+      "make that work possible.",
+  ),
+  closing: text("closing").notNull().default("With gratitude,"),
+  // Seeds empty, not a fake name — an unset signature is visibly,
+  // obviously wrong the moment the treasurer opens the preview, which is
+  // the right failure mode (obviously-incomplete beats plausibly-wrong).
+  signatureName: text("signature_name").notNull().default(""),
+  signatureTitle: text("signature_title").notNull().default("Treasurer, Westerville Lions Club Foundation"),
+  updatedByUserId: uuid("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type LedgerLetterTemplate = typeof ledgerLetterTemplates.$inferSelect;
+export type NewLedgerLetterTemplate = typeof ledgerLetterTemplates.$inferInsert;
 
 // Budgets — per fund × fiscal year × category × flow
 export const ledgerBudgets = pgTable(

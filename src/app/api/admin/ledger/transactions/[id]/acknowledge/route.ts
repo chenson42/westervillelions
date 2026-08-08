@@ -12,6 +12,10 @@
  *   5. amountCents is copied from the transaction — NOT accepted from request body
  *   6. deriveAckType must return non-null unless typeOverride is supplied
  *   7. quidProQuoValueCents required when type='quid_pro_quo_75'
+ *   8. quidProQuoDescription, if provided, must be a string <= 500 chars
+ *      (Acknowledgment Letter Generation, 2026-08-08 — Pub. 1771 requires a
+ *      DESCRIPTION of goods/services, not just their FMV; nullable, falls
+ *      back to generic wording in composeAcknowledgmentLetter() when absent)
  *
  * POST side effect: when donorId is provided, ledger_transactions.donor_id is
  * set to match in the SAME db.transaction() as the acknowledgment insert, so
@@ -53,7 +57,8 @@ import { deriveAckType } from "@/lib/ledger";
  * Body: {
  *   donorId?: string,
  *   typeOverride?: 'written_ack_250' | 'quid_pro_quo_75',
- *   quidProQuoValueCents?: number
+ *   quidProQuoValueCents?: number,
+ *   quidProQuoDescription?: string
  * }
  */
 export async function POST(
@@ -127,7 +132,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { donorId, typeOverride, quidProQuoValueCents } = body;
+    const { donorId, typeOverride, quidProQuoValueCents, quidProQuoDescription } = body;
 
     // Validate donorId if provided
     if (donorId !== undefined && donorId !== null) {
@@ -152,6 +157,16 @@ export async function POST(
       ) {
         return NextResponse.json(
           { error: "quidProQuoValueCents must be a non-negative integer" },
+          { status: 400 },
+        );
+      }
+    }
+
+    // Validate quidProQuoDescription
+    if (quidProQuoDescription !== undefined && quidProQuoDescription !== null) {
+      if (typeof quidProQuoDescription !== "string" || quidProQuoDescription.length > 500) {
+        return NextResponse.json(
+          { error: "quidProQuoDescription must be a string of 500 characters or fewer" },
           { status: 400 },
         );
       }
@@ -211,6 +226,10 @@ export async function POST(
           txnDate: txn.txnDate,         // immutable copy from transaction
           type: ackType,
           quidProQuoValueCents: qpqCents,
+          quidProQuoDescription:
+            typeof quidProQuoDescription === "string" && quidProQuoDescription.trim()
+              ? quidProQuoDescription.trim()
+              : null,
           sentAt: null,
           recordedByUserId: session.user.id,
         })

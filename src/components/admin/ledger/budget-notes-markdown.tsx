@@ -4,12 +4,24 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 /**
- * Shared Markdown renderer for the budget-level "Notes & Assumptions" field
- * (`ledger_budget_notes.notes`) — used by BOTH render sites so they can never
- * structurally diverge in how the same stored text looks:
+ * Shared Markdown renderer, originally built for the budget-level
+ * "Notes & Assumptions" field (`ledger_budget_notes.notes`) — used by BOTH
+ * render sites so they can never structurally diverge in how the same
+ * stored text looks:
  *   - budget-notes-editor.tsx  (on-screen, view-only display for users who
  *     can't edit)
  *   - budget-print-worksheet.tsx (the printed/mailed board document)
+ *
+ * Second consumer (Acknowledgment Letter Generation, DECISION-073,
+ * 2026-08-08): also renders composed donor acknowledgment letters
+ * (`ledger_acknowledgments.letter_text`, produced by
+ * composeAcknowledgmentLetter()) both in the treasurer's on-screen
+ * generation/print-selection screen and in the printed letter batch itself
+ * — same "one renderer, no structural drift between screen and print"
+ * rationale as the budget-notes case above. Genuinely generic (no
+ * budget-specific logic in this file), so this is the kind of reuse on a
+ * real second caller DECISION-065's discipline endorses, not reuse invented
+ * ahead of need.
  *
  * Markdown only — deliberately NO rehype-raw / raw-HTML passthrough. Notes
  * are admin-authored, but there's no reason to let arbitrary HTML into a

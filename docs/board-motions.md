@@ -77,6 +77,41 @@ counted figure.
 
 ---
 
+## Questions for the Board (discussion, not motions)
+
+Items needing the board's direction before they are built or acted on. Not resolutions — no vote
+required unless the board decides one is warranted. Append outcomes inline.
+
+### Q1 — Should board meeting minutes be readable by all members?
+
+> **Status:** OPEN — for the next board meeting. (Raised 2026-08-08 by the Treasurer.)
+
+**Why it is being asked.** The club is building a Minutes area in the member portal
+(`docs/work-log/2026-08-08-meeting-minutes.md`) that will hold general, board, and eventually
+committee minutes. Who may read board minutes has to be decided before it is built, and it is
+awkward to narrow later once members are used to seeing them.
+
+**The Treasurer's position:** all members should be able to read board minutes, since **the board
+meeting itself is open to all active members** — the printed 2026-27 schedule says so explicitly.
+Minutes of a meeting any member may attend are hard to justify withholding from that same member.
+
+**The counter-argument, for completeness.** Common nonprofit practice treats board minutes as more
+restricted than general-membership minutes, because board discussions can touch matters that are
+reasonably confidential — personnel, a member in financial difficulty, a dispute, or legal advice.
+The relevant question is not whether *these* minutes are sensitive, but whether the board wants a
+standing expectation of openness that would make it awkward to handle such a matter later.
+
+**Options if the board wants nuance rather than a simple yes:**
+- Open by default, with the ability to mark an individual set of minutes as board-only.
+- Open by default, with sensitive matters kept out of the minutes and handled in a separately-recorded
+  executive session — which is the conventional mechanism for exactly this.
+
+**What the board needs to decide:** yes, no, or one of the nuanced options. The build currently
+assumes **yes, all members** per the Treasurer's direction; changing it later is more work than
+deciding it now.
+
+---
+
 ## Log (append outcomes here)
 
 _No motions voted yet._

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { LedgerDonor } from "@/lib/db/schema";
+import { formatEmailList } from "@/lib/utils";
 
 interface AcknowledgeDialogProps {
   txnId: string;
@@ -31,6 +32,7 @@ export default function AcknowledgeDialog({
   const router = useRouter();
   const [donorId, setDonorId] = useState(initialDonorId ?? "");
   const [qppCents, setQppCents] = useState(""); // quid-pro-quo value in dollars
+  const [qppDescription, setQppDescription] = useState(""); // e.g. "one Rudolph Run 5K entry"
   const [typeOverride, setTypeOverride] = useState<"" | "written_ack_250" | "quid_pro_quo_75">("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -104,6 +106,7 @@ export default function AcknowledgeDialog({
       return;
     }
     if (qppValue !== null) body.quidProQuoValueCents = qppValue;
+    if (qppDescription.trim()) body.quidProQuoDescription = qppDescription.trim();
 
     setSubmitting(true);
     try {
@@ -162,8 +165,10 @@ export default function AcknowledgeDialog({
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-gray-900">{selectedDonor.name}</p>
-                    {selectedDonor.email && (
-                      <p className="truncate text-xs text-gray-400">{selectedDonor.email}</p>
+                    {formatEmailList(selectedDonor.emails) && (
+                      <p className="truncate text-xs text-gray-400">
+                        {formatEmailList(selectedDonor.emails)}
+                      </p>
                     )}
                   </div>
                   <button
@@ -199,7 +204,9 @@ export default function AcknowledgeDialog({
                             className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none transition"
                           >
                             <span className="text-sm font-medium text-gray-900">{donor.name}</span>
-                            {donor.email && <span className="text-xs text-gray-400">{donor.email}</span>}
+                            {formatEmailList(donor.emails) && (
+                              <span className="text-xs text-gray-400">{formatEmailList(donor.emails)}</span>
+                            )}
                           </button>
                         </li>
                       ))}
@@ -240,6 +247,33 @@ export default function AcknowledgeDialog({
                 for a gala dinner ticket). Leave blank if the gift was fully charitable.
               </p>
             </div>
+
+            {/* Description of goods/services — only meaningful once a quid-pro-quo value is
+                entered; IRS Pub. 1771 requires a DESCRIPTION of what the donor received, not just
+                its value. Falls back to generic "goods or services" wording in generated letters
+                when left blank, so this is never a hard block — just less specific. */}
+            {qppCents.trim() && (
+              <div>
+                <label htmlFor="ack-qpp-description" className="block text-sm font-medium text-gray-700 mb-1">
+                  Description of Goods/Services Provided{" "}
+                  <span className="text-lions-blue font-normal">(required)</span>
+                </label>
+                <input
+                  id="ack-qpp-description"
+                  type="text"
+                  value={qppDescription}
+                  onChange={(e) => setQppDescription(e.target.value)}
+                  className="block w-full rounded-lg border border-gray-300 py-2 px-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+                  placeholder="e.g., one Rudolph Run 5K entry"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Because this gift has a value given in return, IRS Pub. 1771 requires the
+                  acknowledgment to <strong>describe</strong> what the donor received — not just its
+                  dollar value. Left blank, the letter falls back to generic &ldquo;goods or
+                  services&rdquo; wording, which may not satisfy that requirement.
+                </p>
+              </div>
+            )}
 
             {/* Type override */}
             <div>

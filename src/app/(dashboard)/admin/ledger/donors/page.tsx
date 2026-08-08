@@ -107,7 +107,19 @@ export default async function AdminLedgerDonorsPage({
       )}
 
       {activeTab === "acknowledgments" && (
-        <AckQueue rows={pendingAcks} canRecord={canRecord} />
+        <div className="space-y-4">
+          {canRecord && pendingAcks.some((r) => r.ackId !== null) && (
+            <div className="flex justify-end">
+              <Link
+                href="/admin/ledger/donors/letters"
+                className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[40px] inline-flex items-center"
+              >
+                Generate Letters&hellip;
+              </Link>
+            </div>
+          )}
+          <AckQueue rows={pendingAcks} canRecord={canRecord} />
+        </div>
       )}
     </div>
   );

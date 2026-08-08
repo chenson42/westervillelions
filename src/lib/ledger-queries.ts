@@ -4836,8 +4836,30 @@ export type DonorWithGivingHistory = LedgerDonor & {
   givingHistory: Array<{
     txn: LedgerTransaction & { fundName: string; entityName: string };
     ackStatus: "pending" | "sent" | null;
+    /**
+     * The acknowledgment row's id, or null when no acknowledgment exists yet
+     * (ackStatus === null). Already selected below (r.ackId) for ackStatus's
+     * own derivation — surfaced here too so the donor detail page can deep
+     * link an unsent ("pending") row to
+     * /admin/ledger/donors/letters?ackId=<id> (Acknowledgment Letter
+     * Generation, 2026-08-08) without a second query.
+     */
+    ackId: string | null;
   }>;
 };
+
+/**
+ * True when any element of ledgerDonors.emails case-insensitively contains
+ * `term` (a raw substring, not yet wrapped in `%...%` — callers do that).
+ * Donor Multiple Emails (2026-08-08) — emails is a text[], so a plain
+ * ilike() no longer applies; unnest() + ILIKE per-element avoids false
+ * positives from substring-matching the array's brace/comma literal syntax
+ * (e.g. array_to_string(...)::text ILIKE would match a search term that only
+ * appears by accident across two different addresses).
+ */
+function donorEmailsMatch(term: string) {
+  return sql`EXISTS (SELECT 1 FROM unnest(${ledgerDonors.emails}) AS e WHERE e ILIKE ${term})`;
+}
 
 /**
  * List donors, optionally filtered by a name/email search string.
@@ -4851,7 +4873,7 @@ export async function listDonors(opts?: {
   if (opts?.search && opts.search.trim() !== "") {
     const term = `%${opts.search.trim()}%`;
     conditions.push(
-      or(ilike(ledgerDonors.name, term), ilike(ledgerDonors.email, term)),
+      or(ilike(ledgerDonors.name, term), donorEmailsMatch(term)),
     );
   }
   const q = db.select().from(ledgerDonors);
@@ -4912,6 +4934,7 @@ export async function getDonor(donorId: string): Promise<DonorWithGivingHistory 
       : r.ackSentAt !== null
         ? ("sent" as const)
         : ("pending" as const),
+    ackId: r.ackId,
   }));
 
   return { ...donor, givingHistory };

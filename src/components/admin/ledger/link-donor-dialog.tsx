@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import DonorForm from "./donor-form";
 import type { LedgerDonor } from "@/lib/db/schema";
+import { formatEmailList } from "@/lib/utils";
 
 interface LinkDonorDialogProps {
   txnId: string;
@@ -216,8 +217,8 @@ export default function LinkDonorDialog({
                       >
                         <div>
                           <p className="text-sm font-medium text-gray-900">{donor.name}</p>
-                          {donor.email && (
-                            <p className="text-xs text-gray-400">{donor.email}</p>
+                          {formatEmailList(donor.emails) && (
+                            <p className="text-xs text-gray-400">{formatEmailList(donor.emails)}</p>
                           )}
                         </div>
                         {donor.id === currentDonorId ? (

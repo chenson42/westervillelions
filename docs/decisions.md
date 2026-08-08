@@ -28,6 +28,327 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-075: Meeting Minutes — email distribution addendum (companion to DECISION-074): `renderToStaticMarkup()` over the existing renderer for Markdown→HTML, no second dependency; a dedicated inline-styled email components map, not the web renderer's; partial `kind`→address map with no default and no save-block for unmapped kinds; address map co-located with `MINUTES_KINDS`, not a settings table; mandatory draft-status banner in the email body; `sendEmail()` reused unmodified; `CLUB_GROUP_EMAIL` exported for reuse
+
+**Status:** Resolved (send-gating for draft club-wide minutes to `club@` left open — flagged for the treasurer, not decided here)
+**Date:** 2026-08-08
+
+**Decision:** The treasurer added post-save email-distribution requirements to
+`docs/work-log/2026-08-08-meeting-minutes.md` after Phase 2 closed and before Phase 3 began: a
+post-save prompt offering to email the minutes, board-kind → `board@westervillelions.org`,
+general/club-kind → `club@westervillelions.org`, an optional sender note, and the minutes rendered
+inline as HTML (no attachment). This decision rules on the resulting structural questions, appended to
+the Phase 2 review as an addendum rather than a rewrite.
+
+1. **`renderToStaticMarkup()` (from `react-dom/server`) over the DECISION-074 promoted renderer
+   generates the email HTML — no new dependency.** It reuses the already-approved parsing engine
+   (`remark-gfm` + the Markdown→AST→React pipeline) with a second, email-specific `components` map, in
+   a server-only module (never a `"use client"` file). A parallel server-side remark/rehype string
+   pipeline would duplicate capability already in the stack and was rejected on dependency-evaluation
+   criterion 1 (already solved by an existing dependency). This is the feature's second
+   new-dependency question; unlike `turndown` (a genuine capability gap), this one resolves to "not
+   warranted."
+2. **The email path gets its own inline-styled components map, not the web renderer's Tailwind-classed
+   one.** Confirmed by reading this app's existing transactional email HTML
+   (`api/contact/route.ts`, `api/auth/forgot-password/route.ts`, `api/suggestions/route.ts`,
+   `lib/members.ts`): all plain HTML with light inline `style=` attributes, no classes — the existing
+   house convention for mail, chosen because mail clients strip class-based CSS. The new
+   `minutesEmailMarkdownComponents` map follows that convention; the web renderer's component map is
+   not reused as-is for email.
+3. **A `kind` with no address mapping gets no email prompt** — not a default address (a future
+   committee-only kind silently defaulting to the whole-membership `club@` would be a real
+   governance/privacy mistake) and not a block on saving (would re-couple "add a kind" to "resolve an
+   address," defeating DECISION-074's no-migration-to-add-a-kind ruling). `MINUTES_KIND_EMAIL` is a
+   partial map; an unmapped kind is fully usable, just not emailable, until a real address is added.
+4. **Address mapping is a hardcoded const co-located with `MINUTES_KINDS` in `src/lib/minutes.ts`, not
+   a `ledgerSettings`-style singleton table.** It changes at the same cadence, for the same reason, by
+   the same actor as `kind` itself. Explicitly identified as the same open question Phase 1 already
+   raised for `kind` (open question 3: hardcoded array vs. self-service table) — if promoted later,
+   promote both together, not as two separate follow-ups.
+5. **Draft-status disclosure is a required content rule, not a permission rule: any minutes email sent
+   while `status != 'approved'` must carry an unmissable "DRAFT — subject to approval" banner.** This
+   follows mechanically from an already-treasurer-settled fact (approval happens at the next meeting)
+   and doesn't block the board's normal draft-review-by-email workflow. **Left explicitly open, not
+   decided:** whether an unapproved general/club-kind draft may be emailed to `club@` (the whole
+   membership) at all, or only board-kind drafts to `board@` pre-approval — a governance-policy call
+   in the same register as the treasurer's earlier board-minutes-readability reversal, his to make.
+6. **`sendEmail()` (`src/lib/email.ts`) is reused unmodified.** A Google Group address is an ordinary
+   recipient from Resend's point of view; no changes needed. Its existing failure path
+   (`{success, error}` returned synchronously after in-request retries; `status: 'failed'` persisted to
+   `email_queue` with retry only via the admin-triggered `POST /api/admin/email-queue/retry` — confirmed
+   no cron/scheduled job exists in this project) is correctly out of scope to change. New requirement:
+   the post-save send action must surface `sendEmail()`'s result directly to the notetaker at the
+   moment of the attempt, not a generic "saved" toast that implies the email went out regardless — a
+   UI-plan requirement for Phase 3.
+7. **The two addresses are not symmetric.** `club@westervillelions.org` is `CLUB_GROUP_EMAIL` in
+   `src/lib/google-groups.ts` — already auto-synced by this app to every active member.
+   `board@westervillelions.org` appears nowhere in that file — an external, presumably
+   manually-managed group outside this app's sync surface. Doesn't change the send mechanism, but
+   `CLUB_GROUP_EMAIL` should be exported (currently module-private) and imported into the new
+   `MINUTES_KIND_EMAIL` map rather than re-typed as a second literal.
+
+**Rationale:** Every ruling either directly extends an already-resolved DECISION-074 call (the
+`kind`/no-migration principle governing the address map's shape; the `pendingDeleteAt`-style
+"reuse the pattern, not blindly the behavior" discipline applied here to "reuse the renderer, not
+blindly its styling") or grounds a new call in this codebase's already-observed conventions (existing
+plain-HTML transactional email style; `sendEmail()`'s existing queue/retry contract). The one item left
+open is left open deliberately — it is a governance policy question, not a structural one, and this
+review has already established the precedent (DECISION-074's own citation of the board-minutes-readability
+reversal) that such calls belong to the treasurer, not the architect.
+
+**Impact:** No new npm dependency (second dependency question this feature raised, resolved "no").
+`src/lib/minutes.ts` gains `MINUTES_KIND_EMAIL` next to `MINUTES_KINDS`. New email-only components map
+for the promoted Markdown renderer (file location TBD by tech-lead — likely co-located with the
+renderer or the new minutes-email-sending module). `src/lib/google-groups.ts`'s `CLUB_GROUP_EMAIL`
+changes from module-private to exported. `src/lib/email.ts` unchanged. One open question carried into
+Phase 3 for the treasurer: may an unapproved draft of a club-wide (general) minutes record be emailed
+to `club@` at all, or only board-kind drafts to `board@` pre-approval?
+
+---
+
+## DECISION-074: Meeting Minutes — `turndown` approved (client-only, single line-item); new `minutes.ts`/`minutes-queries.ts` sibling pair kept out of the `ledger-*` module family; shared Markdown renderer promoted (not cloned) out of `budget-notes-markdown.tsx`; Dues/Reimbursements/Impact/Financial-Reports routes preserved (navigation-only regroup); `meetingDate` is `date` not `timestamp`; attendance keys on `members`, not `users`; new `notetaker` role + `minutes.manage`/`minutes.delete` features
+
+**Status:** Resolved
+**Date:** 2026-08-08
+
+**Decision:** Phase 2 architectural ruling for `docs/work-log/2026-08-08-meeting-minutes.md`, closing
+the six structural questions the Phase 1 doc (READY WITH NOTES, revised per treasurer feedback) left
+open for the architect.
+
+1. **`turndown` (+ `turndown-plugin-gfm`) is approved as a new dependency**, evaluated against the
+   no-dependency alternative honestly rather than rubber-stamping the analyst's recommendation:
+   hand-rolling Word-HTML-to-Markdown conversion means re-implementing, untested, exactly what
+   Turndown already does well. It clears the dependency-evaluation criteria cleanly — not solved by
+   anything in `package.json` (no HTML→Markdown capability exists there today), MIT-licensed,
+   long-stable — and its defining property is that it **can only run client-side** (built on the
+   browser's `DOMParser`), which is stricter than "nice to have": it is now a hard rule that
+   `turndown`/`turndown-plugin-gfm` may only be imported from a `"use client"` file (the admin minutes
+   paste-handler), never a route handler or server action. Bundle impact is contained to that one
+   admin-only route chunk via Next's per-route code-splitting — the public-site/member-portal-read-side
+   bundle is untouched. One implementation-level gap flagged for Phase 3's edge-cases list, not a
+   dependency concern: Turndown alone doesn't specifically un-fake Word's `mso-list` pseudo-bullets;
+   that needs a small Word-specific DOM pre-clean pass in code, not another dependency.
+2. **Two new top-level sibling modules, `src/lib/minutes.ts` (pure) / `src/lib/minutes-queries.ts`
+   (DB)** — generalizing the Ledger's pure/DB split to a new domain, but deliberately **not** joining
+   the `ledger-*` module family (DECISION-049/062/065/069/072 lineage): minutes shares no tables, no
+   permission keys, and no audience boundary with the Ledger, and prefixing it `ledger-*` would
+   misrepresent it as a Ledger sub-feature. Search (`searchMinutes()`) stays inside
+   `minutes-queries.ts` rather than pre-emptively splitting a `minutes-search-queries.ts` sibling —
+   the lineage's *reasoning* (split when the parent gets oversized) doesn't yet apply to a module
+   starting at zero lines. Search uses `ILIKE`, no full-text index — directly consistent with
+   `ledger-search-queries.ts`'s own "sequential ILIKE scans are cheap at this club's data volume"
+   ruling at comparable-or-larger record volume (minutes: ~30/year).
+3. **The Markdown renderer is promoted out of `budget-notes-markdown.tsx` into a new neutral top-level
+   component** (e.g. `src/components/rich-markdown-content.tsx`), not cloned. Cloning would create two
+   near-identical ~90-line renderers with two places to fix a bug or extend the element set — already
+   a live smell, since `markdown-content.tsx` and `budget-notes-markdown.tsx` are two overlapping
+   renderers today (flagged for the next 30-day code review, not fixed here). The promoted component's
+   two existing call sites (`budget-notes-editor.tsx`, `budget-print-worksheet.tsx`) get their imports
+   updated; minutes imports the same component. `markdown-content.tsx` is left untouched — it has real,
+   different callers (event descriptions) using its simpler element set, and conflating the two risks
+   bleeding table/print styling into plain event prose. The "never `rehype-raw`" comment travels with
+   the promoted file verbatim. Whether the promoted component still needs `"use client"` (the original
+   has no hooks/state/handlers — may be inherited convention, not necessity) is left for Phase 3 to
+   actually check rather than copy blindly.
+4. **IA restructure is navigation-only — no route moves.** `/members/dues`, `/members/reimbursements`,
+   `/members/impact`, and `/members/financial-reports` keep resolving exactly as they do today; "Profile
+   absorbs Dues/Reimbursements" and "Club Finances absorbs Impact/Financial-Reports" are entry-point
+   changes at `/members/page.tsx` only, both hubs fanning out to unchanged underlying pages — the same
+   shape `ADMIN_NAVIGATION`'s "Treasury" group already establishes. This applies one consistent
+   resolution to two structurally identical "hub absorbs sub-pages" moves (Phase 1 had already implied
+   this for Club Finances but left Profile's wording more ambiguous about route fate). Avoids breaking
+   bookmarks, emailed links, and browser history; a tabbed Profile UI must still resolve to the real
+   underlying routes, not a route merge.
+5. **Two data-model type calls, settled now rather than picked arbitrarily in Phase 3:** `minutes.meetingDate`
+   is a `date` column, not `timestamp` — directly following DECISION-001's reasoning (occurrence-keyed
+   data uses `date` to sidestep timezone ambiguity), explicitly **not** copying `eventRsvps.occurrenceDate`'s
+   naive-timestamp pattern, which DECISION-001 itself already named as the known project bug. And
+   `minutesAttendance.memberId` references `members`, not `users` — attendance is a notetaker-checked
+   roster of known club members (per Phase 1's Flow 2), the same table Directory/Dues already key off
+   of, unlike `eventRsvps.userId` which must support anonymous/any-signed-in-account RSVPs.
+6. **No schema change to the three `boardMinute` free-text fields** (`ledgerTransactions.boardMinute`,
+   `ledgerBudgetApprovals.boardMinute`, `ledgerReimbursements.boardMinute`) in this pass — concurring
+   with the analyst's Out-of-Scope call. `minutes.id` being a standard stable `uuid` PK is already
+   sufficient to keep a future nullable `boardMinutesId` FK a clean additive migration; nothing further
+   needs to be shaped now.
+7. **Permissions:** two new `FEATURES` keys, `minutes.manage` (create/edit any kind/status, approve,
+   reopen) and `minutes.delete` (soft-delete/restore, admin-only), plus new role `notetaker`. Follows
+   the `budget_committee`/DECISION-069 migration shape exactly — idempotent `INSERT ... WHERE NOT
+   EXISTS` for the features, the role, and each `role_features` bind, with `admin` explicitly bound to
+   both keys per that migration's own stated convention. No `minutes.view`/read gate — reading any
+   minutes, any kind, any status, is intentionally ungated per the treasurer's explicit call, not
+   reintroduced "for symmetry." `pendingDeleteAt` column shape is reused from `ledgerBudgets`; its
+   purge-on-finalize *behavior* is explicitly not — minutes never auto-purges, matching nonprofit
+   permanent-retention practice the analyst's Phase 1 research already established.
+
+**Rationale:** Every ruling either reuses an already-established pattern in this codebase (DECISION-001's
+date-column reasoning, DECISION-041's no-CHECK taxonomy pattern, DECISION-069's role-binding migration
+shape, the Ledger's pure/DB module split, `ADMIN_NAVIGATION`'s hub-fan-out precedent) or makes an
+explicit, honestly-reasoned call where no precedent existed (the `turndown` dependency gate; promote-
+not-clone for the renderer; `members` not `users` for attendance). Nothing here re-litigates a treasurer
+decision or a Phase 1 recommendation already backed by real research — the six items were genuinely
+undecided structural questions, not disagreements.
+
+**Impact:** New tables `minutes`, `minutesAttendance`, `minutesMotions`, `minutesActionItems` in
+`schema.ts` + one idempotent migration (exact number TBD at Phase 4 — `0076` is reserved in-narrative
+by the concurrently in-flight DECISION-072 work but not yet on disk, `0077` already exists). New files
+`src/lib/minutes.ts`, `src/lib/minutes-queries.ts`. New component directories
+`src/components/admin/minutes/`, `src/components/minutes/`. `src/components/admin/ledger/budget-notes-markdown.tsx`
+relocated to a new top-level neutral name with two import-site updates. New npm dependency: `turndown`
++ `turndown-plugin-gfm` (client-only import boundary enforced). New `FEATURES` keys `minutes.manage`/
+`minutes.delete`, new role `notetaker`, migration via the `add-permission` skill. `src/app/members/page.tsx`
+tile grid changes from 8 tiles to 6; no existing member-portal routes are removed or moved.
+
+---
+
+## DECISION-073: Acknowledgment Letter Generation — Phase 3 implementation calls: added `ledgerAcknowledgments.quidProQuoDescription` column (Pub. 1771 requires a description of goods/services, not just FMV); regenerate allowed freely pre-`sentAt`, hard-refused post-`sentAt`; generate route writes directly (no separate preview endpoint) since pre-send regeneration already covers the review step; threshold guard stays solely at ack-creation time, not re-derived at generation time; new purpose-built `listGeneratableAcknowledgments()` read instead of extending `listPendingAcknowledgments()`; reuse `BudgetNotesMarkdown` for letter rendering instead of a new renderer
+
+**Status:** Resolved
+**Date:** 2026-08-08
+
+**Decision:** Phase 3 technical-design calls for
+`docs/work-log/2026-08-08-acknowledgment-letter-generation.md`, filling in the content-level details
+DECISION-072 (architect) deliberately left to tech-lead.
+
+1. **New nullable column `ledger_acknowledgments.quid_pro_quo_description`** (migration
+   `0078_ledger_ack_quid_pro_quo_description.sql` — `0077` is already claimed by the concurrently
+   in-flight, unrelated `docs/work-log/2026-08-08-donor-multiple-emails.md`). Pub. 1771's
+   quid-pro-quo disclosure requires a *description* of the goods/services provided, not just their
+   fair-market value — `quidProQuoValueCents` alone (the only field that existed) can't name what a
+   donor actually received (e.g. "a Rudolph Run 5K entry"), so the composed letter could only say
+   "goods or services" generically. This wasn't named in DECISION-072's stated impact; flagged here
+   explicitly as a scope addition rather than silently expanded. `AcknowledgeDialog` gets one new
+   optional field to capture it; the composer falls back to the generic phrase when null (legacy
+   rows), never blocking generation on its absence.
+2. **Regenerate is allowed, freely, until `sentAt` is set; refused entirely after.** Reconciles Phase
+   1's "preview then Save" flow with Phase 2's ruling that the generate route writes directly (no
+   separate preview endpoint): since a not-yet-sent ack's `letter_text` can be safely overwritten any
+   number of times, clicking "Generate" IS the review step — the treasurer edits the template or
+   donor record and regenerates until it looks right, then marks it sent. After `sentAt` is set,
+   generation hard-refuses (`skipped: "already sent"`) rather than silently overwriting the
+   historical record of what was actually mailed — mirrors `amountCents`'s DECISION-026 immutability.
+3. **The below-$250/$75 threshold guard is NOT re-checked at generation time.** It already lives at
+   ack-*creation* time (`POST .../acknowledge` already requires `deriveAckType()` non-null unless a
+   treasurer supplies `typeOverride`). Re-deriving and rejecting on mismatch at generation time would
+   create a second decision point that could reject a legitimate manual override, directly against
+   DECISION-072 §3's "exactly one place decides the ack type" invariant. Generation only enum-checks
+   that `ack.type` is one of the two known values (corrupted-row defense, not a second threshold
+   policy). The `ackNotRequired` category guard, by contrast, IS re-checked fresh at generation time
+   (via a JOIN, not inherited from queue membership) — the two guards sit at different points
+   deliberately, not inconsistently: one is a stable per-row fact set once at creation, the other can
+   change after the ack row already exists (a category's flag can be toggled later).
+4. **New `listGeneratableAcknowledgments()` in the new `ledger-acknowledgment-letter-queries.ts`
+   module, not an extension of `listPendingAcknowledgments()`.** The existing pending-queue query
+   (`ledger-queries.ts:4976`) doesn't select the fields this feature needs (`type`,
+   `quidProQuoValueCents`, `quidProQuoDescription`) and is a live dependency of `AckQueue` today —
+   extending it risks regressing that screen. A purpose-built read carries zero blast radius to the
+   existing queue.
+5. **Reuse `BudgetNotesMarkdown` (`src/components/admin/ledger/budget-notes-markdown.tsx`) to render
+   composed letter text**, rather than writing a second Markdown-rendering component. It's already a
+   generic, budget-agnostic renderer (react-markdown + remark-gfm, deliberately no raw-HTML
+   passthrough) — this is a real second caller appearing, the exact trigger DECISION-065's
+   generalize-on-second-need discipline calls for, not a case of building ahead of need. Only its doc
+   comment needs a one-line update naming the second consumer; ux-developer's call whether a rename
+   is also worth it.
+
+**Rationale:** Each call above resolves a genuine tension left open by Phase 1/Phase 2 (preview-vs-
+write-directly; how precise vs. how conservative to be about Pub. 1771's actual required content;
+which existing query/component to extend vs. leave alone) using the same discipline already applied
+elsewhere in this codebase — reuse over duplication, but only once a real second need exists, and
+flag scope additions explicitly rather than quietly expanding them.
+
+**Impact:** Second migration `0078_ledger_ack_quid_pro_quo_description.sql` alongside DECISION-072's
+`0076_ledger_letter_templates.sql`. One new field on `AcknowledgeDialog`. No new rendering component
+(reuses `BudgetNotesMarkdown`). Full detail: Phase 3 section of
+`docs/work-log/2026-08-08-acknowledgment-letter-generation.md`.
+
+---
+
+## DECISION-072: Acknowledgment Letter Generation — new singleton `ledger_letter_templates` table with named editable slots only (required IRS block generated in code, unreachable from the template's writable surface); new `ledger-acknowledgment-letter-queries.ts` + pure `ledger-acknowledgment-letter.ts` sibling modules; one batch-capable generate route; print reuses the existing `print:hidden`/`break-before-page` pattern; template edits audited via the existing `ledger_audit_log` table with no schema change
+
+**Status:** Resolved
+**Date:** 2026-08-08
+
+**Decision:** Phase 2 architectural ruling for
+`docs/work-log/2026-08-08-acknowledgment-letter-generation.md`, closing the seven structural
+questions Phase 1/the treasurer's brief left open.
+
+1. **New table `ledgerLetterTemplates` (`ledger_letter_templates`), singleton row**, following
+   `ledgerSettings`' existing singleton pattern exactly (same seed idiom:
+   `INSERT ... SELECT ... WHERE NOT EXISTS`, `drizzle/migrations/0044_ledger_books.sql:352-360`) —
+   not a column on `ledgerSettings` (a bag of unrelated scalar knobs, wrong axis for structured
+   content) and not a per-type or per-entity table (Treasurer Decision: one shell, ack-type-adaptive).
+   Columns are named editable slots (`greeting`, `bodyText`, `closing`, `signatureName`,
+   `signatureTitle`) plus `updatedByUserId`/`updatedAt`. No version-history table — `letter_text` on
+   `ledger_acknowledgments` already snapshots the merged result per letter (DECISION-026 lineage);
+   template version history is a distinct, unrequested feature, deferred until a real second need
+   appears (same discipline DECISION-065 already applied to this exact audit table).
+2. **Generated structure + editable text is modelled as named slots on the template plus a fixed
+   skeleton in a pure composer function, `composeAcknowledgmentLetter()`** — not free text with
+   required substrings. The template's five columns are the entire allowlist its edit endpoint
+   accepts; there is no field anywhere the required statement (entity name, EIN, amount, date,
+   no-goods-or-services / quid-pro-quo FMV statement) could be typed or deleted, because that text is
+   never treasurer-authored — it's generated fresh from `ack.type`/`entity`/`ack` data by an unexported
+   helper the template's write path cannot reach. This makes a legally deficient letter structurally
+   unreachable, not merely validated, per the Carried-forward invariant.
+3. **Two new sibling modules**, continuing the DECISION-049/061/062/065/069 lineage:
+   `src/lib/ledger-acknowledgment-letter-queries.ts` (DB reads/writes — template CRUD +
+   `generateAcknowledgmentLetters()`), kept out of the already-oversized `ledger-queries.ts`
+   (5,182 lines) and out of the unrelated `ledger-category-queries.ts`; and
+   `src/lib/ledger-acknowledgment-letter.ts` (pure, DB-independent, unit-testable without a DOM —
+   `vitest.config.ts` runs `environment: "node"`), holding `composeAcknowledgmentLetter()`. The pure
+   module imports `deriveAckType`'s already-derived `ack.type` rather than re-deriving it, keeping
+   exactly one place in the codebase (`lib/ledger.ts`) that decides `written_ack_250` vs
+   `quid_pro_quo_75`.
+4. **One route, plural ids**: `POST /api/admin/ledger/acknowledgments/letters/generate`, body
+   `{ ackIds: string[] }`. Mirrors `POST /api/admin/ledger/budgets/seed`'s existing precedent:
+   deterministic pre-validation per row (donor linked, donor has an address, category still passes
+   `listPendingAcknowledgments()`'s existing filter predicate — not a second exclusion list) classifies
+   each id as `generated` or `skipped: <reason>` before any write; only passing rows are written, all
+   inside one `db.transaction()`. Single-letter generation is the same endpoint called with a one-item
+   array — no second implementation to drift out of sync with batch skip logic.
+5. **No new print route.** Reuses the exact pattern already established in
+   `admin/ledger/budgeting/page.tsx`: an interactive `print:hidden` region alongside an unconditionally
+   mounted print-only component, toggled by the print stylesheet rather than React state. A new
+   `AcknowledgmentLettersPrint` component renders one `<section>` per letter with `break-before-page`
+   on every section after the first — the same Tailwind print utility `budget-print-worksheet.tsx:333`
+   already uses. Covers both single-letter preview/print (a selection of one) and batch print (a
+   selection of many) with one component.
+6. **No new npm dependency.** No templating library (a handful of named-slot substitutions, not
+   user-authored logic); no PDF library (locked precedent, reused verbatim).
+7. **Invariants:** no new `FEATURES` key — generate/preview/deliver stays on `LEDGER_RECORD` (same
+   gate as `AcknowledgeDialog`/`MarkSentDialog`); club-wide template edits are gated `LEDGER_MANAGE`,
+   ruled in now rather than left open, since it's a direct application of the existing blast-radius
+   bar `LEDGER_MANAGE` already sets for funds/categories/entities/settings, not a new judgment call.
+   Template edits are audited through the **existing** `ledger_audit_log` table with **no schema
+   change** — its nullable `targetCategoryId` is left `null` (nothing to point at; there's one
+   template row) and its generic `before`/`after`/`details` columns already hold arbitrary JSON diffs,
+   exactly the shape DECISION-065's own comment anticipated a future non-category caller would use.
+   New idempotent migration `0076_ledger_letter_templates.sql`, no SQL-level ordering dependency on
+   `0075_ledger_category_ack_not_required.sql` (different table); the deploy-timing dependency between
+   the two (0075 must have actually run in production before this feature ships, per the treasurer's
+   carried-forward sequencing note) is flagged as a pre-push/qa checklist item for this feature, not a
+   migration-ordering concern.
+
+**Rationale:** Every ruling reuses an already-established pattern in this codebase (singleton-
+settings shape, sibling-module split, `print:hidden`/`break-before-page` print convention, the
+generalized `ledger_audit_log` table, `budgets/seed`'s pre-validate-then-transact batch shape) rather
+than inventing a new one. The one genuinely new design decision — modelling the compliance boundary as
+named slots a pure composer function assembles, instead of free text with required substrings — is the
+Phase 1 recommendation made concrete at the schema/function-signature level, which is what makes an
+edit that produces a legally deficient letter a non-existent code path rather than a validation
+someone could get wrong.
+
+**Impact:** New table `ledgerLetterTemplates` in `schema.ts` + `drizzle/migrations/0076_ledger_letter_templates.sql`.
+New files `src/lib/ledger-acknowledgment-letter-queries.ts`, `src/lib/ledger-acknowledgment-letter.ts`.
+New route `src/app/api/admin/ledger/acknowledgments/letters/generate/route.ts` (+ a template CRUD
+route). New components under `src/components/admin/ledger/` (template editor, generate dialog,
+`AcknowledgmentLettersPrint`). No new `FEATURES` key (existing `LEDGER_RECORD`/`LEDGER_MANAGE` reused).
+No new npm dependency. Full detail: Phase 2 section of
+`docs/work-log/2026-08-08-acknowledgment-letter-generation.md`.
+
+---
+
 ## DECISION-071: Ack Not Required category flag — UI-gated, not server-blocked; not exposed at category creation
 
 **Status:** Resolved

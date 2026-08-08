@@ -12,13 +12,52 @@ import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { ledgerDonors, members } from "@/lib/db/schema";
-import { and, eq, ilike, or, asc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { listDonors } from "@/lib/ledger-queries";
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAILS = 20;
+
+/**
+ * Validates and normalizes a donor `emails` payload.
+ * Returns either the normalized (trimmed, lowercased) list, or an error
+ * message suitable for a 400 response. Rejects malformed addresses and
+ * case-insensitive duplicates within the submitted list (Donor Multiple
+ * Emails, 2026-08-08 — "decide what happens on a duplicate within one
+ * donor": reject rather than silently dedupe, so the caller always knows
+ * exactly what was stored).
+ */
+function normalizeEmails(input: unknown): { emails: string[] } | { error: string } {
+  if (!Array.isArray(input)) {
+    return { error: "emails must be an array of strings" };
+  }
+  if (input.length > MAX_EMAILS) {
+    return { error: `emails must contain ${MAX_EMAILS} or fewer addresses` };
+  }
+  const normalized: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== "string") {
+      return { error: "each email must be a string" };
+    }
+    const trimmed = raw.trim().toLowerCase();
+    if (trimmed.length === 0) continue;
+    if (!EMAIL_REGEX.test(trimmed)) {
+      return { error: `"${raw}" is not a valid email address` };
+    }
+    if (normalized.includes(trimmed)) {
+      return { error: `"${trimmed}" is a duplicate within this donor's email list` };
+    }
+    normalized.push(trimmed);
+  }
+  return { emails: normalized };
+}
 
 /**
  * GET /api/admin/ledger/donors?search=...
  *
  * Returns donors sorted by name ASC.
- * Query params: search (name/email substring, optional)
+ * Query params: search (name/email substring, optional — matches any
+ * address in the donor's email list)
  */
 export async function GET(request: NextRequest) {
   try {
@@ -33,17 +72,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search")?.trim();
 
-    let donors;
-    if (search && search.length > 0) {
-      const term = `%${search}%`;
-      donors = await db
-        .select()
-        .from(ledgerDonors)
-        .where(or(ilike(ledgerDonors.name, term), ilike(ledgerDonors.email, term)))
-        .orderBy(asc(ledgerDonors.name));
-    } else {
-      donors = await db.select().from(ledgerDonors).orderBy(asc(ledgerDonors.name));
-    }
+    const donors = await listDonors({ search: search || undefined });
 
     return NextResponse.json({ donors, total: donors.length });
   } catch (error) {
@@ -55,9 +84,11 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/admin/ledger/donors
  *
- * Body: { name: string, email?: string, address?: string, memberId?: string }
+ * Body: { name: string, emails?: string[], address?: string, memberId?: string }
  *
- * 409 if a donor with the same name + non-null email already exists (soft dedup).
+ * 409 if a donor with the same name + an overlapping (case-insensitive)
+ * email address already exists (soft dedup, generalized from the old
+ * single-email exact match).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -70,7 +101,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, email, address, memberId } = body;
+    const { name, emails, address, memberId } = body;
 
     // --- Validate ---
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -83,14 +114,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (email !== undefined && email !== null) {
-      if (typeof email !== "string") {
-        return NextResponse.json({ error: "email must be a string" }, { status: 400 });
+    let normalizedEmails: string[] = [];
+    if (emails !== undefined && emails !== null) {
+      const result = normalizeEmails(emails);
+      if ("error" in result) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
       }
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email.trim())) {
-        return NextResponse.json({ error: "email must be a valid email address" }, { status: 400 });
-      }
+      normalizedEmails = result.emails;
     }
 
     if (address !== undefined && address !== null) {
@@ -118,21 +148,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Soft dedup: 409 if same name + same non-null email already exists
+    // Soft dedup: 409 if a donor with the same name AND at least one
+    // overlapping email address already exists. Generalized from the old
+    // single-email exact match — fetched by name (cheap; this table is a
+    // handful of rows) and overlap-checked in JS rather than a Postgres
+    // array-overlap operator, since it's a one-time check on a tiny table.
     const normalizedName = name.trim();
-    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : null;
 
-    if (normalizedEmail) {
-      const existing = await db.query.ledgerDonors.findFirst({
-        where: and(
-          eq(ledgerDonors.name, normalizedName),
-          eq(ledgerDonors.email, normalizedEmail),
-        ),
-        columns: { id: true },
+    if (normalizedEmails.length > 0) {
+      const sameName = await db.query.ledgerDonors.findMany({
+        where: eq(ledgerDonors.name, normalizedName),
+        columns: { id: true, emails: true },
       });
+      const existing = sameName.find((d) =>
+        d.emails.some((e) => normalizedEmails.includes(e)),
+      );
       if (existing) {
         return NextResponse.json(
-          { error: "A donor with this name and email already exists", existingId: existing.id },
+          {
+            error: "A donor with this name and email already exists",
+            existingId: existing.id,
+          },
           { status: 409 },
         );
       }
@@ -143,7 +179,7 @@ export async function POST(request: NextRequest) {
       .insert(ledgerDonors)
       .values({
         name: normalizedName,
-        email: normalizedEmail ?? null,
+        emails: normalizedEmails,
         address: typeof address === "string" ? address.trim() : null,
         memberId: memberId ?? null,
       })

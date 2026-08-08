@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -92,8 +93,14 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
               Donor
             </p>
             <h1 className="text-2xl font-bold text-gray-900">{donor.name}</h1>
-            {donor.email && (
-              <p className="mt-1 text-sm text-gray-600">{donor.email}</p>
+            {donor.emails.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                {donor.emails.map((e) => (
+                  <span key={e} className="text-sm text-gray-600">
+                    {e}
+                  </span>
+                ))}
+              </div>
             )}
             {donor.address && (
               <p className="mt-1 text-sm text-gray-500 whitespace-pre-line">{donor.address}</p>
@@ -247,6 +254,14 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
                               >
                                 Acknowledge
                               </button>
+                            )}
+                            {row.ackStatus === "pending" && row.ackId && (
+                              <Link
+                                href={`/admin/ledger/donors/letters?ackId=${row.ackId}`}
+                                className="border-2 border-lions-blue text-lions-blue px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px] inline-flex items-center"
+                              >
+                                Generate Letter
+                              </Link>
                             )}
                             {row.ackStatus === "pending" && (
                               <button

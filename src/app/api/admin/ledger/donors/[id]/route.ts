@@ -16,8 +16,42 @@ import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { ledgerDonors, members } from "@/lib/db/schema";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDonor } from "@/lib/ledger-queries";
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAILS = 20;
+
+/**
+ * Validates and normalizes a donor `emails` payload — same rules as the
+ * create route (src/app/api/admin/ledger/donors/route.ts): trim + lowercase
+ * each entry, reject malformed addresses, reject case-insensitive
+ * duplicates within the submitted list.
+ */
+function normalizeEmails(input: unknown): { emails: string[] } | { error: string } {
+  if (!Array.isArray(input)) {
+    return { error: "emails must be an array of strings" };
+  }
+  if (input.length > MAX_EMAILS) {
+    return { error: `emails must contain ${MAX_EMAILS} or fewer addresses` };
+  }
+  const normalized: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== "string") {
+      return { error: "each email must be a string" };
+    }
+    const trimmed = raw.trim().toLowerCase();
+    if (trimmed.length === 0) continue;
+    if (!EMAIL_REGEX.test(trimmed)) {
+      return { error: `"${raw}" is not a valid email address` };
+    }
+    if (normalized.includes(trimmed)) {
+      return { error: `"${trimmed}" is a duplicate within this donor's email list` };
+    }
+    normalized.push(trimmed);
+  }
+  return { emails: normalized };
+}
 
 /**
  * GET /api/admin/ledger/donors/[id]
@@ -57,7 +91,10 @@ export async function GET(
 /**
  * PATCH /api/admin/ledger/donors/[id]
  *
- * Partial update — any subset of { name, email, address, memberId }.
+ * Partial update — any subset of { name, emails, address, memberId }.
+ * `emails` is a full-list replace (same pattern as events' `recurrenceDays`):
+ * omitted leaves the stored list untouched, `null` clears it to `[]`, an
+ * array replaces it wholesale after validation/normalization.
  */
 export async function PATCH(
   request: NextRequest,
@@ -83,11 +120,11 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { name, email, address, memberId } = body;
+    const { name, emails, address, memberId } = body;
 
     const patch: Partial<{
       name: string;
-      email: string | null;
+      emails: string[];
       address: string | null;
       memberId: string | null;
       updatedAt: Date;
@@ -106,21 +143,15 @@ export async function PATCH(
       patch.name = name.trim();
     }
 
-    if (email !== undefined) {
-      if (email === null) {
-        patch.email = null;
+    if (emails !== undefined) {
+      if (emails === null) {
+        patch.emails = [];
       } else {
-        if (typeof email !== "string") {
-          return NextResponse.json({ error: "email must be a string or null" }, { status: 400 });
+        const result = normalizeEmails(emails);
+        if ("error" in result) {
+          return NextResponse.json({ error: result.error }, { status: 400 });
         }
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email.trim())) {
-          return NextResponse.json(
-            { error: "email must be a valid email address" },
-            { status: 400 },
-          );
-        }
-        patch.email = email.trim().toLowerCase();
+        patch.emails = result.emails;
       }
     }
 
