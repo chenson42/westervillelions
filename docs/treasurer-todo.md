@@ -37,7 +37,7 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
 | T-24 | ⬜ | Standing reference: accounting basis + LCI transparency standard |
 | T-25 | ⬜ | Clean up category catalog / full budget→txn→report traceability |
 | T-26 | 🔶 | FY2025 checks reconciled (8252/8253 done); Admin 8002 refile deferred to T-25 |
-| T-27 | ⬜ | Possible duplicate $102.86 posting (2026-06-10, eyeglass collection boxes) |
+| T-27 | ✅ | Duplicate $102.86 posting confirmed and removed (2026-08-08) |
 | T-28 | ⬜ | WARM budget-vs-actual gap — board to confirm the FY2026 level |
 | T-29 | ✅ | Duplicate Club categories merged (2026-08-06) — Member recognition $200, Program supplies $700 |
 | T-30 | ⬜ | Husky Hub cause placement — Hunger & Basic Needs or Youth & Education? |
@@ -217,7 +217,7 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
   Source: `Chase2000_..._foundation.csv` / `Chase8338_..._admin.csv`, `WLCF/WLC June 2026 Monthly
   Report.pdf`, registers at `/Users/cshenso/Documents/Treasurer Transfer Documents 07-2024 to 06-2026`.
   Net: the ledger is **materially complete**; no missing money was found.
-- [ ] **T-27 — Possible duplicate transaction: two identical $102.86 postings on 2026-06-10.** (added
+- [x] **T-27 — Possible duplicate transaction: two identical $102.86 postings on 2026-06-10.** (added
   2026-08-05, surfaced while reviewing FY2025 Club actuals for the budget-committee review) Both sit in
   the Club Administrative **"Program supplies"** category, both dated 2026-06-10, both $102.86, both for
   **used-eyeglass collection boxes**. They differ only in how they were recorded: one carries the party
@@ -359,3 +359,33 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
 - Register ending balances at import: Foundation $4,836.57, Club $16,218.64 — the Ledger reconciles
   to both exactly. Opening balances: club/admin $19,090.10 (6/30/2024), foundation/charitable
   $28,569.30 (carryover minus pre-window check #8022).
+
+
+---
+
+### T-27 — RESOLVED 2026-08-08
+
+Confirmed a duplicate and removed it. The two rows were identical in date ($102.86, 2026-06-10),
+bank account, and category, and differed in exactly the way that settles it:
+
+| | Quicken row (`c7893e56`) | Bank row (`1b4f1e91`) |
+|---|---|---|
+| Created | 2026-07-21, via the Quicken import | 2026-07-30, from the bank feed |
+| Party | "Lions Clubs International" | raw ACH descriptor (…IND NAME: JAMES *SHIVELY…) |
+| Memo | "Eyeglass collection boxes. [quicken-import]" | "Used eyeglasses collection boxes" |
+| **Reconciled** | **never** | **2026-07-30 — matched the statement** |
+
+Only one charge ever cleared the bank. Reconciliation matched the bank-sourced row and left the
+Quicken row unmatched, because there was no second statement line for it to match. The Quicken import
+was therefore the duplicate.
+
+**Removed** `c7893e56-e9ff-4e19-b43d-12165550604f` by direct delete, guarded on the same conditions the
+app's own DELETE endpoint enforces — not approved, not tied to a closed reconciliation session, not
+part of a transfer pair, no dues link — all of which it cleared. The bank-matched row survives, so the
+books still tie to the June 2026 statement.
+
+**Knock-on figures corrected:** Club Administrative "Program supplies" FY2025 actual falls
+**$670.64 → $567.78**. The FY2026 budget line note in production was updated to cite the corrected
+figure. The FY2026 budget of $700 remains sensible against $567.78 and was left unchanged. Note that
+**T-29's write-up above still cites the old $670.64** as the figure that motivated the category merge —
+that remains an accurate record of what was known at the time, and is deliberately not rewritten.
