@@ -256,7 +256,7 @@ He/She and the other Past Presidents shall officially greet members and their gu
 
 #### (3) VICE-PRESIDENTS:
 
-If the President is unable to perform the duties of his/her office for any reason, the Vice-President next in rank shall occupy his/her position and perform his/her duties with the same authority as the President. Each Vice-President shall, under the direction of the President, oversee the functioning of such committees of this Club as the President shall designate. The 1st Vice-President shall be responsible for coordinating and overseeing of all the club's fund-raisers and service projects during his/her year in office. The 2nd Vice-President shall be responsible for publishing the monthly newsletter and handling all public relations (i.e. newspaper, radio, etc.) of all the club's activities during his/her year in office. It is expected and anticipated that the vice-presidents will succeed to the office of President and the Immediate Past President.
+If the President is unable to perform the duties of his/her office for any reason, the Vice-President next in rank shall occupy his/her- position and perform his/her duties with the same authority as the President. Each Vice-President shall, under the direction of the President, oversee the functioning of such committees of this Club as the President shall designate. The 1st Vice-President shall be responsible for coordinating and overseeing of all the club's fund-raisers and service projects during his/her year in office. The 2nd Vice-President shall be responsible for publishing the monthly newsletter and handling all public relations (i.e. newspaper, radio, etc.) of all the club's activities during his/her year in office. It is expected and anticipated that the vice-presidents will succeed to the office of President and the Immediate Past President.
 
 #### (4) SECRETARY:
 
@@ -302,7 +302,7 @@ He/She shall perform all duties and responsibilities delegated by the Treasurer.
 
 #### (8) LION TAMER:
 
-The Lion Tamer shall have charge of and be responsible, for the property and paraphernalia of the Club, including flags, banners, bell, gavel, and other similar club property. He/She shall put in its proper place before each meeting and return the same to the proper storage place after each meeting. He/She shall act as sergeant-at-arms at meetings, see that all present are properly seated, and distribute bulletins, favors and literature as required at Club and Board meetings. He/She shall give special attention to assure that each new member sits with a different group at each meeting so that the new member can become better acquainted.
+The Lion Tamer shall have charge of and be responsible, for the property and paraphernalia of the Club, including flags, banners, bell, gavel, and other similar club property. He/she shall put in its proper place before each meeting and return the same to the proper storage place after each meeting. He/She shall act as sergeant-at-arms at meetings, see that all present are properly seated, and distribute bulletins, favors and literature as required at Club and Board meetings. He/She shall give special attention to assure that each new member sits with a different group at each meeting so that the new member can become better acquainted.
 
 #### (9) TAIL TWISTER:
 
@@ -609,7 +609,7 @@ Recorded for completeness. None of the following is part of the operative text.
   Section I ("REMOVAL"); Article XV Section A (most of the section); By-Law No. Five
   Sections A and B; By-Law No. Six. These are a later reader's annotations, not part of
   the document.
-- **A hand-drawn "?" in orange/red marker** appears in the margin beside By-Law No. Five,
+- **A hand-drawn "?" in yellow marker** appears in the margin beside By-Law No. Five,
   Section B on page 16 — again, a reader's annotation, not document text.
 - Article headings in the original are centred, bold and underlined; section labels
   ("Section A:") are italic and underlined; membership-class and officer-duty headings are
