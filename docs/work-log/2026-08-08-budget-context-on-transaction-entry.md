@@ -14,10 +14,10 @@
 |-------|-------|--------|---------|------|
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-08-08 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-08-08 |
-| 3 — Technical design | tech-lead | Pending | — | — |
-| 4 — Implementation | TBD by tech-lead | Pending | — | — |
-| 5 — Verification | qa | Pending | — | — |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 3 — Technical design | tech-lead | Complete | Design complete | 2026-08-08 |
+| 4 — Implementation | api-developer (query+route) → ux-developer (panel+form) | Complete (both halves) | — | 2026-08-08 |
+| 5 — Verification | qa | Complete | PASS | 2026-08-08 |
+| 6 — Shipped vs intent | analyst | Complete | SHIP WITH NOTES | 2026-08-08 |
 
 ---
 
@@ -162,135 +162,908 @@ Nothing here warrants a loop-back. Phase 3 can proceed directly to design.
 
 ## Summary
 
-[One paragraph: what we're building and why.]
+We're adding a read-only "budget context" panel to `TransactionForm` (`src/components/admin/ledger/transaction-form.tsx`)
+so a treasurer entering an income or expense transaction sees, right next to the category/budget-line pickers, how much
+of that category's (or cause line's) fiscal-year budget has already been used — counting both posted and pending
+transactions, labeled separately — and what the figure becomes if the transaction being typed right now is saved. This
+closes the gap where the only place to check "am I about to overspend?" today is a completely separate page
+(`/admin/ledger/budgeting`), forcing the treasurer to abandon the entry they're mid-typing to go look. No schema
+changes; this is a new read path over data that already exists (`ledgerBudgets`, `ledgerBudgetLines`,
+`ledgerTransactions`), reusing the pure arithmetic already proven in `src/lib/ledger.ts`. This design executes
+DECISION-069's five architectural rulings; nothing here reopens them.
 
 ## Permissions
 
-- Permission key(s): `area.action`
-- Default role bindings: [list]
+- No new `FEATURES` key. The new route handler gates on the existing keys: `hasAnyFeature(session.user.id, [FEATURES.BUDGET_VIEW, FEATURES.LEDGER_MANAGE])` — `hasAnyFeature` (`src/lib/permissions-server.ts:86-92`) is the established helper for this exact "any of" shape, already used identically in `PATCH /api/admin/ledger/budgets` and `PATCH /api/admin/ledger/budget-notes`. This is deliberately a *second*, independent check from the `LEDGER_RECORD`/`LEDGER_MANAGE` check that already gates reaching the dialog — per the treasurer's decision and Phase 1's finding that today's "every `ledger.record` role also holds `budget.view`" is coincidence, not structure.
+- Default role bindings: none to add — reuses `budget.view` (bound to `admin`, `treasurer`, `board_member`, `budget_committee` per `drizzle/migrations/0069_ledger_budget_permissions.sql`) and `ledger.manage` (bound to `admin`, `treasurer` per `drizzle/migrations/0045_ledger_permissions.sql`).
+
+## Query Contract — `src/lib/ledger-budget-context-queries.ts` (new sibling module)
+
+```ts
+export type BudgetContextCategoryRow = {
+  categoryId: string;
+  categoryName: string;
+  flow: "income" | "expense";
+  /** null = no ledgerBudgets row for (fundId, fiscalYear, categoryId, flow),
+   *  OR an annotation-only row (resolveDisplayBudgetCents convention below).
+   *  Never a fabricated 0 — see Panel States, "No budget set." */
+  budgetCents: number | null;
+  postedCents: number;
+  pendingCents: number;
+};
+
+export type BudgetContextLineRow = {
+  budgetLineId: string;
+  categoryId: string;   // the line's OWN parent category — see Edge Cases
+  categoryName: string;
+  cause: string;
+  label: string;
+  budgetCents: number;  // ledgerBudgetLines.amountCents — NOT NULL at the schema level, always a number
+  postedCents: number;
+  pendingCents: number;
+};
+
+export type BudgetContext = {
+  fiscalYear: number;
+  categories: BudgetContextCategoryRow[]; // every active category for this fund's kind, budgeted or not
+  lines: BudgetContextLineRow[];          // every budget line under a ledgerBudgets row for this fund+FY
+};
+
+export async function getBudgetContext(
+  fundId: string,
+  fiscalYear: number,
+): Promise<BudgetContext | null>  // null = fund not found, mirrors getFundReport's contract
+```
+
+**Which transactions are counted.** One transaction fetch, scoped to `(fundId, fyBounds(fiscalYear))` (`gte(txnDate, start)`,
+`lt(txnDate, end)` — same bounds helper `getFundReport` uses at `ledger-queries.ts:558`) and additionally filtered in SQL to
+`status IN ('posted', 'pending')` — i.e. `rejected` rows are never fetched at all, not merely ignored after the fact. This is
+the mechanism that makes "rejected never counts" true by construction rather than by a filter someone could accidentally
+drop. Split the result into `postedTxns` / `pendingTxns` by `status`, mirroring `getFundReport`'s existing `postedTxns` split
+(`ledger-queries.ts:705`).
+
+**Category grain, single pass over both transaction sets:**
+- `postedByKey` / `pendingByKey`: two `Map<string, number>` keyed by `` `${categoryId}_${flow}` ``, built exactly like
+  `getFundReport`'s `actualMap` (`ledger-queries.ts:710-716`) — one loop over `postedTxns`, one over `pendingTxns`.
+- For every active category for this fund's `(entityId, kind)` (same `ledgerCategories` query as `getFundReport` step 3,
+  `ledger-queries.ts:576-586` — **no "extra categories" pass**, unlike `getFundReport`: this query only serves live
+  picker lookups against the `categories` prop the form already preloaded, so a category that's been deactivated and
+  no longer appears in any picker doesn't need a row here. This is an intentional trim, not an oversight — name it in
+  code as such.), look up `budgetRows` for `(fundId, fiscalYear)` (`ledger-queries.ts:589-597`) to get `rawBudgetCents`,
+  `starred`, `note`, and whether the row has cause lines (`causeLinesByBudgetId`, same batched fetch as
+  `ledger-queries.ts:630-646`). Apply `resolveDisplayBudgetCents(rawBudgetCents, hasCauseLines, starred, note)` from
+  `lib/ledger.ts:2077` — the exact same annotation-only-zero-row discriminator `getFundReport` uses — so a starred/noted
+  $0 row reads as "no budget set" here too, not as a fabricated $0-with-spend. This was flagged explicitly in Phase 2's
+  Notes as the convention to reuse rather than invent a second one.
+
+**Cause-line grain**, reusing `lib/ledger.ts`'s helpers exactly as DECISION-069 ruling 3 requires:
+- `linkedPostedByLineId` / `linkedPendingByLineId`: two maps built from `postedTxns` / `pendingTxns` respectively, filtered
+  to `flow === 'expense' && txn.budgetLineId`, same shape as `getFundReport`'s `actualByBudgetLineId` (`ledger-queries.ts:722-735`).
+- The fuzzy `causeActualsByKey` pool is built **from `postedTxns` only**, via `isEligibleForFuzzyCauseMatch` +
+  `buildCauseActualsByKey` (`ledger-queries.ts:746-756`, unchanged) — **pending transactions never enter the fuzzy pool**,
+  per Phase 2's explicit note. A pending transaction's dollars only ever reach a specific line through an explicit
+  `budgetLineId` link; an un-linked pending expense still counts at the *category* grain (it's in `pendingByKey`) but
+  isn't attributed to any one cause line.
+- For each budget line: `resolveCauseLineActual(linkedPostedByLineId.get(line.id) ?? 0, causeActualsByKey[fallbackKey] ?? null)`
+  gives `postedCents` (`.cents`) exactly as `getFundReport` computes it today — same predicate, same helper, cannot drift.
+  `pendingCents` is simply `linkedPendingByLineId.get(line.id) ?? 0` — direct link only, no fallback branch (there is no
+  pending-eligible fuzzy pool to fall back to).
+
+**Response.** `categories` includes every active category for the fund's kind (budgeted or not — bounded to tens of rows,
+same bound `BudgetLinePicker`'s candidate list already assumes). `lines` includes every `ledgerBudgetLines` row under this
+fund+FY's `ledgerBudgets` rows, each carrying its own `categoryId`/`categoryName` so the panel never has to cross-reference
+back into `categories` to find a line's parent (see Edge Cases, "line whose parent differs from the chosen category"). No
+`asOfDate` parameter — unlike `getFundReport`, this feature always wants "as of right now," never a historical report date.
 
 ## API Contract
 
-- `POST /api/...` — purpose, request body, response shape
-- `GET /api/...` — purpose, query params, response shape
-- Or server-action signatures: `async function actionName(input): Promise<Result>`
+`GET /api/admin/ledger/budget-context?fundId=<uuid>&fiscalYear=<int>`
+
+- Query params: `fundId` (required, UUID), `fiscalYear` (required, integer; reuse the `budget-approvals` route's existing
+  2000–2100 sanity bound).
+- Response 200: `{ fiscalYear: number, categories: BudgetContextCategoryRow[], lines: BudgetContextLineRow[] }`
+- 400: `fundId` missing/not a UUID, or `fiscalYear` missing/non-integer/out of range.
+- 401: no session (`!session?.user?.id`).
+- 403: `!(await hasAnyFeature(session.user.id, [FEATURES.BUDGET_VIEW, FEATURES.LEDGER_MANAGE]))` — generic
+  `{ error: "Forbidden" }`, no data leaked in the body.
+- 404: `getBudgetContext` returns `null` (fund not found) — mirrors every other fund-scoped GET in this directory.
+- 500: unhandled error, generic `{ error: "..." }`, matching the try/catch shape every route in
+  `src/app/api/admin/ledger/**` already uses (see `donors/route.ts`, `reimbursements/route.ts`).
 
 ## Data Model
 
-[New tables / columns / indexes, or "No schema changes required."]
+No schema changes required. Reads existing `ledgerBudgets`, `ledgerBudgetLines`, `ledgerTransactions`, `ledgerCategories` only.
 
 ## Component / Page Plan
 
-- Pages to create: [list]
-- Components to create: [list]
-- Files to modify: [list]
+- Files to create:
+  - `src/lib/ledger-budget-context-queries.ts` — query module above (server-only, imports `@/lib/db`).
+  - `src/app/api/admin/ledger/budget-context/route.ts` — route handler above.
+  - `src/components/admin/ledger/budget-context-panel.tsx` — client panel (below).
+- Files to modify:
+  - `src/components/admin/ledger/transaction-form.tsx` — renders the new panel, derives `parsedAmountCents` once via
+    the file's existing `parseDollars(amount)` (line 101-105, already used at submit time) and threads it down as a prop
+    rather than duplicating or exporting that parser for the panel to re-implement.
 
-## Implementation Order
+### `budget-context-panel.tsx` props
 
-1. Schema (if any) → add migration in `drizzle/migrations/` and update `src/lib/db/schema.ts`
-2. `FEATURES` entry in `src/lib/permissions.ts` + role binding migration
-3. Route handlers / server actions
-4. UI
-5. Email notification (if applicable) — enqueue via `sendEmail` in `src/lib/email.ts`
-6. Release notes entry
+```ts
+interface BudgetContextPanelProps {
+  fundId: string;
+  txnDate: string;             // 'YYYY-MM-DD'
+  flow: "income" | "expense";  // resolveApiFlow(flowMode) — never called for transfer/sweep, see render gate below
+  categoryId: string;          // "" = none chosen yet
+  budgetLineId: string;        // "" = none chosen
+  amountCents: number | null;  // parseDollars(amount) result — null while empty/zero/invalid
+}
+```
+
+The panel owns its own `fetch()` effect, keyed on `[fundId, derivedFiscalYear]` where `derivedFiscalYear =
+getFiscalYear(new Date(txnDate + "T00:00:00"))` — the identical 4-line inline parse `BudgetLinePicker` already does at
+`budget-line-picker.tsx:42-48` and `transaction-form.tsx`'s own effect does at lines 282-284. Not extracted into a new
+shared helper: it's already duplicated twice in this codebase without complaint, and a third inline copy is more honest
+than introducing a one-line-saving abstraction three call sites deep. All lookups (`categories.find(...)`,
+`lines.find(...)`) and the current/projected arithmetic happen client-side against the fetched `BudgetContext` payload —
+zero additional network round-trips per keystroke or per category/line selection, per DECISION-069 ruling 1.
+
+### Render placement in `transaction-form.tsx`
+
+Renders immediately after the Category `<select>` block (after line 660, before the "Party" field at line 662), gated on
+the **same condition as the Category select itself** — `!isTransferOrSweep && !isEditingTransfer` — **not**
+`showBudgetLineSection` (which is expense-only, line 240). This is what makes the panel visible for income transactions
+too (Flow 5), where there is no `BudgetLinePicker` at all. Placement relative to the later `BudgetLinePicker` block
+(lines 745-774, which can rewrite `categoryId` via its `onSelect` handler at line 767) doesn't create a staleness risk:
+`categoryId`/`budgetLineId` are React state on the parent, and picking a line updates both `categoryId` and `budgetLineId`
+in the same event handler, so the panel — wherever it sits in the JSX tree — re-renders with the already-consistent pair
+on the very next paint. No effect ordering to get wrong.
+
+Styling matches the existing inline informational-note precedent in this same file (Transfer note, `rounded-lg bg-gray-50
+border border-gray-200`, lines 556-561; Sweep note, `rounded-lg bg-blue-50 border border-blue-200`, lines 565-578) —
+`rounded-lg`, not `rounded-2xl` (this is inline form context, not a card). No `<ConfirmDialog>` — no destructive action.
+Text stacks vertically by default (block-level `<p>`s, no forced side-by-side layout), so 360px is satisfied without a
+separate mobile treatment.
+
+## Fiscal-Year Rule
+
+FY is derived from `txnDate`, never from today's date — `getFiscalYear(new Date(txnDate + "T00:00:00"))`, same parse as
+`transaction-form.tsx:282-284`'s existing `budgetLineId` auto-clear effect. The panel's fetch effect depends on
+`[fundId, derivedFiscalYear]` (the *derived* FY, per DECISION-069 ruling 1) — editing the day-of-month within the same
+fiscal year never refetches; crossing a FY boundary (e.g. back-dating a June 2026 expense while today is August 2026)
+does.
+
+**What renders while a FY-crossing refetch is in flight — the single highest-consequence case Phase 1 flagged (Flow 3).**
+The panel does not gate on "is a fetch in flight"; it gates on `payload.fiscalYear !== derivedFiscalYear`. Track the last
+*requested* FY alongside the last *loaded* FY:
+
+- The moment `derivedFiscalYear` changes, the panel enters the Loading state **synchronously**, before the new
+  `fetch()` even resolves — it never continues showing the previous FY's numbers under a new-FY date, because the
+  render condition checks the derived FY against the loaded payload's `fiscalYear`, not a boolean "loading" flag that
+  could lag one render behind.
+- A resolved response is only committed to state if its request's FY still matches the *current* `derivedFiscalYear` at
+  resolution time (a standard "ignore stale response" guard) — this covers the case where a treasurer flips the date
+  back and forth quickly and a slow first request resolves after a faster second one.
+- This is exactly the case Phase 1 called "a confidently wrong number is worse than no number" about — it must be an
+  explicit QA click-through in Phase 5 (back-date across a FY boundary with the network throttled), not assumed correct
+  because the dependency array "looks right."
+
+## Panel States
+
+Rendered whenever `!isTransferOrSweep && !isEditingTransfer` (same gate as the Category select), independent of whether
+a category is chosen — the panel itself decides what to show:
+
+1. **No category chosen** (`categoryId === ""`): render nothing — no empty box, no skeleton. The existing Transfer/Sweep
+   notes in this same form already appear/disappear conditionally (lines 556, 565), so a panel that pops in once a
+   category is picked is consistent with this form's existing behavior, not a new pattern.
+2. **Loading** (`derivedFiscalYear !== loadedFiscalYear`, including the very first mount): a muted `rounded-lg bg-gray-50
+   border border-gray-200` block, "Loading budget context…" — never numbers, never the previous FY's figures.
+3. **Fetch failed**: a *visually distinct* block — `rounded-lg bg-amber-50 border border-amber-200 text-amber-800`,
+   "Couldn't load budget context." with a plain-text "Try again" retry action (re-triggers the effect; not a
+   `<ConfirmDialog>`, nothing destructive). Amber, not gray — so this state can never be mistaken for "no budget set,"
+   which is Phase 1's explicit failure mode to avoid.
+4. **No budget set for this category/FY** (`budgetCents === null` after `resolveDisplayBudgetCents`): "No budget set
+   for FY{fiscalYear}." in neutral gray — **no "$X of $Y" framing at all**, since there is no Y. If posted+pending
+   activity exists anyway (a category spent against with no budget row), append a plain factual aside with no
+   progress framing: "No budget set for FY{fiscalYear} — $340 recorded so far." Never a percentage, never a bar,
+   never the word "over."
+5. **Expense, category grain, budget present, no line selected**: "$570 of $700 used ($420 posted + $150 pending)."
+   If `amountCents` is a valid positive parse (see Projected Figure below), append "→ $700 after this one." Negative
+   variance (projected > budget) renders the whole figure in `text-amber-700` — the exact precedent `budget-overview-table.tsx`'s `StatCell` already uses for a negative `Net` figure (`warn` prop, line 139) — never `text-red-*` (forbidden brand color) and never a blocking UI element.
+6. **Expense, line selected** (per treasurer decision #3 — line first, parent underneath): the line's own figure
+   ("[Cause] — [Label]: $A of $B used → $C after this one"), then a visually subordinate second line for the parent
+   category's full rollup ("[Category name] overall: $D of $E used → $F after this one"). Both computed via the same
+   `budgetVariance()` call, once per grain — never two different arithmetic paths.
+7. **Income, category grain**: "received"/"expected" framing per treasurer decision #4 — "$3,200 of $5,000 received,"
+   projected "→ $3,650 after this gift." Never amber/warning styling when projected exceeds expected — exceeding an
+   income budget is good news, not a risk signal, so the over-100% case renders in the same neutral/positive tone as
+   under-100%, explicitly never reusing state 5's amber treatment.
+8. **Loading/failed/no-budget states apply identically to income** — same visual treatment, only the verb framing
+   (state 7 vs. 5/6) differs. One component renders both framings from a `flow` prop, not two components or a
+   search-replaced copy (per Phase 1's explicit requirement that this not be a copy-paste risk).
+
+## Projected Figure
+
+Computed entirely client-side, reusing `budgetVariance()` from `lib/ledger.ts` — the same function the category/line
+grain already uses for the "current" figure, called a second time with `actualCents` replaced by
+`(postedCents + pendingCents + amountCents)`. No separate addition/subtraction reimplemented in the component; one
+function computes this arithmetic everywhere it's computed (DECISION-069 ruling 3).
+
+- `amountCents === null` (empty field, "0"/"0.00" — `parseDollars` already returns `null` for both, `transaction-form.tsx:101-105` — or non-numeric input mid-typing): suppress the "→ $Z after this one" clause entirely. Show only the current figure. Showing a projected total that silently assumes "+$0" would misrepresent an amount the treasurer just hasn't finished typing yet — this is the same "confidently wrong is worse than no number" principle applied to the projection specifically.
+- `amountCents` a valid positive integer: show the projected clause, recomputed via `budgetVariance()` as above.
+- **Update cadence: every keystroke, no debounce.** This is pure client-side arithmetic against an already-fetched
+  payload — no network call is triggered by typing in the Amount field, so there is no cost a debounce would be
+  protecting against. `amount`'s existing `onChange` (`transaction-form.tsx:617`) already re-renders the form on every
+  keystroke; the panel simply reads the freshly parsed `amountCents` prop on that same render.
 
 ## Edge Cases & Risks
 
-- [Thing that could fail or that needs special handling]
+- **Lump-sum category, no cause lines.** `lines.filter(l => l.categoryId === categoryId)` is simply `[]` — the panel
+  renders category grain only (state 5/7), no line-grain block. No special-casing needed; falls out of an empty filter.
+- **Selected line's parent differs from the chosen category.** Cannot actually happen in the running form:
+  `BudgetLinePicker`'s `onSelect` handler (`transaction-form.tsx:753-768`) unconditionally overwrites `categoryId` to
+  the picked line's own `categoryId` in the same event handler that sets `budgetLineId`, so the two are never out of
+  sync by the time the panel re-renders. The panel is still built defensively — it derives "parent category" for the
+  line-selected state from the *line row's own* `categoryId`/`categoryName` fields (returned directly on
+  `BudgetContextLineRow`), never from the form's separate `categoryId` prop — so it stays correct even if a future code
+  path decouples them.
+- **Fund changed after a category was chosen.** Already handled upstream: the existing effect at
+  `transaction-form.tsx:262-267` clears `categoryId` when it no longer belongs to the newly-filtered category list, so
+  the panel falls back to state 1 (no category chosen) on the very next render. The fund change also changes
+  `derivedFiscalYear`'s companion `fundId` dependency, triggering a fresh fetch — no cross-fund staleness risk. The
+  budget-line auto-clear effect (`transaction-form.tsx:275-288`) does the same for `budgetLineId`.
+- **A category with a budget in a different fund.** The query is scoped to `(fundId, fiscalYear)` — a same-named
+  category's budget row under a *different* `fundId` is a genuinely different `ledgerBudgets` row (the unique
+  constraint is `(fundId, fiscalYear, categoryId, flow)`) and is simply never fetched. The panel correctly shows "No
+  budget set for FY{fiscalYear}" for that fund even though the category has budget history elsewhere — this is
+  correct behavior, not a bug, and should be named as such in code comments so a future reader doesn't "fix" it.
+- **Editing an existing transaction.** `initialValues` already populates `fundId`/`txnDate`/`categoryId`/`budgetLineId`
+  before first render (`transaction-form.tsx:166-207`), so the panel's mount-time effect fires with real values
+  immediately — context is visible on dialog open, matching Flow 4, with no special-casing in the panel itself (it only
+  ever reacts to its current props, blind to create-vs-edit mode).
+- **Reimbursement mark-paid dialog (`pay-reimbursement-dialog.tsx`) — OUT OF SCOPE for this increment.** Phase 1 listed
+  this explicitly under "Out of Scope (confirm with user)," and the treasurer's 2026-08-08 decisions didn't override
+  it. `BudgetContextPanel`'s props (`fundId`/`txnDate`/`flow`/`categoryId`/`budgetLineId`/`amountCents`) are generic
+  enough that wiring it into the reimbursement dialog later is a small follow-up (its `amount` prop is currently a
+  fixed, non-editable string — the projected-figure UX would need a small adjustment there), not a redesign. Track as a
+  backlog candidate rather than doing it now.
+
+## Named Unit Tests for Phase 4
+
+**`src/lib/ledger-budget-context-queries.test.ts`** (mocked Drizzle client, same call-order-canned-response pattern as
+`ledger-queries.test.ts`):
+1. A `rejected` transaction is never fetched/counted in either `postedCents` or `pendingCents` — assert the query's
+   WHERE clause and/or that a seeded rejected row contributes to neither figure.
+2. A `posted` and a `pending` transaction in the same category both land in the correct, separately-labeled field
+   (`postedCents` vs. `pendingCents`) — never silently summed into one number.
+3. A category with no `ledgerBudgets` row for `(fundId, fiscalYear)` returns `budgetCents: null`, not `0`.
+4. A starred/noted annotation-only budget row (`annualAmountCents: 0`, no cause lines) also returns `budgetCents: null`
+   via `resolveDisplayBudgetCents` — not a fabricated `$0` figure.
+5. A cause line's `postedCents` resolves via the exact-link-wins-over-fuzzy-fallback rule (`resolveCauseLineActual`),
+   and its `pendingCents` is direct-link-only with no fuzzy fallback applied.
+6. A pending transaction with a non-blank `beneficiaryCause` but no explicit `budgetLineId` does **not** appear in any
+   line's `pendingCents` (fuzzy pool is posted-only) but does count at the category grain.
+7. `fiscalYear`/`fundId` scoping: a budget row for the same category in a different fund, or the same fund in a
+   different fiscal year, never leaks into the response.
+
+**`src/components/admin/ledger/budget-context-panel.test.tsx`** (or colocated with the component, per this repo's
+existing UI-test convention — see `ledger-category-ui.test.ts`, `financial-report-ui.test.ts` for the pure-logic-out-of-
+component pattern to follow if the arithmetic/framing logic is factored into small testable functions):
+8. Projected = current (`postedCents + pendingCents`) + in-progress `amountCents`, via `budgetVariance()` — asserted
+   against a fixed baseline and a range of `amountCents` inputs.
+9. `amountCents === null` (empty, "0", non-numeric) suppresses the projected clause entirely rather than showing
+   "+$0."
+10. Income flow renders "received"/"expected" copy, never "used"/"budgeted."
+11. FY-derivation: a `txnDate` before July 1 resolves to the prior calendar year's FY (mirrors `getFiscalYear`'s own
+    existing test coverage, exercised here at the prop-to-fetch-key boundary) — and changing `txnDate` within the same
+    derived FY does not change the fetch key.
+12. Stale-response guard: a response whose `fiscalYear` no longer matches the current `derivedFiscalYear` prop at
+    resolution time is never committed to displayed state.
+
+**Route-level** (folded into whichever of the above two files is more natural, or a light `route.test.ts` if this
+directory's convention has one for sibling routes — check `budget-notes`/`budgets` for precedent before adding a new
+pattern):
+13. Missing/insufficient permission (`BUDGET_VIEW` and `LEDGER_MANAGE` both absent) returns 403, not 200 with an empty
+    payload — the failure mode must be visibly different from "no budget set."
+
+## Out of Scope
+
+- Editing the budget from inside the transaction dialog — read-only context only (Phase 1).
+- A submission-blocking "you're about to exceed budget" confirmation — pure display, no new confirm step (Phase 1).
+- Historical trend/burn-rate visualization — a snapshot only (Phase 1).
+- Wiring the same panel into `pay-reimbursement-dialog.tsx` — explicitly deferred (see Edge Cases above).
+
+## Implementation Order
+
+1. **api-developer**: `src/lib/ledger-budget-context-queries.ts` (query module) → `src/app/api/admin/ledger/budget-context/route.ts`
+   (route handler) → unit tests 1-7 and 13 above. Handoff point: route returns real data behind the permission gate,
+   verified by curl/Postman or a route test, before any client code is written.
+2. **ux-developer**: `src/components/admin/ledger/budget-context-panel.tsx` (new component, all 8 panel states, the
+   projected-figure logic) → modify `src/components/admin/ledger/transaction-form.tsx` to render it and thread
+   `parsedAmountCents` → unit tests 8-12 above.
+3. Release notes entry via `/release-notes` when this is ready to merge to `main` (tech-lead, Phase 6 SHIP IT).
+
+## Edge Cases & Risks (summary — see full Edge Cases section above for detail)
+
+- FY-boundary refetch race (see Fiscal-Year Rule) is the single highest-consequence risk; must be an explicit QA
+  click-through in Phase 5, not assumed correct from reading the effect's dependency array.
+- Reused `resolveDisplayBudgetCents`/`resolveCauseLineActual`/`budgetVariance`/`isEligibleForFuzzyCauseMatch`/
+  `buildCauseActualsByKey` must stay byte-for-byte the same functions `getFundReport` calls — if either module's import
+  ever forks (a local copy "for convenience"), the transaction-entry number and the fiscal report's number can drift
+  apart silently. Nothing structural prevents this except code review noticing a new local reimplementation — flag it
+  explicitly if Phase 4 or a future PR introduces one.
 
 ## Implementer
 
-[database-admin | api-developer | ux-developer | full-stack-developer]
+**api-developer** for the query module + route handler (Phase 4a), then **ux-developer** for the panel + form
+integration (Phase 4b). This is the specialist split, not full-stack-developer — the query/arithmetic surface alone
+(seven named unit tests, three helper functions reused, a posted/pending split that must exactly mirror
+`getFundReport`'s predicate) is substantial enough on its own, and the panel has eight distinct render states plus a
+race condition to get right — splitting keeps each half reviewable against its own named test list rather than one
+large diff spanning both.
+
+## Phase 3 — Technical Design — 2026-08-08
+
+**Owner:** tech-lead
+**Status:** complete
+
+### Summary
+
+Designed a read-only budget-context panel for `TransactionForm`, executing DECISION-069's five rulings: a new
+`ledger-budget-context-queries.ts` sibling module scoped to `(fundId, derived fiscal year)`, a `GET
+/api/admin/ledger/budget-context` route gated on `BUDGET_VIEW`/`LEDGER_MANAGE`, and a new
+`budget-context-panel.tsx` client component with eight distinct render states (before-category, loading, fetch-failed,
+no-budget, expense/category, expense/line-selected, income, and the shared loading/failed states applied to income
+too). Posted and pending transactions are both counted (rejected never is), always as two separately labeled fields;
+income reads "received/expected," expense reads "used/budgeted"; a selected budget line shows its own figure with the
+parent category's rollup underneath. The projected ("after this one") figure is computed client-side via the same
+`budgetVariance()` helper `getFundReport()` already uses, updating on every keystroke with no debounce since it's pure
+arithmetic against an already-fetched payload.
+
+### What I did
+
+- Read the Phase 1 analyst review and Phase 2 architect ruling (DECISION-069) in full, plus the treasurer's four
+  2026-08-08 decisions and the "Carried from Phase 1" section.
+- Traced the real code the design depends on: `getFundReport()`'s full structure (`ledger-queries.ts:544-883`) as the
+  pattern to mirror; `resolveCauseLineActual`/`causeLineReferenceKey`/`isEligibleForFuzzyCauseMatch`/
+  `buildCauseActualsByKey`/`budgetVariance`/`resolveDisplayBudgetCents` in `lib/ledger.ts`; `transaction-form.tsx`'s
+  state, effects (the FY-derived `budgetLineId` auto-clear at lines 275-288, the fund/category reset at 262-267), and
+  render structure (Category select at 640-660, Transfer/Sweep note styling precedent at 556-578, BudgetLinePicker
+  wiring at 745-774); `budget-line-picker.tsx` and `pay-reimbursement-dialog.tsx` for the shared-picker/out-of-scope
+  question; `permissions-server.ts`'s `hasAnyFeature` and its existing call sites in `budgets/route.ts` and
+  `budget-notes/route.ts`; the `ledgerBudgets`/`ledgerBudgetLines`/`ledgerTransactions` schema; and
+  `budget-overview-table.tsx`'s `StatCell` for the existing amber "warn" styling precedent.
+- Wrote the full Query Contract, API Contract, Component/Page Plan, Fiscal-Year Rule (including the FY-switch race
+  guard), Panel States (all 8), Projected Figure behavior, Edge Cases (7 named), and 13 named unit tests for Phase 4.
+- Logged DECISION-070 for the five implementation-level calls this design makes beyond DECISION-069's architecture
+  (null-vs-zero convention reuse, FY-race guard shape, amber styling reuse, no new shared FY-parse helper, reimbursement
+  dialog confirmed out of scope).
+
+### Outputs
+
+- `docs/work-log/2026-08-08-budget-context-on-transaction-entry.md` — full Phase 3 design doc (this file, Phase 3
+  section above).
+- `docs/decisions.md` — DECISION-070 (implementation-level calls for this feature).
+
+### Open questions / handoff notes
+
+- Use the **api-developer** agent first for `src/lib/ledger-budget-context-queries.ts` and
+  `src/app/api/admin/ledger/budget-context/route.ts`, plus unit tests 1-7 and 13 from the Named Unit Tests section.
+  Hand off to ux-developer only once the route returns real, permission-gated data.
+- Then use the **ux-developer** agent for `src/components/admin/ledger/budget-context-panel.tsx` and the
+  `transaction-form.tsx` integration (render placement after the Category select, `parsedAmountCents` threading), plus
+  unit tests 8-12.
+- Flag for qa (Phase 5): the FY-boundary refetch race (Fiscal-Year Rule section) needs an explicit manual click-through
+  with the network throttled, not just a code read — this is the single highest-consequence failure mode Phase 1
+  identified.
+- Reimbursement mark-paid dialog is explicitly out of scope for this increment (see Edge Cases) — worth a backlog entry
+  if the treasurer wants it later, since it's a small follow-up given the panel's generic prop shape.
 
 ---
 
 # Phase 4 — Implementation
 
-## Files Created
+## Phase 4a — Implementation (API) — 2026-08-08
 
-- `path/to/file` — purpose
+**Owner:** api-developer
+**Status:** complete
 
-## Files Modified
+### Summary
 
-- `path/to/file` — what changed
+Built the server half of the feature exactly per the Phase 3 contract: a new sibling query module
+scoped to `(fundId, fiscalYear)` that fetches only `posted`/`pending` transactions (rejected is never
+fetched, not merely filtered), reuses `lib/ledger.ts`'s existing pure helpers for every piece of
+budget-vs-actual arithmetic, and a permission-gated route handler that serves it. Wrote and passed all
+8 named unit tests assigned to this half (Phase 3 tests 1-7, plus extra positive-path coverage) and the
+route-level test 13, with zero regressions against the 1067-test baseline.
 
-## Schema Changes
+### What I did
 
-- [Tables / columns added, or "none"]
-- Migration file: `drizzle/migrations/NNNN_*.sql` (idempotent)
+- Read the full work-log (Phase 1 analyst review, DECISION-069 architect ruling, DECISION-070 Phase 3
+  implementation calls, the Phase 3 design doc's Query Contract/API Contract/Named Unit Tests, and the
+  Treasurer Decisions) before writing any code.
+- Read `getFundReport()` (`src/lib/ledger-queries.ts:544-883`) as the pattern to mirror, and the six
+  reused pure helpers in `src/lib/ledger.ts` (`resolveCauseLineActual`, `causeLineReferenceKey`,
+  `isEligibleForFuzzyCauseMatch`, `buildCauseActualsByKey`, `budgetVariance`,
+  `resolveDisplayBudgetCents`) to confirm their exact signatures before calling them.
+- Read `getBudgetLineOptions()` (`ledger-queries.ts:911`) and used its
+  `ledgerBudgetLines → ledgerBudgets → ledgerCategories` inner-join shape as the precedent for resolving
+  a cause line's own parent `categoryId`/`categoryName` in one query, rather than cross-referencing back
+  into the separately-fetched `categories` array (per the design doc's Edge Cases section).
+- Read `budget-notes/route.ts` and `budget-approvals/route.ts` for the `hasAnyFeature` gate pattern and
+  the 2000-2100 `fiscalYear` sanity-bound precedent.
+- Wrote `src/lib/ledger-budget-context-queries.ts` — `getBudgetContext(fundId, fiscalYear)`. Five
+  sequential queries (fund lookup, txns restricted to `status IN ('posted','pending')` in SQL, active
+  categories, budget rows, and a joined cause-line query), then two in-memory passes (category grain,
+  cause-line grain) built the same way `getFundReport` builds its maps, reusing the six helpers named
+  above with no local reimplementation.
+- Wrote `src/app/api/admin/ledger/budget-context/route.ts` — `GET`, gated on
+  `hasAnyFeature(session.user.id, [FEATURES.BUDGET_VIEW, FEATURES.LEDGER_MANAGE])`, with `fundId`
+  UUID validation and the same `fiscalYear` 2000-2100 integer bound `budget-approvals` uses.
+- Wrote `src/lib/ledger-budget-context-queries.test.ts` (14 tests covering Phase 3 named tests 1-7, plus
+  a null-fund-lookup case, a genuine-$0-budget-row contrast case for test 4, a fuzzy-fallback-with-no-
+  exact-link case for test 5, and an orphaned-line-with-null-categoryId defensive case) and
+  `src/app/api/admin/ledger/budget-context/route.test.ts` (9 tests covering named test 13 plus the
+  route's 400/401/404/200 contract) — 21 tests total, all against the mocked-Drizzle FIFO-select-queue
+  pattern already established in `ledger-category-queries.test.ts`.
+- Ran `pnpm exec tsc --noEmit` (clean), `pnpm test` (1088 passed, up from the 1067 baseline — 21 new,
+  zero regressions), and `pnpm build:only` (passed; `/api/admin/ledger/budget-context` appears in the
+  build's route list).
 
-## Implementer Notes
+### Outputs
 
-[Tradeoffs taken, anything that diverged from the design and why.]
+- **New file:** `src/lib/ledger-budget-context-queries.ts` — exports `getBudgetContext(fundId: string,
+  fiscalYear: number): Promise<BudgetContext | null>` and the `BudgetContext` /
+  `BudgetContextCategoryRow` / `BudgetContextLineRow` types, exactly as specified in the Phase 3 Query
+  Contract (byte-for-byte field names: `budgetCents: number | null` on category rows, `budgetCents:
+  number` — non-null — on line rows, `postedCents`/`pendingCents` on every row). Server-only (imports
+  `@/lib/db`); never import this from a client component.
+- **New file:** `src/app/api/admin/ledger/budget-context/route.ts` —
+  `GET /api/admin/ledger/budget-context?fundId=<uuid>&fiscalYear=<int>`.
+  - Auth/gate: `auth()` for session, then `hasAnyFeature(session.user.id, [FEATURES.BUDGET_VIEW,
+    FEATURES.LEDGER_MANAGE])` — a second, independent check from whatever gates the calling page/dialog.
+  - Request: query params `fundId` (required, UUID) and `fiscalYear` (required, integer, 2000-2100).
+  - Response 200: `{ fiscalYear: number, categories: BudgetContextCategoryRow[], lines:
+    BudgetContextLineRow[] }`.
+  - 400: `fundId` missing/not a UUID, or `fiscalYear` missing/non-integer/out of range.
+  - 401: no session. 403: `{ error: "Forbidden" }`, gate failed. 404: `{ error: "Fund not found" }`.
+    500: `{ error: "Failed to load budget context" }`.
+- **New file:** `src/lib/ledger-budget-context-queries.test.ts` (14 tests).
+- **New file:** `src/app/api/admin/ledger/budget-context/route.test.ts` (9 tests).
+- No schema changes — reads existing `ledgerFunds`, `ledgerCategories`, `ledgerTransactions`,
+  `ledgerBudgets`, `ledgerBudgetLines` only. No migration.
+- No new `FEATURES` key, no new role binding — reuses `BUDGET_VIEW`/`LEDGER_MANAGE` exactly as
+  DECISION-069/070 specified.
+
+### Implementer notes / divergence from the design doc
+
+- One small, deliberate deviation from the Phase 3 sketch, noted per the "say so, don't fork" instruction:
+  the design doc's prose describes fetching `budgetLineRows` unjoined and building `causeLinesByBudgetId`
+  keyed by `budgetId` (mirroring `getFundReport`'s internal shape), then separately resolving each line's
+  parent category. I instead used `getBudgetLineOptions()`'s existing inner-join shape
+  (`ledgerBudgetLines → ledgerBudgets → ledgerCategories`, filtered to this fund+FY) to fetch
+  `categoryId`/`categoryName` directly alongside each line in one query. This is a real precedent already
+  in this codebase (not a new pattern), it satisfies the same requirement the design doc names in Edge
+  Cases ("the panel derives 'parent category' from the line row's own `categoryId`/`categoryName`
+  fields... never from the form's separate `categoryId` prop"), and it avoids a second local map-building
+  pass the whole-fund `getFundReport` needs but this narrower query doesn't. No arithmetic helper was
+  forked — `resolveCauseLineActual`/`causeLineReferenceKey`/`isEligibleForFuzzyCauseMatch`/
+  `buildCauseActualsByKey` are called exactly as `getFundReport` calls them, just against this smaller
+  fetch. Flagging this explicitly rather than silently diverging, per the design doc's own instruction.
+- `ledgerBudgets.categoryId` is nullable at the schema level (`onDelete: 'set null'`). A budget-line row
+  whose parent budget row's `categoryId` has gone null is excluded from the `lines` array rather than
+  crashing or fabricating a categoryId — covered by its own test ("a budget line whose parent budget row
+  has a null categoryId is excluded, not crashed on"). This can't happen through any live UI path today
+  (categories aren't hard-deleted), but the type system's `BudgetContextLineRow.categoryId: string`
+  (non-nullable) needed a defined behavior for the theoretical case, so I picked "exclude" over "throw."
+- All 5 DB queries run unconditionally (fund, txns, categories, budgets, lines) rather than the
+  `budgetIds.length > 0 ? ... : []` short-circuit `getFundReport` uses for its budget-line fetch — this
+  query joins `ledgerBudgetLines → ledgerBudgets` directly on `(fundId, fiscalYear)` rather than an
+  intermediate `budgetIds` array, so there's no empty-array case to short-circuit, and it keeps the
+  query's call order fixed/predictable for both the mock tests and future readers.
+
+### Open questions / handoff notes
+
+- **Next agent: ux-developer.** Build `src/components/admin/ledger/budget-context-panel.tsx` (all 8
+  panel states, the FY-switch race guard, the projected-figure arithmetic via `budgetVariance()`) and
+  wire it into `src/components/admin/ledger/transaction-form.tsx` per the Phase 3 Component/Page Plan —
+  the route above is live, gated, and returns real data in the exact shape the design doc's props
+  (`BudgetContextPanelProps`) expect. Also write Phase 3's named tests 8-12
+  (`budget-context-panel.test.tsx`).
+- The route has NOT been manually curled/clicked through against a real dev DB — only unit-tested against
+  a mocked Drizzle client and confirmed to type-check/build. Recommend qa's Phase 5 click-through include
+  at least one direct `GET` against a real fund/FY to confirm the live query shape matches the mocked
+  test shape (the mocked tests prove the module's *logic*, not that the real schema's column names/types
+  line up with what Drizzle returns at runtime — `pnpm build:only`'s type-check is the strongest signal
+  available pre-QA that they do, since Drizzle's inferred row types are structurally checked against the
+  code that consumes them).
+- Flagging again for qa per the design doc: the FY-boundary refetch race is UI-side (ux-developer's
+  panel), not something this half's tests can exercise — it needs the explicit network-throttled manual
+  click-through Phase 3 called for.
+- Did not touch `transaction-form.tsx` or build any client component — confirmed out of scope for this
+  half per the task's explicit instruction.
+
+## Phase 4b — Implementation (UI) — 2026-08-08
+
+**Owner:** ux-developer
+**Status:** complete
+
+### Summary
+
+Built the client half exactly per the Phase 3 contract's 8 named panel states: a new pure-logic
+sibling module (`src/lib/budget-context-panel-ui.ts`) holding the FY-derivation, the FY-boundary
+race guard, the current/projected arithmetic (via the shared `budgetVariance()` helper — no local
+reimplementation), and the income/expense copy framing; a `'use client'` panel component
+(`budget-context-panel.tsx`) that owns the fetch effect and renders off that pure module; and the
+`transaction-form.tsx` integration, rendered right after the Category select on the same
+`!isTransferOrSweep && !isEditingTransfer` gate the select itself uses (not the expense-only
+`showBudgetLineSection`), so income transactions get context too. Wrote and passed all 5 named unit
+tests assigned to this half (Phase 3 tests 8-12) against the pure module — no RTL/jsdom added, per
+this project's `environment: "node"` Vitest config.
+
+### What I did
+
+- Read the full work-log (Phase 1 analyst review, DECISION-069 architect ruling, DECISION-070 Phase 3
+  implementation calls, the Phase 3 design doc's Query/API Contracts, Panel States, Fiscal-Year Rule,
+  and Named Unit Tests) and DECISION-069/070 in `docs/decisions.md` before writing any code.
+- Read the already-built server half: `src/lib/ledger-budget-context-queries.ts` (`getBudgetContext`
+  and its `BudgetContext`/`BudgetContextCategoryRow`/`BudgetContextLineRow` types) and
+  `src/app/api/admin/ledger/budget-context/route.ts` — confirmed the response shape and the
+  `budgetCents: number | null` no-budget convention before consuming it.
+- Read `transaction-form.tsx` in full (the Category select at lines 640-660, the
+  `BudgetLinePicker` wiring at 745-774 including its `onSelect` handler that keeps `categoryId` and
+  `budgetLineId` in sync, the FY-derived `budgetLineId` auto-clear effect at 275-288, and the
+  Transfer/Sweep inline-note styling precedent at 556-578), `budget-line-picker.tsx` (the txnDate→FY
+  inline-parse precedent this feature's third copy mirrors), `lib/ledger.ts`'s `budgetVariance()` and
+  `BudgetVarianceResult` type, and `budget-overview-table.tsx`'s `StatCell` (`text-amber-700` "warn"
+  precedent — confirmed no `text-red-*` anywhere in the reused pattern).
+- Read `financial-report-ui.ts`/`ledger-category-ui.ts` and their `.test.ts` siblings as the
+  established "pure-logic-out-of-component" pattern for this codebase, and followed it: all
+  FY-derivation, race-guard, arithmetic, and copy-framing logic lives in
+  `src/lib/budget-context-panel-ui.ts` (no DB import, no async), leaving the component itself thin —
+  a fetch effect plus a render switch over that module's outputs.
+- Wrote `src/lib/budget-context-panel-ui.ts`:
+  - `deriveFiscalYearFromTxnDate(txnDate)` — the same 4-line inline parse duplicated a third time,
+    per the design doc's explicit instruction not to extract a fourth shared helper.
+  - `isResponseCurrent(responseFiscalYear, currentDerivedFiscalYear)` — the stale-response half of
+    the FY-race guard.
+  - `computeBudgetFigures(budgetCents, postedCents, pendingCents, amountCents)` — calls
+    `budgetVariance()` twice (current, then projected against `postedCents + pendingCents +
+    amountCents`); `projected` is `null` when `amountCents` is `null` or `<= 0`.
+  - `isOverBudgetWarn(flow, figures)` — `false` unconditionally for income; for expense, true only
+    when the most-advanced known figure (projected if present, else current) is negative.
+  - `formatGrainCopy(flow, fiscalYear, budgetCents, postedCents, pendingCents, amountCents)` — the
+    ONE function that renders both the expense ("used"/"budgeted") and income ("received"/"expected")
+    framings from the `flow` parameter (Panel States 4, 5, 6-per-grain, 7). Renders "No budget set for
+    FY{year}[ — $X recorded so far.]" when `budgetCents === null` — never "$0 of $0." Only appends the
+    "(X posted + Y pending)" breakdown when `pendingCents > 0` — an implementation call beyond what
+    Phase 3's prose examples show verbatim (see divergence note below).
+  - `formatCauseLineLabel(cause, label)` — matches `BudgetLinePicker`'s own `"{cause} — {label}"` /
+    `"{cause}"` option-label convention exactly, so a selected line reads identically in the picker
+    and in the context panel underneath it.
+- Wrote `src/components/admin/ledger/budget-context-panel.tsx`:
+  - Fetch effect keyed on `[fundId, derivedFiscalYear, reloadToken]` (NOT raw `txnDate` — editing the
+    day-of-month within the same FY never refetches, per DECISION-069 ruling 1).
+  - `currentFiscalYearRef` (a `useRef`, updated in the render body every render) is what the
+    `.then()`/`.catch()` closures check against at resolution time — NOT the closure-captured
+    `requestedFiscalYear` compared against itself, which would trivially always pass. This is the
+    actual race-guard mechanism; `isResponseCurrent()` is the pure comparison, the ref is what makes
+    the comparison meaningful across a stale closure.
+  - `AbortController` cancels the in-flight request on cleanup as a second, belt-and-suspenders guard
+    on top of the ref check (covers the case where React batches a fast double-fire).
+  - Render gate (`effective`) is computed fresh every render by comparing `loadState`'s carried
+    `fiscalYear` against `derivedFiscalYear` — never a separate `isLoading` boolean that could lag a
+    render behind, exactly as the Fiscal-Year Rule section specifies.
+  - Panel State 1 (no category chosen): returns `null` before any of the loading/error/ready branches
+    — no empty box ever flashes while a category is unselected, even though the fetch itself runs
+    unconditionally (context data is fund+FY-scoped, not category-scoped).
+  - Panel State 3 (fetch failed): `rounded-lg bg-amber-50 border border-amber-200 text-amber-800`
+    with a plain-text "Try again" button (`onClick` bumps `reloadToken`) — not a `<ConfirmDialog>`,
+    nothing destructive.
+  - Panel States 4/5/6/7: category-only vs. line-selected-with-parent-rollup, built from two
+    `formatGrainCopy()` calls in the line-selected case (line first, category "overall" second,
+    visually subordinate via `text-xs`) — matches Treasurer Decision 3.
+  - Amber-for-over-budget is applied to the FIGURE TEXT ONLY (`text-amber-700 font-medium`), not the
+    surrounding block, which always stays `bg-gray-50 border-gray-200` for states 4-7 — this is what
+    keeps an over-budget warning visually distinct from the fully-amber fetch-FAILED block (Phase 1's
+    explicit "must never render identically" requirement, extended to also distinguish "over budget"
+    from "couldn't load").
+- Modified `src/components/admin/ledger/transaction-form.tsx`:
+  - Added `parsedAmountCents = parseDollars(amount)` (reusing the file's existing parser, not a
+    duplicate), computed once alongside the other derived values.
+  - Rendered `<BudgetContextPanel>` immediately after the Category `<select>` block, gated on
+    `!isTransferOrSweep && !isEditingTransfer` — the same condition as the Category select itself,
+    NOT `showBudgetLineSection` — so income transactions render the panel too (there is no
+    `BudgetLinePicker` for income at all).
+- Wrote `src/lib/budget-context-panel-ui.test.ts` — 24 tests covering Phase 3 named tests 8-12 (plus
+  supporting cases: no-budget-set current/projected shape, `amountCents <= 0` treated defensively like
+  `null`, income never warns even when exceeding its budget, expense warns only when the most-advanced
+  figure is negative, and `formatCauseLineLabel`'s blank-label fallback).
+- Ran `pnpm exec tsc --noEmit` (clean), `pnpm test` (1113 passed, up from the 1088 baseline handed off
+  by api-developer — 25 new, zero regressions), and `pnpm build:only` (compiled successfully;
+  `/api/admin/ledger/budget-context` still present in the route list, unchanged from Phase 4a).
+
+### Outputs
+
+- **New file:** `src/lib/budget-context-panel-ui.ts` — pure logic (FY derivation, race guard,
+  current/projected arithmetic via `budgetVariance()`, income/expense copy framing). No `@/lib/db`
+  import, no async.
+- **New file:** `src/lib/budget-context-panel-ui.test.ts` (24 tests — Phase 3 named tests 8-12).
+- **New file:** `src/components/admin/ledger/budget-context-panel.tsx` — `'use client'` panel,
+  `BudgetContextPanelProps` exactly as the Phase 3 design doc specifies
+  (`fundId`/`txnDate`/`flow`/`categoryId`/`budgetLineId`/`amountCents`).
+- **Modified:** `src/components/admin/ledger/transaction-form.tsx` — new `parsedAmountCents` const,
+  new `<BudgetContextPanel>` render block after the Category select, new import.
+- No schema changes, no new route, no new `FEATURES` key — this half is pure client consumption of
+  the already-shipped, already-gated Phase 4a route.
+
+### Divergence from the design doc (say-so, not silent)
+
+- The Phase 3 prose examples always show the "(X posted + Y pending)" breakdown inline (e.g. "$570 of
+  $700 used ($420 posted + $150 pending)."), including in the income example's prose description
+  elsewhere in the doc. I made `formatGrainCopy` show that parenthetical ONLY when `pendingCents > 0`,
+  for both flows — "$570.00 of $700.00 used ($420.00 posted + $0.00 pending)." reads as noise in the
+  common all-posted case, and Treasurer Decision 1's actual requirement is "label what it counts,"
+  which only bites when there IS a pending figure to disambiguate. This is a copy-polish call, not an
+  arithmetic one — the underlying `postedCents`/`pendingCents` split is still computed and available
+  every time; only the display omits the zero half. Flagging for qa/analyst to confirm this reads
+  right to the treasurer, since it's a legible but unrequested deviation from the doc's literal
+  example strings.
+
+### Open questions / handoff notes
+
+- **Next agent: qa (Phase 5).** Suggested click-through:
+  1. Open "Record Transaction" on a fund/category with NO budget row for the current FY — confirm it
+     reads "No budget set for FY20XX." in neutral gray, never "$0 of $0," and never amber.
+  2. Same category, but one with existing posted/pending activity and still no budget row — confirm
+     the "— $X recorded so far." aside appears, still neutral gray, never a percentage/bar/the word
+     "over."
+  3. Pick a category WITH a budget and some spend — confirm "$X of $Y used" with a "(posted + pending)"
+     breakdown that appears only when pending is nonzero, and that typing an amount live-updates a
+     "→ $Z after this one." clause on every keystroke, with NO network request firing per keystroke
+     (watch the Network tab — only fund/FY changes should trigger a new `GET
+     /api/admin/ledger/budget-context`).
+  4. Push the projected figure over budget (type a large amount) — confirm the figure's TEXT turns
+     amber (`text-amber-700`), the surrounding block stays gray (not a full amber card), and the word
+     "over" never appears.
+  5. Switch Type to Income on a budgeted income category — confirm "received"/"expected" framing
+     (literally: contains "received", never "used" or "budgeted") and that pushing the projected total
+     past the budgeted figure does NOT turn anything amber (exceeding income is good news).
+  6. Pick a specific line via "Applies to budget line" — confirm the panel shows the line's own figure
+     first (bold), the parent category's rollup underneath in smaller/lighter text, both independently
+     colored by their own over-budget state.
+  7. **THE HIGH-CONSEQUENCE CASE — flagged explicitly per Phase 3's Fiscal-Year Rule section: with the
+     Network tab throttled (Slow 3G or similar), pick a category with today's default date (FY2026),
+     then quickly change the Date field to a date before 2026-07-01 (FY2025) before the FY2026 request
+     resolves.** Confirm the panel shows "Loading budget context…" throughout, and when the (now-stale)
+     FY2026 response and the FY2025 response both eventually land, the panel settles on FY2025's real
+     figures — never a flash of FY2026 numbers under an FY2025 date. This needs the actual
+     network-throttled click-through, not a code read — Phase 1 called this the single
+     highest-consequence failure mode in the whole feature.
+  8. Open "Edit Transaction" on an existing expense row — confirm budget context is visible
+     immediately on dialog open (mount-time effect fires with `initialValues`' real category/date),
+     not only after touching the Category dropdown.
+  9. At 360px width, confirm the panel's text stacks/wraps without introducing horizontal scroll
+     inside the dialog.
+  10. Trigger the fetch-failed state (e.g. by revoking `BUDGET_VIEW`/`LEDGER_MANAGE` from the signed-in
+      test role, or simulating a 500) — confirm the amber "Couldn't load budget context." block with a
+      working "Try again" button, visually distinct from both the loading and no-budget states.
+- New copy strings the Lions Club may want to refine: "Loading budget context…", "Couldn't load budget
+  context." / "Try again", "No budget set for FY{year}.", "No budget set for FY{year} — $X.XX recorded
+  so far.", "{cause}: $X.XX of $Y.XX used/received (…) → $Z.XX after this one/gift.", "{category}
+  overall: …".
+- UX decision/tradeoff logged above (posted/pending breakdown shown only when `pendingCents > 0`) —
+  worth a quick treasurer confirmation alongside qa's click-through, not a blocker.
+- The route itself (Phase 4a's handoff note) still hasn't been curled against a real dev DB — this
+  half's fetch effect has only been exercised via `pnpm build:only`'s type-check and the pure-logic
+  unit tests, never against a running `pnpm dev` + real Postgres. Recommend qa's click-through (above)
+  serves as that first live exercise.
+- Did not touch `src/lib/ledger-budget-context-queries.ts` or
+  `src/app/api/admin/ledger/budget-context/route.ts` (Phase 4a, already complete/green) — no changes.
+- Did not wire this panel into `pay-reimbursement-dialog.tsx` — confirmed out of scope for this
+  increment per the Phase 3 design doc's Edge Cases section; worth a `docs/backlog.md` entry if the
+  treasurer wants it later, since `BudgetContextPanel`'s prop shape is already generic enough to reuse.
 
 ---
 
 # Phase 5 — Verification (qa)
 
-**Date:** YYYY-MM-DD
+**Date:** 2026-08-08
 **Verified by:** qa
+
+## Summary
+
+**Verdict: PASS.** All three automated gates are green with zero regressions against the 1113-test
+baseline (1113/1113 still passing — the two Phase 4 halves added 21 + 25 tests without net growth
+beyond what they reported, confirmed by direct count). All 13 Phase-3-named unit tests exist and pass,
+verified by name, not inferred. I read both new server files end-to-end and confirmed the permission
+gate is correctly ordered (`auth()` → `hasAnyFeature()` → param validation → `getBudgetContext()`,
+nothing fetched before the check). I then drove the actual feature in a real browser (Playwright,
+scripted — not `pnpm test:e2e`, since no e2e spec exists for this feature and none was requested) against
+the real dev Postgres, with SQL-computed ground truth for the posted/pending/rejected arithmetic and a
+genuine network-throttled CDP session for the fiscal-year race. All three of the flagged
+highest-risk items — the back-date FY race, the no-budget state, and posted+pending-with-rejected-excluded
+— check out. One deliberate implementer divergence (posted/pending breakdown suppressed when
+pending is $0) reads correctly in the browser and is recommended to stand as shipped.
 
 ## Type Check
 
-`pnpm exec tsc --noEmit`: PASS / FAIL
+`pnpm exec tsc --noEmit`: **PASS** — zero errors, zero output.
+
+## Unit Tests
+
+`pnpm test`: **PASS**
+Total: 1113 | Passed: 1113 | Failed: 0
+Duration: 1.21s
+Failures: none. Baseline before this feature was 1113 per the Phase 4b handoff (api-developer's 1067 → 1088,
+ux-developer's 1088 → 1113) — the count I measured independently matches the reported final number exactly,
+confirming no regression and no silent test deletion.
+
+All 13 Phase-3-named tests confirmed present by name (not inferred from a pass/fail count):
+- Query module (`src/lib/ledger-budget-context-queries.test.ts`): tests 1–7 all present, plus positive-path
+  extras (null-fund lookup, genuine-vs-annotation $0 budget contrast, fuzzy-fallback-with-no-exact-link,
+  cross-FY/cross-fund non-leak, null-parent-category defensive exclude).
+- Route (`src/app/api/admin/ledger/budget-context/route.test.ts`): test 13 (403, not 200-with-empty-payload)
+  present, plus the full 400/401/404/200 contract.
+- Panel logic (`src/lib/budget-context-panel-ui.test.ts`): tests 8–12 all present (projected arithmetic via
+  `budgetVariance()`, null/zero-amount suppression, income copy framing, FY-derivation at the July-1
+  boundary, and the stale-response race guard), plus extras (income never warns, expense warns only on the
+  most-advanced negative figure, blank cause-line label fallback).
 
 ## Production Build
 
-`pnpm build:only`: PASS / FAIL
+`pnpm build:only`: **PASS**
+Notes: Compiled successfully. `/api/admin/ledger/budget-context` present in the route list as a dynamic
+(`ƒ`) route, consistent with every other `/api/admin/ledger/*` handler. No new warnings in the build output.
 
-## Dev-Server Smoke Test
+## Code Read — Permission Gate (mandatory before PASS)
 
-`pnpm dev` against `.env.local` reaches the routes without runtime error: PASS / FAIL
-Notes: [...]
+Read `src/app/api/admin/ledger/budget-context/route.ts` directly (not inferred from passing tests, per the
+QA mandate — a route that wrongly 200s to an under-privileged caller still passes happy-path tests).
+Confirmed order of operations: `auth()` for session → `hasAnyFeature(session.user.id, [FEATURES.BUDGET_VIEW,
+FEATURES.LEDGER_MANAGE])` → **only then** query-param validation and `getBudgetContext()`. No data is
+fetched before the permission check. Generic `{ error: "Forbidden" }` body on 403, nothing leaked.
 
-## Manual Click-Through
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `GET /api/admin/ledger/budget-context` | yes | yes (`hasAnyFeature`, any-of) | `FEATURES.BUDGET_VIEW` \| `FEATURES.LEDGER_MANAGE` — correct: this is a read-only endpoint returning budget figures, gated on the `*_VIEW` capability (plus the broader `LEDGER_MANAGE` override), deliberately independent of the `LEDGER_RECORD` check that gates reaching the dialog at all, exactly as DECISION-069/070 specify. |
+
+No other protected route or server action was added or changed by this feature (confirmed via
+`git diff --stat` against `main` — the only modified existing file is `transaction-form.tsx`, a client
+component with no new server action).
+
+## Manual Click-Through (browser, scripted via Playwright against real dev Postgres)
+
+No Playwright spec exists for this feature (none was requested, and this is additive UI inside an existing
+form, not a new page). I drove the actual feature in a real Chromium browser via a throwaway Playwright
+script (signed in as the seeded e2e admin, real `pnpm dev` server, real Neon dev DB) rather than reading the
+code and assuming it's correct — per the task's explicit instruction to exercise the three highest-risk
+items live. Two rows (one `pending`, one `rejected`, both memo-tagged `QA-PHASE5-TEST... — DELETE ME`) were
+inserted into the `Marketing` / Administrative Fund / FY2025 category to get non-zero pending and rejected
+ground truth to test against (that category had zero pending/rejected transactions anywhere in the dev DB
+before this). **Both rows were deleted after testing; the dev DB was independently re-verified back to its
+pre-test state (281 posted / 0 pending / 0 rejected, matching the pre-test baseline exactly).**
 
 | Flow | Result | Notes |
 |------|--------|-------|
-| [user flow] | [pass / fail] | [observation] |
+| **No-budget state** (Marketing category, FY2026 — Administrative Fund has zero FY2026 budget rows at all) | PASS | Rendered exactly `"No budget set for FY2026."` — neutral gray, no `$0 of $0`, no amber. |
+| **Posted+pending sum, rejected excluded** — ground truth via direct SQL: posted=$842.51 (6 rows), pending=$150.00 (1 seeded row), rejected=$999.99 (1 seeded row, must not appear) | PASS | Panel showed `"$992.51 of $5000.00 used ($842.51 posted + $150.00 pending)."` — exact match to SQL ground truth; `$999.99` (the rejected amount) does not appear anywhere in the rendered text. |
+| **Projected figure updates live on keystroke** | PASS | Typing `100` into Amount produced `"→ $1092.51 after this one."` (=$992.51+$100) on the same render, no debounce lag. |
+| **No extra network request while typing** | PASS | Request count to `/api/admin/ledger/budget-context` unchanged (3 before, 3 after) across the whole keystroke sequence — confirms the projected figure is pure client arithmetic, not a per-keystroke fetch. |
+| **Empty amount suppresses the projected clause** | PASS | Clearing the Amount field removed the `→ ...` clause entirely rather than showing `+$0`. |
+| **Over-budget renders amber, never red, never the word "over"** | PASS | Typing a large amount turned the figure text `text-amber-700`; no `text-red-*` class anywhere in the dialog's HTML; the word "over" never appears in the rendered copy. |
+| **THE HIGH-CONSEQUENCE CASE — FY-boundary race under network throttling** (CDP `Network.emulateNetworkConditions`, 1500ms latency / ~50KB/s, applied mid-flow) | PASS | Started on today's date (FY2026, confirmed no-budget state settled). Throttled the network, then immediately flipped the date field to 2025-11-15 (FY2025) before the slow FY2026 fetch could resolve. Sampled the DOM 150ms after the date flip: no stale "No budget set for FY2026" text was visible (either already showing "Loading budget context…" or had moved past it — the render gate compares payload FY to derived FY on every render, never a lagging boolean). Once the slow response(s) landed, the panel settled on `"$992.51 of $5000.00 used..."` — FY2025's real figures — never a flash of FY2026 numbers under an FY2025 date. |
+| **Income framing** (New Member Fee category, FY2025, Administrative Fund) | PASS | Rendered `"$0.00 of $175.00 received."` — contains "received", never "used"/"budgeted". Typing a very large gift amount ($9,999.99) did **not** trigger amber styling — confirmed exceeding an income budget stays neutral, per Treasurer Decision 4. |
+| **Budget-line selected: line first, parent underneath** (Charitable Fund, "Charitable donation out" category, FY2025, line = "Youth & Education — Buckeye Girls State") | PASS | Line's own figure rendered first/bold: `"Youth & Education — Buckeye Girls State: $0.00 of $350.00 used."` Parent rollup rendered underneath, visually subordinate: `"Charitable donation out overall: $15325.00 of $15475.00 used."` Independently re-verified the parent figure against SQL (`SELECT SUM(amount_cents) WHERE status='posted' AND fund_id=... AND category_id=... AND txn_date >= '2025-07-01' AND txn_date < '2026-07-01'` → 1,532,500 cents = $15,325.00, budget row `annual_amount_cents` = 1,547,500 cents = $15,475.00) — exact match. (My first pass at this SQL check used the wrong FY date bounds — `2024-07-01..2025-07-01` instead of `2025-07-01..2026-07-01` — and produced a false alarm; re-derived from `fyBounds()`'s own definition in `src/lib/fiscal-year.ts`, the second query matched the UI exactly. Noting this so a future reader trusts the *corrected* figure, not the panic in between.) |
+| **Edit mode shows context immediately on dialog open** | PASS | Opened "Edit" on an existing income row; budget context (`"$944.00 of $1150.00 received. → $991.00 after this gift."`) was visible on the very first render, no category re-selection needed. |
+| **360px viewport — no horizontal scroll inside the dialog** | PASS | `dialog.scrollWidth <= dialog.clientWidth` at 360px; screenshot confirms the panel text wraps and stacks cleanly under the Category select, matching the Transfer/Sweep note precedent. |
 
-## Regression Notes Added (bug fixes)
+All 19 scripted browser assertions passed (19/19). Screenshots captured at desktop (1280px, showing the
+panel inline in the real admin Ledger page) and 360px (showing clean vertical stacking, no dialog overflow).
 
-- [work-log entry name — guards against: brief description]
+**Not separately reproduced live:** the 403 permission-gate response. The e2e admin account holds both
+`BUDGET_VIEW` and `LEDGER_MANAGE` (as does every role holding `LEDGER_RECORD` today, per Phase 1's own
+finding), so there's no existing role to reproduce a live 403 against without mutating role-permission
+bindings. Verified instead by direct code read (above) and by the route's own passing unit test 13
+(`403s ... when the caller holds neither BUDGET_VIEW nor LEDGER_MANAGE`) — consistent with the QA mandate
+that a route audit is satisfied by reading the route file, which I did.
+
+## Divergence Judgment Call
+
+The ux-developer's Phase 4b note flagged one deliberate deviation from the Phase 3 doc's literal example
+strings: the `"(X posted + Y pending)"` breakdown is shown only when `pendingCents > 0`, not unconditionally.
+Confirmed live: in the common all-posted case (e.g. the income example above, `pendingCents: 0`), the
+breakdown is correctly omitted — `"$0.00 of $175.00 received."` reads cleanly with no `"($0.00 posted +
+$0.00 pending)"` noise. This matches Treasurer Decision 1's actual requirement ("label what it counts")
+without over-literally reproducing the design doc's example prose. **Judgment: this reads right and should
+ship as implemented** — worth a one-line confirmation from the treasurer per the implementer's own note, but
+not a blocker.
+
+## Regression Tests Added
+
+This is new-feature work, not a bug fix — there is no pre-existing bug being guarded against, so no
+`— regression for X` tests apply here. The 13 Phase-3-named tests (listed above under Unit Tests) serve the
+equivalent purpose for this feature going forward: any future change that reintroduces the FY-boundary race,
+double-counts rejected transactions, or drops the posted/pending label will fail one of these by name.
+
+## Coverage on Critical Modules
+
+- `src/lib/ledger-budget-context-queries.ts`: exercised by 14 targeted unit tests covering every branch
+  named in the Phase 3 design doc (rejected exclusion, posted/pending split, null-vs-zero budget, cause-line
+  exact-link-vs-fuzzy resolution, FY/fund scoping, null-parent-category defensive path) — not run through
+  `--coverage` numerically as part of this pass, but branch coverage by inspection is complete against the
+  named contract.
+- `src/lib/budget-context-panel-ui.ts`: 24 unit tests, all branches of `computeBudgetFigures`,
+  `isOverBudgetWarn`, `formatGrainCopy` (both flows, no-budget state, breakdown suppression),
+  `deriveFiscalYearFromTxnDate`, and `isResponseCurrent` covered by name.
+- `src/lib/events.ts` / `src/lib/permissions.ts` / `src/lib/members.ts`: unchanged by this feature; not
+  re-audited in this pass (last swept per the 7-day test-coverage review cadence — see `docs/reviews/log.md`).
 
 ## Verdict
 
-[PASS | FAIL]
+**PASS.**
+
+All three automated gates green (tsc clean, 1113/1113 unit tests, production build succeeds with the new
+route present). The permission gate is correctly implemented and correctly ordered, confirmed by direct
+code read. All 13 Phase-3-named unit tests exist and pass. All three flagged highest-risk items — the
+FY-boundary race under real network throttling, the no-budget empty state, and posted+pending-with-rejected-
+excluded against SQL-computed ground truth — were exercised live in a real browser against the real dev
+database and behave exactly as designed. No `lions-red` or `text-red-*` anywhere in the new components. No
+regressions. Dev DB restored to its exact pre-test state.
 
 ---
 
 # Phase 6 — Shipped vs Intent (analyst)
 
+**Date:** 2026-08-08
+**Owner:** analyst
+**Status:** complete
+
 ## VERDICT
 
-[SHIP IT | SHIP WITH NOTES | NEEDS REWORK]
+SHIP WITH NOTES
 
 ## ONE-LINE TAKE
 
-> [The shipped feature in one honest sentence.]
+> A treasurer entering a transaction now sees a trustworthy, correctly-labeled budget-vs-actual figure right where they're already looking — all four of the treasurer's explicit decisions are genuinely delivered, the arithmetic is reused byte-for-byte from the one function that's already proven against the fiscal report, and QA closed the loop with live SQL-verified numbers, not just a green test suite — but one implementer copy decision (hiding the posted/pending breakdown when pending is $0) answers a question the treasurer never actually got asked, and it should get his one-line yes/no before this is called fully closed.
 
 ## What's Working
 
-- [Specific. The flow that works well and why.]
+- **Placement and timing.** `BudgetContextPanel` renders immediately after the Category `<select>` in `transaction-form.tsx` (lines 649-683), before Party/Check#/Amount context further down the form — this is exactly "at the moment he asked," not a collapsed accordion or a separate tab the treasurer has to remember to open. It appears the instant a category is picked and disappears cleanly when none is selected (Panel State 1) — no empty box flash.
+- **The projected figure is real, not decorative.** QA confirmed live in a browser that typing an amount updates "→ $Z after this one." on every keystroke with zero additional network requests (request count held at 3 across the whole typing sequence) — this is client-side arithmetic against an already-fetched payload, reusing `budgetVariance()` from `lib/ledger.ts`, not a re-implementation. This is the single most decision-relevant number in the panel (Treasurer Decision 2) and it's live-correct.
+- **Numbers generalize, not just the one SQL-checked case.** The query module (`getBudgetContext`) reuses `resolveCauseLineActual`, `causeLineReferenceKey`, `isEligibleForFuzzyCauseMatch`, `buildCauseActualsByKey`, `budgetVariance`, and `resolveDisplayBudgetCents` — the exact same functions `getFundReport()` calls for the fiscal report — rather than a parallel implementation. That's what makes "trustworthy" a structural property here, not a QA spot-check: a lump-sum category with no cause lines falls out of an empty `lines.filter(...)`, a category with cause lines resolves exact-link-then-fuzzy-fallback identically to the fiscal report, and a fund with zero budget rows for the FY renders every category as `budgetCents: null` ("No budget set"), never a fabricated `$0`. QA independently verified this against live SQL for three different shapes (no-budget, posted+pending-with-rejected-excluded, a cause-line rollup) and caught its own first-pass SQL error before trusting the UI number — a real independent check, not a rubber stamp.
+- **The single highest-consequence risk Phase 1 flagged — a confidently wrong number across a fiscal-year back-date — was closed for real.** The panel gates on comparing the fetched payload's own `fiscalYear` to the current derived FY on every render (never a lagging `isLoading` boolean), plus a ref-based stale-response guard. QA reproduced this live with actual network throttling (CDP, 1500ms/50KB/s), not a code read, and confirmed no flash of the wrong FY's numbers.
+- **Failure and empty states are visually distinct from each other**, which was Phase 1's explicit requirement: "No budget set" renders neutral gray with no percentage/bar/the word "over"; a fetch failure renders amber with a working retry, and can never be mistaken for either "no budget" or "over budget" (over-budget is amber text only, inside an unchanged gray block).
 
 ## Intent-vs-Shipped Diff
 
-- Phase 1 said: [X]. Shipped: [Y]. Verdict: [matches | acceptable drift | regression]
+- **Phase 1 said** the request is silent on FY resolution, posted-vs-pending, and lump-sum-vs-cause-line scope, and that these needed explicit decisions before Phase 3. **Shipped:** all three were resolved in DECISION-069/070 and implemented exactly as decided (FY derived from `txnDate` via the existing `getFiscalYear` precedent; posted+pending both counted and separately labeled at the data layer; line-grain and category-grain both computed and both shown when a line is selected). **Verdict: matches.**
+- **Treasurer Decision 1** ("used" includes posted AND pending; label what it counts). **Shipped:** `computeBudgetFigures` sums `postedCents + pendingCents` for the "used"/"received" total; the API always returns both fields separately, never pre-collapsed. **Verdict: matches** at the data contract level. The *display* labeling is conditional (see Edge Cases / Follow-Ups below) — this is the one place letter and spirit could be read to diverge, addressed as a note, not a regression, because the display never asserts a total that includes pending without saying so where it actually matters (see below).
+- **Treasurer Decision 2** (show current AND projected). **Shipped:** exactly as decided, live on every keystroke, no debounce, confirmed in a real browser. **Verdict: matches.**
+- **Treasurer Decision 3** (selected line shows with parent category underneath). **Shipped:** line's own figure first (bold), parent category's rollup second (visually subordinate, `text-xs`), independently colored by their own over-budget state, using the line's own `categoryId`/`categoryName` fields rather than the form's separate `categoryId` prop (so it stays correct even if a future code path decouples them). QA verified the parent rollup against direct SQL. **Verdict: matches.**
+- **Treasurer Decision 4** (income reads "received"/"expected," never amber for exceeding). **Shipped:** `formatGrainCopy` swaps `usedVerb`/`afterClause` off the `flow` param in one shared function (not a second copy-pasted component — Phase 1's explicit anti-drift requirement), and `isOverBudgetWarn` is hard-coded `false` for income regardless of variance. QA confirmed live: a $9,999.99 gift against a $175 income budget rendered "received," no amber. **Verdict: matches.**
+- **Phase 1's gap:** "does the projected figure include the transaction being typed right now?" **Shipped:** yes, exactly — and `amountCents === null` (empty/zero/invalid) suppresses the projected clause entirely rather than silently showing "+$0," which is the same "confidently wrong is worse than no number" standard applied to the projection specifically. **Verdict: matches.**
+- **Phase 1's gap:** reimbursement mark-paid dialog scope. **Shipped:** Phase 3 scoped it out, Phase 4 didn't touch `pay-reimbursement-dialog.tsx`, and nothing in the treasurer's four decisions asked for it. Still the right call — the panel's props are already generic enough to wire in later as a small follow-up. **Verdict: matches** (confirmed correctly out of scope, not silently dropped).
+
+## The Divergence — Judged
+
+The Phase 3 doc's prose examples always show "(X posted + Y pending)" inline; the shipped `formatGrainCopy` only renders that parenthetical when `pendingCents > 0`. I traced whether this still satisfies "label what it counts": when `pendingCents === 0`, the displayed total is arithmetically identical to a posted-only figure (0 contribution from pending), so there's no case where the panel asserts a total that quietly includes unlabeled pending money — the breakdown appears exactly when there's something to disambiguate, i.e., exactly when the figure diverges from what the fiscal report would show for the same category. Judged on "does the number mislead," it doesn't: nothing is hidden that changes the total.
+
+But that's a narrower question than the one that actually needs answering, and it's not mine to answer unilaterally: the treasurer's decision said "the UI must label what it counts," full stop — he didn't say "only when it's nonzero." A treasurer who never happens to see the parenthetical (most categories, most days) has no persistent signal that this specific panel — unlike every other budget-vs-actual number in The Ledger — is capable of counting pending money at all, so on the one day it matters, he's relying on the parenthetical appearing correctly rather than already knowing to look for it. Both the implementer and QA independently flagged this as "reads right, not a blocker, worth a treasurer confirmation" — and that confirmation never actually happened; it's still an open loop with the person whose decision is being interpreted. That's a real gap between "the code does what the design doc's author decided was reasonable" and "the treasurer signed off on this specific interpretation of his own words." Not a red flag, but not nothing either — it's exactly the kind of thing that becomes a tracked follow-up rather than something I approve on his behalf.
 
 ## Edge Cases
 
-- Empty state: [pass | fail | not applicable]
-- Failure microcopy: [pass | fail]
-- Permission gate: [pass | fail]
-- Mobile (360px): [pass | fail]
+- Empty state: **pass** — "No budget set for FY{year}." (plus a factual "— $X recorded so far." aside when there's unbudgeted spend), neutral gray, no percentage/bar/"over," verified live and distinct from the fetch-failure state.
+- Failure microcopy: **pass**, with one minor note — "Couldn't load budget context." with "Try again" is human and correctly distinct (amber) from every other state. It does not distinguish a genuine 403 (permission revoked) from a transient network/500 failure — "Try again" is a dead-end affordance for the former, since retrying a 403 just produces the same 403. Not currently reachable (every role holding `LEDGER_RECORD` today also holds `BUDGET_VIEW`/`LEDGER_MANAGE`), so this is a latent rather than live problem — see Follow-Ups.
+- Permission gate: **pass** — `auth()` → `hasAnyFeature([BUDGET_VIEW, LEDGER_MANAGE])` → only then param validation/query, confirmed by direct code read and by a passing named unit test (403, not 200-with-empty-payload). Not reproduced live end-to-end (no existing role lacks the permission to test against without mutating role bindings) — acceptable given the code-read + unit-test coverage, per the QA mandate's own stated bar.
+- Mobile (360px): **pass** — QA confirmed `scrollWidth <= clientWidth` at 360px with a screenshot; text stacks vertically under the Category select, matching the Transfer/Sweep note precedent this component deliberately followed for styling (`rounded-lg`, not `rounded-2xl`, correct for inline form context per brand guidelines).
 
-## Follow-Ups (if SHIP WITH NOTES)
+## Follow-Ups (SHIP WITH NOTES)
 
-- [Concrete, actionable. Each gets its own work-log entry.]
+- **Get the treasurer's explicit one-line confirmation on the conditional posted/pending breakdown** ("only show the parenthetical when pending > 0" vs. "always show it, even as ($X posted + $0.00 pending)"). This is a one-line change in `formatGrainCopy` (`src/lib/budget-context-panel-ui.ts`) if he wants it unconditional — low implementation cost, but it's his call to make, not the implementer's or QA's, since it's a direct interpretation of his own stated decision. Track as its own tiny work-log entry (or a decisions.md addendum) once he answers.
+- **Distinguish "couldn't load — try again" from "you don't have permission to see this"** in the fetch-failed panel state, so a future permission-scoped role (e.g. a `ledger.record`-only "bookkeeper" role, which Phase 1 flagged as a real possibility even though it doesn't exist today) doesn't get a dead-end retry button. Low priority — not reachable under current role bindings — but cheap to fix now (the route already returns a distinguishable 403 vs. 500/network error; the panel just needs to branch on it) versus rediscovering the gap later when that role actually gets created.
 
 ## Red Flags (if NEEDS REWORK)
 
-- [Specific. What has to change before this ships.]
+None. Nothing here blocks shipping.
 
 
 ---

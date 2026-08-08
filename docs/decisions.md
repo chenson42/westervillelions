@@ -28,6 +28,48 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-070: Budget Context on Transaction Entry — Phase 3 implementation calls: `resolveDisplayBudgetCents` reused for the null-vs-zero budget convention, FY-switch handled by comparing payload FY to derived FY (not a loading boolean), amber-only over-budget styling reused from `budget-overview-table.tsx`'s `StatCell`, reimbursement dialog confirmed out of scope
+
+**Status:** Resolved
+**Date:** 2026-08-08
+
+**Decision:** Phase 3 technical design for `docs/work-log/2026-08-08-budget-context-on-transaction-entry.md`, executing
+DECISION-069's rulings. Five implementation-level calls, each within DECISION-069's architecture rather than reopening it:
+
+1. **Null-vs-zero budget convention:** `getBudgetContext()` applies `resolveDisplayBudgetCents()` (`lib/ledger.ts:2077`)
+   to every category row, exactly as `getFundReport()` already does — a starred/noted `$0` annotation-only row reads as
+   `budgetCents: null` ("no budget set"), not a fabricated `$0`. Reuses the existing convention Phase 2 flagged rather
+   than inventing a second null-vs-zero rule for this one payload.
+2. **FY-boundary refetch race:** the panel doesn't gate its Loading state on a `fetchInFlight` boolean (which can lag
+   one render behind a fast prop change). It compares the fetched payload's own `fiscalYear` field to the current
+   `derivedFiscalYear` prop and renders Loading whenever they disagree, plus discards any response whose requested FY
+   no longer matches `derivedFiscalYear` at resolution time. This is the concrete fix for Phase 1's single
+   highest-consequence risk (Flow 3, back-dating across a FY boundary) — a boolean flag alone doesn't cover the
+   out-of-order-response race a slow-then-fast pair of fetches can produce.
+3. **Over-budget styling:** reuses the existing `text-amber-700` "warn" treatment `budget-overview-table.tsx`'s
+   `StatCell` (line 139) already uses for a negative `Net` figure, rather than introducing a new color. Applied only to
+   the expense framing — explicitly never applied when income exceeds its expected figure, since exceeding an income
+   budget is good news (treasurer decision #4), not a risk signal.
+4. **No shared FY-parse helper extracted.** The 4-line `getFiscalYear(new Date(txnDate + "T00:00:00"))` parse is now
+   duplicated a third time (`transaction-form.tsx`, `budget-line-picker.tsx`, `budget-context-panel.tsx`). Left
+   un-extracted deliberately — it was already duplicated twice without complaint, and a third inline copy is more
+   honest than a one-line-saving abstraction three call sites deep. Revisit only if a fourth call site appears.
+5. **Reimbursement mark-paid dialog (`pay-reimbursement-dialog.tsx`) confirmed OUT OF SCOPE** for this increment, per
+   Phase 1's own recommendation, not overridden by the treasurer's 2026-08-08 decisions. `BudgetContextPanel`'s prop
+   shape is generic enough to wire in later as a small follow-up (the reimbursement dialog's `amount` is currently a
+   fixed, non-editable string, so the projected-figure UX needs a small adjustment there first).
+
+**Rationale:** Each call reuses an existing pattern already proven in this exact codebase (the annotation-only budget
+convention, the `StatCell` warn color, the effect-dependency-vs-payload-comparison staleness guard style already implicit
+in other fetch-effect components) rather than inventing a new one, keeping this feature's failure modes — and its visual
+language — consistent with the rest of The Ledger.
+
+**Impact:** No new files beyond what DECISION-069 already named. Full contract, panel states, and named unit tests are in
+`docs/work-log/2026-08-08-budget-context-on-transaction-entry.md`'s Phase 3 section. Implementer split: api-developer
+(query module + route) → ux-developer (panel + form integration).
+
+---
+
 ## DECISION-069: Budget Context on Transaction Entry — new `ledger-budget-context-queries.ts` sibling module; fetch scoped to `(fundId, derived fiscal year)` via a client-fetched route handler, not per-category-selection and not whole-entity-across-all-FYs; posted/pending both returned as separate labeled fields, never a silent toggle
 
 **Status:** Resolved

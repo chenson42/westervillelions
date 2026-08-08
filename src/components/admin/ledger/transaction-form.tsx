@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import ReceiptFileInput from "./receipt-file-input";
 import BudgetLinePicker from "./budget-line-picker";
+import BudgetContextPanel from "./budget-context-panel";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
 import type { BudgetLineOption } from "@/lib/ledger-queries";
 import { getFiscalYear } from "@/lib/fiscal-year";
@@ -242,6 +243,13 @@ export default function TransactionForm({
   // The effective fund kind for category filtering (regular income/expense
   // only — Transfer/Sweep never show the generic category picker below).
   const activeFund = funds.find((f) => f.id === fundId);
+
+  // Budget-context panel's projected figure (2026-08-08-budget-context-on-
+  // transaction-entry, Phase 3) — reuses the form's existing parseDollars
+  // parser rather than a second implementation; null while empty/zero/
+  // invalid, which BudgetContextPanel treats as "suppress the projected
+  // clause," never "+$0."
+  const parsedAmountCents = parseDollars(amount);
 
   // Filter categories by active fund kind and api flow
   const filteredCategories = categories.filter(
@@ -657,6 +665,21 @@ export default function TransactionForm({
             ))}
           </select>
         </div>
+      )}
+
+      {/* Budget context — read-only, right after Category. Gated on the SAME
+          condition as the Category select itself (NOT showBudgetLineSection,
+          which is expense-only) so income transactions get context too
+          (2026-08-08-budget-context-on-transaction-entry, Phase 3). */}
+      {!isTransferOrSweep && !isEditingTransfer && (
+        <BudgetContextPanel
+          fundId={fundId}
+          txnDate={txnDate}
+          flow={apiFlow}
+          categoryId={categoryId}
+          budgetLineId={budgetLineId}
+          amountCents={parsedAmountCents}
+        />
       )}
 
       {/* Party (not for transfer/sweep) */}
