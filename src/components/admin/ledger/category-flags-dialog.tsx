@@ -12,6 +12,12 @@ import type { CategoryImpact } from "@/lib/ledger-category-queries";
 interface CategoryFlagsDialogProps {
   category: AdminCategoryRow;
   fundLabel: string;
+  /** Whether gifts to this category's entity are tax-deductible (Foundation:
+   *  true, Club: false). Gates whether the "never needs an acknowledgment"
+   *  checkbox is shown at all — the flag only has any effect on income
+   *  categories on a donations-deductible entity (see
+   *  listPendingAcknowledgments(), ledger-queries.ts). */
+  entityDonationsDeductible: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -21,32 +27,41 @@ function formatDollars(cents: number): string {
 }
 
 /**
- * countsAsGiving / form990Line editor. countsAsGiving retroactively changes
- * what /members/impact shows for every transaction already posted to this
- * category, so flipping it fetches GET .../impact for the dollar figure and
- * gates the save behind a <ConfirmDialog destructive> — literally
- * reversible, but retroactive-and-public-facing enough to deserve the same
- * weight as an irreversible action (architect Ruling #7). form990Line is
- * compliance text with no dollar impact — a plain save when it's the only
- * thing that changed.
+ * countsAsGiving / ackNotRequired / form990Line editor. countsAsGiving
+ * retroactively changes what /members/impact shows for every transaction
+ * already posted to this category, so flipping it fetches GET .../impact for
+ * the dollar figure and gates the save behind a <ConfirmDialog destructive>
+ * — literally reversible, but retroactive-and-public-facing enough to
+ * deserve the same weight as an irreversible action (architect Ruling #7).
+ * ackNotRequired (2026-08-08) only changes whether future/pending rows show
+ * up in the internal Acknowledgments queue — nothing public-facing, no
+ * dollar total to recompute — so it saves plainly alongside form990Line,
+ * same treatment. Only shown for an income category on a donations-
+ * deductible entity (Foundation) — it's a no-op everywhere else, since
+ * listPendingAcknowledgments() only ever checks it there.
  */
 export default function CategoryFlagsDialog({
   category,
   fundLabel,
+  entityDonationsDeductible,
   open,
   onOpenChange,
 }: CategoryFlagsDialogProps) {
   const router = useRouter();
   const [countsAsGiving, setCountsAsGiving] = useState(category.countsAsGiving);
+  const [ackNotRequired, setAckNotRequired] = useState(category.ackNotRequired);
   const [form990Line, setForm990Line] = useState(category.form990Line ?? "");
   const [impact, setImpact] = useState<CategoryImpact | null>(null);
   const [loadingImpact, setLoadingImpact] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  const showAckNotRequired = category.flow === "income" && entityDonationsDeductible;
+
   useEffect(() => {
     if (!open) return;
     setCountsAsGiving(category.countsAsGiving);
+    setAckNotRequired(category.ackNotRequired);
     setForm990Line(category.form990Line ?? "");
     setImpact(null);
     setLoadingImpact(true);
@@ -62,14 +77,16 @@ export default function CategoryFlagsDialog({
 
   const trimmedForm990Line = form990Line.trim();
   const givingChanged = countsAsGiving !== category.countsAsGiving;
+  const ackNotRequiredChanged = showAckNotRequired && ackNotRequired !== category.ackNotRequired;
   const form990Changed = trimmedForm990Line !== (category.form990Line ?? "");
-  const nothingChanged = !givingChanged && !form990Changed;
+  const nothingChanged = !givingChanged && !ackNotRequiredChanged && !form990Changed;
 
   async function doSave() {
     setSaving(true);
     try {
       const patch: Record<string, unknown> = {};
       if (givingChanged) patch.countsAsGiving = countsAsGiving;
+      if (ackNotRequiredChanged) patch.ackNotRequired = ackNotRequired;
       if (form990Changed) patch.form990Line = trimmedForm990Line || null;
 
       const res = await fetch(`/api/admin/ledger/categories/${category.id}`, {
@@ -153,6 +170,25 @@ export default function CategoryFlagsDialog({
                       : "No posted giving-eligible transactions on this category."}
                 </p>
               </div>
+
+              {showAckNotRequired && (
+                <div className="rounded-lg bg-gray-50 p-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={ackNotRequired}
+                      onChange={(e) => setAckNotRequired(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue"
+                    />
+                    Never needs a donor acknowledgment
+                  </label>
+                  <p className="mt-2 text-xs text-gray-500">
+                    For race entries, event receipts, grants, and internal transfers — income
+                    that will {ackNotRequired ? "stay off" : "still be queued on"} the
+                    Acknowledgments pending list, even at $250 or more.
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label htmlFor="flags-cat-990" className="block text-sm font-medium text-gray-700 mb-1">

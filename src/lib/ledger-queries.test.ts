@@ -2454,3 +2454,37 @@ describe("listPendingAcknowledgments — ackId/ackSentAt row-shape regression", 
     expect(rows[0].ackSentAt).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// listPendingAcknowledgments — ack_not_required exclusion
+// (docs/work-log/2026-08-08-ack-not-required-flag.md). The hermetic mock's
+// `where()` only CAPTURES the composed condition (it doesn't evaluate it
+// against the canned queue), so — mirroring the established "getFundReport
+// asOfDate bounding" pattern above — this asserts the compiled WHERE clause
+// structurally includes the ack_not_required exclusion (as an OR admitting
+// "no category" alongside "category not flagged"), rather than a row-level
+// filtering result a full DB round trip would be needed to prove.
+// ---------------------------------------------------------------------------
+describe("listPendingAcknowledgments — ack_not_required exclusion", () => {
+  const dialect = new PgDialect();
+
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  it("WHERE clause excludes categories flagged ack_not_required while still admitting rows with no category", async () => {
+    mockDbState.queue.push([]);
+
+    await listPendingAcknowledgments();
+
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql, params } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    // The category-id-null / not-flagged OR pair, alongside ledger_categories
+    // actually being referenced (proves the join + filter are wired, not
+    // just present in isolation).
+    expect(sql).toContain('"ack_not_required"');
+    expect(sql).toContain('"ledger_categories"');
+    expect(params).toContain(false);
+  });
+});

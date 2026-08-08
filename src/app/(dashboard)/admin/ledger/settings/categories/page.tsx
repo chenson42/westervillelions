@@ -43,6 +43,7 @@ export default async function AdminLedgerCategoriesPage() {
         slug: entity.slug,
         name: entity.name,
         shortName: entity.shortName,
+        donationsDeductible: entity.donationsDeductible,
         funds: funds.map((f) => ({ kind: f.kind, name: f.name })),
         categories: categories.map((c) => {
           const dto = toCategoryDTO(c);
@@ -54,6 +55,7 @@ export default async function AdminLedgerCategoriesPage() {
             sortOrder: dto.sortOrder,
             isActive: dto.isActive,
             countsAsGiving: dto.countsAsGiving,
+            ackNotRequired: dto.ackNotRequired,
             form990Line: dto.form990Line,
           };
         }),

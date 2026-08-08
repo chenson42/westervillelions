@@ -17,6 +17,7 @@ function row(overrides: Partial<AdminCategoryRow> = {}): AdminCategoryRow {
     sortOrder: 0,
     isActive: true,
     countsAsGiving: true,
+    ackNotRequired: false,
     form990Line: null,
     ...overrides,
   };

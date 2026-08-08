@@ -28,6 +28,35 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-071: Ack Not Required category flag — UI-gated, not server-blocked; not exposed at category creation
+
+**Status:** Resolved
+**Date:** 2026-08-08
+
+**Decision:** `ledger_categories.ack_not_required` (docs/work-log/2026-08-08-ack-not-required-flag.md) has no
+server-side restriction on which category it can be set on — the PATCH route accepts it on any category, income or
+expense, either entity. The admin UI (`CategoryFlagsDialog`) only *offers* the checkbox for an income category on a
+donations-deductible entity (Foundation today), because that's the only combination `listPendingAcknowledgments()`
+(`ledger-queries.ts`) ever checks the flag against. Also not added to `CategoryCreateDialog` (unlike `countsAsGiving`,
+which that dialog does expose at creation time).
+
+**Rationale:** Setting the flag on an expense category or a non-deductible entity's category is inert, not harmful —
+`listPendingAcknowledgments()`'s own WHERE clause already scopes to `donationsDeductible = true AND flow = 'income'`
+before the flag is ever consulted, so a stray `true` elsewhere can never suppress an acknowledgment that would
+otherwise fire. Adding a server-side block would duplicate that scoping logic in two places for a category that
+can't do anything wrong. Skipping category-creation exposure: this flag names five specific, already-existing,
+recurring categories (race-entry fees, event receipts, pooled fundraiser deposits, grants, an internal transfer) —
+a genuinely rare exception, not a routine creation-time decision the way giving-vs-overhead (`countsAsGiving`) is.
+
+**Impact:** `CategoryFlagsDialog` conditionally renders the checkbox on `category.flow === "income" &&
+entityDonationsDeductible`; `EntityCategoryData.donationsDeductible` (new field) carries that down from the Server
+Component page. `CategoryUpdatePatch.ackNotRequired` and the PATCH route's validation are otherwise symmetric with
+`countsAsGiving`'s handling, minus the `ConfirmDialog`/dollar-impact step — the flag has no public-facing or
+retroactive-dollar-total effect (it only changes what's queued in the internal Acknowledgments list), so it saves
+plainly alongside `form990Line`.
+
+---
+
 ## DECISION-070: Budget Context on Transaction Entry — Phase 3 implementation calls: `resolveDisplayBudgetCents` reused for the null-vs-zero budget convention, FY-switch handled by comparing payload FY to derived FY (not a loading boolean), amber-only over-budget styling reused from `budget-overview-table.tsx`'s `StatCell`, reimbursement dialog confirmed out of scope
 
 **Status:** Resolved

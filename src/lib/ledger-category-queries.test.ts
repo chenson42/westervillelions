@@ -143,6 +143,7 @@ function category(overrides: Partial<Record<string, unknown>> = {}) {
     sortOrder: 0,
     isActive: true,
     countsAsGiving: true,
+    ackNotRequired: false,
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-01"),
     ...overrides,
@@ -243,6 +244,31 @@ describe("updateCategory — audit trail", () => {
       countsAsGiving: false,
       form990Line: "Line 4a",
     });
+  });
+
+  it("flags-only: ackNotRequired change alone writes a category_flags_updated audit row with only that field in before/after", async () => {
+    const existing = category({ ackNotRequired: false });
+    mockDbState.selectQueue.push([existing]);
+    mockDbState.updateReturningQueue.push([{ ...existing, ackNotRequired: true }]);
+
+    await updateCategory("cat-1", { ackNotRequired: true }, "user-1");
+
+    const audit = mockDbState.insertCalls[0];
+    expect(audit.values.action).toBe("category_flags_updated");
+    expect(JSON.parse(audit.values.before as string)).toEqual({ ackNotRequired: false });
+    expect(JSON.parse(audit.values.after as string)).toEqual({ ackNotRequired: true });
+    expect(mockDbState.updateCalls[0].values).toMatchObject({ ackNotRequired: true });
+  });
+
+  it("no-op ackNotRequired patch (value equals current) writes no audit row and issues no UPDATE", async () => {
+    const existing = category({ ackNotRequired: true });
+    mockDbState.selectQueue.push([existing]);
+
+    const result = await updateCategory("cat-1", { ackNotRequired: true }, "user-1");
+
+    expect(result).toEqual({ ok: true, category: existing });
+    expect(mockDbState.insertCalls).toHaveLength(0);
+    expect(mockDbState.updateCalls).toHaveLength(0);
   });
 
   it("simultaneous rename + deactivate: action is category_renamed but before/after carry both fields", async () => {

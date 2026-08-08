@@ -20,6 +20,12 @@ export interface AdminCategoryRow {
   sortOrder: number;
   isActive: boolean;
   countsAsGiving: boolean;
+  /** True: income on this category is excluded from the Acknowledgments
+   *  pending queue (listPendingAcknowledgments()), regardless of amount.
+   *  Only meaningful — and only offered in the UI — for an income category
+   *  on a donations-deductible entity; see EntityCategoryData.donationsDeductible
+   *  and docs/work-log/2026-08-08-ack-not-required-flag.md. */
+  ackNotRequired: boolean;
   form990Line: string | null;
 }
 
@@ -33,6 +39,10 @@ export interface EntityCategoryData {
   slug: string;
   name: string;
   shortName: string | null;
+  /** Whether gifts to this entity are tax-deductible (Foundation: true,
+   *  Club: false) — gates whether the ackNotRequired checkbox is offered at
+   *  all in CategoryFlagsDialog. */
+  donationsDeductible: boolean;
   funds: EntityFundOption[];
   categories: AdminCategoryRow[];
 }

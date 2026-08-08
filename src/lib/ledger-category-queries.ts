@@ -84,6 +84,7 @@ export function toCategoryDTO(category: LedgerCategory) {
     sortOrder: category.sortOrder,
     isActive: category.isActive,
     countsAsGiving: category.countsAsGiving,
+    ackNotRequired: category.ackNotRequired,
     form990Line: category.form990Line,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
@@ -168,6 +169,7 @@ export type CategoryImpact = {
     flow: "income" | "expense";
     isActive: boolean;
     countsAsGiving: boolean;
+    ackNotRequired: boolean;
     form990Line: string | null;
   };
   transactions: {
@@ -282,6 +284,7 @@ export async function getCategoryImpact(categoryId: string): Promise<CategoryImp
       flow: category.flow as "income" | "expense",
       isActive: category.isActive,
       countsAsGiving: category.countsAsGiving,
+      ackNotRequired: category.ackNotRequired,
       form990Line: category.form990Line,
     },
     transactions: {
@@ -307,6 +310,7 @@ export async function getCategoryImpact(categoryId: string): Promise<CategoryImp
 export type CategoryUpdatePatch = {
   name?: string;
   countsAsGiving?: boolean;
+  ackNotRequired?: boolean;
   form990Line?: string | null;
   isActive?: boolean;
 };
@@ -341,8 +345,8 @@ export type CategoryUpdateResult =
   | { ok: false; error: string; status: 404 };
 
 /**
- * General-purpose category edit — rename, countsAsGiving, form990Line, and
- * isActive all flow through this one function (architect Ruling #3:
+ * General-purpose category edit — rename, countsAsGiving, ackNotRequired,
+ * form990Line, and isActive all flow through this one function (architect Ruling #3:
  * deliberately not one-way action routes, so reactivation costs nothing
  * extra). Re-reads the row inside the transaction so before/after reflect
  * the freshest state at write time, computes only-the-changed-fields diffs,
@@ -387,6 +391,14 @@ export async function updateCategory(
       setValues.countsAsGiving = patch.countsAsGiving;
       before.countsAsGiving = existing.countsAsGiving;
       after.countsAsGiving = patch.countsAsGiving;
+    }
+    if (
+      patch.ackNotRequired !== undefined &&
+      patch.ackNotRequired !== existing.ackNotRequired
+    ) {
+      setValues.ackNotRequired = patch.ackNotRequired;
+      before.ackNotRequired = existing.ackNotRequired;
+      after.ackNotRequired = patch.ackNotRequired;
     }
     if (
       patch.form990Line !== undefined &&

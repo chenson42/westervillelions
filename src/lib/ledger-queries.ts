@@ -4960,6 +4960,16 @@ export type AcknowledgmentSummaryRow = {
  * List Foundation income transactions >= $250 that do NOT yet have a sent
  * acknowledgment (sentAt IS NULL). These are the pending ack tasks.
  *
+ * Excludes transactions posted to a category flagged `ackNotRequired`
+ * (2026-08-08, docs/work-log/2026-08-08-ack-not-required-flag.md) — race
+ * entries, event receipts, pooled fundraiser deposits, grants, and internal
+ * transfers recur every year and will never produce a donor acknowledgment,
+ * so they're dropped from the queue entirely rather than requiring per-
+ * transaction dismissal forever. A transaction with no category at all
+ * (categoryId IS NULL) is still admitted — there's nothing to check the
+ * flag on, so this stays the safer "include it" default rather than
+ * silently dropping uncategorized income from the queue.
+ *
  * Includes donor row (nullable) for display. Caller must gate on LEDGER_RECORD
  * to expose donor PII.
  */
@@ -4983,6 +4993,7 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
       eq(ledgerAcknowledgments.donationTxnId, ledgerTransactions.id),
     )
     .leftJoin(ledgerDonors, eq(ledgerTransactions.donorId, ledgerDonors.id))
+    .leftJoin(ledgerCategories, eq(ledgerTransactions.categoryId, ledgerCategories.id))
     .where(
       and(
         eq(ledgerEntities.donationsDeductible, true),
@@ -4992,6 +5003,11 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
         or(
           isNull(ledgerAcknowledgments.id),
           isNull(ledgerAcknowledgments.sentAt),
+        ),
+        // category missing (nothing to check) OR its ackNotRequired flag is false
+        or(
+          isNull(ledgerCategories.id),
+          eq(ledgerCategories.ackNotRequired, false),
         ),
         // Only include transactions that meet the minimum threshold ($250)
         sql`${ledgerTransactions.amountCents} >= 25000`,

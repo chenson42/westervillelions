@@ -593,6 +593,22 @@ export const ledgerCategories = pgTable(
     // excluded from philanthropy/impact reporting even though the money still
     // flows through a giving-eligible fund kind. See DECISION-030.
     countsAsGiving: boolean("counts_as_giving").notNull().default(true),
+    // True marks INCOME categories whose transactions will never produce a
+    // donor acknowledgment letter — race-entry fees, event receipts, pooled
+    // fundraiser deposits, grants, and internal Club<->Foundation transfers,
+    // where either the payer received something of value in return or the
+    // money isn't an outside gift at all. Excluded from
+    // listPendingAcknowledgments() (ledger-queries.ts) regardless of amount.
+    // NOT the same axis as countsAsGiving above: countsAsGiving governs
+    // OUTBOUND spend counted toward philanthropy/impact reporting; this flag
+    // governs INBOUND Foundation income never needing an acknowledgment
+    // queued in the first place. Default false preserves every existing
+    // category's current behavior (still queued for acknowledgment review).
+    // Only meaningful for income categories on a donations-deductible entity
+    // (Foundation) — the admin UI only offers the checkbox there, though the
+    // column itself has no such constraint (see
+    // docs/work-log/2026-08-08-ack-not-required-flag.md).
+    ackNotRequired: boolean("ack_not_required").notNull().default(false),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },

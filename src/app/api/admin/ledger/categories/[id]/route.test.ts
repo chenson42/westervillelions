@@ -31,6 +31,7 @@ vi.mock("@/lib/ledger-category-queries", () => ({
     sortOrder: c.sortOrder,
     isActive: c.isActive,
     countsAsGiving: c.countsAsGiving,
+    ackNotRequired: c.ackNotRequired,
     form990Line: c.form990Line,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
@@ -61,6 +62,7 @@ const EXISTING_CATEGORY = {
   sortOrder: 0,
   isActive: true,
   countsAsGiving: true,
+  ackNotRequired: false,
   createdAt: new Date("2026-01-01"),
   updatedAt: new Date("2026-01-01"),
 };
@@ -158,6 +160,30 @@ describe("PATCH /api/admin/ledger/categories/[id] — validation", () => {
     const response = await PATCH(makeRequest({ countsAsGiving: "yes" }), makeParams());
     expect(response.status).toBe(400);
     expect(updateCategory).not.toHaveBeenCalled();
+  });
+
+  it("400s when ackNotRequired is not a boolean", async () => {
+    const response = await PATCH(makeRequest({ ackNotRequired: "yes" }), makeParams());
+    expect(response.status).toBe(400);
+    expect(updateCategory).not.toHaveBeenCalled();
+  });
+
+  it("200s on a valid ackNotRequired patch and passes it through to updateCategory", async () => {
+    vi.mocked(updateCategory).mockResolvedValueOnce({
+      ok: true,
+      category: { ...EXISTING_CATEGORY, ackNotRequired: true },
+    } as never);
+
+    const response = await PATCH(makeRequest({ ackNotRequired: true }), makeParams());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ackNotRequired).toBe(true);
+    expect(updateCategory).toHaveBeenCalledWith(
+      "cat-1",
+      { ackNotRequired: true },
+      "user-1",
+    );
   });
 
   it("400s when isActive is not a boolean", async () => {

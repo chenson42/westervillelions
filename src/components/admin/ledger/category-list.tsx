@@ -295,6 +295,7 @@ export default function CategoryList({ entities, currentFiscalYear }: CategoryLi
         <CategoryFlagsDialog
           category={flagsTarget}
           fundLabel={fundKindLabel(flagsTarget.fundKind, activeEntity.funds)}
+          entityDonationsDeductible={activeEntity.donationsDeductible}
           open={Boolean(flagsTarget)}
           onOpenChange={(open) => {
             if (!open) setFlagsTarget(null);

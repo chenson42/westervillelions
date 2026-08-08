@@ -12,7 +12,7 @@
  * Gate: LEDGER_MANAGE
  *
  * Body — any non-empty subset of:
- * { name?: string; countsAsGiving?: boolean; form990Line?: string | null; isActive?: boolean }
+ * { name?: string; countsAsGiving?: boolean; ackNotRequired?: boolean; form990Line?: string | null; isActive?: boolean }
  *
  * Validation, in order (Phase 3 contract):
  *   1. 404 if category doesn't exist.
@@ -24,11 +24,17 @@
  *   3. If `form990Line` present: null/"" (after trim) stores NULL; otherwise
  *      trim and reject over MAX_FORM_990_LINE_LENGTH (400).
  *   4. If `countsAsGiving` present: must be boolean (400 otherwise).
- *   5. If `isActive` present: must be boolean (400 otherwise). No block
+ *   5. If `ackNotRequired` present: must be boolean (400 otherwise). No
+ *      entity/flow restriction server-side — the flag is only offered in the
+ *      UI for income categories on a donations-deductible entity (where it
+ *      has any effect on listPendingAcknowledgments()), but setting it on
+ *      any other category is inert rather than harmful, so it isn't blocked
+ *      here (2026-08-08, docs/work-log/2026-08-08-ack-not-required-flag.md).
+ *   6. If `isActive` present: must be boolean (400 otherwise). No block
  *      either direction — deactivate/reactivate are both unconditional here;
  *      the open-balance warning is surfaced by GET .../impact before the
  *      call, never a server-side block.
- *   6. If no recognized field is present in the body: 400 "No fields to update."
+ *   7. If no recognized field is present in the body: 400 "No fields to update."
  *
  * On success: one UPDATE ledger_categories (only changed columns +
  * updatedAt) + one ledgerAuditLog insert, in the same transaction
@@ -77,11 +83,12 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { name, countsAsGiving, form990Line, isActive } = body ?? {};
+    const { name, countsAsGiving, ackNotRequired, form990Line, isActive } = body ?? {};
 
     const hasRecognizedField =
       name !== undefined ||
       countsAsGiving !== undefined ||
+      ackNotRequired !== undefined ||
       form990Line !== undefined ||
       isActive !== undefined;
     if (!hasRecognizedField) {
@@ -125,6 +132,13 @@ export async function PATCH(
         return NextResponse.json({ error: "countsAsGiving must be a boolean" }, { status: 400 });
       }
       patch.countsAsGiving = countsAsGiving;
+    }
+
+    if (ackNotRequired !== undefined) {
+      if (typeof ackNotRequired !== "boolean") {
+        return NextResponse.json({ error: "ackNotRequired must be a boolean" }, { status: 400 });
+      }
+      patch.ackNotRequired = ackNotRequired;
     }
 
     if (isActive !== undefined) {
