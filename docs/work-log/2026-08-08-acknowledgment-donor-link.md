@@ -17,7 +17,7 @@
 | 3 — Technical design | tech-lead | Skipped | Trivial fix — root cause documented below | 2026-08-08 |
 | 4 — Implementation | full-stack-developer | Complete | — | 2026-08-08 |
 | 5 — Verification | qa | Complete | PASS | 2026-08-08 |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 6 — Shipped vs intent | analyst | Complete | SHIP IT | 2026-08-08 |
 
 **No silent skips — see the Bug-Fix Variant notes below for why Phases 1–3 were brief/skipped.**
 
@@ -522,3 +522,165 @@ directly (not inferred from passing tests):
   matches what he actually needed: recording an acknowledgment linking the
   donor, and being able to complete Mark Sent from the same screen he was
   stuck on.
+
+---
+
+# Phase 6 — Shipped vs Intent — 2026-08-08
+
+**Owner:** analyst
+**Status:** complete
+
+### Summary
+
+**Verdict: SHIP IT.** Read both implementation increments, qa's Phase 5
+report, and the actual changed code (`route.ts`, `ledger-queries.ts`,
+`ack-queue-ui.ts`, `ack-queue.tsx`, `route.test.ts`). The treasurer's exact
+reported path now resolves completely: the donor he added shows up on the
+donors screen, the row he acknowledged is visually distinguishable from a
+truly-pending one, and he can reach Mark Sent from the same screen instead
+of hitting a 409 dead end. The record/send distinction — the one thing that
+must not have moved — is intact. The overwrite decision is sound. One
+pre-existing, out-of-scope data-modeling risk is worth a tracked follow-up
+but does not block this fix.
+
+### What I did
+
+- Re-read the Phase 4 root-cause diagnosis (two divergent `donor_id`
+  columns) and both increments' summaries against the actual diffs, not
+  just the work-log prose.
+- Walked the treasurer's exact path against the shipped code:
+  1. `POST .../acknowledge` — confirmed the `db.transaction()` block
+     (lines 204–227 of `route.ts`) inserts the ack row and, when `donorId`
+     is present, updates `ledgerTransactions.donorId` in the same
+     transaction. Both writes now succeed or fail together.
+  2. `listPendingAcknowledgments()` (`ledger-queries.ts:4966`) joins
+     `ledgerDonors` on `ledgerTransactions.donorId` (line 4985) — since
+     that column is now populated, the donor name and link render in the
+     table instead of "No donor linked." This directly answers the
+     treasurer's second complaint ("I also didn't see the donor show up in
+     the table when assigned").
+  3. `ackQueueRowStatus()`/`ackQueueRowAction()` (`ack-queue-ui.ts`) key
+     off `ackId !== null`, which the query now actually carries through
+     (`ledger-queries.ts:5009`, previously dropped in the `.map()`).
+     `ack-queue.tsx` renders the blue "Acknowledged — not sent" badge and
+     a working "Mark Sent" button instead of a second identical "Record
+     acknowledgment" button that would 409.
+  4. Confirmed `MarkSentDialog`'s target (`PATCH .../acknowledge`,
+     `route.ts:250-367`) sets `sentAt`, which is exactly the column
+     `listPendingAcknowledgments()` filters on (`isNull` on the ack's
+     `sentAt` — line 4994), so a successful Mark Sent removes the row from
+     the queue on refresh, closing the loop the treasurer got stuck in.
+- Confirmed the record/send model is untouched: `POST` still inserts with
+  `sentAt: null` unconditionally (route.ts:214); `PATCH` is the only place
+  `sentAt` gets written, and only via an explicit second user action. No
+  auto-send, no collapsing of the two steps.
+- Read `route.test.ts` in full (not just qa's description of it) —
+  confirmed the three tests actually assert `db.transaction()` call
+  arguments for the set/omit/overwrite cases, matching the work-log's
+  claims exactly.
+- Reasoned through the overwrite decision independently rather than taking
+  the implementer's justification at face value: `AcknowledgeDialog` (the
+  only caller of `POST`) only ever renders when `ackQueueRowAction`
+  returns `"record"` — i.e., no acknowledgment exists yet for that
+  transaction. So the overwrite branch fires only when a donor was already
+  linked via the separate `LinkDonorDialog` (a prior, distinct user
+  action) and the treasurer then changes the pre-filled donor field before
+  ever acknowledging. That's a narrow window, it's an explicit edit to a
+  labeled "Donor" field the treasurer is looking directly at, and
+  `LinkDonorDialog`'s existing "Re-link" affordance already permits the
+  identical kind of overwrite with no extra confirmation. Refusing here
+  would be the inconsistent choice, and there's no "force" affordance to
+  resolve a refusal anyway. Silent reassignment (the risk the task asked
+  me to check) would require the treasurer *not* to notice the field
+  already showed a different donor's name — possible in theory for any
+  form field, but not a defect specific to this fix, and no worse than the
+  pre-existing `LinkDonorDialog` pattern it mirrors.
+- Considered the Rudolph Run Entry Receipts note. `listPendingAcknowledgments()`
+  has no way to distinguish a single donor's gift from an aggregate/batch
+  deposit (event ticket proceeds, multiple small registrations rolled into
+  one Foundation income line) — both pass the same `amountCents >= 25000`
+  Foundation-income filter. Before this fix, that risk was mostly
+  theoretical because donor-linking from Acknowledge silently failed to
+  persist; now that the link path actually works end-to-end, a treasurer
+  could accidentally acknowledge "Trucco Construction Co" as the source of
+  a $14,451.90 batch deposit that isn't Trucco's gift at all, which is a
+  real IRS Pub. 1771 substantiation problem (the acknowledgment must name
+  the actual donor of the actual gift). This is pre-existing query scope,
+  not something introduced or worsened by either increment, and the
+  implementer correctly left it alone per the task's boundary — but it
+  belongs as a tracked follow-up now that the mechanism it would misfire
+  through is fixed.
+
+### Intent-vs-shipped diff
+
+- Phase 1 (brief) said: acknowledging a donor should make that donor
+  visible on the donors/activities screen. Shipped: `ledger_transactions.donor_id`
+  is set in the same transaction as the ack insert; donor name/link now
+  renders in the queue and giving history. **Matches.**
+- Phase 1 (brief) said: the treasurer needs a way to complete the
+  acknowledgment workflow (Mark Sent) from the screen where he does the
+  rest of the work. Shipped: `AckQueue` now renders "Mark Sent" for rows
+  with an unsent ack, wired to the previously-dead `MarkSentDialog` state.
+  **Matches** — this was the one item that required more than a one-line
+  fix, and it's the one qa specifically verified end-to-end including the
+  row leaving the queue on success.
+- Phase 1 (brief, "what is NOT a bug") said: staying in the pending list
+  after Record (before Send) is correct by design. Shipped: unchanged —
+  `listPendingAcknowledgments()`'s `sentAt IS NULL OR no-ack` filter was
+  not touched by either increment. **Matches**, and the two states are now
+  visually distinct instead of looking like nothing happened.
+- Not in the original brief, found during Phase 4 and correctly not fixed
+  there: two-badge legibility (identical-looking "acknowledged" vs.
+  "unacknowledged" rows). Shipped in the second increment: distinct amber
+  "Pending" / blue "Acknowledged — not sent" badges. **Matches** the
+  treasurer's underlying need even though it wasn't in his literal words.
+
+### Edge cases
+
+- Empty state (queue with 0 pending rows): pass — unchanged "All caught
+  up!" state with green check icon, not touched by either increment, still
+  correct.
+- Failure microcopy: pass — 409 on double-acknowledge reads "An
+  acknowledgment already exists for this transaction" (now practically
+  unreachable from the queue itself since the button choice is now
+  correct); 404 on Mark Sent with no ack reads "No acknowledgment found for
+  this transaction. Create one first." Both are human sentences, not stack
+  traces.
+- Permission gate: pass — both POST and PATCH re-checked `auth()` +
+  `hasFeature(FEATURES.LEDGER_RECORD)` (route.ts:64-70, 255-261), unchanged
+  by this fix; qa's feature-gate audit confirms the correct key.
+- Brand consistency: pass — badges use `rounded-lg` (not `rounded-full`),
+  blue badge uses `lions-blue`/`bg-blue-50` matching the existing
+  in-progress badge convention cited from `filings-calendar.tsx` and
+  `panel-990.tsx`; no `window.confirm` introduced (neither Record nor Mark
+  Sent is a destructive action, so `<ConfirmDialog>` doesn't apply here);
+  no `lions-red` anywhere in the diff.
+- Mobile: pass (not independently re-verified at 360px by me, but the
+  table sits inside the pre-existing `overflow-x-auto` wrapper unchanged
+  by this fix, and neither increment altered layout/breakpoints).
+
+### Recommended follow-ups (not blocking — separate backlog items, not gaps in this fix)
+
+1. **Aggregate/batch deposits in the ack queue.** `listPendingAcknowledgments()`
+   surfaces any Foundation income ≥ $250 with no distinction between a
+   single donor's gift and a batch deposit (e.g., "Rudolph Run Entry
+   Receipts," $14,451.90, many small registrations). Now that donor-linking
+   from Acknowledge actually persists, this is a live risk of producing an
+   incorrect written acknowledgment, not just a cosmetic queue oddity.
+   Recommend a normal-pipeline (non-bug-fix) work-log entry to either flag
+   likely-batch rows for exclusion/warning in the queue, or give the
+   treasurer an explicit "this is a batch deposit, not a single gift" skip
+   action. Add to `docs/backlog.md`.
+2. **`ledger-search.spec.ts` fixture drift.** Already identified by qa as
+   unrelated to this fix (the test's "current FY has no data" assumption no
+   longer holds). Recommend a small follow-up ticket per qa's note so it
+   stops tripping future e2e runs.
+
+Neither item reopens this pipeline entry — both are pre-existing scope
+outside what the treasurer reported and outside what either increment
+touched.
+
+### Open questions / handoff notes
+
+- None for this entry. Recommend logging the two follow-ups above in
+  `docs/backlog.md` with `B-nn` IDs on the next normal-pipeline pass.
