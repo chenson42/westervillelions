@@ -28,6 +28,201 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-069: Budget Context on Transaction Entry — new `ledger-budget-context-queries.ts` sibling module; fetch scoped to `(fundId, derived fiscal year)` via a client-fetched route handler, not per-category-selection and not whole-entity-across-all-FYs; posted/pending both returned as separate labeled fields, never a silent toggle
+
+**Status:** Resolved
+**Date:** 2026-08-08
+
+**Decision:** Phase 2 architectural ruling for `docs/work-log/2026-08-08-budget-context-on-transaction-entry.md`, closing the five structural questions Phase 1 left open.
+
+1. **Fetch strategy: neither of the two extremes Phase 1 flagged.** Not "preload the whole entity across every fiscal year it has ever budgeted" (that's `getBudgetLineOptions()`'s existing shape for static line *metadata*, but actuals are live data that changes on every posted/pending transaction — preloading every historical FY multiplies cost for years the treasurer isn't entering against). Not "fetch per category/line selection" either — Phase 1 confirmed zero precedent for that anywhere in this form. The right grain is **`(fundId, fiscalYear-derived-from-txnDate)`**: one request returns every category's and every budget line's budgeted/used figures for that one fund+FY slice, and the category/budget-line pickers keep doing what they already do — filtering a preloaded set client-side with no further round trip. A `useEffect` in the new panel component depends on `[fundId, derivedFiscalYear]` (the *derived* FY, not raw `txnDate` — so editing the day-of-month within the same fiscal year never refetches), matching the dependency shape `transaction-form.tsx`'s existing `budgetLineId` auto-clear effect (line 284) already uses for the same date-crosses-FY-boundary case. This also answers Flow 4 (edit mode): the effect fires on mount using `initialValues`' already-set `fundId`/`txnDate`, same as every other effect in this file.
+2. **New sibling module, `src/lib/ledger-budget-context-queries.ts`**, not an extension of `getFundReport()` and not a new call site inside `ledger-queries.ts` (already the largest file in `src/lib`). Mirrors the precedent `financial-report-queries.ts` (DECISION-049), `ledger-search-queries.ts` (DECISION-062), and `ledger-category-queries.ts` (DECISION-065) all set: a distinct, narrower read surface composing the existing pure-arithmetic engine in `lib/ledger.ts`, not a rework of `getFundReport()`. `getFundReport()` is not reused directly as the data source because it computes several things this feature doesn't need (fund-wide rollforward, an extra categories query, the full posted-only cause-actuals pool) and is missing the one thing this feature does need (a per-category/per-line *pending* breakdown — `getFundReport()` only ever surfaces `pendingExpenseCents` as a single fund-wide total, never broken out by category). The new module owns exactly one exported query, scoped to `(fundId, fiscalYear)`, returning budgeted/posted/pending figures per category and per budget line in that slice.
+3. **Reuse `lib/ledger.ts`'s existing pure helpers rather than a fourth implementation of budget-vs-actual arithmetic.** The new query imports and reuses `resolveCauseLineActual`, `causeLineReferenceKey`, `isEligibleForFuzzyCauseMatch`, and `buildCauseActualsByKey` for cause-line-grain actuals — becoming a third consumer of `resolveCauseLineActual` alongside `getFundReport()` and `computeOneMonthCashActuals()`, exactly the pattern its own doc comment anticipates ("Called once per cause line by every consumer"). The category-grain budgeted/remaining figure reuses `budgetVariance()` unchanged. `lib/ledger.ts` has no DB import and is already client-safe (confirmed: only imports `getFiscalYear` from `fiscal-year.ts`), so the same `budgetVariance()` call is reused again, client-side, for the "projected after this transaction" figure — one function computing that arithmetic everywhere it's computed, not a client-side reimplementation. This is the concrete mechanism that keeps this feature's numbers from drifting out of agreement with the fiscal report and the admin fund report: the *posted* half of this feature's figure and `getFundReport()`'s figure are required to share the identical `status === 'posted'` predicate and the identical grouping/resolution helpers, not just "an equivalent computation."
+4. **Posted vs. pending is expressed as two separate, explicitly labeled fields on every returned row — not a boolean `opts` toggle and not two call sites.** The new query always computes and returns both `postedCents` and `pendingCents` per category/line (this feature is the only consumer today; there's no second call site to diverge from). A labeled dual-figure return is self-documenting at the type level — a future posted-only caller reads `postedCents` and ignores `pendingCents` without needing to know a flag existed — and it directly satisfies the treasurer's requirement that the UI label what it counts, since the component has both numbers in hand rather than one pre-collapsed sum.
+5. **Server/client split:** a new `GET /api/admin/ledger/budget-context` route handler (Node runtime, `auth()` + `hasFeature(BUDGET_VIEW) || hasFeature(LEDGER_MANAGE)`, per the treasurer's explicit gate) calls the new query and returns JSON. A new client component, `src/components/admin/ledger/budget-context-panel.tsx` (`'use client'`), owns its own fetch effect keyed on `[fundId, derivedFiscalYear]`, receives `categoryId`/`budgetLineId`/`flow`/`amount` as props from `transaction-form.tsx`, and does the "current vs. projected" and received-vs-expected arithmetic locally against the fetched baseline — pure client computation, no additional fetch per keystroke. This is the first client-side `fetch()` inside `transaction-form.tsx` itself, but not a new pattern for this *directory* — `category-merge-dialog.tsx`, `budget-cause-editor.tsx`, and several other client components under `src/components/admin/ledger/` already fetch their own route handlers on demand; this feature follows that existing convention rather than inventing a new one. `TransactionFormDialog`/`TransactionForm`'s existing preloaded-props pattern for `categories`/`budgetLines` is untouched — this is additive, not a replacement.
+6. **No new dependency.** Confirmed against the dependency-evaluation criteria: this is arithmetic on data already in Postgres via Drizzle, rendered with existing Tailwind/shadcn primitives. Follows the strong prior stated in the brief.
+
+**Rationale:** Every ruling favors the shape that keeps exactly one code path per concern (one query module for this grain, one shared arithmetic library reused three-plus times, one labeled response shape for posted/pending) over a shape that would require either a heavier whole-entity fetch, a second independent arithmetic implementation, or a hidden mode flag — consistent with the DECISION-049/061/062/065 lineage this feature explicitly continues.
+
+**Impact:** New file `src/lib/ledger-budget-context-queries.ts` (query + types). New file `src/app/api/admin/ledger/budget-context/route.ts`. New file `src/components/admin/ledger/budget-context-panel.tsx`. Modified: `src/components/admin/ledger/transaction-form.tsx` (renders the new panel, passes props, first client-fetch in this file). No schema changes, no new `FEATURES` key (existing `BUDGET_VIEW`/`LEDGER_MANAGE` reused per the treasurer's explicit gating call). Full component wiring and the API contract are Phase 3's to lock.
+
+---
+
+## DECISION-068: Ledger Category Management — merge now ALSO refuses the whole operation when any affected fiscal year is EARLIER than the current fiscal year, regardless of lock status; the lock-based guard from DECISION-067 was necessary but not sufficient
+
+**Status:** Resolved
+**Date:** 2026-08-08
+
+**Decision:** DECISION-067's whole-merge, lock-based refusal is a correct implementation of
+what it says, but the Phase 6 re-check (`docs/work-log/2026-08-07-ledger-category-management.md`,
+"Phase 6 Re-Check (loop-back)") found it doesn't actually restore the boundary it was written to
+restore. Tracing the real `Awards` → `Member recognition` merge concretely against the live dev
+DB: `Awards` carries exactly one budget row, FY2025, and **no fiscal year has ever actually been
+locked** for either entity — every `ledger_budget_approvals` row on record is a QA e2e artifact,
+all `unlocked`, and Club FY2025 has no approval row at all. Because DECISION-067's guard triggers
+only on `status = 'locked'`, that merge would proceed today, silently re-pointing FY2025's
+approved budget row — exactly what `scripts/merge-club-budget-categories.ts`'s own header comment
+refused to do ("would falsify the historical record") and exactly what DECISION-067 was written to
+prevent. The guard is a correct reading of DECISION-067's literal text; it does not restore the
+precedent script's actual boundary, which was **fiscal-year scope**, not lock status.
+
+New rule, effective now, checked in `mergeCategories()` **before** the existing locked-year check
+(both checks remain; this one runs first because it doesn't depend on anyone having remembered to
+lock a closed year — in practice, nobody ever has): **merge refuses the whole operation, naming
+the prior fiscal year(s), whenever ANY fiscal year it would re-point is earlier than the current
+fiscal year** — derived from the existing `currentFiscalYear(new Date())` helper in
+`src/lib/fiscal-year.ts` (never hardcoded). This is a whole-merge refusal, same discipline as
+DECISION-067's lock-based one: not a partial merge that quietly skips the prior year and proceeds
+for the rest. The treasurer's own framing: a merge moves a budgeted *amount*, and a prior fiscal
+year's budget is already closed — the club shouldn't quietly restate it, and that correctness
+shouldn't depend on locking discipline nobody has practised.
+
+One concrete, known, and *intended* consequence: `Awards` now has only its FY2025 row left (its
+FY2026 row was already merged by an earlier script), so merging `Awards` → `Member recognition`
+through the UI is now refused outright — there is nothing left in `Awards` to merge in the current
+fiscal year. The merge dialog (`category-merge-dialog.tsx`) and the refusal message itself say so
+plainly (distinct wording from the locked-year refusal, since the reasons differ), so a treasurer
+reads this as "nothing to do here, and the old row is safe as approved" rather than a bug.
+
+**Rationale:** A guard that depends on a manual, easy-to-skip action (locking a fiscal year) that
+has never actually been performed in this database's real history is not a safety guarantee, it's
+a policy statement that happens to have zero live enforcement. The treasurer's actual intent — do
+not quietly restate a budget the club has already closed out — is better and more simply
+guaranteed by comparing the fiscal year directly to the one everyone already treats as "current"
+(the same `currentFiscalYear()` helper every other Ledger surface uses), independent of whether
+anyone remembered to run Approve & Lock for that year. Keeping the lock-based check alongside this
+one (rather than replacing it) still matters: a future or current-year budget row can be locked for
+reasons unrelated to being prior (e.g. a current-year approval the board has already signed off
+on), and that case is still correctly blocked by DECISION-067's check.
+
+**Impact:** `src/lib/ledger-category-queries.ts` (`mergeCategories()` gains a new refusal step,
+inserted immediately after the both-sides-budget-collision check and before the existing
+locked-year check — filters the computed `plan[]` for any `fiscalYear < currentFY` and refuses the
+whole call, for both `confirm:false` and `confirm:true`, naming every prior year with correct
+singular/plural grammar; module and function doc comments updated). `src/app/api/admin/ledger/categories/merge/route.ts`
+(doc comment gains the new refusal step, renumbering the locked-year step from 8 to 9).
+`src/lib/ledger-category-ui.ts` (new pure helper `isPriorFiscalYearMergeRefusal()`, unit-tested in
+`ledger-category-ui.test.ts`). `src/components/admin/ledger/category-merge-dialog.tsx` (top doc
+comment, `Dialog.Description` copy, and a non-alarming presentation for this specific refusal —
+"Nothing to merge in the current fiscal year" — instead of the generic red failure treatment).
+Unit tests added to `src/lib/ledger-category-queries.test.ts` (new prior-fiscal-year tests; the
+three existing locked-year tests and the plan/apply-agreement test had their fixture fiscal years
+moved off prior years — FY2024/2025 → FY2027/2028 for the locked-year tests, FY2024/2026 →
+FY2026/2027 for the plan/apply test — so each test continues to isolate the specific condition its
+name says it tests, now that a fiscal year can trigger either refusal independently). `e2e/ledger-category-management.spec.ts`
+extended with a real-data test using `Contingency` (Foundation, 0 transactions, real FY2025 budget
+row) merging toward `Disaster relief` (same scope, zero budget rows) — confirms the refusal fires
+against real prior-year data with no fiscal year locked, matching the Phase 6 re-check's own
+finding. **DECISION-067's Status line and item 2 below are corrected in place, struck through, not
+deleted** — see that entry.
+
+---
+
+## DECISION-067: Ledger Category Management — merge now REFUSES the whole operation when any affected fiscal year is locked; corrects DECISION-066 item 3's inaccurate "matches both precedent scripts exactly" claim
+
+**Status:** Resolved; item 2's closing claim corrected in place by DECISION-068 (2026-08-08) — the
+lock-based guard below is necessary but was found NOT sufficient on its own (no fiscal year has
+ever actually been locked in this database), so merge now ALSO refuses on fiscal-year scope,
+independent of lock status. See DECISION-068 for the full correction; struck-through text below is
+kept, not deleted.
+**Date:** 2026-08-07
+
+**Decision:** Two things, logged together because the second corrects the first:
+
+1. **DECISION-066 item 3 was wrong and is corrected here, not silently edited.** It claimed the
+   shipped merge behavior — re-pointing a locked prior fiscal year's budget row, disclosed via a
+   `locked: true` chip but never blocked — "matches both precedent scripts exactly." It does not.
+   `scripts/merge-club-budget-categories.ts` is hardcoded to a single `FY = 2026` throughout —
+   every query and every `UPDATE` is scoped `WHERE fiscal_year = ${FY}` — and its own header
+   comment states FY2025's `Awards`/`Supplies` rows were "DELIBERATELY NOT TOUCHED... rewriting an
+   approved prior-year budget to match this year's naming would falsify the historical record."
+   The shipped `mergeCategories()` (as of Phase 4/DECISION-066) fetched and re-pointed budget rows
+   for every fiscal year the source category had ever touched, locked or not — a broader,
+   materially different operation than the script it was supposed to match. This was caught by
+   the analyst's Phase 6 shipped-vs-intent review (`docs/work-log/2026-08-07-ledger-category-management.md`)
+   and confirmed by the treasurer before this feature shipped.
+2. **New rule, effective now: merge REFUSES the entire operation, naming which fiscal year(s) are
+   locked and why, if ANY fiscal year it would re-point is locked** — for both the `confirm:false`
+   plan and the `confirm:true` apply (one code path, so they can never diverge). This is a
+   **whole-merge refusal, not a partial merge that skips the locked year(s) and proceeds for the
+   rest** — a partial merge would leave one category's history split across two names with no
+   obvious record of why, which is harder to reason about later than simply refusing and asking
+   the treasurer to unlock the year (or use a separate, more explicit path) first. The distinction
+   that drives this, in the treasurer's own words: a category *name* is a label, not a figure —
+   relabeling a locked year (rename) is fine. A *merge* moves a budgeted *amount* between
+   categories in a year the board approved and locked — a different kind of change, and ~~the one
+   place merge now hard-blocks on a lock beyond the current fiscal year.~~ **Corrected by
+   DECISION-068 (2026-08-08):** this was true of the code as shipped, but the Phase 6 re-check
+   found this guard alone was vacuous in practice — no fiscal year has ever actually been locked
+   for either entity, so the check above never fired for the real `Awards`/`Supplies` merges it
+   was meant to protect. Merge now ALSO hard-blocks on any affected fiscal year being earlier than
+   the current one, regardless of lock status — see DECISION-068.
+
+**Rationale:** Precedent scripts are only a safe spec for automated UI behavior if they're read
+correctly — DECISION-066 asserted an equivalence it hadn't actually verified against the script's
+own scoping and its own stated reasoning for declining to touch FY2025. Once the treasurer read
+the gap in Phase 6's honest telling, the fix was clear from the same "label vs. figure" logic
+Treasurer Decision 1 (rename) already established: rename never blocks on a lock because a name
+isn't board-approved history in the way a budgeted amount is; merge, which does move an amount,
+should therefore be the one operation that *does* block on any lock it would touch, not just the
+current year's.
+
+**Impact:** `src/lib/ledger-category-queries.ts` (`mergeCategories()` gains a new refusal step,
+inserted after the both-sides-budget-collision check and before the plan is returned — checks
+every entry in the computed plan for `locked: true` and refuses the whole call if any exist,
+naming the year(s) in the message; `MergePlanEntry.locked` therefore always reads `false` on any
+plan actually returned to a caller). `src/app/api/admin/ledger/categories/merge/route.ts` (doc
+comment gains refusal step 8). `src/components/admin/ledger/category-merge-dialog.tsx` (dialog
+copy explains the locked-year block plainly; the amber "locked" chip is now defensive/unreachable
+display, kept rather than removed in case a future increment relaxes the block). Unit tests added
+to `src/lib/ledger-category-queries.test.ts`; `e2e/ledger-category-management.spec.ts` extended
+using the existing Approve & Lock fixture. DECISION-066's Status line is updated to note this
+partial supersession — items 1, 2, 4, 5, and 6 of that decision are unaffected and still stand.
+
+---
+
+## DECISION-066: Ledger Category Management Phase 3 — one impact endpoint for three callers, 120-char caps on `name`/`form990Line`, merge shows-but-doesn't-block on locked prior years, deactivate open-balance is a warning not a block, create stays unaudited
+
+**Status:** Superseded in part by DECISION-067 (item 3 only — items 1, 2, 4, 5, and 6 below are
+unaffected and still stand)
+**Date:** 2026-08-07
+
+**Decision:** Six implementation calls closing the Phase 3 design for `docs/work-log/2026-08-07-ledger-category-management.md`, left open by Phase 1 (analyst) and/or explicitly deferred by Phase 2 (architect):
+
+1. **One `GET .../[id]/impact` response shape serves all three callers** (rename preview, `countsAsGiving` dollar impact, deactivate open-balance warning) — `{ category, transactions: { total, postedGivingCents }, budgetLines: { total, fiscalYears[] }, openBalance }`. `postedGivingCents` reuses `getPhilanthropy`'s exact filter (`status='posted'`, no transfer group, `flow='expense'`, fund kind in `activity|charitable|scholarship`) minus the `countsAsGiving` condition, computed unconditionally so the figure is meaningful both before and after a flip.
+2. **`MAX_CATEGORY_NAME_LENGTH = 120` and `MAX_FORM_990_LINE_LENGTH = 120`**, both app-layer only (DECISION-041 precedent, no DB `CHECK`), matching the existing `MAX_BUDGET_LINE_LABEL_LENGTH` cap already in `ledger.ts`. `form990Line` stays free text with a length cap only — no enum/autocomplete in v1, since no canonical IRS-line list exists anywhere in this codebase or `docs/` for one to be built against.
+3. ~~**Merge's lock check stays scoped to the current fiscal year only** (architect Ruling #5, reaffirmed) — a locked *prior* year with a source-only budget row is still re-pointed by merge, matching both precedent scripts exactly. The merge plan/impact response annotates `locked: boolean` per affected year so the treasurer sees it before confirming, but it is disclosure, not a block. This is a deliberate asymmetry: merge hard-blocks only on the current year; rename shows-but-never-blocks on any locked year (Treasurer Decision 1); deactivate doesn't look at locks at all (next item).~~ **This claim was inaccurate and is corrected by DECISION-067 (2026-08-07):** `merge-club-budget-categories.ts` does NOT match this behavior — it is scoped to a single hardcoded fiscal year and its own header states the prior year's rows were "DELIBERATELY NOT TOUCHED" to avoid falsifying approved history. As of DECISION-067, merge instead REFUSES the whole operation, naming the year(s), whenever any fiscal year it would re-point is locked.
+4. **Deactivating a category with an open, non-locked, non-zero current-FY budget row is a warning, not a hard block.** Phase 1 flagged this as unresolved; the architect explicitly left it to Phase 3 ("no lock-based failure case identified... worth an explicit warning, not necessarily a hard block"). Rationale: deactivation only flips `isActive` and never writes to `ledger_budgets`, so there's no data-integrity reason to block it — only a UX concern that `openBalance.hasNonLockedBudgetRow` surfaces inside the `<ConfirmDialog>` body.
+5. **Category creation is not audited in v1.** Treasurer Decision 3's list (renames, merges, deactivations, flag changes) does not include creation, and architect Ruling #3 leaves `POST /api/admin/ledger/categories` completely unchanged. `ledgerAuditLog.action` reserves `'category_created'` as a documented-but-unused future value rather than silently wiring an audit write into a route Phase 2 already ruled untouched.
+6. **PATCH audit-action precedence when multiple fields change in one call:** `name` changed → `category_renamed`; else `isActive` `false→true` → `category_reactivated`; else `isActive` `true→false` → `category_deactivated`; else (flags only) → `category_flags_updated`. `before`/`after` always capture every changed field regardless of which action name wins, so a simultaneous rename+deactivate loses no information to the single-action label.
+
+**Rationale:** Each call closes a gap Phase 1 raised and Phase 2 either deferred or left as a Phase 3 judgment call, rather than inventing new structure — the impact endpoint reuses `getPhilanthropy`'s own filter instead of a parallel giving calculation; the length caps reuse the existing `MAX_BUDGET_LINE_LABEL_LENGTH` convention; the merge/rename/deactivate lock-vs-warning-vs-silent split follows directly from what each operation actually writes (merge changes `category_id` on `ledger_budgets` rows — the one place a lock-integrity argument applies; rename and deactivate change unrelated columns, so a lock check there would be protecting nothing).
+
+**Impact:** `src/lib/db/schema.ts` (`ledgerAuditLog`), `drizzle/migrations/0074_ledger_category_audit.sql`, `src/lib/ledger.ts` (new length consts + `validateCategoryEditInput`, extended `validateCategoryCreateInput`), `src/lib/ledger-category-queries.ts` (new), four route files under `src/app/api/admin/ledger/categories/**`, new UI under `src/app/(dashboard)/admin/ledger/settings/categories/` and `src/components/admin/ledger/`. Full contracts in the work-log's Phase 3 section.
+
+---
+
+## DECISION-065: Ledger Category Management — new `ledger_audit_log` table (generalized schema, category-only code), `ledger-category-queries.ts` sibling module, merge reuses the scripts' dry-run/`--apply` shape as `confirm: boolean`
+
+**Status:** Resolved
+**Date:** 2026-08-07
+
+**Decision:** Phase 2 architectural ruling for `docs/work-log/2026-08-07-ledger-category-management.md`. Seven placement/structure calls:
+
+1. **New table `ledgerAuditLog`** (`ledger_audit_log`), not an extension of `permissionAuditLog`/`googleGroupSyncLog`/`failedLoginAttempts` (none are ledger-shaped) and not a category-only table (`ledger_category_audit_log`). Mirrors `permissionAuditLog`'s existing convention of typed nullable FK columns per target kind (`targetCategoryId` today; `targetTransactionId`/`targetBudgetId` addable later via additive migration) rather than a polymorphic `(targetType, targetId)` pair, which has no precedent in this codebase. The **schema** is deliberately named/shaped to grow into the treasurer's stated future want (transaction/budget audit) at zero later cost (one additive `ALTER TABLE ADD COLUMN IF NOT EXISTS`); the **code** is not pre-generalized — the audit-write helper lives inside `ledger-category-queries.ts` with its one real caller, per DECISION-061's "don't build the parallel structure ahead of a second consumer" precedent. Extraction to a shared `logLedgerAudit()` helper happens when a second real caller (transaction/budget audit) is actually built.
+2. **New sibling module `src/lib/ledger-category-queries.ts`**, following the DECISION-049/DECISION-061 split precedent (`reconciliation-queries.ts`, `financial-report-queries.ts`, `ledger-search-queries.ts`) rather than adding to the 5,149-line `ledger-queries.ts`. Owns all new mutations (`renameCategory`, `updateCategoryFlags`, `setCategoryActive`, `mergeCategories`) plus the new read (`getCategoryImpact`); continues importing `getCategories`/`getEntityById`/`getFunds`/`assertBudgetUnlocked` from `ledger-queries.ts` unchanged.
+3. **API surface:** `GET /api/admin/ledger/categories` (new, list+filters) alongside the existing unchanged `POST`; `PATCH /api/admin/ledger/categories/[id]` (new) handles rename, `countsAsGiving`, `form990Line`, **and `isActive`** as one general-purpose edit endpoint — deliberately not a one-way `POST .../deactivate` action route, because categories lack the multi-guard state machine (`reconciledSessionId`, `transferGroupId`, etc.) that justifies `transactions/[id]/{approve,reject,split}` being separate routes. Treating `isActive` as an ordinary PATCH field makes reactivation free at the API layer regardless of what Phase 3 exposes in the UI. `GET /api/admin/ledger/categories/[id]/impact` (new, read-only) serves both the rename-impact display and the deactivate open-balance warning from one query. `POST /api/admin/ledger/categories/merge` (new, top-level — not nested under `[id]`, since merge is inherently two-category, mirroring `budgets/cause-lines/collapse`/`group`) takes `{ sourceId, destinationId, confirm?: boolean }` — `confirm: false`/omitted returns the plan without writing, `confirm: true` executes, which is the exact dry-run/`--apply` discipline `merge-club-budget-categories.ts` already uses, promoted from a CLI flag to a request-body flag rather than inventing a separate preview endpoint.
+4. **UI placement:** new sub-route `src/app/(dashboard)/admin/ledger/settings/categories/page.tsx`, not a section or tab on `settings/page.tsx` (which is laid out `max-w-2xl` for a short form) — same reasoning that already makes `budgeting/[fundSlug]` a distinct route from `budgeting`. `settings/page.tsx` gains one small nav-card addition linking to it.
+5. **Server/client split:** route-handler-driven throughout (no server actions — no exception exists anywhere under `/api/admin/ledger/**` today). Impact preview and merge plan are fetched on demand from client components exactly like `reconciliation-match-picker.tsx`/`split-transaction-dialog.tsx`/`fund-manage-dialog.tsx` already do, with `router.refresh()` as the sole post-mutation refresh idiom (already used in 34 files under `src/components/admin/ledger/`) — no new data-fetching library.
+6. **Merge transactional integrity:** one Drizzle transaction inside `mergeCategories()`, checking only the *current* FY's lock (matching both scripts — never every year the category has touched), refusing outright on any source transaction (Treasurer Decision 2) or any fiscal year where both source and destination already have a budget row (the exact unique-constraint collision `merge-club-budget-categories.ts` guards against), computed identically for both the `confirm: false` plan and the `confirm: true` execution so they can never diverge.
+7. **No new npm dependency** — confirmed against all five evaluation criteria.
+
+**Rationale:** Every ruling extends an already-established pattern in this codebase (module-splitting precedent, `[id]`-scoped vs. top-level action routes, route-handler + `router.refresh()` convention, `permissionAuditLog`'s typed-FK audit shape, the two scripts' own dry-run/lock-check/rollback discipline) rather than inventing a new one. The one genuinely new design choice — generalizing the audit table's schema now while deferring code generalization — is deliberately asymmetric: schema changes get harder to make non-breaking the longer real rows exist under the old shape, while code extraction is cheap and safe to defer until a second real caller exists.
+
+**Impact:** New `schema.ts` entry `ledgerAuditLog` (Ledger section, after `ledgerCategories`) + matching idempotent migration `drizzle/migrations/0074_ledger_category_audit.sql` (`CREATE TABLE IF NOT EXISTS`, guarded indexes). New file `src/lib/ledger-category-queries.ts`. New route files: `categories/[id]/route.ts`, `categories/[id]/impact/route.ts`, `categories/merge/route.ts`; `categories/route.ts` gains a `GET`. New route `src/app/(dashboard)/admin/ledger/settings/categories/`, new components under `src/components/admin/ledger/`. No new `FEATURES` key (existing `LEDGER_MANAGE` covers everything, per Treasurer Decision 5). No new npm dependency.
+
+---
+
 ## DECISION-064: `membershipType` — snake_case token taxonomy stored in `src/lib/members.ts` (not `ledger.ts`); gated by `MEMBERS_EDIT` (not `DUES_MANAGE`); edited on the existing member-form, not a dedicated sub-route; no admin member-list column in this increment
 
 **Status:** Resolved

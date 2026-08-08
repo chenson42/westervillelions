@@ -42,6 +42,30 @@ export default async function AdminLedgerSettingsPage() {
         </p>
       </div>
 
+      {/* Categories nav card */}
+      <Link
+        href="/admin/ledger/settings/categories"
+        className="group flex items-center justify-between gap-4 bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-6 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+      >
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Manage Categories</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Rename, deactivate, merge, and flag ledger categories across the Club and Foundation
+            books.
+          </p>
+        </div>
+        <svg
+          className="h-5 w-5 shrink-0 text-lions-blue transition group-hover:translate-x-0.5"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth="1.5"
+          stroke="currentColor"
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+        </svg>
+      </Link>
+
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <LedgerSettingsForm settings={settings} />
       </div>

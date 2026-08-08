@@ -29,6 +29,8 @@ import {
   decideSeedWriteAction,
   isBudgetLocked,
   validateCategoryCreateInput,
+  validateCategoryEditInput,
+  MAX_CATEGORY_NAME_LENGTH,
   nextCategorySortOrder,
   validateRequiredTrimmedText,
   bucketGivingByCause,
@@ -2114,6 +2116,87 @@ describe("validateCategoryCreateInput", () => {
       existingNames: ["Club Dues", "Fundraising Event Costs"],
     });
     expect(result).toEqual({ ok: true });
+  });
+
+  it("rejects a name over MAX_CATEGORY_NAME_LENGTH", () => {
+    const result = validateCategoryCreateInput({
+      name: "A".repeat(MAX_CATEGORY_NAME_LENGTH + 1),
+      flow: "income",
+      existingNames: [],
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: "Category name must be 120 characters or fewer.",
+      status: 400,
+    });
+  });
+
+  it("accepts a name exactly at MAX_CATEGORY_NAME_LENGTH", () => {
+    const result = validateCategoryCreateInput({
+      name: "A".repeat(MAX_CATEGORY_NAME_LENGTH),
+      flow: "income",
+      existingNames: [],
+    });
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateCategoryEditInput — Ledger Category Management (rename path,
+// 2026-08-07 / DECISION-066)
+// ---------------------------------------------------------------------------
+
+describe("validateCategoryEditInput", () => {
+  it("rejects a name over MAX_CATEGORY_NAME_LENGTH", () => {
+    const result = validateCategoryEditInput({
+      name: "A".repeat(MAX_CATEGORY_NAME_LENGTH + 1),
+      existingNames: [],
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: "Category name must be 120 characters or fewer.",
+      status: 400,
+    });
+  });
+
+  it("allows renaming a category to its own current name, including a case-only change", () => {
+    // Caller excludes the category's own current name from existingNames —
+    // renaming "Awards" to "AWARDS" (case-only) must not collide with itself.
+    const result = validateCategoryEditInput({
+      name: "AWARDS",
+      existingNames: ["Member recognition", "Program supplies"],
+    });
+    expect(result).toEqual({ ok: true, trimmedName: "AWARDS" });
+  });
+
+  it("rejects a case-insensitive collision against a sibling category, excluding self", () => {
+    // Editing "Awards" and attempting to rename it to something that
+    // case-insensitively collides with a sibling category "awards " (which
+    // trims to "awards"). The category's OWN name is excluded from
+    // existingNames by the caller, so only the sibling can collide.
+    const result = validateCategoryEditInput({
+      name: "AWARDS ",
+      existingNames: ["awards"],
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: "A category named 'AWARDS' already exists for this fund.",
+      status: 409,
+    });
+  });
+
+  it("rejects an empty name", () => {
+    const result = validateCategoryEditInput({ name: "   ", existingNames: [] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(400);
+  });
+
+  it("accepts a valid, unique renamed value", () => {
+    const result = validateCategoryEditInput({
+      name: "Bags to Benches",
+      existingNames: ["Awards", "Program supplies"],
+    });
+    expect(result).toEqual({ ok: true, trimmedName: "Bags to Benches" });
   });
 });
 

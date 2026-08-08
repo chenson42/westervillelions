@@ -604,6 +604,59 @@ export const ledgerCategories = pgTable(
 export type LedgerCategory = typeof ledgerCategories.$inferSelect;
 export type NewLedgerCategory = typeof ledgerCategories.$inferInsert;
 
+// Ledger Category Management (2026-08-07 / DECISION-065/066): audit trail for
+// destructive writes to ledgerCategories (rename, deactivate, reactivate,
+// merge, countsAsGiving/form990Line flag edits) — moving these operations out
+// of one-off tsx scripts and into an admin UI raised the value of a record of
+// who did what considerably (Treasurer Decision 3). Mirrors
+// permissionAuditLog's shape above: typed nullable FK columns per target
+// kind (targetCategoryId today), not a polymorphic (targetType, targetId)
+// pair — that keeps real ON DELETE SET NULL referential integrity instead of
+// an unenforced string+uuid pair. Named ledger_audit_log (not
+// ledger_category_audit_log) and deliberately schema-generalized ahead of
+// need: a future transaction/budget-audit increment adds
+// target_transaction_id / target_budget_id to this SAME table via an
+// additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` migration, no rename,
+// no second table to reconcile in reports. The code stays un-generalized
+// (the audit-write helper lives with its one real caller in
+// ledger-category-queries.ts, per DECISION-061) — only the schema pre-pays
+// for the stated future need.
+//
+// before/after hold JSON-stringified diffs of ONLY the fields that changed
+// in that call (e.g. a rename-only PATCH writes before: {"name":"Awards"},
+// after: {"name":"Member recognition"}), NOT a full-row snapshot of the
+// category. This is the difference between an audit log a reviewer can
+// actually read at a glance — "what changed, from what, to what" — and one
+// that just confirms "category edited" while forcing a diff against some
+// other historical record to find out what. Both are null for
+// 'category_merged' (a structural two-category re-point, not a field flip;
+// its description lives in `details`).
+export const ledgerAuditLog = pgTable(
+  "ledger_audit_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    // 'category_renamed' | 'category_merged' | 'category_deactivated' |
+    // 'category_reactivated' | 'category_flags_updated'
+    // ('category_created' is a reserved future value — category creation is
+    // NOT audited in v1, per DECISION-066 item 5.)
+    action: text("action").notNull(),
+    targetCategoryId: uuid("target_category_id").references(() => ledgerCategories.id, { onDelete: "set null" }),
+    before: text("before"),
+    after: text("after"),
+    // Human-readable note: affected fiscal years, merge partner name/id, $ impact.
+    details: text("details"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_ledger_audit_log_category").on(t.targetCategoryId),
+    index("ix_ledger_audit_log_created").on(t.createdAt),
+  ],
+);
+
+export type LedgerAuditLog = typeof ledgerAuditLog.$inferSelect;
+export type NewLedgerAuditLog = typeof ledgerAuditLog.$inferInsert;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The Ledger — Increment 6a: Donors & Acknowledgments
 // ledgerDonors must be defined BEFORE ledgerTransactions because

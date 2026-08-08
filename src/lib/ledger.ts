@@ -647,6 +647,18 @@ export function sumBudgetCauseLines(lines: BudgetCauseLineAmount[]): number {
 export const MAX_BUDGET_LINE_LABEL_LENGTH = 120;
 
 /**
+ * Ledger Category Management (2026-08-07 / DECISION-066 item 2): server-
+ * enforced max length (after trim) for a ledger category's `name` and
+ * `form990Line`. Both app-layer only, no DB CHECK constraint — DECISION-041's
+ * established precedent for this codebase's text classifier/label columns.
+ * 120 matches MAX_BUDGET_LINE_LABEL_LENGTH — a category name/990-line
+ * reference is a short label, not prose (contrast MAX_BUDGET_NOTE_LENGTH's
+ * 500, which is for free-text notes).
+ */
+export const MAX_CATEGORY_NAME_LENGTH = 120;
+export const MAX_FORM_990_LINE_LENGTH = 120;
+
+/**
  * Normalizes a cause line's free-text label: trims leading/trailing
  * whitespace only. Null/undefined/all-whitespace input normalizes to `""`
  * (the "generic" line for its cause) — this is what makes the DB's
@@ -1532,7 +1544,9 @@ export function nextCategorySortOrder(existingSortOrders: number[]): number {
 }
 
 // ---------------------------------------------------------------------------
-// validateCategoryCreateInput — Budget Approve/Lock (inline category create)
+// validateCategoryCreateInput / validateCategoryEditInput — Budget
+// Approve/Lock (inline category create) + Ledger Category Management
+// (rename path, 2026-08-07 / DECISION-066)
 // ---------------------------------------------------------------------------
 
 export type CategoryCreateValidationInput = {
@@ -1547,25 +1561,34 @@ export type CategoryCreateValidationResult =
   | { ok: false; error: string; status: 400 | 409 };
 
 /**
- * Pure validation core for POST /api/admin/ledger/categories, factored out
- * so the shape/uniqueness checks are unit-testable without a DB (matching
- * validateBudgetLineInput's established split). Checks, in order: name
- * required (trimmed non-empty), flow is 'income' | 'expense', and a
- * case-insensitive duplicate-name check scoped to the caller-supplied
- * existingNames list (already scoped to entityId+fundKind+flow by the
- * caller via getCategories()).
+ * Shared trim/length/collision core for both validateCategoryCreateInput and
+ * validateCategoryEditInput, so the two validators can't drift on what "too
+ * long" or "a collision" means (DECISION-066 item 2). Not exported — each
+ * public validator wraps this with its own field set (create also validates
+ * `flow`; edit doesn't, since PATCH never changes flow).
+ *
+ * Checks, in order: name required (trimmed non-empty), trimmed length <=
+ * MAX_CATEGORY_NAME_LENGTH, and a case-insensitive duplicate-name check
+ * against the caller-supplied `existingNames`. The caller is responsible for
+ * scoping `existingNames` to (entityId, fundKind, flow) and — for an edit —
+ * excluding the category's own current name, so renaming a category to its
+ * own unchanged name (or fixing casing only) is never a false-positive
+ * collision.
  */
-export function validateCategoryCreateInput(
-  input: CategoryCreateValidationInput,
-): CategoryCreateValidationResult {
-  const { name, flow, existingNames } = input;
-
+function validateCategoryNameCore(
+  name: string,
+  existingNames: string[],
+): { ok: true; trimmedName: string } | { ok: false; error: string; status: 400 | 409 } {
   const trimmedName = typeof name === "string" ? name.trim() : "";
   if (!trimmedName) {
     return { ok: false, error: "Category name is required.", status: 400 };
   }
-  if (flow !== "income" && flow !== "expense") {
-    return { ok: false, error: "flow must be 'income' or 'expense'", status: 400 };
+  if (trimmedName.length > MAX_CATEGORY_NAME_LENGTH) {
+    return {
+      ok: false,
+      error: `Category name must be ${MAX_CATEGORY_NAME_LENGTH} characters or fewer.`,
+      status: 400,
+    };
   }
 
   const lowerName = trimmedName.toLowerCase();
@@ -1577,7 +1600,59 @@ export function validateCategoryCreateInput(
     };
   }
 
+  return { ok: true, trimmedName };
+}
+
+/**
+ * Pure validation core for POST /api/admin/ledger/categories, factored out
+ * so the shape/uniqueness checks are unit-testable without a DB (matching
+ * validateBudgetLineInput's established split). Checks, in order: name
+ * required + length-capped (via validateCategoryNameCore), flow is
+ * 'income' | 'expense', and a case-insensitive duplicate-name check scoped
+ * to the caller-supplied existingNames list (already scoped to
+ * entityId+fundKind+flow by the caller via getCategories()).
+ */
+export function validateCategoryCreateInput(
+  input: CategoryCreateValidationInput,
+): CategoryCreateValidationResult {
+  const { name, flow, existingNames } = input;
+
+  const nameResult = validateCategoryNameCore(name, existingNames);
+  if (!nameResult.ok) {
+    return nameResult;
+  }
+  if (flow !== "income" && flow !== "expense") {
+    return { ok: false, error: "flow must be 'income' or 'expense'", status: 400 };
+  }
+
   return { ok: true };
+}
+
+export type CategoryEditValidationInput = {
+  name: string;
+  /**
+   * Active category names already in scope for this (entityId, fundKind,
+   * flow), EXCLUDING the category's own current name — the caller (PATCH
+   * route / ledger-category-queries.ts) is responsible for that exclusion
+   * before calling.
+   */
+  existingNames: string[];
+};
+
+export type CategoryEditValidationResult =
+  | { ok: true; trimmedName: string }
+  | { ok: false; error: string; status: 400 | 409 };
+
+/**
+ * PATCH-side twin of validateCategoryCreateInput for `PATCH
+ * /api/admin/ledger/categories/[id]`'s `name` field (DECISION-066 item 2).
+ * Same trimmed-length + case-insensitive-collision core as create — no
+ * `flow` check, since a category's flow never changes via PATCH.
+ */
+export function validateCategoryEditInput(
+  input: CategoryEditValidationInput,
+): CategoryEditValidationResult {
+  return validateCategoryNameCore(input.name, input.existingNames);
 }
 
 // ---------------------------------------------------------------------------

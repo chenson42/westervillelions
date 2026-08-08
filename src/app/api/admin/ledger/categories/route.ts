@@ -1,4 +1,24 @@
 /**
+ * GET /api/admin/ledger/categories
+ *
+ * Ledger Category Management (2026-08-07 / DECISION-065/066) — list+filter,
+ * the read side of `/admin/ledger/settings/categories`.
+ *
+ * Gate: LEDGER_MANAGE
+ *
+ * Query params:
+ *   entityId       required
+ *   fundKind       optional — one of the 4 valid kinds
+ *   flow           optional — 'income' | 'expense'
+ *   includeInactive optional — "true" to include deactivated categories
+ *                    (default: active only)
+ *
+ * Response 200: { categories: LedgerCategoryDTO[] }, ordered sortOrder, name.
+ *
+ * Errors: 400 missing/invalid entityId/fundKind/flow; 401; 403; 404 entity not found.
+ */
+
+/**
  * POST /api/admin/ledger/categories
  *
  * Guided Budgeting — creates a new ledger category inline, scoped to the fund
@@ -15,7 +35,8 @@
  * Per DECISION-044, this endpoint never accepts an amount — the category is
  * created bare (no ledger_budgets row) and appears in BudgetEditor as an
  * empty-amount row; the treasurer's next keystroke goes through the existing
- * PATCH /budgets, unchanged.
+ * PATCH /budgets, unchanged. Category creation is NOT audited (DECISION-066
+ * item 5) — unchanged from before this feature.
  *
  * Body:
  * {
@@ -51,10 +72,54 @@ import { ledgerCategories } from "@/lib/db/schema";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getEntityById, getFunds, getCategories, assertBudgetUnlocked } from "@/lib/ledger-queries";
+import { listCategoriesForAdmin, toCategoryDTO } from "@/lib/ledger-category-queries";
 import { validateCategoryCreateInput, nextCategorySortOrder } from "@/lib/ledger";
 
 const VALID_FUND_KINDS = ["administrative", "activity", "charitable", "scholarship"] as const;
 const VALID_FLOWS = ["income", "expense"] as const;
+
+export async function GET(request: NextRequest) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const entityId = searchParams.get("entityId");
+    const fundKind = searchParams.get("fundKind") ?? undefined;
+    const flow = searchParams.get("flow") ?? undefined;
+    const includeInactive = searchParams.get("includeInactive") === "true";
+
+    if (!entityId) {
+      return NextResponse.json({ error: "entityId is required" }, { status: 400 });
+    }
+    if (fundKind && !(VALID_FUND_KINDS as readonly string[]).includes(fundKind)) {
+      return NextResponse.json(
+        { error: "fundKind must be one of administrative, activity, charitable, scholarship" },
+        { status: 400 },
+      );
+    }
+    if (flow && !(VALID_FLOWS as readonly string[]).includes(flow)) {
+      return NextResponse.json({ error: "flow must be 'income' or 'expense'" }, { status: 400 });
+    }
+
+    const entity = await getEntityById(entityId);
+    if (!entity) {
+      return NextResponse.json({ error: "Entity not found" }, { status: 404 });
+    }
+
+    const categories = await listCategoriesForAdmin(entityId, { fundKind, flow, includeInactive });
+
+    return NextResponse.json({ categories: categories.map(toCategoryDTO) });
+  } catch (error) {
+    console.error("Error listing ledger categories:", error);
+    return NextResponse.json({ error: "Failed to list categories" }, { status: 500 });
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
