@@ -1687,3 +1687,144 @@ export const documentVersions = pgTable(
 
 export type DocumentVersion = typeof documentVersions.$inferSelect;
 export type NewDocumentVersion = typeof documentVersions.$inferInsert;
+
+// ── Project / Activity Proposals ────────────────────────────────────────────
+// docs/work-log/2026-08-09-project-proposal-form.md (Phase 3, DECISION-084).
+// Replaces the paper "give it to any Board Member" workflow with a
+// draft-and-submit member-portal form + a board review/decide surface.
+//
+// Two tables, not one: `proposals` (one row per proposal, mutable while
+// unlocked) + append-only `proposalDecisions` (one row per status
+// transition). A single mutable decision-column set on `proposals` would
+// silently overwrite an earlier deferral's decidedAt/decidedByUserId the
+// moment a later decision is recorded — Deferred is a routine, repeatable
+// transition, not a one-shot terminal state. This generalizes the
+// documentVersions adoption-trio shape (decidedByUserId/decidedAt/
+// citingMinutesId) rather than inventing a new one.
+//
+// Every instant-in-time column here is `timestamp(..., { withTimezone: true })`
+// — deliberately, not by habit. schema.ts's `minutes` table declares its
+// timestamp columns WITHOUT { withTimezone: true } even though the live
+// column (per 0079_meeting_minutes.sql, hand-written timestamptz) actually IS
+// timestamptz — a real, confirmed drift, not reproduced here. `documentVersions`
+// happens to be consistent with its own (non-tz) live columns, which is a
+// coincidence of that table's history, not a convention to copy forward.
+export const proposals = pgTable(
+  "proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    // Nullable FK + name/email/phone snapshot — same shape as
+    // minutes.notetakerMemberId/notetakerNameSnapshot, not a hard cascade.
+    // A hard-deleted member's already-submitted proposal is a governance
+    // record (the board may have decided on it, cited it in minutes) and
+    // must survive the member row's deletion. While status = 'draft' the
+    // snapshot columns stay null and every read uses the live member join;
+    // the snapshot is written once, by the submit action, at the moment the
+    // proposal becomes board-visible — never recomputed afterward.
+    proposerMemberId: uuid("proposer_member_id").references(() => members.id, { onDelete: "set null" }),
+    proposerUserId: uuid("proposer_user_id").references(() => users.id, { onDelete: "set null" }),
+    proposerNameSnapshot: text("proposer_name_snapshot"),
+    proposerEmailSnapshot: text("proposer_email_snapshot"),
+    proposerPhoneSnapshot: text("proposer_phone_snapshot"),
+
+    // DECISION-041 pattern, validated in src/lib/proposals.ts, no DB CHECK.
+    // 'draft' | 'submitted' | 'under_review' | 'approved' | 'declined' | 'deferred'
+    status: text("status").notNull().default("draft"),
+
+    projectName: text("project_name"), // NOT NULL enforced at submit time only (draft rows may be blank)
+    // 'fundraiser' | 'service_project' | 'both' — DECISION-041 pattern.
+    type: text("type"),
+    needDescription: text("need_description"), // 2-3 sentence what/why
+    // "Not yet identified" is a valid literal submitted value, not a null —
+    // Phase 1's treasurer ruling. Editable by the proposer while unlocked;
+    // once locked (status >= under_review), only a PROPOSALS_REVIEW holder
+    // may update it, via the optional `chairName` field on the decide action.
+    chairName: text("chair_name"),
+
+    // The money GATE — required tri-state answer, not a value/unknown pair.
+    moneyNeeded: text("money_needed"), // 'yes' | 'no' | 'not_sure'
+
+    // Conditional on moneyNeeded === 'yes'. Value + unknown pair — "not sure"
+    // and "blank/invalid" are different facts and must not collapse into one
+    // NULL.
+    estimatedCostCents: integer("estimated_cost_cents"),
+    estimatedCostUnknown: boolean("estimated_cost_unknown").notNull().default(false),
+
+    // Conditional on type including fundraising ('fundraiser' | 'both'). Value + unknown pair.
+    estimatedIncomeCents: integer("estimated_income_cents"),
+    estimatedIncomeUnknown: boolean("estimated_income_unknown").notNull().default(false),
+
+    // "When would this happen" — `date`, not `timestamp`: it names a calendar
+    // day a volunteer picked, not a wall-clock instant. Typing this as
+    // timestamp would resurrect the naive-timestamp-as-UTC bug class already
+    // documented for eventRsvps.occurrenceDate. Value + unknown pair.
+    proposedDate: date("proposed_date"),
+    proposedDateUnknown: boolean("proposed_date_unknown").notNull().default(false),
+
+    // "Roughly how many volunteers" — value + unknown pair.
+    volunteersNeeded: integer("volunteers_needed"),
+    volunteersNeededUnknown: boolean("volunteers_needed_unknown").notNull().default(false),
+
+    clubResourcesNeeded: text("club_resources_needed"), // optional; absorbs paper form's tech/equipment item
+    publicityPlan: text("publicity_plan"),               // optional; merged club+community per treasurer decision #2
+    additionalNotes: text("additional_notes"),           // optional
+
+    submittedAt: timestamp("submitted_at", { withTimezone: true }), // null while draft
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_proposals_proposer_member").on(t.proposerMemberId),
+    index("ix_proposals_proposer_user").on(t.proposerUserId),
+    index("ix_proposals_status").on(t.status),
+  ],
+);
+
+export type Proposal = typeof proposals.$inferSelect;
+export type NewProposal = typeof proposals.$inferInsert;
+
+// Append-only — one row per status transition. The FIRST row for any
+// submitted proposal is always status='submitted', written by the submit
+// action itself in the same transaction as the proposals.status flip (a
+// self-transition: decidedByUserId is the proposer's own user id, not a
+// board decision) — this keeps one unified, complete timeline instead of
+// special-casing the first transition.
+export const proposalDecisions = pgTable(
+  "proposal_decisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    proposalId: uuid("proposal_id").notNull().references(() => proposals.id, { onDelete: "cascade" }),
+    // The status this row transitions the proposal TO. Same vocabulary as
+    // proposals.status minus 'draft' — no decision row is ever written for
+    // the draft state.
+    status: text("status").notNull(),
+    // Nullable + set-null, same attribution convention as every other
+    // *_user_id column in this schema (minutes.authorUserId,
+    // documentVersions.adoptedByUserId).
+    decidedByUserId: uuid("decided_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    // Post-Phase-3 ruling (2026-08-09): the calendar day of the board
+    // meeting that actually decided this, DISTINCT from decidedAt (the
+    // instant the decision was recorded in the app). They diverge in the
+    // ordinary case — the board meets, and someone records the outcome days
+    // later. `date`, not `timestamp`, same reasoning as minutes.meetingDate
+    // (DECISION-001): a meeting belongs to a calendar day, not a wall-clock
+    // instant. Nullable + backfillable for the same reason citingMinutesId
+    // is — a decision may be recorded before the meeting date is confirmed.
+    meetingDate: date("meeting_date"),
+    // Backfillable — same pattern as documentVersions.citingMinutesId. Board
+    // decisions happen at a meeting whose minutes aren't written until the
+    // NEXT meeting; this column is null at decision time and filled in later.
+    citingMinutesId: uuid("citing_minutes_id").references(() => minutes.id, { onDelete: "set null" }),
+    note: text("note"), // optional free text, e.g. "tabled pending updated budget"
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_proposal_decisions_proposal").on(t.proposalId),
+    index("ix_proposal_decisions_status").on(t.status),
+  ],
+);
+
+export type ProposalDecision = typeof proposalDecisions.$inferSelect;
+export type NewProposalDecision = typeof proposalDecisions.$inferInsert;

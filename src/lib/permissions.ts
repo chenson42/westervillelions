@@ -93,6 +93,17 @@ export const FEATURES = {
   // minutes. No documents.delete key either: every version is a permanent,
   // immutable row — there is no delete path anywhere in this design.
   DOCUMENTS_MANAGE: "documents.manage", // create versions, review/adopt pending amendments, link citing minutes
+
+  // Proposals features (docs/work-log/2026-08-09-project-proposal-form.md, DECISION-084)
+  // One key covers both viewing submitted proposals and recording the board's
+  // decision — matches DOCUMENTS_MANAGE's precedent (one role authors AND
+  // adopts) rather than the Ledger's view/record/approve split, whose
+  // separation-of-duties reasoning is money-specific and doesn't transfer to
+  // a once-a-month board vote. Explicitly bound below to `admin` +
+  // `board_member` by 0085_proposals_permissions.sql — NOT assumed to ride
+  // along on any existing binding (board_member does NOT already hold
+  // documents.manage/minutes.manage; verified against production).
+  PROPOSALS_REVIEW: "proposals.review",
 } as const;
 
 // Type for feature names
@@ -112,6 +123,7 @@ export const FEATURE_CATEGORIES = {
   LEDGER: "ledger",
   MINUTES: "minutes",
   DOCUMENTS: "documents",
+  PROPOSALS: "proposals",
 } as const;
 
 // Helper to get features by category
@@ -174,6 +186,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
 
   [FEATURES.DOCUMENTS_MANAGE]:
     "Create document versions, review pending amendments, adopt substantive changes, and link citing minutes",
+
+  [FEATURES.PROPOSALS_REVIEW]: "View and decide project/activity proposals",
 };
 
 // Default role names (should match database seed data)
@@ -425,6 +439,12 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         href: "/admin/suggestions",
         icon: "💡",
         requiredFeature: FEATURES.SUGGESTIONS_VIEW,
+      },
+      {
+        name: "Proposals",
+        href: "/admin/proposals",
+        icon: "🗂️",
+        requiredFeature: FEATURES.PROPOSALS_REVIEW,
       },
     ],
   },

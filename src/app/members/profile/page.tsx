@@ -71,8 +71,19 @@ export default async function ProfilePage() {
               navigation-only, routes unchanged (DECISION-074 Ruling 4,
               docs/work-log/2026-08-08-meeting-minutes.md). Both destinations
               are already ungated beyond membership, so this is a pure
-              declutter, not a permission change. */}
-          <div className="mt-8 pt-6 border-t border-gray-200 grid gap-4 sm:grid-cols-2">
+              declutter, not a permission change.
+
+              Proposals (2026-08-09, docs/work-log/2026-08-09-project-proposal-form.md
+              Phase 4/ux-developer) joins the same "My X" card grid rather than
+              becoming a 7th top-level portal tile (would break the 3x2 grid,
+              DECISION-074) or a hero header action (that pattern — see
+              SuggestionBoxLauncher below — fits a quick single-shot submission,
+              not an ongoing member-owned record with a tracked review status).
+              A proposal is structurally identical to a reimbursement request:
+              member submits it, staff/board reviews it, the member watches its
+              status change over time. This is the closest existing shape in the
+              app, so it belongs right next to My Reimbursements. */}
+          <div className="mt-8 pt-6 border-t border-gray-200 grid gap-4 sm:grid-cols-3">
             <a
               href="/members/dues"
               className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100"
@@ -88,6 +99,13 @@ export default async function ProfilePage() {
             >
               <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Reimbursements</h3>
               <p className="text-sm text-gray-600">Request reimbursement for out-of-pocket club expenses</p>
+            </a>
+            <a
+              href="/members/proposals"
+              className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100"
+            >
+              <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Proposals</h3>
+              <p className="text-sm text-gray-600">Propose a project or activity and track the board&rsquo;s decision</p>
             </a>
           </div>
 
