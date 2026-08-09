@@ -1,19 +1,19 @@
 # Lions Club of Westerville, Ohio — Constitution and By-Laws
 
-> ## ⚠️ HISTORICAL ARCHIVE — SUPERSEDED BY THE IN-APP VERSION ONCE PUBLISHED
+> ## ⚠️ HISTORICAL ARCHIVE — SUPERSEDED. DO NOT EDIT.
 >
 > This file is the transcription of the club's scanned Constitution & By-Laws (cover: *"The
 > Westerville Lions Club — Constitution & Bylaws — Revised April 2, 1998"*), imported verbatim
 > as version 1 of the in-app governing document by `scripts/seed-governance-document.ts`
 > (docs/work-log/2026-08-09-governance-document-versioning.md).
 >
-> **Until that script has been run against the club's live production database, the scanned
-> original PDF remains the authoritative governing document** and this transcription has no
-> independent legal or governing force — if anything here differs from the scan, the scan wins.
-> **Once published, the in-app document at `/members/records/documents/constitution-bylaws`
-> becomes the club's authoritative governing text**, superseding both the scan and this file;
-> from that point on, this file is a frozen historical artifact and is not updated further — see
-> the in-app version history for every change made since publication.
+> **Published to production on 2026-08-09.** As of that date the in-app document at
+> `/members/records/documents/constitution-bylaws` **is the club's authoritative governing
+> text**, superseding both the 1998 scan and this file. This file is now a frozen historical
+> artifact recording what version 1 said at publication; it is not updated further, and editing
+> it changes nothing — the seed script is a no-op once the document exists. Every change made
+> since publication lives in the in-app version history, which is the only place amendments are
+> recorded.
 >
 > The text below is reproduced **as printed**, including archaic phrasing, inconsistent
 > capitalisation, and the original's own typographical errors. Nothing has been corrected,
