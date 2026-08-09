@@ -67,6 +67,30 @@ export default async function ProfilePage() {
             </div>
           )}
 
+          {/* Dues/Reimbursements absorbed into Profile as linked sections —
+              navigation-only, routes unchanged (DECISION-074 Ruling 4,
+              docs/work-log/2026-08-08-meeting-minutes.md). Both destinations
+              are already ungated beyond membership, so this is a pure
+              declutter, not a permission change. */}
+          <div className="mt-8 pt-6 border-t border-gray-200 grid gap-4 sm:grid-cols-2">
+            <a
+              href="/members/dues"
+              className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100"
+            >
+              <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Dues</h3>
+              <p className="text-sm text-gray-600">
+                View your annual membership dues status and payment history
+              </p>
+            </a>
+            <a
+              href="/members/reimbursements"
+              className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100"
+            >
+              <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Reimbursements</h3>
+              <p className="text-sm text-gray-600">Request reimbursement for out-of-pocket club expenses</p>
+            </a>
+          </div>
+
           <div className="mt-8 pt-6 border-t border-gray-200">
             <SignOutButton />
           </div>

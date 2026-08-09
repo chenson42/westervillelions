@@ -9,7 +9,7 @@ import {
   type ComposeLetterTemplate,
 } from "@/lib/ledger-acknowledgment-letter";
 import type { LedgerLetterTemplate } from "@/lib/db/schema";
-import BudgetNotesMarkdown from "./budget-notes-markdown";
+import RichMarkdownContent from "@/components/rich-markdown-content";
 
 interface Props {
   template: LedgerLetterTemplate;
@@ -229,16 +229,16 @@ export default function LedgerAcknowledgmentTemplateForm({ template, entity }: P
         </div>
 
         <div className="rounded-xl border border-gray-200 p-4 space-y-4">
-          {before && <BudgetNotesMarkdown>{before}</BudgetNotesMarkdown>}
+          {before && <RichMarkdownContent>{before}</RichMarkdownContent>}
 
           <div className="rounded-xl border-2 border-dashed border-lions-gold bg-amber-50 p-3">
             <p className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-800">
               <span aria-hidden="true">🔒</span> Generated automatically — not editable here
             </p>
-            <BudgetNotesMarkdown className="text-gray-900">{requiredOnly}</BudgetNotesMarkdown>
+            <RichMarkdownContent className="text-gray-900">{requiredOnly}</RichMarkdownContent>
           </div>
 
-          {after && <BudgetNotesMarkdown>{after}</BudgetNotesMarkdown>}
+          {after && <RichMarkdownContent>{after}</RichMarkdownContent>}
         </div>
 
         <p className="text-xs text-gray-400">

@@ -66,6 +66,12 @@ export const FEATURES = {
 
   // Admin security / failed-login visibility
   ADMIN_SECURITY_VIEW: "admin.security_view",
+
+  // Meeting Minutes (docs/work-log/2026-08-08-meeting-minutes.md,
+  // DECISION-074/075/077). No minutes.view/read key exists by design — reading
+  // any minutes record, any kind, any status, is open to any linked member.
+  MINUTES_MANAGE: "minutes.manage", // create, edit (draft only), approve, reopen
+  MINUTES_DELETE: "minutes.delete", // soft-delete / restore — admin only
 } as const;
 
 // Type for feature names
@@ -82,6 +88,7 @@ export const FEATURE_CATEGORIES = {
   REPORTS: "reports",
   DUES: "dues",
   LEDGER: "ledger",
+  MINUTES: "minutes",
 } as const;
 
 // Helper to get features by category
@@ -136,6 +143,9 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.IMPACT_VIEW]: "View the member philanthropy and community impact dashboard",
 
   [FEATURES.ADMIN_SECURITY_VIEW]: "View failed sign-in attempts and account security events",
+
+  [FEATURES.MINUTES_MANAGE]: "Create, edit, approve, and reopen meeting minutes",
+  [FEATURES.MINUTES_DELETE]: "Soft-delete and restore meeting minutes",
 };
 
 // Default role names (should match database seed data)
@@ -145,6 +155,15 @@ export const ROLES = {
   TREASURER: "treasurer",
   MEMBER: "member",
   VOLUNTEER: "volunteer",
+  // Pre-existing drift, not introduced by this change: budget_committee is
+  // real in the DB (drizzle/migrations/0069_ledger_budget_permissions.sql)
+  // but was missing here — added opportunistically while this file was
+  // already being touched for `notetaker` (DECISION-074 Invariants note).
+  BUDGET_COMMITTEE: "budget_committee",
+  // Meeting Minutes (docs/work-log/2026-08-08-meeting-minutes.md) — bound to
+  // minutes.manage only; granted manually by an admin, same as every other
+  // role today (no auto-derivation from members.boardPosition).
+  NOTETAKER: "notetaker",
 } as const;
 
 export type RoleName = typeof ROLES[keyof typeof ROLES];
@@ -295,6 +314,17 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         href: "/admin/ledger/guide",
         icon: "📖",
         requiredFeature: FEATURES.LEDGER_VIEW,
+      },
+    ],
+  },
+  {
+    label: "Records",
+    items: [
+      {
+        name: "Minutes",
+        href: "/admin/minutes",
+        icon: "📝",
+        requiredFeature: FEATURES.MINUTES_MANAGE,
       },
     ],
   },

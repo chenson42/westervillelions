@@ -6,7 +6,7 @@ import {
   sumBudgetCauseLines,
 } from "@/lib/ledger";
 import type { BudgetApprovalSummary } from "@/components/admin/ledger/budget-approval-panel";
-import BudgetNotesMarkdown from "@/components/admin/ledger/budget-notes-markdown";
+import RichMarkdownContent from "@/components/rich-markdown-content";
 
 interface PrintCauseLine {
   cause: string;
@@ -149,7 +149,7 @@ export default function BudgetPrintWorksheet({
           <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-700 border-b border-gray-300 pb-1 mb-2">
             Notes &amp; Assumptions
           </h2>
-          <BudgetNotesMarkdown className="text-gray-900">{budgetNotes}</BudgetNotesMarkdown>
+          <RichMarkdownContent className="text-gray-900">{budgetNotes}</RichMarkdownContent>
         </div>
       )}
 

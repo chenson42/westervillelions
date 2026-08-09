@@ -1,41 +1,50 @@
-"use client";
-
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 /**
- * Shared Markdown renderer, originally built for the budget-level
- * "Notes & Assumptions" field (`ledger_budget_notes.notes`) — used by BOTH
- * render sites so they can never structurally diverge in how the same
- * stored text looks:
- *   - budget-notes-editor.tsx  (on-screen, view-only display for users who
- *     can't edit)
- *   - budget-print-worksheet.tsx (the printed/mailed board document)
+ * Shared Markdown renderer — promoted (not cloned) from
+ * `src/components/admin/ledger/budget-notes-markdown.tsx` (DECISION-074
+ * Ruling 2, docs/work-log/2026-08-08-meeting-minutes.md Phase 3 Component
+ * Plan / Implementation Order step 5). Neutral, non-domain-named on purpose:
+ * it now has FOUR real call sites, not the two the architect originally
+ * counted (DECISION-073 had already added a third before DECISION-074 was
+ * written; a fourth followed in the same file) —
+ *   - src/components/admin/ledger/budget-notes-editor.tsx (on-screen budget
+ *     notes display)
+ *   - src/components/admin/ledger/budget-print-worksheet.tsx (printed board
+ *     worksheet)
+ *   - src/components/admin/ledger/acknowledgment-letters-print.tsx (printed
+ *     donor acknowledgment letters)
+ *   - src/components/admin/ledger/ledger-acknowledgment-template-form.tsx
+ *     (on-screen letter template preview)
+ *   - src/components/minutes/minutes-detail.tsx (member-facing minutes
+ *     discussion body — Meeting Minutes, 2026-08-08-meeting-minutes.md)
+ *   - src/components/admin/minutes/minutes-body-editor.tsx (admin live
+ *     preview while pasting/editing minutes discussion notes)
  *
- * Second consumer (Acknowledgment Letter Generation, DECISION-073,
- * 2026-08-08): also renders composed donor acknowledgment letters
- * (`ledger_acknowledgments.letter_text`, produced by
- * composeAcknowledgmentLetter()) both in the treasurer's on-screen
- * generation/print-selection screen and in the printed letter batch itself
- * — same "one renderer, no structural drift between screen and print"
- * rationale as the budget-notes case above. Genuinely generic (no
- * budget-specific logic in this file), so this is the kind of reuse on a
- * real second caller DECISION-065's discipline endorses, not reuse invented
- * ahead of need.
+ * Markdown only — deliberately NO rehype-raw / raw-HTML passthrough. This
+ * invariant travels with the file verbatim on every promotion/clone: notes,
+ * minutes, and letters are all admin/notetaker-authored, but there is no
+ * reason to let arbitrary HTML into a document that also gets handed to the
+ * board (as a PDF) or to the whole membership (as a member-portal page).
  *
- * Markdown only — deliberately NO rehype-raw / raw-HTML passthrough. Notes
- * are admin-authored, but there's no reason to let arbitrary HTML into a
- * document that also gets handed to the board as a PDF.
+ * Drops "use client" on promotion — the original had no hooks/state/event
+ * handlers (confirmed by reading it before the move), so this renders
+ * server-side cleanly. That is a real, intentional win the architect flagged
+ * as a possible outcome (Phase 2 Ruling 2): it keeps every Server Component
+ * caller — including the member-facing minutes detail page — a pure Server
+ * Component end to end, with zero client-bundle cost for this renderer.
  *
- * Legacy-data note: notes written before this change are plain text —
- * paragraphs separated by blank lines, some using a literal "•" character as
- * a bullet prefix (not Markdown "-"/"*" list syntax). remark-gfm renders
- * that acceptably: each blank-line-separated block becomes its own <p>, and
- * the "•" glyph is preserved as ordinary text at the start of the line, so
- * it still reads as a bulleted list even though it isn't a real Markdown
- * list. See budget-notes-markdown.test.tsx for the render-shape assertion.
+ * Legacy-data note: notes written before this component existed are plain
+ * text — paragraphs separated by blank lines, some using a literal "•"
+ * character as a bullet prefix (not Markdown "-"/"*" list syntax).
+ * remark-gfm renders that acceptably: each blank-line-separated block
+ * becomes its own <p>, and the "•" glyph is preserved as ordinary text at
+ * the start of the line, so it still reads as a bulleted list even though
+ * it isn't a real Markdown list. See rich-markdown-content.test.tsx for the
+ * render-shape assertion.
  */
-export default function BudgetNotesMarkdown({
+export default function RichMarkdownContent({
   children,
   className = "",
 }: {

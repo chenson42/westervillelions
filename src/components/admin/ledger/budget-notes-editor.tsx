@@ -18,7 +18,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import BudgetNotesMarkdown from "@/components/admin/ledger/budget-notes-markdown";
+import RichMarkdownContent from "@/components/rich-markdown-content";
 
 interface BudgetNotesEditorProps {
   entityId: string;
@@ -65,7 +65,7 @@ export default function BudgetNotesEditor({
     return (
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden p-5">
         <h2 className="text-base font-semibold text-gray-900 mb-2">Notes &amp; Assumptions</h2>
-        <BudgetNotesMarkdown className="text-gray-700">{initialNotes}</BudgetNotesMarkdown>
+        <RichMarkdownContent className="text-gray-700">{initialNotes}</RichMarkdownContent>
       </div>
     );
   }

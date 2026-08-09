@@ -100,6 +100,22 @@ export async function proxy(request: NextRequest) {
         FEATURES.BUDGET_EDIT,
       ],
     },
+    // Minutes admits anyone holding either minutes feature. This rule MUST
+    // precede the /^\/admin/ catch-all below, which requires ADMIN_DASHBOARD
+    // — without it, a notetaker (minutes.manage, deliberately NOT
+    // admin.dashboard — the role built specifically to author minutes) is
+    // bounced here before /admin/minutes*'s own page-level gate ever runs.
+    // This is the SAME bug class the /^\/admin\/ledger/ rule above exists to
+    // prevent for the budget-committee role (v1.55.0) — found again here by
+    // qa in Phase 5 of the meeting-minutes feature
+    // (docs/work-log/2026-08-08-meeting-minutes.md) because this rule was
+    // never added when /admin/minutes shipped. Each minutes page still
+    // enforces its own finer-grained requirement; this rule only decides who
+    // may reach the area.
+    {
+      pattern: /^\/admin\/minutes/,
+      requiredFeatures: [FEATURES.MINUTES_MANAGE, FEATURES.MINUTES_DELETE],
+    },
     {
       pattern: /^\/admin/,
       requiredFeatures: [FEATURES.ADMIN_DASHBOARD],

@@ -1,4 +1,4 @@
-import BudgetNotesMarkdown from "./budget-notes-markdown";
+import RichMarkdownContent from "@/components/rich-markdown-content";
 
 export interface PrintableAcknowledgmentLetter {
   ackId: string;
@@ -22,9 +22,10 @@ export interface PrintableAcknowledgmentLetter {
  * already uses for its own multi-section document. A 30-letter selection
  * prints as 30 clean pages, one donor per page: today's date, the donor's
  * mailing block, then the full composed letter body rendered through
- * BudgetNotesMarkdown (the SAME renderer the budget notes print surface
+ * RichMarkdownContent (the SAME renderer the budget notes print surface
  * uses — Markdown-only, no raw HTML passthrough, per DECISION-073's reuse
- * note). No letterhead/logo — out of scope for this increment.
+ * note; promoted to this neutral name by DECISION-074 Ruling 2). No
+ * letterhead/logo — out of scope for this increment.
  *
  * This component renders exactly what generateAcknowledgmentLetters()
  * returned/wrote server-side — it never re-composes or re-derives letter
@@ -52,7 +53,7 @@ export default function AcknowledgmentLettersPrint({
             {letter.donorAddress}
           </p>
           <div className="mt-6">
-            <BudgetNotesMarkdown>{letter.letterText}</BudgetNotesMarkdown>
+            <RichMarkdownContent>{letter.letterText}</RichMarkdownContent>
           </div>
         </section>
       ))}

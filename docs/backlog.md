@@ -658,8 +658,9 @@ Design each with the others in view — decisions in one box in the next.
 - [ ] **B-38 — Publish the club constitution and by-laws on the site.** (added 2026-08-08, from Chris;
   **partially answered 2026-08-08** — member-portal placement and format decided, see
   `docs/work-log/2026-08-08-meeting-minutes.md` ADDENDUM 2: folded into the renamed Minutes tile,
-  scan hosted as-is. What remains open here: whether it is ALSO published publicly, and OCR/transcription
-  so it becomes searchable and linkable by article.)
+  scan hosted as-is. **Resolved 2026-08-09:** members-only, NOT public. Transcription is complete and verified
+  (`docs/club-constitution-and-bylaws.md`). The website version becomes AUTHORITATIVE once live. Remaining
+  work is the documents infrastructure itself — see `docs/work-log/2026-08-09-governance-document-versioning.md`.)
   Make the club's governing documents available rather than living in someone's files. Open questions
   for whoever picks this up: **public or members-only** — Lions International's own constitution and
   by-laws are public documents and many clubs post theirs openly, but the board may prefer

@@ -28,6 +28,418 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-080: Meeting Minutes — notetaker-of-record field: nullable member FK + write-time name snapshot, resolved server-side, never shown alongside `authorUserId` (further Phase 4 increment)
+
+**Status:** Resolved
+**Date:** 2026-08-09
+
+**Decision:** `minutes` gains `notetakerMemberId` (nullable, `ON DELETE SET NULL` to `members.id`) and
+`notetakerNameSnapshot` (nullable `text`) — the notetaker *of record*, i.e. who took the minutes,
+selectable via a member picker in the admin editor and shown on both the admin/member detail views and
+the emailed version. This is explicitly **not** a replacement for `authorUserId` (data-entry
+attribution — whoever created/is editing the row), which continues to be stamped from the session and,
+per this decision, continues to be shown nowhere in the UI — confirmed via `grep` that it was never
+displayed before this change either, so choosing not to surface it is a continuation of existing
+practice, not a new omission.
+
+Both new columns are **nullable**, deliberately unlike `minutesAttendance.memberNameSnapshot`'s old `NOT
+NULL`: that `NOT NULL` was safe because an attendance *row* only ever existed once a member had been
+picked (the row's existence implied a name). Here the notetaker is one optional field on a row that
+always exists regardless of whether a notetaker was ever recorded — historical minutes entered later may
+have no clear record of who took them, and forcing a value would fabricate data rather than capture
+accountability. The FK/snapshot *pairing* itself, though, follows the shape the schema already got right
+for the (now-removed) attendance design exactly: nullable member FK with `ON DELETE SET NULL` so a hard
+member-delete degrades gracefully, paired with a name snapshot that is the sole display source of truth
+and is **never** recomputed from, or invalidated by, the current roster. A notetaker who later resigns
+still shows as the notetaker of that meeting, forever — only a hard member-delete nulls the FK, and even
+then the name snapshot survives untouched.
+
+The name snapshot is resolved **server-side**, not trusted from client-supplied text: the client submits
+only `notetakerMemberId`; the route (`POST /api/admin/minutes`, `PATCH .../[id]` `{action:'update'}`)
+calls a new `getMemberNameSnapshot(memberId)` in `minutes-queries.ts` — a plain `members` lookup — and
+snapshots the current `"{firstName} {lastName}"` at that exact write. An id that doesn't resolve to an
+existing member 400s before `createMinutes()`/`updateMinutesDraft()` is ever called, rather than writing
+a row with a dangling/guessed name. This mirrors the removed `minutesAttendance` design's own
+`snapshotMemberNames()` precedent (member FKs get canonical, server-resolved names; free-text fields like
+motions' `moverName`/`seconderName` and action items' `ownerName` — which can legitimately name a
+non-member guest — do not).
+
+The picker (`getMinutesFormMemberOptions()` in `minutes-admin-form-data.ts`) lists **every** member,
+active or not — deliberately unfiltered, unlike the active-only convention `link-member-form.tsx`'s
+caller (`/admin/users`) uses — because editing or backfilling a historical minutes record must still be
+able to name a notetaker no longer active; a currently-inactive member's option label is suffixed `"(no
+longer active)"` so the picker stays legible about the live roster without hiding anyone. The form
+defaults the picker to the signed-in user's own linked member id (`session.user.memberId`) **only** when
+no notetaker has been recorded yet (a fresh create, or a still-unset draft) — an already-recorded
+notetaker is never silently overridden by whoever next opens the record, and the picker is always freely
+changeable regardless of the default, per the treasurer's own framing ("select who the notetaker is if
+someone else is entering the notes online").
+
+Display: a "Recorded by {name}" line (or "not recorded" when null) sits directly under the meeting date
+in `MinutesDetail` (shared by the admin read-only view and `/members/records/[id]`) and directly under
+the meeting date in the emailed HTML (`minutes-email-render.tsx`), ahead of the sender's optional note —
+minutes conventionally name their recorder near the top of the record, not buried in the body. Not added
+to the admin list table (`/admin/minutes`) — the brief asked for the detail view and the email, not the
+summary list; a future increment can add it there if that need surfaces.
+
+**Rationale:** The record's existing `authorUserId` answers "who did the data entry," not "who took the
+notes" — the secretary may take notes on paper and someone else types them up later, or a substitute may
+cover a meeting, so the two are frequently different people. Minutes conventionally name their recorder
+as a governance fact, not a UI nicety, which is why this is a first-class column pair rather than free
+text folded into `bodyMarkdown`. Nullable-both (rather than reusing attendance's `NOT NULL` snapshot
+shape verbatim) is the correct read of "consider that historical minutes may be entered later with no
+clear record of who took them" — an unrecorded notetaker is a real, expected state, not an error.
+Server-side name resolution (rather than trusting client-submitted text, the way motions/action-items'
+free-text names are trusted) is the correct read of "follow the pattern the schema already got right for
+attendance" — attendance's one FK-to-roster field always got its display name from a live `members`
+lookup at write time, never from client text, and that's the property worth preserving for a second
+FK-to-roster field.
+
+**Impact:** `src/lib/db/schema.ts` (`minutes.notetakerMemberId`/`notetakerNameSnapshot`, new
+`ix_minutes_notetaker` index), `drizzle/migrations/0079_meeting_minutes.sql` (amended in place — see that
+file's header for why amending rather than a follow-up migration is safe here, same reasoning
+DECISION-079 already established: never committed to git, never shipped), `src/lib/minutes-queries.ts`
+(`CreateMinutesInput`/`UpdateMinutesInput`/`MinutesDetail` gain the two fields; new
+`getMemberNameSnapshot()`), both `/api/admin/minutes*` route files (server-side resolution + 400 on an
+unresolvable id), `src/lib/minutes-admin-form-data.ts` (new `getMinutesFormMemberOptions()`),
+`minutes-form.tsx` (picker UI + default-to-self logic), `minutes-editor-shell.tsx` and both
+`/admin/minutes` pages (threading `memberOptions`/`currentMemberId`), `minutes-detail.tsx` and
+`minutes-email-render.tsx` (display). Unit tests added in `minutes-queries.test.ts` (`getMemberNameSnapshot`),
+a new `src/app/api/admin/minutes/route.test.ts` (POST-create notetaker resolution — this route had no
+prior dedicated test file), `[id]/route.test.ts` (PATCH-update notetaker resolution, including the
+"omitted key leaves it unchanged" contract), and `[id]/email/route.test.ts` (the rendered "Recorded by"
+line). `pnpm exec tsc --noEmit` clean, `pnpm test` at 1263 (no regression from the 1251 baseline; +12 new
+tests), `pnpm build:only` clean. Migration applied to the dev database only (`DATABASE_URL`, confirmed by
+hostname distinct from `PROD_DATABASE_URL`) — production was never touched.
+
+---
+
+## DECISION-079: Meeting Minutes — attendance is a single headcount, not a per-member roster; `minutesAttendance` dropped entirely (Phase 4 loop-back, supersedes DECISION-078)
+
+**Status:** Resolved
+**Date:** 2026-08-09
+
+**Decision:** The treasurer clarified the actual requirement mid-implementation, after DECISION-078 had
+already fixed a data-loss defect in the per-member design: *"I wanted a single count number for
+attendance."* This is not a refinement of DECISION-078's merge contract — it eliminates the per-member
+model the defect lived in. `minutesAttendance` (the child table: `memberId` FK, `memberNameSnapshot`,
+`present`, the unique `(minutesId, memberId)` constraint, its two indexes) is **removed outright**, not
+deprecated or soft-migrated. `minutes` gains one nullable `present_count integer` column instead — a
+plain scalar alongside `title`/`bodyMarkdown`, set or left null on every create/update exactly like any
+other content field.
+
+Because `drizzle/migrations/0079_meeting_minutes.sql` had never been committed to git (confirmed via
+`git ls-files`/`git log` — untracked at the time of this pivot) and therefore had never shipped to any
+deployed database, it was **amended in place** rather than followed with a separate drop migration —
+there is no production state to migrate away from; the amended file IS the first version anyone will
+ever run. The one local dev database that had already applied the pre-pivot migration got a direct,
+one-off `DROP TABLE minutes_attendance CASCADE` (dev-only, never production) so its schema matches the
+amended migration exactly, plus a re-run of `pnpm db:migrate` to pick up the new
+`ALTER TABLE minutes ADD COLUMN IF NOT EXISTS present_count integer` (idempotent, safe on any
+environment regardless of which shape of `0079` it last ran).
+
+Every consumer of the removed per-member shape was rewritten to the scalar, not patched around it:
+`minutes-queries.ts` (`createMinutes`/`updateMinutesDraft` take `presentCount` instead of an
+`attendance` array; `getMinutesDetail`/`listMinutesForAdmin`/`listMinutesForMembers` return
+`presentCount` directly off the `minutes` row, no join; `searchMinutes` drops the
+`minutesAttendance.memberNameSnapshot` search branch entirely — a number isn't a searchable name), both
+`/api/admin/minutes*` routes (`parseAttendance()` replaced by `parsePresentCount()`, a non-negative-
+integer-or-null validator), the admin editor (`AttendanceChecklist` and its roster-fetching
+`getMinutesFormRoster()` deleted outright; `MinutesForm` gains one plain number input), the email
+renderer (`minutesEmailMarkdownComponents` present/absent name lists replaced by one "Present: N" line),
+and the member-facing `MinutesDetail` component (same simplification). DECISION-078's merge-vs-replace
+contract question, and the data-loss defect it fixed, are moot with no child-row array left to lose
+anything from — its regression test, `e2e/minutes-attendance-snapshot-survival.spec.ts`, was deleted
+(not adapted) since it tests a concept that no longer exists.
+
+**Rationale:** Building the exact contract the requester asked for beats repairing a more elaborate one
+they didn't. The per-member design (attendance rows FK'd to `members`, a roster checklist UI, a
+name-snapshot survival guarantee) was a reasonable-looking elaboration of "record who attended," but it
+was never actually requested — DECISION-074's original brief described a "roster checklist" without the
+treasurer ever having been asked "roster, or just a number?" Once asked directly, the answer was the
+simpler shape, and it was still uncommitted, so the honest move was to replace it rather than carry
+merge-semantics complexity (DECISION-078) forward in service of a data model nobody wanted. This also
+resolves DECISION-078's own accepted last-write-wins concurrency gap for attendance specifically — a
+single scalar column has no row-omission failure mode to begin with; ordinary last-write-wins on a
+scalar field (already accepted for `title`/`bodyMarkdown`) is all that's left.
+
+**Impact:** Schema: `src/lib/db/schema.ts` (`minutesAttendance` table removed; `minutes.presentCount`
+added), `drizzle/migrations/0079_meeting_minutes.sql` (amended in place, not a new migration file).
+Server: `src/lib/minutes-queries.ts`, `src/app/api/admin/minutes/route.ts`,
+`src/app/api/admin/minutes/[id]/route.ts`, `src/components/admin/minutes/minutes-email-render.tsx`.
+Client: `src/components/admin/minutes/minutes-form.tsx` (rewritten), `attendance-checklist.tsx`
+(deleted), `minutes-editor-shell.tsx`, `src/lib/minutes-admin-form-data.ts` (`getMinutesFormRoster`
+deleted), `src/components/minutes/minutes-detail.tsx`, both `/admin/minutes` pages. Tests:
+`src/lib/minutes-queries.test.ts` (DECISION-078's merge-contract block removed; `searchMinutes` fixture
+updated), `src/app/api/admin/minutes/[id]/email/route.test.ts` (fixture updated), and
+`e2e/minutes-attendance-snapshot-survival.spec.ts` (deleted). No unrelated test coverage was lost —
+`pnpm test` returns to the exact same 1246 count qa's Phase 5 report recorded as the pre-loop-back
+baseline. A future quorum check (still deliberately not built, per the treasurer's standing decision) is
+a direct, obvious consumer of `presentCount` against the by-laws' "majority of the members in good
+standing" threshold for a regular meeting — noted, not built.
+
+---
+
+## DECISION-078: Meeting Minutes — attendance-update contract changed from whole-array-replace to merge-only (Phase 4 loop-back) — SUPERSEDED by DECISION-079
+
+**Status:** Superseded by DECISION-079
+**Date:** 2026-08-09
+
+**Decision:** `PATCH /api/admin/minutes/[id]` `{action:'update'}`'s `attendance` array is no longer
+delete-then-reinserted. `updateMinutesDraft()` now **upserts** each submitted `{memberId, present}`
+entry by the existing `(minutesId, memberId)` unique constraint (`ON CONFLICT ... DO UPDATE`) and
+**never deletes a `minutesAttendance` row through this action, under any circumstances.** An
+attendance row that exists but isn't mentioned in a given payload is left completely untouched.
+`motions`/`actionItems` are explicitly **not** included in this change — they keep the
+delete-then-reinsert semantics DECISION-077/Phase 3 already specified; this loop-back is scoped to
+attendance only, per the treasurer's own framing ("attendance should have nothing to do with members
+records") and qa's Phase 5 finding, not a general re-litigation of the update contract.
+
+Paired UI change: `AttendanceChecklist` now renders every attendance row already on the record whose
+member is off the live active/prospective roster as an **editable** checkbox (defaulting to its
+last-recorded `present` value), not a read-only informational line — the notetaker must deliberately
+uncheck a former member to record them absent; simply saving an unrelated edit leaves their row
+exactly as it was. A row whose `memberId` has gone `NULL` (the member was hard-deleted, not just
+resigned) has no live id to upsert against and is shown as a plain, non-interactive line — it survives
+automatically because nothing in the new contract ever deletes it.
+
+**Rationale:** qa's Phase 5 finding (`docs/work-log/2026-08-08-meeting-minutes.md`) reproduced concrete
+data loss: an ordinary `membershipStatus -> 'ended'` resignation, followed by any unrelated save,
+silently destroyed the resigned member's attendance row and its `NOT NULL memberNameSnapshot` — even
+though the schema (`memberId` nullable + `ON DELETE SET NULL`, paired with the snapshot column) was
+explicitly built so the row survives. The Phase 3 API contract's "attendance... fully replace... when
+present, delete-then-reinsert" was the actual defect: any client whose payload can only reflect the
+*current* roster (which every realistic client must, since it's rendering a checkbox list) will
+necessarily omit anyone no longer on that roster, and delete-then-reinsert treats that omission as "this
+person's attendance is deleted" rather than "the client doesn't have an opinion about this row." Merge
+semantics (upsert what's given, never delete what's omitted) makes the loss structurally impossible
+rather than relying on every future client to remember to round-trip every former-member row it's shown.
+This also strengthens the accepted "last write wins" concurrent-edit gap named in Phase 3's Edge Cases:
+two notetakers saving concurrently can no longer cause one save to delete the other's freshly-added
+attendance row for a member the first payload didn't happen to mention (whether because that member
+just resigned, or was just added by the other editor) — only the shared `present` value of a row **both**
+payloads mention can still race, which is the narrower, already-accepted gap.
+
+**Impact:** `src/lib/minutes-queries.ts` (`updateMinutesDraft()` attendance handling — upsert loop, no
+delete), `src/components/admin/minutes/attendance-checklist.tsx` (former-attendee rows become editable
+checkboxes when `memberId` is non-null), `src/components/admin/minutes/minutes-form.tsx` (former-attendee
+state merged into the submitted `attendance` payload), `src/app/api/admin/minutes/[id]/route.ts`
+(doc-comment only — `parseAttendance()`'s shape validation is unchanged since the wire shape didn't
+change, only what the server does with it). New unit test coverage in `minutes-queries.test.ts` asserts
+`minutesAttendance` is never targeted by `tx.delete()` inside `updateMinutesDraft()`, closing the
+coverage gap qa's Phase 5 report named explicitly ("a direct unit test... would have made the
+whole-array-replace behavior obvious immediately"). No schema or migration change — the nullable
+`memberId` / `ON DELETE SET NULL` / `NOT NULL memberNameSnapshot` shape was already correct; only the
+application layer defeated it.
+
+---
+
+## DECISION-077: Meeting Minutes — Phase 3 implementation calls: `minutes.title` (nullable, disambiguation only) added beyond the architect's column list; motions' mover/seconder and action items' owner are free text, NOT `members` FKs (attendance stays the one FK-to-roster per DECISION-074 Ruling 3); `escapeIlikeTerm()` duplicated into `minutes.ts` rather than imported from `ledger.ts`; `MINUTES_KIND_EMAIL` values are `{address, requiresApproval}` objects, not bare strings, to encode the treasurer's send-gating rule in data; Word-paste HTML pre-clean is pure string transforms so it stays unit-testable without adding `jsdom`; member-facing route is `/members/records` ("Club Records" tile) while admin nav and the `src/lib/minutes*`/`src/components/minutes/` module names stay "minutes"; `minutesAttendance.memberId` is nullable `ON DELETE SET NULL` with a denormalized `memberNameSnapshot`; reopening approved minutes does not clear `approvedByUserId`/`approvedAt`; no unique constraint on `(kind, meetingDate)`
+
+**Status:** Resolved
+**Date:** 2026-08-09
+
+**Decision:** Phase 3 technical-design calls for `docs/work-log/2026-08-08-meeting-minutes.md`,
+filling in the shape-level details DECISION-074/075 (architect) deliberately left to tech-lead ("exact
+DDL is database-admin's call," "file location TBD by tech-lead").
+
+1. **`minutes` gets one column beyond the architect's Ruling 3 list: `title text NULL`.** Two minutes
+   records can legitimately share a `kind` and `meetingDate` (edge case: two sets of minutes for one
+   meeting — no unique constraint prevents this, see #9 below), and search results need a human-scannable
+   label. `title` is optional — the UI falls back to `"{kind} minutes — {meetingDate}"` when null. Not a
+   structural change to anything the architect ruled on, additive only.
+2. **Motions' mover/seconder and action items' owner are plain `text` columns, not FKs to `members`.**
+   DECISION-074 Ruling 3 FK'd attendance to `members` for a specific, stated reason — Flow 2 describes it
+   as "a roster checklist," an explicit member-picker UI concept. Motions/action items were never given
+   that same treatment: Flow 2 describes them as free-form "(text, mover, seconder, result)" /
+   "(text, owner, due date)" with no picker UI implied. Forcing a member-FK here would be over-structuring
+   exactly the failure mode the brief warned about (item 2: "over-structuring makes the secretary's weekly
+   job worse") — a mover or seconder is sometimes a guest, and typing a name is strictly lower-friction
+   than cross-referencing the roster for a fact that, unlike attendance, this club has no stated intent to
+   ever query by member identity. The client UI may typeahead-suggest against active member names for
+   convenience; the stored value is always the text the notetaker ended up with. This also sidesteps the
+   snapshot problem entirely for these three fields — there's no live FK to go stale when a member is
+   later deleted, because there was never a FK to begin with.
+3. **`escapeIlikeTerm()` is duplicated (not imported) into `minutes.ts`.** The existing implementation
+   lives in `src/lib/ledger.ts:2238`, exported and otherwise reusable verbatim. Importing it into
+   `minutes-queries.ts` would create a real `minutes → ledger` module dependency — exactly the coupling
+   DECISION-074 Ruling 2 ruled out ("minutes shares no tables, no permission keys, and no audience
+   boundary with the Ledger; prefixing it `ledger-*`... would misrepresent it as a Ledger sub-feature").
+   The function is two lines of pure string-escaping with no ledger-specific meaning; duplicating it costs
+   nothing and preserves the module-independence the architect was explicit about.
+4. **`MINUTES_KIND_EMAIL` values are `{ address: string; requiresApproval: boolean }` objects, not bare
+   address strings.** DECISION-075 ruled the map itself (partial, hardcoded, co-located with
+   `MINUTES_KINDS`) but not this detail. The treasurer's later send-gating decision — "drafts MAY be
+   emailed to `board@` at any status; `club@` receives minutes ONLY once approved" — is a per-recipient
+   policy, not a per-`kind` string comparison, and hard-coding "if kind === 'general'" into the email route
+   would silently stop being correct the day a second kind is ever mapped to `club@` or to some other
+   whole-membership list. Encoding `requiresApproval` on the map entry itself keeps the policy declarative
+   and co-located with the address it governs, matching DECISION-075's own stated reason for co-locating
+   the map with `MINUTES_KINDS` in the first place (same cadence, same actor, same file).
+5. **The Word-paste HTML pre-clean (un-faking `mso-list` pseudo-bullets, flagged as a real implementation
+   gap by DECISION-074 Ruling 1) is written as pure string/regex transforms over the raw clipboard HTML
+   string, run BEFORE handing the cleaned string to `turndown`— not as a `DOMParser`/DOM-walk pass.**
+   This is a real constraint, not just a style preference: this project's Vitest config
+   (`vitest.config.ts:7`) runs `environment: "node"`, and no `jsdom`/`happy-dom` dependency exists in
+   `package.json` today. A DOM-walk implementation would only be testable by adding a new devDependency
+   purely to unit-test one helper — a dependency question nobody has evaluated. Turndown's own DOM-consuming
+   conversion is a mature, independently-tested library and does not need re-testing here; the
+   project-authored pre-clean logic is exactly the part that does, and writing it as string transforms
+   keeps that coverage inside the existing test setup at zero new dependency cost. `turndown` itself is
+   still only ever invoked from the `"use client"` editor component, unchanged from Ruling 1.
+6. **Member-facing route is `/members/records` (tile: "Club Records"); admin routes, `src/lib/minutes.ts`
+   /`minutes-queries.ts`, and `src/components/minutes/`/`src/components/admin/minutes/` keep the "minutes"
+   name.** The brief for this design ("the Minutes tile will later also hold governing documents — name it
+   accordingly, but do not build that") only extends to the member-facing surface a member actually clicks
+   — the admin sidebar entry, the module/file names, and the component directories the architect already
+   ruled on (DECISION-074 Ruling 2) describe what the code IS today (minutes only), not what the tile will
+   grow into. Renaming ruled module names to anticipate an unbuilt feature would be scope creep in the
+   other direction. `/members/records` is a pure routing/label choice sitting on top of unchanged
+   `minutes.ts`/`minutes-queries.ts` logic — when documents ship, the route gains a second section; nothing
+   here needs to move.
+7. **`minutesAttendance.memberId` is nullable, `ON DELETE SET NULL`, with a `memberNameSnapshot text NOT
+   NULL` captured at attendance-row creation.** Minutes retention is permanent (Phase 1 research,
+   DECISION-074's own citation of it), but member deletion is a real hard-delete
+   (`src/app/api/admin/members/[id]/route.ts:233`, `db.delete(members)...`, not a soft-delete). A plain
+   `NOT NULL` FK with `ON DELETE SET NULL` — the pattern already sitting uncorrected in
+   `ledgerReimbursements.submittedByUserId` (schema.ts:1236) — would throw a not-null-violation the moment
+   a member with attendance history is ever deleted, silently blocking a routine admin action. Making the
+   column nullable and snapshotting the name at write time means a later member deletion degrades the row
+   gracefully (the fact "Jane Doe — present" survives) rather than erroring or silently losing the record.
+   Not fixing the pre-existing `ledgerReimbursements` inconsistency here — out of scope, flagged for the
+   30-day code review.
+8. **Reopening an approved minutes record does not clear `approvedByUserId`/`approvedAt`.** Mirrors
+   `ledgerBudgetApprovals`' own stated design ("neither clears the other, so the most recent lock and most
+   recent unlock are both visible at once," schema.ts:1016-1020) applied to a two-state instead of
+   lock/unlock pair: reopening only flips `status` back to `'draft'`; a subsequent approve overwrites the
+   trio with fresh values. This gives "previously approved MM/DD/YYYY, currently reopened for correction"
+   as a free read from existing columns, no new history table needed.
+9. **No unique constraint on `(kind, meetingDate)`.** Two sets of minutes for one meeting (edge case,
+   item 9) must be representable — a split or a re-do is a real scenario for a volunteer secretary. The
+   "next meeting" pointer and "most recent approved minutes" queries resolve the ambiguity at read time
+   (prefer `status='approved'` over `'draft'`; break remaining ties by most recent `approvedAt`/`createdAt`)
+   rather than the schema forbidding the situation from existing.
+
+**Rationale:** Every call either fills a gap the architect explicitly deferred to tech-lead (exact child-
+table DDL, the email components-map file location) or resolves a real ambiguity the Phase 1/2 documents
+didn't reach (mover/seconder structure level, the `MINUTES_KIND_EMAIL` policy shape, the member-hard-delete
+interaction with attendance). None of it reopens a treasurer decision, DECISION-074, or DECISION-075.
+
+**Impact:** Full detail in the Phase 3 section of `docs/work-log/2026-08-08-meeting-minutes.md`. Schema:
+`minutes` (+ `title`), `minutesAttendance`, `minutesMotions`, `minutesActionItems` in `schema.ts`, migration
+`0079_meeting_minutes.sql` (next free number as of 2026-08-09; database-admin confirms at implementation
+time per DECISION-074's own numbering caution). Permission migration via the `add-permission` skill,
+likely `0080` (confirmed at implementation time). New files `src/lib/minutes.ts`, `src/lib/minutes-queries.ts`,
+`src/components/rich-markdown-content.tsx` (promoted), `src/components/admin/minutes/*`,
+`src/components/minutes/*`, `src/app/(dashboard)/admin/minutes/*`, `src/app/members/records/*`. No new
+npm dependency beyond the already-approved `turndown`/`turndown-plugin-gfm` (DECISION-074 Ruling 1);
+`jsdom` explicitly NOT added.
+
+---
+
+## DECISION-076: Governance Document Versioning — sibling `documents`/`documentVersions` tables (not merged with minutes), `currentVersionId` pointer updated transactionally, no `kind` column for a corpus of one; `diff` (jsdiff) approved as a third new dependency, server-only (the inverse boundary of `turndown`); new `src/lib/documents.ts`/`documents-queries.ts` sibling pair; diff computed server-side, no client bundle impact, no size concern at 642 lines; seed is a one-off `scripts/*.ts` script, never a migration; git transcription file kept as a frozen historical artifact; `documents.manage` bound to `notetaker`/`admin`, pending substantive versions gated to `documents.manage` holders; `visibility` column (not route placement) expresses public-vs-members
+
+**Status:** Resolved
+**Date:** 2026-08-09
+
+**Decision:** Phase 2 architectural ruling for
+`docs/work-log/2026-08-09-governance-document-versioning.md`, split out of
+`docs/work-log/2026-08-08-meeting-minutes.md` on 2026-08-09 once governance-document versioning grew
+into a comparably-sized second feature. DECISION-074 and DECISION-075 stand exactly as written for
+minutes — nothing below touches them.
+
+1. **Two tables, `documents` and `documentVersions`, confirmed sibling-not-merged.** Minutes' real
+   structure (attendance, motions, action items, kind-based email routing) and documents' real
+   structure (an immutable version chain, `changeType` branching, adoption/citation) share no columns
+   worth merging — doing so would reproduce, one level up, the same "bag of mutually-exclusive nullable
+   columns" anti-pattern DECISION-072 already rejected once for `ledgerLetterTemplates` vs.
+   `ledgerSettings`. The two systems share the *adoption pattern* as vocabulary
+   (`approvedByUserId`/`approvedAt`/nullable minutes FK on one side, `adoptedByUserId`/`adoptedAt`/
+   nullable `citingMinutesId` on the other), never a shared table. `documents` carries no `kind` column
+   — the current inventory is one document, and a taxonomy for a corpus of one is the same
+   premature-generalization trap already declined elsewhere in this feature's own Phase 1. "Current" is
+   `documents.currentVersionId`, a pointer updated transactionally on every editorial save and on every
+   adoption — never a computed `MAX(versionNumber)` or derived "latest adopted" query — so what a member
+   sees is a single indexed lookup with no ambiguous in-between state.
+2. **`diff` (jsdiff) is approved** — this feature's third new-dependency question, evaluated against the
+   same five criteria `turndown` was, not waved through on precedent. Hand-rolling a line-level diff is
+   not credible here for the same reason `turndown` wasn't hand-rolled: a well-understood algorithm
+   (Myers/LCS) with real, named failure modes (off-by-one backtracking, trailing-newline handling,
+   Unicode) whose entire job is to be the artifact the board trusts to show "exactly what changed" in a
+   governing document — a correctness-critical, already-solved problem, not a reimplementation-for-its-
+   own-sake. **Unlike `turndown`, `diff` must run server-only** — it has no DOM dependency (unlike
+   `turndown`'s `DOMParser` requirement), so the architectural choice is to keep it out of every client
+   bundle entirely: computed in a Server Component or server module, the resulting diff passed to any
+   client wrapper as already-computed, serializable props. `diff` may never be imported from a
+   `"use client"` file — the mirror image of `turndown`'s client-only rule, for the same underlying
+   reason (a narrow, deliberate import boundary per dependency, not an accident of habit).
+3. **New sibling pair `src/lib/documents.ts` (pure) / `src/lib/documents-queries.ts` (DB)**, the exact
+   shape DECISION-074 Ruling 2 already established for minutes, applied on documents' own terms — not
+   merged into `minutes.ts`/`minutes-queries.ts`, not joining the `ledger-*` family. `documents.ts` holds
+   the `changeType`/`visibility` DECISION-041-pattern consts/validators and the pure
+   `diffDocumentVersions()` helper (unit-testable without a DOM, `vitest.config.ts` runs
+   `environment: "node"`). Admin compositions live in `src/components/admin/documents/`; member-facing
+   read-side pieces in `src/components/documents/`. **Rendering reuses the promoted
+   `rich-markdown-content.tsx` (DECISION-074 Ruling 2), never `ReleaseNotesViewer`'s `rehype-raw`-enabled
+   pipeline** — an explicit correction, since Round 1's original by-laws plan reasoned from a
+   git-authored trust boundary that Round 2 knowingly overturned; once versions are typed/pasted through
+   an admin form, the trust tier is minutes'/budget-notes', not release notes'.
+4. **Diff renders server-side; no practical size problem at this scale.** The seeded document (642
+   lines / ~16 pages) diffs in millisecond order — no pagination/virtualization needed for the diff view
+   at this size. A version-history list plus a compare view (default: this version vs. the one it
+   superseded, but any two versions selectable) covers "how a member reviews history," computed
+   server-side per request.
+5. **The seed is a one-off `scripts/*.ts` script, never a migration.** This is the exact bug class that
+   has already bitten this project for real — the standing memory note on the Ledger's Quicken-export
+   seed ("NEVER re-run import — delete-and-reinsert wipes post-seed edits") is the concrete precedent a
+   migration-based seed would risk repeating, since a `WHERE NOT EXISTS` guard protects against
+   re-insertion but not against a human later re-running an edited migration file against a database
+   where versions 2+ already exist on top of version 1. The script self-guards (no-op if the target
+   `slug` already exists) as defense-in-depth, but its primary safety property is structural: it is not
+   wired into `drizzle/migrations/` or any deploy step, so it cannot be silently re-triggered by a
+   routine `pnpm build`/`db:migrate`. `docs/club-constitution-and-bylaws.md` stays committed as a frozen
+   historical artifact (the human-reviewed-against-the-scan provenance record) but is never read by the
+   app again after the one-time script runs — the database is authoritative from that point forward.
+6. **`documents.manage` bound to `notetaker` and `admin`, no `documents.delete`** — confirmed, same
+   module-separation reasoning as `minutes.manage` (no shared tables, and, per this ruling, not even a
+   shared read-audience boundary). **A pending, not-yet-adopted substantive version is visible only to
+   `documents.manage` holders until adoption** — ruled in, not left open: a pending version is a proposed
+   amendment, not yet the club's actual text, and showing it indistinguishably from the adopted current
+   version risks a member citing text that was never voted in. This is a principled divergence from
+   minutes' "drafts visible to any member immediately" call, not an inconsistency — a minutes draft
+   describes something that already happened (an imperfectly-transcribed meeting); a pending document
+   version describes something that hasn't happened yet (a vote). **Public-vs-members visibility (B-38)
+   is a `documents.visibility text NOT NULL` column** (DECISION-041 pattern), not route placement as
+   Round 1 first proposed — Round 1's route-based idea was reasoned for a single static git-authored
+   page with one reading surface; documents now has multiple reading surfaces (current view, history,
+   diff) per row and must "express public without a rewrite" per the brief, which a column satisfies
+   with a one-row update and a route-placement encoding does not. A pending substantive version is never
+   public regardless of the document's `visibility` — the `documents.manage`-only gate applies on top of,
+   not instead of, the document's general visibility.
+
+**Rationale:** Every ruling either directly extends an already-resolved pattern in this codebase
+(DECISION-072's rejection of merged mutually-exclusive-column tables; DECISION-041's no-CHECK taxonomy
+pattern, applied here to `changeType`/`visibility`; DECISION-074's sibling pure/DB module split and
+promoted-renderer reuse; the standing Ledger-seed memory note's cautionary precedent) or makes an
+explicit, honestly-reasoned call where Phase 1 had flagged genuine ambiguity (`diff`'s server-only
+boundary as the inverse of `turndown`'s client-only one; ruling the pending-version visibility question
+in rather than leaving it open; `visibility` as a column once the by-laws' reading surface multiplied
+beyond Round 1's single-page premise). Nothing here reopens a treasurer decision or DECISION-074/075's
+settled minutes design.
+
+**Impact:** New tables `documents`, `documentVersions` in `src/lib/db/schema.ts` + one idempotent
+migration (exact number TBD at Phase 4 implementation time; `0078` is the highest on disk today, and
+this migration must be sequenced after the not-yet-implemented `minutes` table exists, since
+`documentVersions.citingMinutesId` references `minutes.id`). New files `src/lib/documents.ts`,
+`src/lib/documents-queries.ts`. New component directories `src/components/admin/documents/`,
+`src/components/documents/`. New npm dependency: `diff` (server-only import boundary enforced,
+mirroring `turndown`'s client-only one). New `FEATURES` key `documents.manage` (no `documents.delete`),
+bound to `notetaker`/`admin` via the `add-permission` skill. No changes to `minutes`/`minutes-queries.ts`
+or the `minutes.manage`/`minutes.delete` keys. Full detail: Phase 2 section of
+`docs/work-log/2026-08-09-governance-document-versioning.md`.
+
+---
+
 ## DECISION-075: Meeting Minutes — email distribution addendum (companion to DECISION-074): `renderToStaticMarkup()` over the existing renderer for Markdown→HTML, no second dependency; a dedicated inline-styled email components map, not the web renderer's; partial `kind`→address map with no default and no save-block for unmapped kinds; address map co-located with `MINUTES_KINDS`, not a settings table; mandatory draft-status banner in the email body; `sendEmail()` reused unmodified; `CLUB_GROUP_EMAIL` exported for reuse
 
 **Status:** Resolved (send-gating for draft club-wide minutes to `club@` left open — flagged for the treasurer, not decided here)

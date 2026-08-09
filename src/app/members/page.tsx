@@ -153,7 +153,15 @@ export default async function MembersPage() {
       </div>
 
       <div className="container mx-auto px-4 py-12 print:hidden">
-        <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 mb-12">
+        {/* 6-tile portal restructure (docs/work-log/2026-08-08-meeting-minutes.md,
+            Phase 3 "The IA restructure", DECISION-074 Ruling 4): navigation
+            regroups, routes do NOT move. Profile and Club Finances are new
+            fan-out hubs to pages that already resolve at their existing URLs
+            (/members/dues, /members/reimbursements, /members/impact,
+            /members/financial-reports) — bookmarks and emailed links are
+            unaffected. Same tile styling as before, just six instead of
+            eight. */}
+        <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6 mb-12">
           <a
             href="/members"
             className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
@@ -176,39 +184,25 @@ export default async function MembersPage() {
             <p className="text-gray-700">Browse committees, service teams, and branches</p>
           </a>
           <a
+            href="/members/records"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+          >
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Club Records</h3>
+            <p className="text-gray-700">Read meeting minutes — general and board</p>
+          </a>
+          <a
             href="/members/profile"
             className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
-            <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Profile</h3>
-            <p className="text-gray-700">Update your contact information and preferences</p>
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Profile</h3>
+            <p className="text-gray-700">Your contact info, dues status, and reimbursement requests</p>
           </a>
           <a
-            href="/members/dues"
+            href="/members/finances"
             className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
-            <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Dues</h3>
-            <p className="text-gray-700">View your annual membership dues status and payment history</p>
-          </a>
-          <a
-            href="/members/reimbursements"
-            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
-          >
-            <h3 className="text-xl font-semibold mb-2 text-lions-blue">My Reimbursements</h3>
-            <p className="text-gray-700">Request reimbursement for out-of-pocket club expenses</p>
-          </a>
-          <a
-            href="/members/impact"
-            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
-          >
-            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Our Impact</h3>
-            <p className="text-gray-700">See how the Lions Club serves our community</p>
-          </a>
-          <a
-            href="/members/financial-reports"
-            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
-          >
-            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Financial Statements</h3>
-            <p className="text-gray-700">View the club&rsquo;s monthly Statement of Financial Condition</p>
+            <h3 className="text-xl font-semibold mb-2 text-lions-blue">Club Finances</h3>
+            <p className="text-gray-700">Monthly financial statements and our community impact</p>
           </a>
         </div>
 

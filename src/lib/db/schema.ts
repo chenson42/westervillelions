@@ -1393,3 +1393,171 @@ export const ledgerReceiptFiles = pgTable("ledger_receipt_files", {
 
 export type LedgerReceiptFile = typeof ledgerReceiptFiles.$inferSelect;
 export type NewLedgerReceiptFile = typeof ledgerReceiptFiles.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Meeting Minutes — DECISION-074/075 (architect), DECISION-077 (tech-lead),
+// DECISION-079 (Phase 4 loop-back: attendance is a single count, not a roster)
+// docs/work-log/2026-08-08-meeting-minutes.md
+//
+// One parent table (minutes) + two child tables (motions, action items).
+// Deliberately NOT part of the `ledger_*` family — DECISION-074 Ruling 2 is
+// explicit that minutes shares no tables, permission keys, or audience
+// boundary with the Ledger. Read access is universal (any linked member, any
+// kind, any status) — there is no minutes.view/read gate by design. Write
+// access is gated by minutes.manage (create/edit/approve/reopen) and
+// minutes.delete (soft-delete/restore only), added in the companion permission
+// migration 0080_minutes_permissions.sql via the notetaker role.
+//
+// DECISION-079 superseded the original per-member `minutesAttendance` child
+// table (roster checklist, memberId FK, memberNameSnapshot) — the treasurer
+// clarified the actual requirement was "a single count number for
+// attendance," not a per-member roster fact. That table never shipped (the
+// migration adding it was never committed), so it was removed outright
+// rather than deprecated — see `presentCount` below.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const minutes = pgTable(
+  "minutes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Open-ended, DECISION-041 pattern: plain text, no DB CHECK/enum. Validated
+    // against MINUTES_KINDS in src/lib/minutes.ts. Adding a new kind (e.g. a
+    // new ad hoc committee) is a one-line const change + deploy — it must NEVER
+    // require a migration. Same shape as ledger_budget_lines.cause.
+    kind: text("kind").notNull(),
+    // Nullable — not every record ties to a scheduled event occurrence (ad hoc
+    // or historical minutes can exist with no matching events row).
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "set null" }),
+    // `date`, NOT `timestamp` — deliberate, and NOT copied from
+    // eventRsvps.occurrenceDate, which is a naive timestamp("...", { mode:
+    // "string" }) column with a known, previously-tripped-over bug (12:30 PM
+    // wall-clock reads back as 8:30 AM in EDT because it's silently treated as
+    // UTC). A minutes record belongs to a calendar day, not a wall-clock
+    // instant — same reasoning DECISION-001 already used for
+    // event_occurrence_overrides.occurrence_date. Do NOT "fix" this to
+    // timestamp later; that would reintroduce the exact bug this column type
+    // was chosen to avoid. When eventId is set this is that occurrence's
+    // calendar date; when null the notetaker enters it directly.
+    meetingDate: date("meeting_date").notNull(),
+    // DECISION-041 pattern: 'draft' | 'approved', validated in src/lib/minutes.ts.
+    status: text("status").notNull().default("draft"),
+    // Optional disambiguation label (e.g. "Officer Elections") for the rare case
+    // of two minutes records sharing a kind + meetingDate (no unique constraint
+    // forbids this — see below). UI falls back to "{kind} minutes — {meetingDate}"
+    // when null.
+    title: text("title"),
+    // A single headcount of members present, not a per-member roster —
+    // DECISION-079 (Phase 4 loop-back). Nullable: a set of minutes may
+    // legitimately not record a count at all (an ad hoc/historical record,
+    // or simply not taken that meeting). Deliberately NOT tied to `members`
+    // in any way — the treasurer's own framing, "attendance should have
+    // nothing to do with members records," taken literally. A future
+    // quorum check (still not built, by design — Phase 1) would consume
+    // this count directly against the by-laws' "majority of the members in
+    // good standing" threshold for a regular meeting.
+    presentCount: integer("present_count"),
+    // Notetaker of record — WHO TOOK THE MINUTES, per governance convention
+    // that minutes name their recorder. Distinct from authorUserId below,
+    // which is data-entry attribution only (whoever typed the record into
+    // the app) and is never displayed. The secretary may take notes on
+    // paper and someone else types them up later, or a substitute may cover
+    // a meeting — the two people are frequently different.
+    //
+    // Follows the pattern the schema already got right for attendance
+    // (nullable member FK + ON DELETE SET NULL, paired with a name snapshot
+    // that is the display source of truth): notetakerMemberId is nullable
+    // and degrades gracefully if the member is later hard-deleted;
+    // notetakerNameSnapshot is written once, from the submitted payload, at
+    // create/update time — it is NEVER recomputed from, or invalidated by,
+    // the current roster. A notetaker who later resigns must still show as
+    // the notetaker of that meeting, forever; a hard member-delete only
+    // nulls the FK, the name snapshot survives untouched.
+    //
+    // Both columns are nullable, unlike minutesAttendance's old NOT NULL
+    // snapshot — that NOT NULL was safe there because an attendance ROW only
+    // ever existed once a member had been picked (the row's existence
+    // implied a name). Here the notetaker is one optional field on a row
+    // that always exists regardless of whether a notetaker was ever
+    // recorded — historical minutes entered later may have no clear record
+    // of who took them, and forcing a value would produce false data, not
+    // real accountability.
+    notetakerMemberId: uuid("notetaker_member_id").references(() => members.id, { onDelete: "set null" }),
+    notetakerNameSnapshot: text("notetaker_name_snapshot"),
+    bodyMarkdown: text("body_markdown"),
+    // Data-entry attribution ONLY — who created/is editing this row, not who
+    // took the notes (that's notetakerMemberId/notetakerNameSnapshot above).
+    // Never displayed in any UI or the emailed version; kept for internal
+    // accountability only (mirrors every other *_user_id attribution column
+    // in this schema).
+    authorUserId: uuid("author_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at"),
+    // Column SHAPE reused from ledgerBudgets.pendingDeleteAt (nullable timestamp,
+    // flag-flip, restorable) — the PURGE behavior is explicitly NOT reused.
+    // ledgerBudgets purges pending-delete rows in the same transaction as
+    // Approve & lock, a budget-specific finalize event minutes has no
+    // equivalent of. Meeting minutes are a permanent governance record (IRS
+    // guidance treats board minutes as core records retained forever) — a
+    // soft-deleted minutes row must stay in the database indefinitely, hidden
+    // from every read path, restorable by admin. There is no purge path for
+    // this table anywhere in the app; if a true hard-delete is ever genuinely
+    // needed it is a separate, rare, manual-only action, not this column.
+    pendingDeleteAt: timestamp("pending_delete_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // No unique(kind, meetingDate) — two sets of minutes for one meeting (a
+    // split session, or a re-do) must be representable. DECISION-077 §9;
+    // read-time queries (next-meeting pointer, most-recent-approved) resolve
+    // the ambiguity by preferring status='approved' and breaking ties by most
+    // recent approvedAt/createdAt, rather than the schema forbidding it.
+    index("ix_minutes_kind").on(t.kind),
+    index("ix_minutes_meeting_date").on(t.meetingDate),
+    index("ix_minutes_event").on(t.eventId),
+    index("ix_minutes_status").on(t.status),
+    index("ix_minutes_notetaker").on(t.notetakerMemberId),
+  ],
+);
+
+export type Minutes = typeof minutes.$inferSelect;
+export type NewMinutes = typeof minutes.$inferInsert;
+
+export const minutesMotions = pgTable(
+  "minutes_motions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    minutesId: uuid("minutes_id").notNull().references(() => minutes.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    // Free text, NOT a members FK — DECISION-077 §2. A mover/seconder can be a
+    // guest, and unlike attendance, this club has no stated need to ever query
+    // motions by member identity. Forcing a member-picker here would be the
+    // over-structuring failure mode the brief warned against.
+    moverName: text("mover_name").notNull(),
+    seconderName: text("seconder_name"), // nullable — small bodies don't always formally second
+    // DECISION-041 pattern: 'passed' | 'failed' | 'tabled' | 'withdrawn',
+    // validated against MOTION_RESULTS in src/lib/minutes.ts.
+    result: text("result").notNull().default("passed"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("ix_minutes_motions_minutes").on(t.minutesId)],
+);
+
+export type MinutesMotion = typeof minutesMotions.$inferSelect;
+export type NewMinutesMotion = typeof minutesMotions.$inferInsert;
+
+export const minutesActionItems = pgTable(
+  "minutes_action_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    minutesId: uuid("minutes_id").notNull().references(() => minutes.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    ownerName: text("owner_name").notNull(), // free text — same reasoning as motions above, DECISION-077 §2
+    dueDate: date("due_date"), // nullable — some action items are "ongoing" / "before next meeting"
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("ix_minutes_action_items_minutes").on(t.minutesId)],
+);
+
+export type MinutesActionItem = typeof minutesActionItems.$inferSelect;
+export type NewMinutesActionItem = typeof minutesActionItems.$inferInsert;

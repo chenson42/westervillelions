@@ -10,8 +10,16 @@ import { db } from "@/lib/db";
 import { groups, groupMemberships, members, googleGroupSyncLog } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import type { MembershipStatus } from "@/lib/members";
+import { CLUB_GROUP_EMAIL } from "@/lib/club-contacts";
 
-const CLUB_GROUP_EMAIL = "club@westervillelions.org";
+// Re-exported for any DB-coupled consumer that wants it from here (this file
+// is the natural place to look for it, since it's the module that actually
+// syncs members to this address). The canonical definition now lives in
+// src/lib/club-contacts.ts — a dependency-free module — so that
+// src/lib/minutes.ts (which must stay importable without @/lib/db, see its
+// own header comment) can share the same source of truth instead of
+// duplicating the literal. DECISION-075 §7 / DECISION-077 §4.
+export { CLUB_GROUP_EMAIL };
 
 /** club@ list eligibility (decision: prospects ride the list, ended members don't). */
 export const CLUB_LIST_ELIGIBLE_STATUSES = ["active", "prospective"] as const;

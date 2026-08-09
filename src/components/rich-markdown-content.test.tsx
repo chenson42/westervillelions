@@ -1,5 +1,9 @@
 /**
- * Unit tests for BudgetNotesMarkdown (Budget Notes Markdown Rendering).
+ * Unit tests for RichMarkdownContent (promoted from BudgetNotesMarkdown —
+ * DECISION-074 Ruling 2, docs/work-log/2026-08-08-meeting-minutes.md Phase 3
+ * Implementation Order step 5). Assertions carried forward verbatim from
+ * budget-notes-markdown.test.tsx — the component itself is unchanged, only
+ * relocated and renamed.
  *
  * Covers the two things that actually matter for this change:
  *   1. Markdown feature coverage — headings, bold/italic, bullet/numbered
@@ -18,13 +22,13 @@
 
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import BudgetNotesMarkdown from "./budget-notes-markdown";
+import RichMarkdownContent from "./rich-markdown-content";
 
 function render(markdown: string): string {
-  return renderToStaticMarkup(<BudgetNotesMarkdown>{markdown}</BudgetNotesMarkdown>);
+  return renderToStaticMarkup(<RichMarkdownContent>{markdown}</RichMarkdownContent>);
 }
 
-describe("BudgetNotesMarkdown", () => {
+describe("RichMarkdownContent", () => {
   it("renders headings, bold, italic, links, and both list types", () => {
     const html = render(
       [
