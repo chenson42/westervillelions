@@ -112,6 +112,101 @@ deciding it now.
 
 ---
 
+## To Bring to the Next Board Meeting (agenda items, not motions)
+
+Things to do or show at the meeting. No vote required.
+
+### A1 — Demo the new member-portal functionality to the board
+
+> **Status:** TO DO — next board meeting. (Added 2026-08-09 by the Treasurer.)
+
+A fair amount has shipped that the board has not seen, and several items only deliver value once
+the board knows they exist and tells members about them. Worth a walkthrough on a laptop or
+projector rather than a verbal description.
+
+### The four to actually demo (everything else is a list)
+
+1. **Club Records → Meeting Minutes.** The 2026-08-07 Board Retreat minutes are already in the
+   portal, with all three motions recorded and Hank named as notetaker. Shows the board what
+   their own minutes now look like to a member. *(The Notetaker role still has to be assigned to
+   the secretary before Hank can enter the next set himself.)*
+2. **The Constitution & By-Laws**, readable by any member for the first time — full version
+   history, and side-by-side comparison of any two versions. Say plainly that **the in-app
+   version is now the club's authoritative text**, superseding the 1998 booklet, and that
+   amendments from here are recorded with who adopted them and when.
+3. **Monthly Statement of Financial Condition**, as members see it — the same report the board
+   gets, published automatically once a month is reconciled.
+4. **Reimbursement request from a phone**, photographing a receipt — the most immediately useful
+   thing for the average member, and the easiest to demo live.
+
+### Everything that has shipped since the board last looked
+
+**For every member, in the portal**
+- Meeting minutes — general, board, and committee; searchable, with past minutes browsable
+- Constitution & By-Laws, with amendment history and version comparison
+- Monthly financial statements (print-friendly)
+- Community Impact dashboard — what the club has given, by cause and by year
+- Member directory, now including mailing addresses — **and a printable/PDF directory**
+- Self-service profile, including updating your own address and photo
+- Events calendar with RSVP per occurrence, and "Add to Calendar" download
+- Member groups and committees
+- Your own dues payment history
+- Expense reimbursement requests, with receipt photos — including modern iPhone (HEIC) photos
+- Suggestion box
+
+**For the treasurer and the board — The Ledger**
+- Full two-fund accounting: the Club's Administrative fund and the Foundation's Charitable fund,
+  with a firewall between them and directional guardrails on moving money
+- Transaction register, splits, and a bank account recorded on every transaction
+- Bank reconciliation, including batch matching (one bank line to several transactions)
+- Transfers between accounts, and sweeping public funds to the Foundation
+- Outstanding/uncashed check tracking
+- Budgeting: seed next year from last year's actuals, budget by cause and by beneficiary,
+  star lines for discussion, add notes, approve and lock a year, prior-year reference columns,
+  and a board-ready printable budget
+- Transactions link to budget lines, giving exact budget-vs-actual rather than a fuzzy match
+- See the remaining budget while you are entering a transaction
+- Search the ledger and the budget together from the treasurer's dashboard
+- Reports, CSV exports, and a fiscal report broken down by cause and line
+- Compliance: filings calendar, 990 determiner, standing reminders, fund-compliance guardrails
+- Donors and acknowledgments: IRS-compliant letters, thank-you letters, editable club wording,
+  batch generation, multiple email addresses per donor
+- Annual dues tracking by fiscal year, with payment methods and a payment-method breakdown
+- An in-app Treasury User's Guide and a Budgeting guide
+
+**For administrators**
+- Membership applications, with email alerts when one arrives
+- Prospective members — on the club email list without being billed dues
+- Lions International membership types on the member record
+- Manage ledger categories: rename, merge, retire — with an audit trail
+- Roles and permissions, including new **Treasurer**, **Budget Committee**, and **Notetaker** roles
+- Google Group sync, email queue, sync log, and a failed-login security log
+- Release notes visible in the app
+
+**On the public website**
+- Events calendar and past events
+- Donate page with per-campaign forms
+- Programs, including plastic-film drop-off locations with maps
+- Contact form, newsletter signup, and the membership application
+
+### Coming — worth previewing for feedback
+
+- **The Project/Activity Proposal form** — the paper form simplified from 18 questions to about
+  five required ones, with the board notified by email on submission and a place to record what
+  the board decided. This is the form the **Communication Policy** requires be submitted with any
+  publicity request, so it needs to be usable by the time Jim presents that policy on
+  **September 17**. Board feedback on the questions before it is finished is genuinely useful.
+
+**Why it matters beyond a demo.** Two of the retreat's own action items depend on members knowing
+this exists: the **welcome packet** Howard and John are assembling is meant to include
+"membership portal access information," and Hank's secretary task is to "post meeting minutes on
+the website." Both are easier to explain once the board has seen the thing.
+
+**Also worth raising:** a second person familiar with operating the website was named as the Tech
+Committee's main goal at the retreat. A demo is a natural moment to ask who that should be.
+
+---
+
 ## Log (append outcomes here)
 
 _No motions voted yet._

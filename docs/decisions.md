@@ -28,6 +28,51 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-084: Project/Activity Proposal form — new top-level module pair, one-key permission gate, two-table append-only decision history
+
+**Status:** Resolved
+**Date:** 2026-08-09
+
+**Decision:** The Project/Activity Proposal feature (`docs/work-log/2026-08-09-project-proposal-form.md`,
+Phase 2) gets a new top-level lib module pair — `src/lib/proposals.ts` (pure helpers/validators) +
+`src/lib/proposals-queries.ts` (DB-facing) — following the split DECISION-074 established for
+minutes/documents, generalized to a third domain rather than folded into `ledger-*` or `minutes.ts`.
+Member surface lives at `src/app/members/proposals/` (flat top-level directory, following the
+`members/reimbursements/` / `members/financial-reports/` "any linked member, no `FEATURES` gate" shape,
+not the `records/` hub shape — proposals is one feature, not a federation of two). Admin surface lives at
+`src/app/(dashboard)/admin/proposals/`, gated by one new key, `FEATURES.PROPOSALS_REVIEW`
+(`"proposals.review"`), bound to `admin` + `board_member` via a new idempotent migration (`0084_*`) —
+one key covers both viewing submitted proposals and deciding them, matching `DOCUMENTS_MANAGE`'s
+precedent (one role authors and adopts) rather than the Ledger's view/record/approve split, whose
+separation-of-duties reasoning is money-specific and doesn't transfer to a once-a-month board vote.
+No new npm dependency: the form is hand-rolled `useState` + `fetch`-to-route-handler, matching every
+existing form including the closest analog (`reimbursement-form.tsx`); `react-hook-form` stays
+installed-but-unused rather than adopted for this one feature (flagged separately for the 30-day
+dependency review — remove it or adopt it project-wide on purpose, not implicitly via this feature).
+Data model is two tables, not one: `proposals` (one row per proposal, mutable while
+`status` is `Draft`/`Submitted`, denormalized current `status` column) + an append-only
+`proposalDecisions` history table (one row per status transition, reusing the `documentVersions` shape:
+`decidedByUserId` / `decidedAt` / `citingMinutesId`, nullable and backfillable).
+
+**Rationale:** Reuses three precedents already proven in this codebase (module-pair split, any-linked-
+member gating, `DOCUMENTS_MANAGE`-style single review key) instead of inventing new shapes. The two-table
+decision history departs from a single mutable decision-column set specifically because `Deferred` is a
+routine, repeatable transition (a board can defer the same proposal in consecutive months) — a mutable
+column set would silently overwrite an earlier deferral's `decidedAt`/`decidedByUserId` the moment a later
+decision is recorded, losing exactly the "who decided what, when" audit trail this club's governance
+culture already expects elsewhere (`documentVersions`, permanently-retained minutes).
+
+**Impact:** New tables `proposals` and `proposalDecisions` land in `schema.ts` first, then a matching
+idempotent migration; new `FEATURES.PROPOSALS_REVIEW` key + role-binding migration; new
+`ADMIN_NAVIGATION` entry (so `getAdminProtectionRules()` derives proxy protection per DECISION-082); the
+admin page must still carry its own `auth()` + `hasFeature()` check per
+`src/lib/admin-page-feature-gates.test.ts`. Two new top-level directories
+(`src/app/members/proposals/`, `src/app/(dashboard)/admin/proposals/`); no new dependencies. Tech-lead
+designs the detailed schema/API contract in Phase 3, including a tri-state (value + "not sure yet" flag)
+shape for the money/date/headcount fields rather than overloading `NULL`.
+
+---
+
 ## DECISION-083: Newsletter subscriber PII gets its own permission key, `subscriptions.view` — not a reuse of `contact.view` — closing the Phase 5 re-verification FAIL on `/admin/subscriptions`
 
 **Status:** Resolved
