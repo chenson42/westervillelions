@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { FEATURES } from "@/lib/permissions";
+import { FEATURES, getAdminProtectionRules } from "@/lib/permissions";
 
 /**
  * Feature-based route protection middleware
@@ -50,72 +50,32 @@ export async function proxy(request: NextRequest) {
   const userFeatures = session.user.features || [];
   const pathname = request.nextUrl.pathname;
 
-  // Define route protection rules
+  // Define route protection rules.
+  //
+  // The admin sub-area rules are DERIVED from ADMIN_NAVIGATION
+  // (getAdminProtectionRules(), src/lib/permissions.ts) rather than
+  // hand-maintained here. This used to be a hand-written parallel list, and
+  // it drifted out of sync with ADMIN_NAVIGATION five times running — every
+  // time a new admin area shipped gated on a permission narrower than
+  // admin.dashboard, someone forgot to also add a matching rule here, so the
+  // intended holder of that narrower permission (budget-committee, twice;
+  // ledger; the minutes notetaker; the documents notetaker) was bounced to
+  // /access-pending by the ADMIN_DASHBOARD catch-all below before the area's
+  // own, correct page-level hasFeature() check ever ran. See
+  // docs/work-log/2026-08-05-admin-area-gating.md and
+  // docs/work-log/2026-08-09-governance-document-versioning.md (Phase 4
+  // loop-back) for the full history and getAdminProtectionRules()'s own doc
+  // comment for exactly what guarantee this derivation does and doesn't
+  // provide. Each admin page still enforces its own finer-grained
+  // requirement (e.g. /admin/ledger/settings still requires LEDGER_MANAGE
+  // specifically) — these derived rules only decide who may reach the area
+  // at all, same as the hand-written rules they replace.
   const protectionRules: Array<{
     pattern: RegExp;
     requiredFeatures: string[];
     requireAll?: boolean; // Default is ANY
   }> = [
-    // Admin routes
-    {
-      pattern: /^\/admin\/members/,
-      requiredFeatures: [FEATURES.MEMBERS_EDIT],
-    },
-    {
-      pattern: /^\/admin\/users/,
-      requiredFeatures: [FEATURES.ADMIN_USERS],
-    },
-    {
-      pattern: /^\/admin\/roles/,
-      requiredFeatures: [FEATURES.ADMIN_ROLES],
-    },
-    {
-      pattern: /^\/admin\/permissions/,
-      requiredFeatures: [FEATURES.ADMIN_ROLES],
-    },
-    {
-      pattern: /^\/admin\/campaigns/,
-      requiredFeatures: [FEATURES.CAMPAIGNS_MANAGE],
-    },
-    {
-      pattern: /^\/admin\/groups/,
-      requiredFeatures: [FEATURES.GROUPS_MANAGE],
-    },
-    // The Ledger admits anyone holding ANY ledger or budget feature. This rule MUST
-    // precede the /^\/admin/ catch-all below, which requires ADMIN_DASHBOARD — without
-    // it, a budget-committee member (budget.view/budget.edit, deliberately NOT
-    // admin.dashboard) is bounced here before the page's own gate ever runs. That is
-    // exactly the bug v1.55.0 set out to fix: that release corrected the admin layout
-    // and the header nav but missed this layer, so the reported user stayed locked out
-    // of the budget she had been asked to review. Each Ledger page still enforces its
-    // own finer-grained requirement; this rule only decides who may reach the area.
-    {
-      pattern: /^\/admin\/ledger/,
-      requiredFeatures: [
-        FEATURES.LEDGER_VIEW,
-        FEATURES.LEDGER_RECORD,
-        FEATURES.LEDGER_MANAGE,
-        FEATURES.LEDGER_APPROVE,
-        FEATURES.BUDGET_VIEW,
-        FEATURES.BUDGET_EDIT,
-      ],
-    },
-    // Minutes admits anyone holding either minutes feature. This rule MUST
-    // precede the /^\/admin/ catch-all below, which requires ADMIN_DASHBOARD
-    // — without it, a notetaker (minutes.manage, deliberately NOT
-    // admin.dashboard — the role built specifically to author minutes) is
-    // bounced here before /admin/minutes*'s own page-level gate ever runs.
-    // This is the SAME bug class the /^\/admin\/ledger/ rule above exists to
-    // prevent for the budget-committee role (v1.55.0) — found again here by
-    // qa in Phase 5 of the meeting-minutes feature
-    // (docs/work-log/2026-08-08-meeting-minutes.md) because this rule was
-    // never added when /admin/minutes shipped. Each minutes page still
-    // enforces its own finer-grained requirement; this rule only decides who
-    // may reach the area.
-    {
-      pattern: /^\/admin\/minutes/,
-      requiredFeatures: [FEATURES.MINUTES_MANAGE, FEATURES.MINUTES_DELETE],
-    },
+    ...getAdminProtectionRules(),
     {
       pattern: /^\/admin/,
       requiredFeatures: [FEATURES.ADMIN_DASHBOARD],

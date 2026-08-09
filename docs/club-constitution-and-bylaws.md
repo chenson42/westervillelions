@@ -1,15 +1,19 @@
 # Lions Club of Westerville, Ohio — Constitution and By-Laws
 
-> ## ⚠️ THIS IS A TRANSCRIPTION — THE SCANNED PDF IS AUTHORITATIVE
+> ## ⚠️ HISTORICAL ARCHIVE — SUPERSEDED BY THE IN-APP VERSION ONCE PUBLISHED
 >
-> This file is a plain-text transcription of the club's scanned Constitution & By-Laws
-> (cover: *"The Westerville Lions Club — Constitution & Bylaws — Revised April 2, 1998"*),
-> produced **on 2026-08-08** solely to make the document readable and searchable online.
+> This file is the transcription of the club's scanned Constitution & By-Laws (cover: *"The
+> Westerville Lions Club — Constitution & Bylaws — Revised April 2, 1998"*), imported verbatim
+> as version 1 of the in-app governing document by `scripts/seed-governance-document.ts`
+> (docs/work-log/2026-08-09-governance-document-versioning.md).
 >
-> **The scanned original PDF remains the authoritative governing document.**
-> This transcription has no independent legal or governing force. **If anything here differs
-> from the scan — a word, a number, a date, a dollar amount, a quorum figure — the scan wins.**
-> Verify against the scan before quoting this document in any club matter.
+> **Until that script has been run against the club's live production database, the scanned
+> original PDF remains the authoritative governing document** and this transcription has no
+> independent legal or governing force — if anything here differs from the scan, the scan wins.
+> **Once published, the in-app document at `/members/records/documents/constitution-bylaws`
+> becomes the club's authoritative governing text**, superseding both the scan and this file;
+> from that point on, this file is a frozen historical artifact and is not updated further — see
+> the in-app version history for every change made since publication.
 >
 > The text below is reproduced **as printed**, including archaic phrasing, inconsistent
 > capitalisation, and the original's own typographical errors. Nothing has been corrected,

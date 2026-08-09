@@ -32,6 +32,19 @@ export const FEATURES = {
   // Contact features
   CONTACT_VIEW: "contact.view",
 
+  // Newsletter subscribers (docs/work-log/2026-08-09-governance-document-versioning.md,
+  // Phase 4 loop-back 2). Deliberately NOT CONTACT_VIEW: contact.view gates a
+  // different dataset (contact-form submissions) with a different seeded
+  // description ("View contact form submissions"). The subscriber list is
+  // its own bulk-PII dataset (name + email for every newsletter subscriber)
+  // and earned its own key rather than reusing a same-shaped-but-wrong one —
+  // the same "wrong key, not missing key" pattern DECISION-082 already found
+  // and fixed once for /admin/members vs /admin/membership. Bound to the
+  // same two roles (admin, board_member) that held contact.view — the only
+  // roles that could legitimately reach this page before this key existed —
+  // so this is a like-for-like swap, not a widening or narrowing.
+  SUBSCRIPTIONS_VIEW: "subscriptions.view",
+
   // Suggestions features
   SUGGESTIONS_VIEW: "suggestions.view",
 
@@ -72,6 +85,14 @@ export const FEATURES = {
   // any minutes record, any kind, any status, is open to any linked member.
   MINUTES_MANAGE: "minutes.manage", // create, edit (draft only), approve, reopen
   MINUTES_DELETE: "minutes.delete", // soft-delete / restore — admin only
+
+  // Governance Documents (docs/work-log/2026-08-09-governance-document-versioning.md,
+  // DECISION-076/081). No documents.view/read key exists by design — reading
+  // the current text and its adopted history is open to any linked member
+  // for a visibility: 'members' (or 'public') document, same shape as
+  // minutes. No documents.delete key either: every version is a permanent,
+  // immutable row — there is no delete path anywhere in this design.
+  DOCUMENTS_MANAGE: "documents.manage", // create versions, review/adopt pending amendments, link citing minutes
 } as const;
 
 // Type for feature names
@@ -86,9 +107,11 @@ export const FEATURE_CATEGORIES = {
   ANNOUNCEMENTS: "announcements",
   ADMIN: "admin",
   REPORTS: "reports",
+  SUBSCRIPTIONS: "subscriptions",
   DUES: "dues",
   LEDGER: "ledger",
   MINUTES: "minutes",
+  DOCUMENTS: "documents",
 } as const;
 
 // Helper to get features by category
@@ -121,6 +144,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
 
   [FEATURES.CONTACT_VIEW]: "View contact form submissions",
 
+  [FEATURES.SUBSCRIPTIONS_VIEW]: "View the newsletter subscriber list and export subscribers",
+
   [FEATURES.SUGGESTIONS_VIEW]: "View member suggestion box submissions",
 
   [FEATURES.MEMBERSHIP_MANAGE]: "View and manage membership applications",
@@ -146,6 +171,9 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
 
   [FEATURES.MINUTES_MANAGE]: "Create, edit, approve, and reopen meeting minutes",
   [FEATURES.MINUTES_DELETE]: "Soft-delete and restore meeting minutes",
+
+  [FEATURES.DOCUMENTS_MANAGE]:
+    "Create document versions, review pending amendments, adopt substantive changes, and link citing minutes",
 };
 
 // Default role names (should match database seed data)
@@ -324,7 +352,19 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Minutes",
         href: "/admin/minutes",
         icon: "📝",
-        requiredFeature: FEATURES.MINUTES_MANAGE,
+        // MINUTES_DELETE is admin-only (0080_minutes_permissions.sql binds it
+        // to `admin` alone, who bypasses feature checks entirely) and isn't
+        // needed to see the nav item itself — but it must still be part of
+        // this item's gate-feature set so getAdminProtectionRules() (below)
+        // derives the same area-admission set proxy.ts hand-maintained
+        // before this file became the single source for it.
+        requiredFeature: [FEATURES.MINUTES_MANAGE, FEATURES.MINUTES_DELETE],
+      },
+      {
+        name: "Governing Documents",
+        href: "/admin/documents",
+        icon: "📜",
+        requiredFeature: FEATURES.DOCUMENTS_MANAGE,
       },
     ],
   },
@@ -365,7 +405,9 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Newsletter",
         href: "/admin/subscriptions",
         icon: "📧",
-        requiredFeature: FEATURES.CONTACT_VIEW,
+        // SUBSCRIPTIONS_VIEW, not CONTACT_VIEW — see the FEATURES.SUBSCRIPTIONS_VIEW
+        // doc comment for why this page earned its own key.
+        requiredFeature: FEATURES.SUBSCRIPTIONS_VIEW,
       },
     ],
   },
@@ -467,4 +509,104 @@ export function getFirstAccessibleAdminHref(features?: string[] | null): string 
     }
   }
   return null;
+}
+
+// ── Admin proxy protection rules (derived from ADMIN_NAVIGATION) ───────────
+//
+// src/proxy.ts's route-admission middleware used to maintain its own
+// hand-written list of "which feature(s) let a request reach this admin
+// area" in parallel with ADMIN_NAVIGATION. Every time a new admin area
+// shipped gated on a permission narrower than admin.dashboard, someone had
+// to remember to *also* add a matching proxy rule by hand — and this drifted
+// FIVE times running: budget-committee (fixed twice before it stuck),
+// /admin/ledger, /admin/minutes, and /admin/documents (see
+// docs/work-log/2026-08-05-admin-area-gating.md and
+// docs/work-log/2026-08-09-governance-document-versioning.md's Phase 4
+// loop-back). Each time, the intended user was bounced to /access-pending by
+// the generic ADMIN_DASHBOARD-only catch-all before the area's own, correct
+// page-level hasFeature() check ever ran.
+//
+// getAdminProtectionRules() ends the drift structurally rather than by
+// convention: proxy.ts calls this function directly instead of maintaining
+// its own list, so there is only ONE list an admin area's gate feature(s)
+// can be declared in. Adding a nav item to ADMIN_NAVIGATION with a
+// requiredFeature is now sufficient, by construction, to also protect that
+// area's URL space at the proxy layer — there is no second place to update
+// and forget.
+//
+// Rules are grouped by the top-level path segment under /admin/ (e.g.
+// "ledger", "minutes", "documents") because the proxy's job is coarse
+// AREA admission — "may this request reach anything under /admin/ledger at
+// all" — not per-page gating; each page underneath still enforces its own
+// finer-grained hasFeature() requirement (see the Ledger/Budgeting
+// precedent, where the proxy admits any ledger-or-budget feature but
+// /admin/ledger/settings itself still requires LEDGER_MANAGE specifically).
+// For a segment with multiple nav items (Ledger's eight items, e.g.), the
+// derived rule admits ANY feature required by ANY item under that segment —
+// the same "any ledger or budget feature" shape the original hand-written
+// /admin/ledger rule used.
+//
+// Segment patterns require a trailing "/" or end-of-string after the
+// segment name (not a bare prefix match) so that, e.g., "/admin/members"
+// (segment "members") can never also match "/admin/membership" (segment
+// "membership") — a real collision the old hand-written
+// `/^\/admin\/members/` pattern was silently exposed to (no other rule
+// existed for /admin/membership, so it fell through and was governed by the
+// members rule's MEMBERS_EDIT requirement instead of Applications' own
+// MEMBERSHIP_MANAGE). This derivation fixes that as a side effect of giving
+// every segment its own bounded pattern; it does not change matching for
+// any path actually under /admin/members/* itself.
+//
+// Items with no requiredFeature (Email Queue, Sync Log, Release Notes) and
+// the bare "/admin" Dashboard root contribute no segment rule — the
+// Dashboard root is intentionally left to proxy.ts's generic
+// ADMIN_DASHBOARD catch-all, unchanged from before this refactor.
+//
+// What this DOES guarantee: any ADMIN_NAVIGATION item with a
+// `requiredFeature` is automatically proxy-admitted for holders of that
+// feature — the specific failure mode behind all five prior incidents
+// becomes structurally impossible, not just tested for.
+//
+// What this does NOT guarantee: if a future admin page is never added to
+// ADMIN_NAVIGATION at all (not merely missing a proxy rule, but missing
+// from the sidebar's own data entirely), it has no requiredFeature for this
+// function to read, and a direct visit still falls to the ADMIN_DASHBOARD
+// catch-all. That is a different, so-far-unobserved failure mode (all five
+// real incidents involved a nav entry that DID exist) and this change does
+// not close it — flagging honestly rather than claiming a guarantee this
+// doesn't build. `pnpm test` (see the "every ADMIN_NAVIGATION item..."
+// coverage in permissions.test.ts) fails loudly if a nav entry's declared
+// feature(s) are ever *not* reflected in the derived rules, which is the
+// guarantee this function can actually make.
+export interface AdminProtectionRule {
+  segment: string;
+  pattern: RegExp;
+  requiredFeatures: FeatureName[];
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function getAdminProtectionRules(): AdminProtectionRule[] {
+  const bySegment = new Map<string, Set<FeatureName>>();
+
+  for (const group of ADMIN_NAVIGATION) {
+    for (const item of group.items) {
+      if (!item.requiredFeature) continue;
+      const match = item.href.match(/^\/admin\/([^/]+)/);
+      if (!match) continue; // the bare "/admin" Dashboard root — see above
+      const segment = match[1];
+      const required = Array.isArray(item.requiredFeature) ? item.requiredFeature : [item.requiredFeature];
+      const set = bySegment.get(segment) ?? new Set<FeatureName>();
+      required.forEach((f) => set.add(f));
+      bySegment.set(segment, set);
+    }
+  }
+
+  return Array.from(bySegment.entries()).map(([segment, features]) => ({
+    segment,
+    pattern: new RegExp(`^/admin/${escapeRegExpLiteral(segment)}(?:/|$)`),
+    requiredFeatures: Array.from(features),
+  }));
 }

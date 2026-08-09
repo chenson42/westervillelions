@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { newsletterSubscriptions } from "@/lib/db/schema";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
@@ -30,7 +30,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const canExport = await hasFeature(session.user.id, FEATURES.REPORTS_EXPORT);
+  // FEATURES.SUBSCRIPTIONS_VIEW (the same key that now gates the
+  // /admin/subscriptions page — see FEATURES.SUBSCRIPTIONS_VIEW's doc
+  // comment) OR the generic REPORTS_EXPORT, matching the OR-pattern
+  // src/app/api/admin/dues/export/route.ts and .../ledger/export/route.ts
+  // already use (resource-specific permission OR the cross-cutting export
+  // grant). Previously this route checked REPORTS_EXPORT alone — a
+  // standalone "wrong key" gap found while fixing /admin/subscriptions:
+  // not live-exploitable today (only admin/board_member hold
+  // reports.export, and both already hold subscriptions.view), but a future
+  // role granted reports.export for an unrelated report would have silently
+  // been able to download the full newsletter-subscriber PII list via this
+  // endpoint with no relationship to the page's own gate.
+  const canExport = await hasAnyFeature(session.user.id, [
+    FEATURES.SUBSCRIPTIONS_VIEW,
+    FEATURES.REPORTS_EXPORT,
+  ]);
   if (!canExport) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

@@ -2,12 +2,36 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { newsletterSubscriptions } from "@/lib/db/schema";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { desc } from "drizzle-orm";
 import ExportSubscribersButton from "@/components/admin/export-subscribers-button";
 
 export default async function SubscriptionsPage() {
   const session = await auth();
-  if (!session?.user) redirect("/signin");
+  if (!session?.user?.id) redirect("/signin");
+
+  // Page-level gate — the proxy's derived rule (getAdminProtectionRules(),
+  // src/lib/permissions.ts) already requires SUBSCRIPTIONS_VIEW to reach
+  // /admin/subscriptions*, matching the "Newsletter" nav item's declared
+  // requiredFeature (ADMIN_NAVIGATION). Before DECISION-082 this page had no
+  // check of its own and relied entirely on the generic ADMIN_DASHBOARD
+  // catch-all for protection; once the proxy started admitting a narrower
+  // feature instead, nothing compensated here and a low-privilege account
+  // could read the full subscriber PII table (name + email) — see
+  // docs/work-log/2026-08-09-governance-document-versioning.md's Phase 5
+  // re-verification and e2e/admin-subscriptions-page-gate.spec.ts. This
+  // check restores the same defense-in-depth every sibling admin page
+  // already has (contact, dues, events, announcements, security, ...):
+  // don't rely on the proxy alone to gate a bulk-PII page.
+  //
+  // SUBSCRIPTIONS_VIEW, not CONTACT_VIEW — see the FEATURES.SUBSCRIPTIONS_VIEW
+  // doc comment (src/lib/permissions.ts): contact.view is seeded for a
+  // different dataset (contact-form submissions), and reusing it here would
+  // have been the same "wrong key, not missing key" pattern DECISION-082
+  // already found and fixed once for /admin/members vs /admin/membership.
+  const canView = await hasFeature(session.user.id, FEATURES.SUBSCRIPTIONS_VIEW);
+  if (!canView) redirect("/admin");
 
   const subscribers = await db
     .select()

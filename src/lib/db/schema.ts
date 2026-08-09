@@ -1561,3 +1561,129 @@ export const minutesActionItems = pgTable(
 
 export type MinutesActionItem = typeof minutesActionItems.$inferSelect;
 export type NewMinutesActionItem = typeof minutesActionItems.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Governance Documents — Versioning, Diffing & Adoption
+// docs/work-log/2026-08-09-governance-document-versioning.md
+// DECISION-076 (architect), DECISION-081 (currentVersionId FK ruling)
+//
+// Two tables, sibling to minutes, NOT merged with it (DECISION-076 Ruling 1):
+// `documents` (one row per governed document — today, exactly one, the
+// by-laws) and `documentVersions` (every save, forever). Read access is
+// universal for the current/adopted-history text (any linked member, gated
+// only by `documents.visibility`) — there is no documents.view/read key by
+// design, same shape as minutes. Write access — create a version, adopt a
+// pending substantive version, link a citing minutes record after the fact —
+// is gated by documents.manage (bound to notetaker + admin, companion
+// migration 0082_governance_documents_permissions.sql). No documents.delete
+// key exists anywhere in this design: every version is a PERMANENT,
+// IMMUTABLE row. There is no edit path and no delete path for a version once
+// inserted — the version chain itself IS the audit trail (this is what
+// satisfies the "should have auditing" requirement; no separate audit table
+// was added for this feature). Do not add a soft-delete column or an
+// updatedAt column to documentVersions later — either would be a quiet lie
+// about what an immutable row is (same reasoning minutes_motions already
+// uses for its own child rows).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const documents = pgTable(
+  "documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    title: text("title").notNull(),
+    slug: text("slug").notNull(), // routing handle, e.g. "constitution-bylaws"
+    // DECISION-041 pattern: 'public' | 'members', validated in
+    // src/lib/documents.ts, no DB CHECK. Ships 'members' for the by-laws
+    // (treasurer, B-38) — the column exists so a future public document is a
+    // one-row change, not a rewrite.
+    visibility: text("visibility").notNull().default("members"),
+    // Pointer to the operative version — NEVER a derived MAX(versionNumber)
+    // or "latest adopted" query (DECISION-076 Ruling 1). This is what makes
+    // "what does a member see right now" a single indexed FK lookup at every
+    // instant, including while a substantive amendment sits pending.
+    //
+    // DELIBERATELY NO `.references()` HERE — DECISION-081. `documents` and
+    // `documentVersions` have a circular table-creation dependency (this
+    // column points into documentVersions, which itself has a NOT NULL FK
+    // back to documents.id), and this project's build pipeline runs
+    // `pnpm db:migrate` (raw SQL) and then `drizzle-kit push --force`
+    // (CLAUDE.md, Common Commands) on every deploy. A constraint added by raw
+    // SQL — e.g. a guarded `ALTER TABLE documents ADD CONSTRAINT ...` in the
+    // migration — but never declared here in schema.ts is exactly the shape
+    // of drift `push --force` treats as unmanaged and can silently drop on
+    // the very next deploy. Enforcement is instead entirely app-side:
+    // src/lib/documents-queries.ts is the ONLY code path that ever writes
+    // this column, and it always does so inside the same transaction as the
+    // version row it points to (insert-and-flip for an editorial save,
+    // adopt-and-flip for a substantive one). DO NOT "fix" this by adding the
+    // constraint back later — that reintroduces the exact drop risk this
+    // column was deliberately built without it to avoid.
+    currentVersionId: uuid("current_version_id"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("ix_documents_slug").on(t.slug)],
+);
+
+export type Document = typeof documents.$inferSelect;
+export type NewDocument = typeof documents.$inferInsert;
+
+export const documentVersions = pgTable(
+  "document_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    versionNumber: integer("version_number").notNull(),
+    bodyMarkdown: text("body_markdown").notNull(),
+    // DECISION-041 pattern: 'editorial' | 'substantive', validated in
+    // src/lib/documents.ts, no DB CHECK. Editorial saves flip
+    // documents.currentVersionId immediately, in the same transaction as the
+    // insert. Substantive saves insert with adoptedByUserId/adoptedAt/
+    // citingMinutesId all NULL and do NOT touch currentVersionId — the row
+    // exists and is queryable by documents.manage holders, but is not "the
+    // document" until a separate adopt action flips the pointer.
+    changeType: text("change_type").notNull(),
+    changeNote: text("change_note").notNull(),
+    // Attribution only, same convention as minutes.authorUserId — nullable
+    // so a hard user-delete degrades gracefully instead of orphaning the row.
+    authorUserId: uuid("author_user_id").references(() => users.id, { onDelete: "set null" }),
+    // Adoption trio — all three stay NULL forever for an `editorial` row
+    // (there is no vote for an editorial change) and are set together, in
+    // one transaction alongside the currentVersionId flip, only by the
+    // 'adopt' action on a pending `substantive` row.
+    adoptedByUserId: uuid("adopted_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    adoptedAt: timestamp("adopted_at"),
+    // Deliberately backfillable — minutes are not approved until the meeting
+    // after the vote that adopted the amendment, so adoption and citation are
+    // routinely two separate writes, sometimes weeks apart (Phase 1). A
+    // citation is a stateless FK: it does not care about the referenced
+    // minutes row's current status (e.g. later reopened) and reopening does
+    // not retroactively invalidate it.
+    citingMinutesId: uuid("citing_minutes_id").references(() => minutes.id, { onDelete: "set null" }),
+    adoptionNote: text("adoption_note"),
+    // NO `updatedAt` — deliberate, not an oversight. Every version row is
+    // PERMANENT and IMMUTABLE from the moment it's inserted: there is no edit
+    // path, no delete path, anywhere in this design. `adoptedByUserId`/
+    // `adoptedAt`/`adoptionNote`/`citingMinutesId` are the only columns ever
+    // written after insert (by the adopt / link-citing-minutes actions), and
+    // those writes are adoption metadata being recorded once, not an edit of
+    // the version's content (bodyMarkdown/changeType/changeNote never
+    // change after insert). A mutable-timestamp column on a row that's
+    // otherwise permanent would be a quiet lie about what the row is — same
+    // reasoning minutes_motions already applies to its own child rows. The
+    // version chain IS the audit trail; do not add a soft-delete column or
+    // an updatedAt column here later.
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ix_document_versions_doc_version").on(t.documentId, t.versionNumber),
+    index("ix_document_versions_document").on(t.documentId),
+    index("ix_document_versions_change_type").on(t.changeType),
+    index("ix_document_versions_citing_minutes").on(t.citingMinutesId),
+  ],
+);
+
+export type DocumentVersion = typeof documentVersions.$inferSelect;
+export type NewDocumentVersion = typeof documentVersions.$inferInsert;

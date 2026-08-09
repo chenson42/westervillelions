@@ -87,6 +87,8 @@ src/
 │   │   ├── profile/       # Member profile and picture upload
 │   │   ├── dues/          # Member's own dues payment history
 │   │   ├── reimbursements/ # Member expense-reimbursement requests (The Ledger)
+│   │   ├── records/       # Club Records hub — meeting minutes + governing documents (any linked member)
+│   │   ├── records/documents/[slug]/  # Governing document current text, /history, /compare
 │   │   ├── impact/        # Philanthropy / community impact dashboard (impact.view gated when philanthropyVisibility='board'; open to any linked member when ='members')
 │   │   └── financial-reports/  # Monthly Statement of Financial Condition (read-only, print-friendly; any linked member)
 │   ├── api/               # API routes
@@ -142,8 +144,19 @@ docs/
 - **Member Directory:** Contact information for club members
 - **Events:** Internal event calendar, per-occurrence RSVP system, "Add to Calendar" (.ics) download
 - **Philanthropy Dashboard:** `/members/impact` — all-time and current-FY giving totals, giving by cause (CSS bar list), giving by fiscal year, recent named gifts. Two-tier gate: `impact.view` required when `philanthropyVisibility='board'`; any linked member when `='members'`.
+- **Club Records:** `/members/records` — meeting minutes (general, board, committee) and governing documents. Readable by any linked member; authored under `minutes.manage` / `documents.manage` (the **Notetaker** role, intended for the secretary), deleted under `minutes.delete`. Minutes are soft-deleted only and are retained permanently.
+- **Governing Documents:** `/members/records/documents/[slug]` — the club's Constitution & By-Laws with full version history and side-by-side diffing. Versions are append-only: **corrections** take effect immediately, **amendments** stay `pending` until adopted under `documents.manage`, which records the adopter, the timestamp, and (optionally, backfillable) the citing minutes. The document's `currentVersionId` is the single source of truth for which text is operative.
 - **Monthly Financial Statements:** `/members/financial-reports` — read-only, print-friendly Statement of Financial Condition (One Month / Twelve Months / Annual Budget columns) for the Club's Administrative fund and the Foundation's Charitable fund, reproducing the treasurer's monthly board reports. Open to any linked member, no `FEATURES` gate; a month only appears once every posted transaction on/before its last day is reconciled (auto-appears, no manual publish step).
-- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, The Ledger (online accounting: books, reimbursements, compliance/990, reports, donors & acknowledgments, and an in-app Treasury User's Guide at `/admin/ledger/guide`), subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, failed-login security log, in-app release notes, and contact submissions
+- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, The Ledger (online accounting: books, reimbursements, compliance/990, reports, donors & acknowledgments, and an in-app Treasury User's Guide at `/admin/ledger/guide`), meeting minutes, governing documents, subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, failed-login security log, in-app release notes, and contact submissions
+
+### Admin-Area Protection Is Derived, Never Hand-Maintained
+
+`src/proxy.ts` does **not** carry its own list of which permission guards which `/admin/*` area. It derives those rules from `ADMIN_NAVIGATION` via `getAdminProtectionRules()` (DECISION-082), so a new admin area is protected the moment it appears in the nav. Five separate features shipped locked-out because the two lists were maintained separately — do not reintroduce a hand-written rule table.
+
+Two rules follow from this:
+
+1. **The proxy is a coarse outer gate, not the gate.** Every admin page must still call `auth()` + `hasFeature()` in its own body. `src/lib/admin-page-feature-gates.test.ts` fails the build if an admin page ships without its own check.
+2. **Widening a nav entry's permission widens proxy access.** Before broadening one, confirm every page under that segment gates independently — a page relying solely on the proxy will silently become reachable by the wider permission (this is exactly how `/admin/subscriptions` nearly leaked subscriber PII; it now has its own `subscriptions.view` key).
 
 ## Integrations
 

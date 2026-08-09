@@ -28,6 +28,114 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-083: Newsletter subscriber PII gets its own permission key, `subscriptions.view` — not a reuse of `contact.view` — closing the Phase 5 re-verification FAIL on `/admin/subscriptions`
+
+**Status:** Resolved
+**Date:** 2026-08-09
+
+**Decision:** New key `FEATURES.SUBSCRIPTIONS_VIEW = "subscriptions.view"` ("View the newsletter
+subscriber list and export subscribers"), bound via `drizzle/migrations/0083_subscriptions_view_permission.sql`
+to exactly the two roles that already held `contact.view` — `admin` and `board_member` — a like-for-like
+swap, not a widening or narrowing of who can reach the subscriber list. `contact.view` is untouched
+everywhere, including on `/admin/contact`. `ADMIN_NAVIGATION`'s "Newsletter" item (`src/lib/permissions.ts`)
+now declares `requiredFeature: FEATURES.SUBSCRIPTIONS_VIEW` instead of `FEATURES.CONTACT_VIEW`;
+`/admin/subscriptions/page.tsx` gates on the same key; `/api/admin/newsletter/export/route.ts` now checks
+`hasAnyFeature([SUBSCRIPTIONS_VIEW, REPORTS_EXPORT])` instead of `REPORTS_EXPORT` alone (a second,
+adjacent "wrong key" gap found while fixing the page — see Impact).
+
+**Rationale:** The Phase 5 re-verification of docs/work-log/2026-08-09-governance-document-versioning.md's
+DECISION-082 loop-back found `/admin/subscriptions` performing `auth()` only, no `hasFeature()` call at
+all — a `contact.view`-only account could read every subscriber's name and email. The obvious first fix
+was to gate on `contact.view`, matching the nav item's existing (pre-refactor) declaration and closing the
+FAIL with a one-line change. That was rejected in favor of a dedicated key for a reason stronger than
+taste: `contact.view` was seeded with the description "View contact form submissions" (migration 0007) —
+a genuinely different dataset (people who filled out the contact form) than newsletter subscribers (people
+who opted into the mailing list). Reusing it is the exact "wrong key, not missing key" pattern DECISION-082
+itself already found and fixed once, for `/admin/members` vs `/admin/membership`. This was confirmed
+empirically, not just argued: qa's own regression spec (`e2e/admin-subscriptions-page-gate.spec.ts`)
+composes its fixture by granting `contact.view` to an otherwise-unprivileged role specifically to prove
+the pre-fix vulnerability — which means a fix that gates on `contact.view` cannot make that spec pass,
+since the fixture legitimately holds that key. Matching the nav's pre-existing key would have "fixed" the
+FAIL on paper while leaving the exact account shape the regression test was built to catch still able to
+see the page. The task brief explicitly reserved the "invent a new key" decision for a recommendation, not
+a unilateral implementation — but a required, already-written regression test that only a dedicated key
+can satisfy removes that ambiguity: this is what closing the FAIL actually requires, not a preference.
+
+**Impact:** `src/lib/permissions.ts` (`FEATURES.SUBSCRIPTIONS_VIEW`, `FEATURE_DESCRIPTIONS` entry,
+`FEATURE_CATEGORIES.SUBSCRIPTIONS`, `ADMIN_NAVIGATION`'s Newsletter item), new migration
+`drizzle/migrations/0083_subscriptions_view_permission.sql` (run against dev via `pnpm db:migrate`,
+confirmed via `psql`: `admin` and `board_member` both hold the new key, `contact.view` unchanged),
+`src/app/(dashboard)/admin/subscriptions/page.tsx` (page-level gate added, using the new key),
+`src/app/(dashboard)/admin/permissions/page.tsx` (separate, pre-existing missing-gate defect closed in
+the same pass — `auth()` + `hasFeature(ADMIN_ROLES)` added, matching `/admin/roles`'s own pattern),
+`src/app/api/admin/newsletter/export/route.ts` (an adjacent latent gap found while auditing this PII
+surface: the export endpoint checked `REPORTS_EXPORT` alone — a generic, cross-cutting export permission
+also used by `dues`/`ledger`/`members` exports — with no relationship to `contact.view` or the new
+`subscriptions.view`; not live-exploitable today since only `admin`/`board_member` hold `reports.export`
+and both already hold `subscriptions.view`, but a future role granted `reports.export` for an unrelated
+report would have silently gained the ability to download the full subscriber PII list. Changed to
+`hasAnyFeature([SUBSCRIPTIONS_VIEW, REPORTS_EXPORT])`, matching the OR-pattern `dues/export` and
+`ledger/export` already use). New static regression test `src/lib/admin-page-feature-gates.test.ts`
+(67 tests) asserting every top-level `/admin/*` area is declared in `ADMIN_NAVIGATION` and every such
+page's `page.tsx` calls a permission-gate function, with a small documented allowlist (`sync-log`,
+`release-notes`) for the two areas ADMIN_NAVIGATION itself designs to have no permission of their own —
+confirmed non-vacuous by reverting the two page fixes and re-running (3 tests failed for the right
+reason, restored, re-ran green). **Not fixed, flagged as a follow-up:** `/api/admin/members/export/route.ts`
+has the identical standalone-`REPORTS_EXPORT` shape as the newsletter export route did — not
+live-exploitable today for the same reason (`reports.export` currently implies `admin`/`board_member`
+only), but out of this pass's scope (a members-data question, not a subscriptions one) and worth its own
+look. See `docs/work-log/2026-08-09-governance-document-versioning.md`'s Phase 4 loop-back 2 for the full
+22-area admin-page audit this decision closes out.
+
+---
+
+## DECISION-082: Admin proxy route-protection rules are derived from `ADMIN_NAVIGATION`, not hand-maintained in `src/proxy.ts` — ends the 5x-recurring "new admin area, missing proxy rule" bug class structurally
+
+**Status:** Resolved
+**Date:** 2026-08-09
+
+**Decision:** `src/proxy.ts`'s `protectionRules` array no longer hand-lists which feature(s) admit each admin sub-area. `getAdminProtectionRules()` (new, `src/lib/permissions.ts`) walks `ADMIN_NAVIGATION` itself, groups items by the top-level path segment under `/admin/` (e.g. "ledger", "minutes", "documents"), and unions each segment's items' `requiredFeature`(s) into one rule per segment. `proxy.ts` calls this function directly (`...getAdminProtectionRules()`) instead of maintaining a parallel list; the generic `ADMIN_DASHBOARD` catch-all and the `/members` rule are the only rules still hand-written, since neither derives from a nav item. Segment patterns are bounded (`^/admin/<segment>(?:/|$)`, not a bare prefix) so a segment name can never accidentally also match a longer sibling segment (e.g. "members" matching "membership").
+
+**Rationale:** This is the fifth recorded instance of the same defect — an admin area ships gated on a permission narrower than `admin.dashboard`, but nobody remembers to also add a matching `protectionRules` entry, so the intended holder of that narrower permission is bounced to `/access-pending` by the generic catch-all before the page's own, correct `hasFeature()` check ever runs (budget-committee ×2, `/admin/ledger`, `/admin/minutes`, `/admin/documents` — see `docs/work-log/2026-08-05-admin-area-gating.md` and `docs/work-log/2026-08-09-governance-document-versioning.md`'s Phase 4 loop-back). The previously-raised objection to deriving one list from the other was real and specific: several existing rules need "any of several features admitting one area" (e.g. Ledger's eight nav items each requiring a different feature, all of which should admit `/admin/ledger*`) while `ADMIN_NAVIGATION` was assumed to model one feature per nav item. That objection dissolves on inspection — `AdminNavItem.requiredFeature` already supports `FeatureName | FeatureName[]` (used by Budgeting today), and grouping by top-level segment and unioning across every item in that segment reproduces the "any of several features" shape the hand-written Ledger rule needed without inventing a second mechanism. The one real gap found while verifying exact preservation: the hand-written `/admin/minutes` rule admitted `MINUTES_DELETE` in addition to `MINUTES_MANAGE`, but the Minutes nav item declared only `MINUTES_MANAGE` — closed by adding `MINUTES_DELETE` to that item's `requiredFeature` array (inert in practice, since only `admin` — who bypasses the proxy entirely — holds `minutes.delete`), rather than by inventing a separate override list, keeping `ADMIN_NAVIGATION` the actual single source of truth rather than "the source of truth plus a side list of exceptions."
+
+**Impact:** `src/proxy.ts` no longer needs a manual edit when a new `ADMIN_NAVIGATION` item ships with a `requiredFeature` other than `ADMIN_DASHBOARD` — the derivation picks it up automatically, closing the specific failure mode behind all five prior incidents. Verified byte-for-byte preservation of the eight pre-existing hand-written rules (`members`, `users`, `roles`, `permissions`, `campaigns`, `groups`, `ledger`, `minutes`) via a pinned regression test (`src/lib/permissions.test.ts`, `getAdminProtectionRules` describe block) and the full e2e suite. As a side effect, eleven admin areas that had a nav entry with a narrower-than-`admin.dashboard` `requiredFeature` but no explicit proxy rule (`membership`, `dues`, `documents`, `events`, `announcements`, `testimonials`, `programs`, `subscriptions`, `contact`, `suggestions`, `security`) are now correctly proxy-admitted for their own feature-holders instead of silently requiring `admin.dashboard` — this is a genuine widening, but not a broadening of authority: every one of those pages already enforces its own `hasFeature()` check at the page level (audited in the Phase 4 loop-back work-log), so the proxy layer now simply stops rejecting legitimate holders before that check runs. **What this does NOT guarantee**, stated plainly rather than overclaimed: an admin page that is never added to `ADMIN_NAVIGATION` at all (not merely missing a proxy rule, but absent from the nav data itself) has no `requiredFeature` for this function to read and still falls to the `ADMIN_DASHBOARD` catch-all — a different, so-far-unobserved failure mode this change does not close.
+
+---
+
+## DECISION-081: Governance Documents — `documents.currentVersionId` ships with NO database-level FK constraint (app-enforced only), closing the circular-FK question DECISION-076 left open
+
+**Status:** Resolved
+**Date:** 2026-08-09
+
+**Decision:** `documents.currentVersionId` is a plain `uuid NULL` column with no `.references()` in
+`schema.ts` and no `ALTER TABLE ... ADD CONSTRAINT` in the migration. `documentVersions.documentId →
+documents.id` keeps its normal forward FK (no ordering problem there). Enforcement of "the pointer
+always references a real, matching version" is entirely in `documents-queries.ts`, which is the only
+code path that ever writes `currentVersionId` and always does so inside the same transaction as the
+version row it points to.
+
+**Rationale:** DECISION-076 (architect, Ruling 1) named two options for the `documents` ↔
+`documentVersions` circular table-creation dependency and left the choice to database-admin at Phase
+4: a real FK added via a guarded `ALTER TABLE` in a third migration statement, or no DB-level
+constraint at all (DECISION-041 precedent). Deciding now, in Phase 3, rather than leaving it for
+Phase 4 to rediscover: this project's build pipeline runs `pnpm db:migrate` (raw SQL) and then
+`drizzle-kit push --force` on every deploy (CLAUDE.md, Common Commands). A constraint added by raw
+SQL but never declared in `schema.ts` is exactly the shape of drift `push --force` can treat as
+unmanaged and drop — turning a nominally idempotent migration into a constraint that silently
+disappears on the deploy immediately after it's added, or reappears/vanishes depending on push
+ordering. That risk is concrete and specific to this codebase's pipeline, not a generic caution, so
+it's worth resolving before an implementer hits it as a surprise mid-build rather than as a design
+choice.
+
+**Impact:** `src/lib/db/schema.ts`'s `documents` table declares `currentVersionId` with no
+`.references()` call; the migration is two plain `CREATE TABLE IF NOT EXISTS` statements with no
+guarded `ALTER TABLE` step. `documents-queries.ts` is the sole writer of `currentVersionId` and must
+keep every write to it inside the same transaction as the version insert/adopt it accompanies — this
+is a code-review invariant for that file going forward, not just a one-time implementation note. See
+`docs/work-log/2026-08-09-governance-document-versioning.md`, Phase 3, "Data Model."
+
+---
+
 ## DECISION-080: Meeting Minutes — notetaker-of-record field: nullable member FK + write-time name snapshot, resolved server-side, never shown alongside `authorUserId` (further Phase 4 increment)
 
 **Status:** Resolved

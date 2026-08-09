@@ -8,6 +8,7 @@ import {
   getMostRecentApprovedMinutes,
 } from "@/lib/minutes-queries";
 import { MINUTES_KINDS, minutesKindLabel } from "@/lib/minutes";
+import { listDocumentsForMembers } from "@/lib/documents-queries";
 import { NextMeetingPointer } from "@/components/minutes/next-meeting-pointer";
 import { KindFilterTabs } from "@/components/minutes/kind-filter-tabs";
 import { SearchBox } from "@/components/minutes/search-box";
@@ -40,7 +41,7 @@ export default async function MemberRecordsPage({
   const { kind, q } = await searchParams;
   const query = (q ?? "").trim();
 
-  const [rows, pointers] = memberId
+  const [rows, pointers, documents] = memberId
     ? await Promise.all([
         query ? searchMinutes(query, kind) : listMinutesForMembers({ kind }),
         Promise.all(
@@ -50,8 +51,9 @@ export default async function MemberRecordsPage({
             mostRecentApproved: await getMostRecentApprovedMinutes(k),
           })),
         ),
+        listDocumentsForMembers({ isAuthenticated: true }),
       ])
-    : [[], []];
+    : [[], [], []];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -83,6 +85,29 @@ export default async function MemberRecordsPage({
           </div>
         ) : (
           <>
+            {documents.length > 0 && (
+              <div className="space-y-3">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Governing Documents</h2>
+                <ul className="grid gap-3 sm:grid-cols-2">
+                  {documents.map((d) => (
+                    <li key={d.id}>
+                      <Link
+                        href={`/members/records/documents/${d.slug}`}
+                        className="block bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-4 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+                      >
+                        <p className="font-semibold text-gray-900">{d.title}</p>
+                        <p className="text-sm text-gray-500">
+                          {d.currentVersionNumber !== null
+                            ? `Current version ${d.currentVersionNumber} — the club's operative text`
+                            : "Not yet published"}
+                        </p>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-2">
               {pointers.map(({ kind: k, pointer, mostRecentApproved }) => (
                 <NextMeetingPointer key={k} kind={k} pointer={pointer} mostRecentApproved={mostRecentApproved} />

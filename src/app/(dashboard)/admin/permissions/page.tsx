@@ -1,6 +1,10 @@
 import { db } from "@/lib/db";
 import { roles, features, roleFeatures } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import PermissionsMatrix from "@/components/admin/permissions-matrix";
 
 /**
@@ -9,6 +13,21 @@ import PermissionsMatrix from "@/components/admin/permissions-matrix";
  * Comprehensive view and editor for role-feature permissions.
  */
 export default async function PermissionsPage() {
+  // Page-level gate — this page rendered the entire role/feature/
+  // role-feature matrix unconditionally, with no auth() or hasFeature()
+  // call of its own, since the original commit. It was never live-
+  // exploitable (the proxy's hand-written "permissions" segment rule has
+  // always required ADMIN_ROLES, unchanged by DECISION-082), but it's the
+  // identical missing-defense-in-depth shape as the /admin/subscriptions
+  // defect and was flagged as a non-blocking follow-up in that work-log's
+  // Phase 5 re-verification. Matching the "Permissions" nav item's own
+  // declared requiredFeature (ADMIN_NAVIGATION) and every sibling page's
+  // pattern (e.g. /admin/roles).
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ADMIN_ROLES);
+  if (!canAccess) redirect("/admin");
+
   // Fetch all roles and features
   const [allRoles, allFeatures] = await Promise.all([
     db.select().from(roles).orderBy(roles.sortOrder),

@@ -7,6 +7,7 @@ import {
   getFeaturesByCategory,
   canAccessAdminArea,
   getFirstAccessibleAdminHref,
+  getAdminProtectionRules,
   ADMIN_NAVIGATION,
   type FeatureName,
 } from "./permissions";
@@ -283,5 +284,132 @@ describe("getFirstAccessibleAdminHref", () => {
     // test is vacuous)
     expect(openItems.length).toBeGreaterThan(0);
     expect(getFirstAccessibleAdminHref([])).not.toBe(openItems[0]?.href);
+  });
+});
+
+// ── getAdminProtectionRules ──────────────────────────────────────────────────
+// Regression coverage for the FIFTH instance of the same bug: an admin area
+// shipping with a permission narrower than admin.dashboard, but src/proxy.ts
+// having no matching protectionRules entry — so the intended user (budget-
+// committee twice, ledger, the minutes notetaker, the documents notetaker)
+// was bounced to /access-pending before the area's own, correct page-level
+// hasFeature() check ever ran. See
+// docs/work-log/2026-08-05-admin-area-gating.md and
+// docs/work-log/2026-08-09-governance-document-versioning.md (Phase 4
+// loop-back). proxy.ts no longer hand-maintains this list — it calls
+// getAdminProtectionRules() directly — so these tests exercise exactly what
+// proxy.ts uses at runtime, not a parallel copy of it.
+
+describe("getAdminProtectionRules", () => {
+  it("every ADMIN_NAVIGATION item with a requiredFeature is admitted by a derived rule matching its own href — the test that would have caught all five prior incidents", () => {
+    const rules = getAdminProtectionRules();
+
+    for (const group of ADMIN_NAVIGATION) {
+      for (const item of group.items) {
+        if (!item.requiredFeature) continue; // System items with no permission of their own — not admission criteria
+        if (item.href === "/admin") continue; // bare Dashboard root — intentionally left to proxy.ts's ADMIN_DASHBOARD catch-all, not a segment rule
+
+        const required = Array.isArray(item.requiredFeature) ? item.requiredFeature : [item.requiredFeature];
+        const matchingRules = rules.filter((r) => r.pattern.test(item.href));
+
+        // Exactly one derived rule should ever match a given nav item's href
+        // — segment patterns are mutually exclusive by construction.
+        expect(
+          matchingRules.length,
+          `expected exactly one derived proxy rule to match "${item.href}" (${item.name}), found ${matchingRules.length}`
+        ).toBe(1);
+
+        // Every feature that legitimately unlocks this nav item must be
+        // reflected in the matched rule's requiredFeatures — i.e. a user
+        // holding ONLY this item's feature(s) would be admitted to the area
+        // by proxy.ts, not bounced to /access-pending before the page's own
+        // gate ever runs.
+        for (const feature of required) {
+          expect(
+            matchingRules[0].requiredFeatures,
+            `"${item.name}" (${item.href}) requires ${feature}, but the derived rule for its area doesn't include it`
+          ).toContain(feature);
+        }
+      }
+    }
+  });
+
+  it("preserves the exact requiredFeatures set for every admin area that had a hand-written proxy rule before this derivation existed", () => {
+    // Regression pin: this is "verify explicitly that each existing area
+    // still admits and refuses exactly who it did before" — the exact
+    // feature sets src/proxy.ts hand-wrote prior to this refactor.
+    const bySegment = new Map(getAdminProtectionRules().map((r) => [r.segment, r]));
+
+    expect(bySegment.get("members")?.requiredFeatures.sort()).toEqual([FEATURES.MEMBERS_EDIT].sort());
+    expect(bySegment.get("users")?.requiredFeatures.sort()).toEqual([FEATURES.ADMIN_USERS].sort());
+    expect(bySegment.get("roles")?.requiredFeatures.sort()).toEqual([FEATURES.ADMIN_ROLES].sort());
+    expect(bySegment.get("permissions")?.requiredFeatures.sort()).toEqual([FEATURES.ADMIN_ROLES].sort());
+    expect(bySegment.get("campaigns")?.requiredFeatures.sort()).toEqual([FEATURES.CAMPAIGNS_MANAGE].sort());
+    expect(bySegment.get("groups")?.requiredFeatures.sort()).toEqual([FEATURES.GROUPS_MANAGE].sort());
+    expect(bySegment.get("ledger")?.requiredFeatures.slice().sort()).toEqual(
+      [
+        FEATURES.LEDGER_VIEW,
+        FEATURES.LEDGER_RECORD,
+        FEATURES.LEDGER_MANAGE,
+        FEATURES.LEDGER_APPROVE,
+        FEATURES.BUDGET_VIEW,
+        FEATURES.BUDGET_EDIT,
+      ].sort()
+    );
+    expect(bySegment.get("minutes")?.requiredFeatures.slice().sort()).toEqual(
+      [FEATURES.MINUTES_MANAGE, FEATURES.MINUTES_DELETE].sort()
+    );
+  });
+
+  it("derives a /admin/documents rule requiring DOCUMENTS_MANAGE — the exact gap this loop-back closes", () => {
+    const rules = getAdminProtectionRules();
+    const documentsRule = rules.find((r) => r.segment === "documents");
+
+    expect(documentsRule).toBeDefined();
+    expect(documentsRule?.requiredFeatures).toContain(FEATURES.DOCUMENTS_MANAGE);
+    expect(documentsRule?.pattern.test("/admin/documents")).toBe(true);
+    expect(documentsRule?.pattern.test("/admin/documents/constitution-bylaws")).toBe(true);
+  });
+
+  it("does not let a bounded segment pattern accidentally match a longer sibling segment — /admin/members must not match /admin/membership", () => {
+    const rules = getAdminProtectionRules();
+    const membersRule = rules.find((r) => r.segment === "members");
+    const membershipRule = rules.find((r) => r.segment === "membership");
+
+    expect(membersRule).toBeDefined();
+    expect(membershipRule).toBeDefined();
+
+    // The bug this guards: a bare-prefix pattern like /^\/admin\/members/
+    // also matches "/admin/membership...", so a request for Applications
+    // (membership.manage) would incorrectly be evaluated against the
+    // Members area's members.edit requirement instead of its own.
+    expect(membersRule?.pattern.test("/admin/membership")).toBe(false);
+    expect(membersRule?.pattern.test("/admin/membership/123")).toBe(false);
+    expect(membershipRule?.pattern.test("/admin/membership")).toBe(true);
+    expect(membershipRule?.requiredFeatures).toEqual([FEATURES.MEMBERSHIP_MANAGE]);
+
+    // And the members segment still matches its own paths correctly.
+    expect(membersRule?.pattern.test("/admin/members")).toBe(true);
+    expect(membersRule?.pattern.test("/admin/members/123")).toBe(true);
+  });
+
+  it("produces no rule for System items with no requiredFeature of their own (Email Queue, Sync Log, Release Notes)", () => {
+    const rules = getAdminProtectionRules();
+    const segments = rules.map((r) => r.segment);
+
+    expect(segments).not.toContain("email-queue");
+    expect(segments).not.toContain("sync-log");
+    expect(segments).not.toContain("release-notes");
+  });
+
+  it("a user holding exactly one area's required feature is admitted by that area's rule and no other unrelated area's rule wrongly admits them", () => {
+    const rules = getAdminProtectionRules();
+    const documentsRule = rules.find((r) => r.segment === "documents")!;
+    const membersRule = rules.find((r) => r.segment === "members")!;
+
+    const notetakerFeatures: FeatureName[] = [FEATURES.DOCUMENTS_MANAGE];
+
+    expect(documentsRule.requiredFeatures.some((f) => notetakerFeatures.includes(f))).toBe(true);
+    expect(membersRule.requiredFeatures.some((f) => notetakerFeatures.includes(f))).toBe(false);
   });
 });

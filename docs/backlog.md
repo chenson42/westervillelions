@@ -655,12 +655,17 @@ Design each with the others in view — decisions in one box in the next.
   carries forward individual labeled line items today. Pairs with B-31 (printable budget) and the
   guided-budget-setup flow.
 
-- [ ] **B-38 — Publish the club constitution and by-laws on the site.** (added 2026-08-08, from Chris;
+- [x] **B-38 — Publish the club constitution and by-laws on the site.** (added 2026-08-08, from Chris;
   **partially answered 2026-08-08** — member-portal placement and format decided, see
   `docs/work-log/2026-08-08-meeting-minutes.md` ADDENDUM 2: folded into the renamed Minutes tile,
   scan hosted as-is. **Resolved 2026-08-09:** members-only, NOT public. Transcription is complete and verified
-  (`docs/club-constitution-and-bylaws.md`). The website version becomes AUTHORITATIVE once live. Remaining
-  work is the documents infrastructure itself — see `docs/work-log/2026-08-09-governance-document-versioning.md`.)
+  (`docs/club-constitution-and-bylaws.md`). The website version becomes AUTHORITATIVE once live.
+  **Delivered 2026-08-09** → `docs/work-log/2026-08-09-governance-document-versioning.md` — SHIP WITH
+  NOTES. Versioning/diffing/adoption infrastructure is built and verified end-to-end (real
+  concurrency, permission, and pending-version adversarial testing); production has **not yet been
+  seeded** — `pnpm tsx scripts/seed-governance-document.ts --apply` against `PROD_DATABASE_URL` is a
+  deliberate, separate, human action the treasurer still needs to take before any member can read the
+  by-laws in the app. See that work-log's Phase 6 for the full note list.)
   Make the club's governing documents available rather than living in someone's files. Open questions
   for whoever picks this up: **public or members-only** — Lions International's own constitution and
   by-laws are public documents and many clubs post theirs openly, but the board may prefer
@@ -670,3 +675,34 @@ Design each with the others in view — decisions in one box in the next.
   force on a given date can matter. Pairs naturally with the meeting-minutes work
   (`docs/work-log/2026-08-08-meeting-minutes.md`) — amendments are adopted *in* minutes, so the two
   records reference each other, and both are governance documents with retention expectations.
+
+- [ ] **B-39 — [**Resolved 2026-08-09** — `destructive` added to the adopt confirm dialog.]  Adopt-version confirm dialog should render as destructive.** (added 2026-08-09,
+  Phase 6 of `docs/work-log/2026-08-09-governance-document-versioning.md`, priority: quick fix)
+  `src/components/admin/documents/pending-versions-panel.tsx`'s `<ConfirmDialog>` for "Adopt Version
+  N" doesn't pass `destructive`, even though its own description text says "It cannot be undone" and
+  a nearby code comment calls adoption out as qualifying. CLAUDE.md: "Use the `destructive` prop for
+  irreversible actions." One-line fix.
+
+- [ ] **B-40 — [**Resolved 2026-08-09** — the member-facing document view now states it is the club's governing text of record.]  State authoritative status on the member-facing governing-document page itself.**
+  (added 2026-08-09, Phase 6 of `docs/work-log/2026-08-09-governance-document-versioning.md`,
+  priority: nice-to-have) The treasurer's Decision 1 (2026-08-09) was "the website version becomes
+  AUTHORITATIVE once live" — but that framing only exists in `docs/club-constitution-and-bylaws.md`
+  (a git file) and the seed script's console banner, neither of which any member ever sees. The
+  member-facing `/members/records/documents/[slug]` page (`document-view.tsx`) only says "Current —
+  the club's operative text." That's a reasonable practical signal but never states the document
+  supersedes the 1998 print/scan. For a page whose entire job is being the club's legal governing
+  text, add one sentence making the supersession explicit and member-visible, not just recorded in
+  a file developers read.
+
+- [ ] **B-41 — Carried-forward admin-permission gaps from DECISION-083's 22-area audit, not fixed,
+  not blocking.** (added 2026-08-09, Phase 6 of
+  `docs/work-log/2026-08-09-governance-document-versioning.md`, priority: idea — needs Phase 1)
+  Three items surfaced by the audit and explicitly deferred as out of scope for that pass: (1)
+  `/admin/sync-log` shows Google-Group sync history including real member email addresses to any
+  `ADMIN_DASHBOARD` holder, with no dedicated permission key — genuinely PII-adjacent, pre-existing,
+  unaffected by DECISION-082/083's own fixes. (2) `/api/admin/members/export/route.ts` has the same
+  standalone-`REPORTS_EXPORT`-only gating shape the newsletter export had before DECISION-083 fixed
+  it (not live-exploitable today since `reports.export` currently implies `admin`/`board_member`
+  only, but the same shape). (3) The admin dashboard's "Newsletter Subscribers" stat card links to
+  `/admin/newsletter`, which doesn't exist — should point to `/admin/subscriptions`. Logged here so
+  they aren't lost, per that decision's own note.
