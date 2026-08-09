@@ -121,6 +121,7 @@ docs/
 ├── decisions.md           # ADR-style decision log
 ├── backlog.md             # Agreed-on feature ideas not yet started (B-nn IDs)
 ├── treasurer-todo.md      # Treasurer's living checklist (books/compliance follow-ups)
+├── club-documents/        # Club-facing artifacts (welcome-packet source; render to PDF, don't commit the PDF)
 ├── work-log/              # Per-feature pipeline tracking
 ├── reviews/               # Review log + detail files
 ├── release-notes/         # vX.Y.md files per minor version
