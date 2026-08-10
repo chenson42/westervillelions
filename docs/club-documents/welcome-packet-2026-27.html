@@ -222,10 +222,27 @@
   @media (max-width: 46rem) { .causes { grid-template-columns: repeat(2, 1fr); } }
   .cause .inner { padding: 1rem 1.15rem 1.35rem; }
 
-  .box { border: 1px solid var(--rule); border-radius: 3px; padding: 1.1rem 1.25rem; }
-  .box h3 { color: var(--accent); }
+  /* Cards take an optional --hue, the same treatment the eight causes use:
+     a band at the top edge and a matching heading. Colour separates one card
+     from the next at a glance, which matters most on the pages that are a
+     grid of six or eight. Cards without a hue fall back to the accent. */
+  .box {
+    border: 1px solid var(--rule); border-radius: 3px;
+    border-top: 3px solid var(--hue, var(--accent));
+    padding: 1rem 1.15rem 1.1rem;
+  }
+  .box h3 { color: var(--hue, var(--accent)); }
   .box p { font-size: .95rem; color: var(--ink-soft); margin: 0; }
-  .box.open { border-color: var(--gold-400); border-width: 2px; }
+  .box.open { border-color: var(--gold-400); border-top-color: var(--gold-400); }
+  .box.open h3 { color: var(--gold-700); }
+
+  /* Eight cards on one page: the only grid dense enough to need its own
+     tighter measure once the type went up to 13pt. */
+  #committee-list .grid { gap: .8rem; margin-top: 1rem !important; }
+  #committee-list .box { padding: .65rem .85rem .75rem; }
+  #committee-list .box h3 { font-size: .95rem; margin-bottom: .15rem; }
+  #committee-list .box p { font-size: .85rem; line-height: 1.35; }
+  #committee-list .rule { margin-bottom: 1rem; }
 
   /* Eight causes, eight colours. A cause is a category, and colour is how a
      reader tells categories apart at a glance; eight identical boxes make
@@ -286,11 +303,11 @@
 
   .pullquote {
     font-family: var(--font-display);
-    font-size: clamp(1.9rem, 4vw, 2.9rem);
-    line-height: 1.25; font-weight: 700; text-wrap: balance;
+    font-size: clamp(2rem, 4.4vw, 3.4rem);
+    line-height: 1.2; font-weight: 700; text-wrap: balance;
     border-left: 4px solid var(--gold-400);
     padding: .5rem 0 .5rem 1.75rem;
-    margin: 2.25rem 0 0; max-width: 26ch;
+    margin: 2.25rem 0 0; max-width: none;
   }
   .attrib { margin: 1.4rem 0 0 1.95rem; font-size: .95rem; color: var(--ink-soft); letter-spacing: .04em; }
   .callout {
@@ -332,7 +349,7 @@
      the only pages meant to be written on, and nobody fills in a form in pen
      on a navy page. Re-declaring the tokens on the section cascades to
      everything inside it. */
-  .slide.recordpage {
+  .slide.recordpage { font-size: .85rem;
     --ink: #17203A; --ink-soft: #4C566E; --rule: #D3D9E6;
     --card: #FFFFFF; --accent: #1A56DB; --gold-700: #8A6100;
     background: #FFFFFF; color: #17203A;
@@ -401,7 +418,12 @@
       --accent: #7FA5F5; --gold-700: #E9BE4A;
       --flag: #F0CE7C; --flag-bg: #2A2313; --flag-rule: #5C4A1E;
     }
-    body { background: var(--paper); padding: 0; font-size: 11.5pt; }
+    /* Scale from the root, not body: every size in this stylesheet is in
+       rem, which resolves against the root and ignores a body font-size.
+       13pt is the largest the deck takes before slides start spilling; the
+       render script enforces that. */
+    html { font-size: 13pt; }
+    body { background: var(--paper); padding: 0; font-size: 1rem; }
     .deck { gap: 0; }
     .slide {
       box-shadow: none; border: none; border-radius: 0;
@@ -426,7 +448,7 @@
     .recordpage .rechead { margin-bottom: .6rem; }
     .recordpage .causekey { margin-bottom: .5rem; font-size: .68rem; }
     .recordpage .rule { margin-bottom: .7rem; }
-    .recordpage table.log td { height: 1.4rem; }
+    .recordpage table.log td { height: 1.25rem; }
     .recordpage .totals { margin-top: .7rem; }
   }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
@@ -476,9 +498,9 @@
     <p>Lions Clubs International began in Chicago in <strong>1917</strong>, when a young insurance man named Melvin Jones asked a simple question: what if business clubs did something beyond business? Our own club has served Westerville since <strong>1928</strong>, which is very nearly a hundred years.</p>
     <p>In <strong>1925, at Cedar Point here in Ohio</strong>, Helen Keller stood in front of the Lions convention and asked them to become “Knights of the Blind in my crusade against darkness.” They said yes. A century later it is still why Lions everywhere work on sight.</p>
     <div class="grid g3" style="margin-top:1.6rem">
-      <div class="box"><h3>1.4 million</h3><p>Lions worldwide, in about 48,000 clubs across more than 200 countries.</p></div>
-      <div class="box"><h3>Locally decided</h3><p>Our members choose which causes we fund. Nobody hands us a list.</p></div>
-      <div class="box"><h3>All volunteer</h3><p>No paid staff. Every dollar is moved by someone in this room.</p></div>
+      <div class="box" style="--hue:#2E9BD6"><h3>1.4 million</h3><p>Lions worldwide, in about 48,000 clubs across more than 200 countries.</p></div>
+      <div class="box" style="--hue:#E0803A"><h3>Locally decided</h3><p>Our members choose which causes we fund. Nobody hands us a list.</p></div>
+      <div class="box" style="--hue:#3F9E6B"><h3>All volunteer</h3><p>No paid staff. Every dollar is moved by someone in this room.</p></div>
     </div>
     <p class="num">3</p>
   </section>
@@ -542,9 +564,9 @@
     <h2>The rhythm of a month</h2>
     <div class="rule"></div>
     <div class="grid g3">
-      <div class="box"><h3>1st Thursday · 7:00 PM</h3><p><strong>General Meeting.</strong> A speaker or program, plus club business. The one to come to if you only come to one.</p></div>
-      <div class="box"><h3>3rd Thursday · 7:00 PM</h3><p><strong>Activities Meeting.</strong> Planning the hands-on work, who is doing what, and when. Where projects get organized.</p></div>
-      <div class="box"><h3>Monthly · Tuesday</h3><p><strong>Board Meeting.</strong> Decisions on spending and direction. <strong>Open to every member</strong>, you are welcome to attend.</p></div>
+      <div class="box" style="--hue:#2E9BD6"><h3>1st Thursday · 7:00 PM</h3><p><strong>General Meeting.</strong> A speaker or program, plus club business. The one to come to if you only come to one.</p></div>
+      <div class="box" style="--hue:#E0803A"><h3>3rd Thursday · 7:00 PM</h3><p><strong>Activities Meeting.</strong> Planning the hands-on work, who is doing what, and when. Where projects get organized.</p></div>
+      <div class="box" style="--hue:#3F9E6B"><h3>Monthly · Tuesday</h3><p><strong>Board Meeting.</strong> Decisions on spending and direction. <strong>Open to every member</strong>, you are welcome to attend.</p></div>
     </div>
     <div class="callout" style="margin-top:1.5rem"><strong>New this year.</strong> We used to hold two club meetings a month. From September, the second one becomes the Activities Meeting, same night of the month, different purpose: less business, more planning the work.</div>
     <p style="margin-top:1.4rem"><strong>Where:</strong> Every meeting is at The Landings of Westerville, 1st&nbsp;Floor Training Room, same room each time.</p>
@@ -621,10 +643,10 @@
     <div class="rule"></div>
     <p style="max-width:64ch">The board has already committed this money to causes. These are not stretch targets, they are what the approved budget depends on.</p>
     <div class="grid g2" style="margin-top:1.4rem">
-      <div class="box"><h3>Rudolph Run: $26,958</h3><p>$15,490 in registrations, $11,468 in sponsorships. <strong>69% of everything the Foundation takes in.</strong></p></div>
-      <div class="box"><h3>Out the door: $33,175</h3><p>$25,675 in charitable giving plus $7,500 in scholarships. This is the point of all of it.</p></div>
-      <div class="box"><h3>Pizza Challenge: $4,000</h3><p>Our newest fundraiser, in its first year.</p></div>
-      <div class="box"><h3>White Cane: $2,500</h3><p>Running online at the end of October.</p></div>
+      <div class="box" style="--hue:#2E9BD6"><h3>Rudolph Run: $26,958</h3><p>$15,490 in registrations, $11,468 in sponsorships. <strong>69% of everything the Foundation takes in.</strong></p></div>
+      <div class="box" style="--hue:#E0803A"><h3>Out the door: $33,175</h3><p>$25,675 in charitable giving plus $7,500 in scholarships. This is the point of all of it.</p></div>
+      <div class="box" style="--hue:#3F9E6B"><h3>Pizza Challenge: $4,000</h3><p>Our newest fundraiser, in its first year.</p></div>
+      <div class="box" style="--hue:#C77BB8"><h3>White Cane: $2,500</h3><p>Running online at the end of October.</p></div>
     </div>
     <div class="callout">If every member brings one Rudolph Run sponsor, the year's giving is covered before Christmas.</div>
     <p class="num">11</p>
@@ -637,8 +659,8 @@
     <div class="rule"></div>
     <p style="max-width:64ch">The Club's operating fund has built up more money than it needs. Sitting on member dues is not the point of a service club, so the board has planned this year to put that surplus to work rather than let it accumulate.</p>
     <div class="grid g2" style="margin-top:1.4rem">
-      <div class="box"><h3>$5,000 for the Fouse/McVay Cabin</h3><p>Earmarked for the educational center. We expect the project won't be ready this year, so the money is tracked and carried rather than quietly reabsorbed.</p></div>
-      <div class="box"><h3>The rest</h3><p>Marketing, program supplies, member recognition and hospitality. The things that make the club work, and make people want to come.</p></div>
+      <div class="box" style="--hue:#2E9BD6"><h3>$5,000 for the Fouse/McVay Cabin</h3><p>Earmarked for the educational center. We expect the project won't be ready this year, so the money is tracked and carried rather than quietly reabsorbed.</p></div>
+      <div class="box" style="--hue:#E0803A"><h3>The rest</h3><p>Marketing, program supplies, member recognition and hospitality. The things that make the club work, and make people want to come.</p></div>
     </div>
     <p class="note" style="margin-top:1.4rem">So if you see the Club budget planned to spend more than it takes in this year: that is on purpose, and it is the responsible thing to do with a surplus.</p>
     <p class="num">12</p>
@@ -651,8 +673,8 @@
     <div class="rule"></div>
     <p>This trips up nearly everybody, and it matters when you write a check.</p>
     <div class="grid g2" style="margin-top:1.4rem">
-      <div class="box"><h3>The Club</h3><p>Runs the club itself: dues, meetings, insurance, and our dues to Lions International. Funded by members. <strong>Payments to the Club are not tax-deductible.</strong></p></div>
-      <div class="box"><h3>The Foundation</h3><p>A tax-exempt 501(c)(3) charitable organization, EIN 32-0467239. Everything raised from the public and everything given away runs through it. <strong>Gifts to the Foundation are tax-deductible.</strong></p></div>
+      <div class="box" style="--hue:#2E9BD6"><h3>The Club</h3><p>Runs the club itself: dues, meetings, insurance, and our dues to Lions International. Funded by members. <strong>Payments to the Club are not tax-deductible.</strong></p></div>
+      <div class="box" style="--hue:#E0803A"><h3>The Foundation</h3><p>A tax-exempt 501(c)(3) charitable organization, EIN 32-0467239. Everything raised from the public and everything given away runs through it. <strong>Gifts to the Foundation are tax-deductible.</strong></p></div>
     </div>
     <p class="note" style="margin-top:1.4rem">Rule of thumb: money from <em>us</em> is Club; money from the <em>public</em>, and money going out to causes, is Foundation. Lions International is built the same way. LCI and its charitable arm, LCIF, are separate for exactly this reason.</p>
     <p class="num">13</p>
@@ -676,11 +698,11 @@
         </ol>
       </div>
       <div>
-        <div class="box">
+        <div class="box" style="--hue:#2E9BD6">
           <h3>Four people is the target</h3>
           <p>A chair and three other Lions is enough to share the work, and small enough that everyone's ideas still matter. More are welcome; fewer still counts.</p>
         </div>
-        <div class="box" style="margin-top:1rem">
+        <div class="box" style="--hue:#E0803A;margin-top:1rem">
           <h3>Step 4 is easier than it sounds</h3>
           <p>Presenting to the board is the proposal form on the portal. About ten questions, and the board is emailed the moment you send it.</p>
         </div>
@@ -689,19 +711,19 @@
     <p class="num">14</p>
   </section>
 
-  <section class="slide">
+  <section class="slide" id="committee-list">
     <p class="eyebrow">Where you fit</p>
     <h2>Committees for your consideration</h2>
-    <div class="rule"></div>
+    <div class="rule" style="margin-bottom:1rem"></div>
     <div class="grid g2" style="margin-top:1.4rem">
-      <div class="box"><h3>Service</h3><p>Plans the Activities Meeting and the hands-on projects. <em>Howard Baum</em></p></div>
-      <div class="box"><h3>Program</h3><p>Finds and invites the speakers who make General Meetings worth attending. <em>Mimi Reinhoudt</em></p></div>
-      <div class="box"><h3>Communications &amp; Social Media</h3><p>Tells the community what we are doing. <em>Portia Opoku Agyeman &amp; Jim Shively</em></p></div>
-      <div class="box"><h3>Technology</h3><p>Website, member portal, social accounts, online donations. <em>Chris Henson</em></p></div>
-      <div class="box"><h3>Budget</h3><p>Builds and watches the club's budget. <em>Chaired by the Treasurer</em></p></div>
-      <div class="box"><h3>Member Care</h3><p>Looks after Lions who are unwell or going through something. <em>Hank Stonerook</em></p></div>
-      <div class="box open"><h3>Fundraising, needs a chair</h3><p>Seeks out new fundraising opportunities. <strong>Open.</strong></p></div>
-      <div class="box open"><h3>Fellowship, needs a chair</h3><p>Plans outings and time together away from meetings. <strong>Open.</strong></p></div>
+      <div class="box" style="--hue:#2E9BD6"><h3>Service</h3><p>Plans the Activities Meeting and hands-on projects. <em>Howard Baum</em></p></div>
+      <div class="box" style="--hue:#E0803A"><h3>Program</h3><p>Finds and invites our speakers. <em>Mimi Reinhoudt</em></p></div>
+      <div class="box" style="--hue:#3F9E6B"><h3>Communications &amp; Social Media</h3><p>Tells the community what we are doing. <em>Portia Opoku Agyeman &amp; Jim Shively</em></p></div>
+      <div class="box" style="--hue:#C77BB8"><h3>Technology</h3><p>Website, portal, social accounts, donations. <em>Chris Henson</em></p></div>
+      <div class="box" style="--hue:#4C63C9"><h3>Budget</h3><p>Builds and watches the club's budget. <em>Chaired by the Treasurer</em></p></div>
+      <div class="box" style="--hue:#C2544B"><h3>Member Care</h3><p>Looks after Lions who are unwell. <em>Hank Stonerook</em></p></div>
+      <div class="box open"><h3>Fundraising, needs a chair</h3><p>Finds new ways to raise money. <strong>Open.</strong></p></div>
+      <div class="box open"><h3>Fellowship, needs a chair</h3><p>Plans outings away from meetings. <strong>Open.</strong></p></div>
     </div>
     <div class="flag"><b>Needs a decision</b><p>“Fellowship” is a placeholder for the committee that plans outings, it can't be called Activities, since the Service Committee already runs the Activities Meeting. What should it be called?</p></div>
     <p class="num">15</p>
@@ -713,12 +735,12 @@
     <h2>Where we'll need you</h2>
     <div class="rule"></div>
     <div class="grid g2">
-      <div class="box"><span class="tag">Fundraising</span><h3>Rudolph 5K Run/Walk &amp; Winterfest</h3><p>Sunday, December 6 · Westerville Sports Complex. Our biggest day of the year, food trucks, Santa, and a new Middle School Challenge. <em>Mike McCusker &amp; Howard Baum</em></p></div>
-      <div class="box"><span class="tag">Service</span><h3>BMX volunteering</h3><p>Tuesdays, Thursdays and Sundays through October 25 at Westerville BMX. Sign up on the portal.</p></div>
-      <div class="box"><span class="tag">Fundraising</span><h3>White Cane</h3><p>End of October, online this year, with in-person promotion at the 4th Friday event.</p></div>
-      <div class="box"><span class="tag">Service · Environment</span><h3>Bio Blitz</h3><p>Sunday, September 20 · Blendon Woods. A first for us, and easy to bring family to.</p></div>
-      <div class="box"><span class="tag">Fundraising</span><h3>Pizza Challenge</h3><p>Spring, at Westerville Central High School. Brand new, shape it while it's still being planned.</p></div>
-      <div class="box"><span class="tag">Community</span><h3>4th of July Parade</h3><p>The one everybody in Westerville sees us at.</p></div>
+      <div class="box" style="--hue:#2E9BD6"><span class="tag">Fundraising</span><h3>Rudolph 5K Run/Walk &amp; Winterfest</h3><p>Sunday, December 6 · Westerville Sports Complex. Our biggest day of the year, food trucks, Santa, and a new Middle School Challenge. <em>Mike McCusker &amp; Howard Baum</em></p></div>
+      <div class="box" style="--hue:#E0803A"><span class="tag">Service</span><h3>BMX volunteering</h3><p>Tuesdays, Thursdays and Sundays through October 25 at Westerville BMX. Sign up on the portal.</p></div>
+      <div class="box" style="--hue:#3F9E6B"><span class="tag">Fundraising</span><h3>White Cane</h3><p>End of October, online this year, with in-person promotion at the 4th Friday event.</p></div>
+      <div class="box" style="--hue:#C77BB8"><span class="tag">Service · Environment</span><h3>Bio Blitz</h3><p>Sunday, September 20 · Blendon Woods. A first for us, and easy to bring family to.</p></div>
+      <div class="box" style="--hue:#4C63C9"><span class="tag">Fundraising</span><h3>Pizza Challenge</h3><p>Spring, at Westerville Central High School. Brand new, shape it while it's still being planned.</p></div>
+      <div class="box" style="--hue:#C2544B"><span class="tag">Community</span><h3>4th of July Parade</h3><p>The one everybody in Westerville sees us at.</p></div>
     </div>
     <p class="num">16</p>
   </section>
@@ -766,12 +788,6 @@
         <colgroup><col class="c-date"><col><col class="c-cause"><col class="c-hours"></colgroup>
         <thead><tr><th>Date</th><th>Activity or project</th><th>Cause</th><th class="numc">Hours</th></tr></thead>
         <tbody>
-          <tr><td></td><td></td><td></td><td></td></tr>
-          <tr><td></td><td></td><td></td><td></td></tr>
-          <tr><td></td><td></td><td></td><td></td></tr>
-          <tr><td></td><td></td><td></td><td></td></tr>
-          <tr><td></td><td></td><td></td><td></td></tr>
-          <tr><td></td><td></td><td></td><td></td></tr>
           <tr><td></td><td></td><td></td><td></td></tr>
           <tr><td></td><td></td><td></td><td></td></tr>
           <tr><td></td><td></td><td></td><td></td></tr>
@@ -864,7 +880,7 @@
           <li>That's it. You'll land on the member home page.</li>
         </ol>
       </div>
-      <div class="box">
+      <div class="box" style="--hue:#2E9BD6">
         <h3>It works on a phone</h3>
         <p>Most members use it that way, checking the calendar, RSVPing to a meeting, or photographing a receipt for reimbursement while still standing in the parking lot.</p>
       </div>
@@ -878,12 +894,12 @@
     <h2>What's inside</h2>
     <div class="rule"></div>
     <div class="grid g3">
-      <div class="box"><h3>Directory</h3><p>Every member's contact details, and a printable copy.</p></div>
-      <div class="box"><h3>Events</h3><p>The full calendar, RSVP, and add-to-calendar for your phone.</p></div>
-      <div class="box"><h3>Club Records</h3><p>Meeting minutes, and the Constitution &amp; By-Laws.</p></div>
-      <div class="box"><h3>Club Finances</h3><p>Monthly financial statements, and what the club has given.</p></div>
-      <div class="box"><h3>Reimbursements</h3><p>Spent your own money on a project? Claim it back with a photo.</p></div>
-      <div class="box"><h3>Proposals</h3><p>Put a project idea in front of the board.</p></div>
+      <div class="box" style="--hue:#2E9BD6"><h3>Directory</h3><p>Every member's contact details, and a printable copy.</p></div>
+      <div class="box" style="--hue:#E0803A"><h3>Events</h3><p>The full calendar, RSVP, and add-to-calendar for your phone.</p></div>
+      <div class="box" style="--hue:#3F9E6B"><h3>Club Records</h3><p>Meeting minutes, and the Constitution &amp; By-Laws.</p></div>
+      <div class="box" style="--hue:#C77BB8"><h3>Club Finances</h3><p>Monthly financial statements, and what the club has given.</p></div>
+      <div class="box" style="--hue:#4C63C9"><h3>Reimbursements</h3><p>Spent your own money on a project? Claim it back with a photo.</p></div>
+      <div class="box" style="--hue:#C2544B"><h3>Proposals</h3><p>Put a project idea in front of the board.</p></div>
     </div>
     <p style="margin-top:1.4rem"><strong>The Constitution &amp; By-Laws are now on the portal</strong>, readable by every member, with the full history of any change. A review of the text is planned this year. There is no printed copy in this packet on purpose: it runs to forty pages and is about to be revised.</p>
     <p class="num">21</p>
@@ -896,21 +912,21 @@
     <div class="rule"></div>
     <p style="max-width:64ch">Sign in, choose <strong>Profile</strong>, and the four things that belong to you personally are all on that one page.</p>
     <div class="grid g2" style="margin-top:1.5rem">
-      <div class="box">
+      <div class="box" style="--hue:#2E9BD6">
         <h3>My Profile</h3>
-        <p>Your address, phone, email and photo. <strong>You can change these yourself</strong>, and doing so is what keeps the printed directory right. If you move, this is the one thing worth updating.</p>
+        <p>Your address, phone, email and photo. <strong>You can change these yourself</strong>, and that is what keeps the printed directory right.</p>
       </div>
-      <div class="box">
+      <div class="box" style="--hue:#E0803A">
         <h3>My Dues</h3>
-        <p>What you have paid and when, going back through the years. If you are ever unsure whether your dues are settled, the answer is here rather than in an email to the Treasurer.</p>
+        <p>What you have paid and when. If you are unsure whether your dues are settled, the answer is here rather than in an email to the Treasurer.</p>
       </div>
-      <div class="box">
+      <div class="box" style="--hue:#3F9E6B">
         <h3>My Reimbursements</h3>
-        <p>Spent your own money on a club project? Claim it back here, with a photo of the receipt taken on your phone. You can see where each claim stands, from submitted through to paid.</p>
+        <p>Spent your own money on a project? Claim it back with a photo of the receipt, and see where the claim stands.</p>
       </div>
-      <div class="box">
+      <div class="box" style="--hue:#C77BB8">
         <h3>My Proposals</h3>
-        <p>Put a project or fundraiser in front of the board, and follow what happens to it. Drafts save as you go, so you can start one and come back later.</p>
+        <p>Put a project in front of the board and follow what happens to it. Drafts save as you go.</p>
       </div>
     </div>
     <p class="note" style="margin-top:1.4rem">Rather not do any of this on a computer? Everything here can be handled on paper instead. See the next page.</p>
@@ -952,11 +968,11 @@
     <div class="rule"></div>
     <p style="max-width:64ch">A printed directory of every member, name, phone, email and mailing address, is included in this packet. It was printed fresh from the portal, so it is accurate as of the day it went in the folder.</p>
     <div class="grid g2" style="margin-top:1.4rem">
-      <div class="box">
+      <div class="box" style="--hue:#2E9BD6">
         <h3>Keeping your own entry right</h3>
         <p>Sign in to the portal and update your address, phone or photo yourself, it takes a moment and no one has to be asked. If you'd rather not, tell the Secretary and he'll do it for you.</p>
       </div>
-      <div class="box">
+      <div class="box" style="--hue:#E0803A">
         <h3>Want a fresh copy later?</h3>
         <p>The directory prints from the portal whenever you want one, always current. Ask anyone on the Technology Committee and they'll run one off for you.</p>
       </div>
@@ -972,9 +988,9 @@
     <div class="rule"></div>
     <p style="max-width:62ch">Any member can put a project or fundraiser in front of the board. It is a short form on the portal, about ten questions, and “I don't know yet” is a perfectly good answer to most of them.</p>
     <div class="grid g3" style="margin-top:1.4rem">
-      <div class="box"><h3>You submit</h3><p>Fill it in over a few sittings if you like, it saves as you go.</p></div>
-      <div class="box"><h3>The board sees it</h3><p>Emailed the moment you send it; taken up at their next meeting.</p></div>
-      <div class="box"><h3>You hear back</h3><p>Emailed at every step, and you can see exactly where it stands.</p></div>
+      <div class="box" style="--hue:#2E9BD6"><h3>You submit</h3><p>Fill it in over a few sittings if you like, it saves as you go.</p></div>
+      <div class="box" style="--hue:#E0803A"><h3>The board sees it</h3><p>Emailed the moment you send it; taken up at their next meeting.</p></div>
+      <div class="box" style="--hue:#3F9E6B"><h3>You hear back</h3><p>Emailed at every step, and you can see exactly where it stands.</p></div>
     </div>
     <p class="note" style="margin-top:1.4rem">You don't need a chairperson lined up, and you don't need to know the budget. Bring the idea; we'll help with the rest. Prefer paper? Hand a written note to any board member, it goes to the same place.</p>
     <p class="num">25</p>
