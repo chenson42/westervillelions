@@ -7,25 +7,18 @@
   artifact and is deliberately not committed.
 
   RENDERING THE PDF
-    The file has no <!doctype>/<html> wrapper because it is also published as
-    a Claude artifact, which supplies one. To render standalone, wrap it and
-    print with headless Chrome:
 
-      { printf '<!doctype html><html><head><meta charset="utf-8"></head><body>';
-        cat docs/club-documents/welcome-packet-2026-27.html;
-        printf '</body></html>'; } > /tmp/wp.html
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-        --headless --disable-gpu --no-pdf-header-footer \
-        --print-to-pdf="$PWD/welcome-packet.pdf" "file:///tmp/wp.html"
+      scripts/render-welcome-packet.sh
 
+    Writes to ~/Downloads, and checks that the page count still matches the
+    slide count. Pass a source and an output path to override either.
     Output is 11 x 8.5in landscape, one slide per page.
 
   THINGS THAT WILL BITE YOU IF YOU EDIT THIS
     * ONE SLIDE PER PAGE IS NOT AUTOMATIC. Slides are content-sized; a slide
       that grows past the page silently spills onto a second sheet and the
-      whole deck goes out of register. After any content change, render each
-      <section class="slide"> on its own and assert it produces exactly one
-      page. Adding a single contact row has already caused this twice.
+      whole deck goes out of register. Adding a single contact row has caused
+      this twice. The render script checks for it; run it after any edit.
     * Backgrounds only print because of `print-color-adjust: exact`. Remove it
       and the navy pages go white AND the giving-by-cause bars vanish, leaving
       labels beside empty tracks.
