@@ -241,6 +241,34 @@ the website." Both are easier to explain once the board has seen the thing.
 **Also worth raising:** a second person familiar with operating the website was named as the Tech
 Committee's main goal at the retreat. A demo is a natural moment to ask who that should be.
 
+
+### A2 — Ask board members to add a headshot to their portal profile
+
+> **Status:** TO DO — next board meeting. (Added 2026-08-12 by the Treasurer.)
+
+**The ask.** Every board member signs in and adds a photo to their profile. It is self-service,
+takes about a minute, and works from a phone: Sign in, **Profile**, **My Profile**, upload.
+
+**Where it stands today.** Five of the thirteen board members have a photo. Missing: the
+President, both Vice Presidents, the Secretary, the Tail Twister, the Lion Tamer, and two of
+the First Year Directors. Club-wide it is **8 of 41 active members**.
+
+**Why the board first, rather than asking everyone at once.** Two reasons.
+
+1. A directory where a handful of people have photos looks broken; one where most do looks
+   finished. The board is thirteen people and can be asked in one meeting, which gets the
+   directory over the line where it starts to feel worth using.
+2. The board is who members are most likely to need to recognise. A new member trying to work
+   out who to approach about joining a committee benefits far more from a photo of the
+   Membership Chair than from one of a member they have already met.
+
+**Why it is worth doing before September.** The welcome packet points new members at the
+directory, and new members are exactly the people who cannot yet put a name to a face.
+
+**Suggested framing at the meeting:** ask everyone to do it before they leave the room. It is
+a phone, a minute, and it is done. Chasing it by email afterwards will take longer than the
+task itself.
+
 ---
 
 ## Log (append outcomes here)

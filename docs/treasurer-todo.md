@@ -280,6 +280,11 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
   2026-08-12, five historical payments totalling $153.59 moved with it), so the effect of any
   push is measurable quarter by quarter. Raised as **Q2** in `docs/board-motions.md` for the
   next board meeting.
+- [ ] **T-32 — Get board members to add headshots to their portal profiles.** Only 5 of 13 board
+  members have one, and 8 of 41 active members club-wide. It is self-service from a phone
+  (Profile > My Profile). Raised as **A2** in `docs/board-motions.md` for the next board
+  meeting; worth doing before September, since the welcome packet points new members at the
+  directory and they are the ones who cannot yet put a name to a face.
 - [ ] **T-17 — Zeffy donations flow through the Activity Fund (plan revised 2026-07-21).**
   ~~Original plan: open a second Zeffy account so the club account backs the dues form and the
   Foundation account backs donation forms.~~ **2026-07-21 — treasurer decision: do NOT open a
