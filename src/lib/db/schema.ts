@@ -915,6 +915,18 @@ export const ledgerAcknowledgments = pgTable(
     quidProQuoDescription: text("quid_pro_quo_description"),
     // null = pending acknowledgment; set to now() when treasurer marks sent
     sentAt: timestamp("sent_at"),
+    // null = unset (legacy row, or not yet sent); 'email' | 'print' once a
+    // send path succeeds. sentAt alone only says "this went" — once both a
+    // print path and an email path exist, that's no longer enough to answer
+    // "who still needs a printed copy," which the treasurer needs at a
+    // glance (Phase 1 of docs/work-log/2026-08-12-acknowledgment-letter-
+    // email.md). Plain text, not a DB enum/CHECK — validated in application
+    // code, matching this project's minutes.kind/minutes.status convention
+    // (DECISION-041). No backfill: nobody can truthfully say today whether a
+    // pre-this-feature sentAt row was mailed or printed, so legacy rows stay
+    // NULL rather than guess on a document with tax consequences. See
+    // DECISION-087 item 3 / DECISION-088.
+    sentVia: text("sent_via"),
     // Opaque Blob storage key for the uploaded letter file; pattern: acknowledgments/<uuid>/<filename>
     letterStorageKey: text("letter_storage_key"),
     // Free-text alternative to an uploaded letter file

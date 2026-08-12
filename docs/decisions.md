@@ -28,6 +28,142 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-088: Emailing the Donor Acknowledgment Letter — atomic claim-then-send, one `sendBulkMemberEmail()` call per batch, `letterText`/`donor.emails` both added to the read projection, tolerant `resolveTreasurer()`
+
+**Status:** Resolved
+**Date:** 2026-08-12
+
+**Decision:** Phase 3 of the Emailing the Donor Acknowledgment Letter feature
+(`docs/work-log/2026-08-12-acknowledgment-letter-email.md`) makes five implementation calls beyond
+what Phase 2 specified. (1) **The atomic claim is `UPDATE ledger_acknowledgments SET sent_at = now(),
+sent_via = 'email', updated_at = now() WHERE id = $ackId AND sent_at IS NULL RETURNING id`, one
+statement per ack, executed in a loop BEFORE any email is sent** — only acks that return a row are
+included in the send. A row that loses the race reports `skipped: "already sent"`, the identical
+skip-reason string `generateAcknowledgmentLetters()` already uses, so the client's existing
+skip-reporting UI needs no new case. (2) **If every address for a claimed ack fails to send, the
+claim is reverted** (`UPDATE ... SET sent_at = NULL, sent_via = NULL WHERE id = $ackId AND sent_via =
+'email'`) and the ack reports `status: "failed"`, distinct from `"skipped"` — this is the one case
+where a write is undone after commit, and it's necessary because the claim is taken before delivery
+is known, per Phase 2's own ruling that the claim must precede the send, not follow it. If at least
+one address succeeds, the claim is kept and the ack reports `status: "emailed"` with per-address
+detail, adopting Phase 1's recommendation for partial multi-address failure (open question 4) as the
+final ruling: a donor who received the letter at one of two addresses did receive it. (3) **One
+`sendBulkMemberEmail()` call per invocation of `emailAcknowledgmentLetters()`, covering every
+successfully-claimed ack's donor's every address in a single flattened `recipients` array** — not one
+call per ack. This mirrors the dues-reminder send route's own shape exactly (one call, N members, each
+with distinct per-recipient HTML but one shared `subject`/`replyTo`/`bcc` for the whole call), which
+is possible here because the subject doesn't need to vary per donor or per gift (see composition
+below). Per-ack result grouping after the call is done by array-index zipping against a local
+`{ackId, to}` tracking array built in the same order the recipients were submitted — not by looking
+up results by the `to` address string, because two different donors can legitimately share one email
+address (a shared household or business inbox), and a by-address lookup would silently misattribute
+one donor's delivery result to the other. (4) **`GeneratableAcknowledgmentRow` gains `letterText:
+string | null` in addition to Phase 2's confirmed `donor.emails: string[]`** — Phase 2 named `emails`
+as the one blocking gap it had found, but `emailAcknowledgmentLetters()` also needs to know whether a
+letter has been generated at all (the "letter not yet generated" skip reason), and reusing
+`listGeneratableAcknowledgments()` for hydration (as DECISION-087 item 1 directs) means that field
+must be projected too. Same shape as the `emails` fix: `r.ack.letterText` is already fetched into the
+query's `ack:` select, only the `.map()` narrows it away. (5) **`resolveTreasurer()` failure is
+tolerant here, matching the five existing treasury-CC sites, not the dues-reminder signer's hard
+block**: a resolution failure logs a warning and sends without `replyTo`/`bcc`, rather than blocking
+the donor's letter. The letter itself carries its own complete, legally sufficient signature block
+(DECISION-072's five "warmth" fields) independent of `resolveTreasurer()` — a missing CC lowers the
+treasurer's own visibility into the send, not the document's validity, and that's the club's problem
+to fix by correcting the Board of Directors group, not a reason to withhold a donor's tax receipt.
+
+**Rationale:** Each ruling resolves an ambiguity the two prior phases correctly identified but left
+open. The claim-then-send-with-compensating-revert-on-total-failure shape is the only one that
+satisfies Phase 2's hard requirement (claim precedes send, never the reverse) while still allowing a
+fully-failed send to be retried rather than permanently stuck in a false "sent" state. The one-call
+design was chosen over a call-per-ack design because it's strictly simpler, has an established,
+decision-logged precedent (DECISION-085/086) to copy rather than a new shape to invent, and loses
+nothing — the subject line doesn't carry any content that needs to vary per ack, since the entity's
+name is already in the required legal block, not the subject.
+
+**Impact:** `src/lib/ledger-acknowledgment-letter-queries.ts` (new `emailAcknowledgmentLetters()`,
+`GeneratableAcknowledgmentRow` gains `letterText` and `donor.emails`), `src/lib/
+ledger-acknowledgment-letter.ts` (new `composeAcknowledgmentEmailHtml()`), `src/app/api/admin/ledger/
+acknowledgments/letters/email/route.ts` (new), `src/lib/db/schema.ts` + `drizzle/migrations/
+0088_ledger_ack_sent_via.sql` (`ledgerAcknowledgments.sentVia`), the existing PATCH mark-sent route
+(sets `sentVia: 'print'`), `src/components/admin/ledger/acknowledgment-letter-selector.tsx` (new
+action + email-status column). Full contract, edge cases, and the required unit tests are in the
+Phase 3 section of the work-log linked above.
+
+---
+
+## DECISION-087: Emailing the Donor Acknowledgment Letter — extends the existing letter-generation module pair, not a new one; `sendBulkMemberEmail()` keeps its name; `ledgerAcknowledgments.sentVia` added
+
+**Status:** Resolved
+**Date:** 2026-08-12
+
+**Decision:** Phase 2 of the Emailing the Donor Acknowledgment Letter feature
+(`docs/work-log/2026-08-12-acknowledgment-letter-email.md`) makes four architectural rulings.
+(1) **No new module pair.** The send path — `emailAcknowledgmentLetters()` (write) and the
+`emails: string[]` addition to `GeneratableAcknowledgmentRow`/`listGeneratableAcknowledgments()`
+(read) — lands in the existing `src/lib/ledger-acknowledgment-letter-queries.ts`, and a new pure
+`composeAcknowledgmentEmailHtml()` (the plain-text `letterText` wrapped in a one-line lead-in and
+converted to escaped HTML) lands in the existing `src/lib/ledger-acknowledgment-letter.ts`. Emailing
+a letter is the same domain as generating and printing one; DECISION-072's "sibling module, not a
+third one, without a genuinely new domain" lineage applies directly. The route is a new sibling
+file, `src/app/api/admin/ledger/acknowledgments/letters/email/route.ts`, next to the existing
+`.../letters/generate/route.ts`, gating itself with the identical `auth()` + `hasFeature(...,
+FEATURES.LEDGER_RECORD)` pattern — API routes are outside `src/proxy.ts` entirely (it early-returns
+on any `/api/` path) and outside `admin-page-feature-gates.test.ts`'s scope (page.tsx files only),
+so this self-gate is the *only* protection either route has, and the new one must copy it exactly,
+not merely resemble it. UI is a new action + email-status column on the existing
+`AcknowledgmentLetterSelector` component and its existing gated page
+(`/admin/ledger/donors/letters`) — no new admin nav entry, no new page. (2) **`sendBulkMemberEmail()`
+keeps its name**; its doc comment gets a one-line broadening ("recipients need not be club
+members — this is 'send individually to N addresses,' not a membership check") rather than a
+rename. The function is referenced by two already-resolved decisions (DECISION-085/086); renaming a
+decided, shipped primitive for vocabulary reasons a doc-comment can fix is churn without a behavior
+change, and nothing about donor-eligibility or the deny-by-default guard depends on the name.
+(3) **`ledgerAcknowledgments.sentVia: text` (nullable, `'email' | 'print'`) is added**, migration
+`0088_ledger_ack_sent_via.sql`, `ADD COLUMN IF NOT EXISTS`. The existing PATCH mark-sent route sets
+`'print'`; the new send route sets `'email'` on success. Legacy rows stay `NULL` — no backfill,
+matching the "forward-looking disambiguation, not a backfill claim" reasoning Phase 1 gave and the
+project's existing posture on ungraded legacy rows (DECISION-026 lineage). (4) **The new send route's
+`sentAt`/`sentVia` write must be a single conditional `UPDATE ... WHERE id = $ackId AND sent_at IS
+NULL RETURNING id`, one row at a time, not the read-then-write shape `generateAcknowledgmentLetters()`
+uses today.** Regeneration before a letter is sent is deliberately idempotent-safe (DECISION-073 item
+2), which is why that function's existing select-then-batch-update pattern (and the existing PATCH
+mark-sent route's own select-then-check-then-update) is fine for what they do. An email send is not
+idempotent-safe — a donor must not receive the same letter twice because two requests both read
+`sentAt IS NULL` before either wrote it — so the send path may not reuse that shape even though it's
+sitting right next to it.
+
+**Rationale:** Every one of these rulings is "extend what already carries the exact same
+invariant, rather than open a new surface that has to reprove it." The module-pair ruling follows
+the same reasoning the acknowledgment-letter feature itself was built on (DECISION-072/073's
+sibling-module lineage) — a fifth module for a fourth verb in the same domain would be the kind of
+fragmentation those decisions were written to prevent. The naming ruling weighs the actual cost of
+each option: a rename touches two decision-logged call sites for a doc-accuracy problem a one-line
+comment fully resolves, while the substantive safety property Phase 1 was actually worried about —
+"a dev run must never reach a real donor" — turns out to hold regardless of the function's name,
+because `src/lib/email.ts`'s non-production guard is deny-by-default for every `sendEmail()` call
+since the 2026-08-12 incident rewrite, not conditioned on the `_bulkMemberSend` flag alone. The
+`sentVia` ruling accepts Phase 1's recommendation as-is; it's the only structural fix for "who still
+needs a printed copy" the treasurer's own stated need requires, and NULL-for-legacy costs nothing a
+future report can't already tolerate. The atomic-update ruling exists because this is the one place
+in the whole acknowledgment-letter feature where the existing "regeneration is safe to repeat"
+assumption stops holding — sending mail is a real-world side effect a retried or double-clicked
+request cannot safely repeat, unlike overwriting a text column.
+
+**Impact:** `src/lib/ledger-acknowledgment-letter-queries.ts` gains `emails: string[]` on
+`GeneratableAcknowledgmentRow.donor` (already-selected `ledgerDonors` row, zero new query) and a new
+`emailAcknowledgmentLetters()` write function using the atomic conditional-update pattern.
+`src/lib/ledger-acknowledgment-letter.ts` gains `composeAcknowledgmentEmailHtml()` (pure). New route
+`src/app/api/admin/ledger/acknowledgments/letters/email/route.ts`. `src/lib/db/schema.ts` gains
+`ledgerAcknowledgments.sentVia`; new migration `0088_ledger_ack_sent_via.sql` (idempotent
+`ADD COLUMN IF NOT EXISTS`, no backfill). `src/lib/email.ts`'s `sendBulkMemberEmail()` doc comment
+broadened, no signature change. `src/components/admin/ledger/acknowledgment-letter-selector.tsx`
+gains an email-status column and a "Send by Email" action. No new `FEATURES` key (reuses
+`LEDGER_RECORD`). No new npm dependency. Full contract for the API route, email HTML composition,
+component plan, and partial-multi-address-failure semantics is Phase 3's (tech-lead), per the
+work-log linked above.
+
+---
+
 ## DECISION-086: Dues Reminder Emails — shared `resolveTreasurer()` extracted to `src/lib/board-positions.ts`; `sendEmail()`/`email_queue` gain `cc`/`bcc`; migration numbers split 0086/0087
 
 **Status:** Resolved

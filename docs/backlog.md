@@ -846,3 +846,42 @@ Design each with the others in view — decisions in one box in the next.
   `email_queue` row, plus a status column and a visible state on `/admin/email-queue`.
   Small — one endpoint, one column — and it improves **every** email in the app rather than
   one feature. Prerequisite for treating an emailed acknowledgment as reliable.
+
+- [ ] **B-48 — Route-level automated test for the treasury CC rule at the five existing ledger
+  send sites.** *(Raised 2026-08-12, Phase 6 of Dues Reminder Emails.)*
+
+  The treasury CC rule (`resolveTreasurer()` CC'd onto every treasury email) is applied
+  correctly at all five existing send sites — three in
+  `src/app/api/admin/ledger/reimbursements/[id]/route.ts` (approved/rejected/paid) and two in
+  `src/app/api/admin/ledger/transactions/route.ts` (the `LEDGER_APPROVE`-approver-loop
+  notifications) — confirmed by direct code review during Phase 6. But that review is the only
+  coverage: `resolveTreasurer()` itself is unit-tested, and the dues-reminder path is
+  unit-tested, but no test exercises the CC behavior at these five specific call sites. QA
+  deliberately declined to live-trigger them, correctly, given that doing exactly that mid-build
+  is what mailed 16 real board members (see the `ff613f1` incident). A future refactor of the
+  ledger routes could silently drop the CC and nothing would fail red.
+
+  **Shape of the fix:** mock `resolveTreasurer()` and `sendEmail()` the way
+  `dues-reminders.test.ts` mocks its own dependencies (no live transaction, no live send) and
+  assert the `cc` field is present when `resolveTreasurer()` resolves and absent — not thrown —
+  when it doesn't. `src/app/api/admin/ledger/reimbursements/[id]/route.ts` has no `route.test.ts`
+  at all today; this is also the first coverage of that file.
+
+- [ ] **B-49 — Named regression test confirming the deny-by-default email guard blocks a
+  single, non-bulk `sendEmail()` call, not just `sendBulkMemberEmail()`.**
+  *(Raised 2026-08-12, Phase 6 of Dues Reminder Emails.)*
+
+  `ff613f1` moved the non-production guard to deny-by-default at the `sendEmail()` chokepoint
+  itself, which is the reason the guard now covers every call site rather than just the ones a
+  feature author remembered to route through `sendBulkMemberEmail()`. `email-guardrail.test.ts`
+  has direct coverage for the club-distribution-list guard and for `sendBulkMemberEmail()`'s
+  unconditional block, but no test explicitly asserts the shape that actually caused the second
+  2026-08-12 incident: a `for` loop calling plain `sendEmail()` once per recipient (the
+  `LEDGER_APPROVE`-approver notification), not routed through `sendBulkMemberEmail()` at all.
+  Reading the guard condition shows it covers this shape correctly today — but the incident that
+  motivated the rewrite deserves a test in that exact shape, not just a read-through.
+
+  **Shape of the fix:** add a test asserting a single, non-bulk `sendEmail({ to: <fabricated,
+  never-allowlisted address> })` call is blocked outside production with `RESEND_API_KEY` unset
+  or set — mirroring the loop shape in `transactions/route.ts`'s approver notification, not the
+  bulk shape already covered.

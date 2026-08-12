@@ -18,8 +18,8 @@
 | 4 — Implementation (schema) | database-admin | Complete | — | 2026-08-12 |
 | 4 — Implementation (server) | api-developer | Complete | — | 2026-08-12 |
 | 4 — Implementation (client) | ux-developer | Complete | — | 2026-08-12 |
-| 5 — Verification | qa | Pending | — | — |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 5 — Verification | qa | Complete | PASS | 2026-08-12 |
+| 6 — Shipped vs intent | analyst | Complete | SHIP WITH NOTES | 2026-08-12 |
 
 ---
 
@@ -1704,3 +1704,485 @@ disagrees, it's a one-line revert (drop the `destructive` prop in
   phase's verification stayed entirely inside the non-production guard by design and cannot answer
   that question. Also re-confirm the `dues.view`-only block manually in your own pass rather than
   trusting this write-up alone, per CLAUDE.md's "an admin session proves nothing" instruction.
+
+---
+
+## Phase 5 — Verification — 2026-08-12
+
+**Owner:** qa
+**Status:** complete
+
+### Summary
+
+**PASS.** Typecheck, unit tests (1443/1443), and production build are all clean. Migrations
+verified idempotent by two consecutive runs against DEV. Both the deny-by-default email guard
+(`EMAIL_DEV_ALLOWLIST` empty → nothing reaches Resend) and the nested `dues.manage` permission
+gate were independently re-proven against a **real, non-privileged, throwaway sign-in** — not an
+admin session — at both the page and the API, for both GET and POST. The treasury CC rule's
+tolerant-failure-vs-hard-block contrast is proven correct by code review at all five existing
+send sites plus the automated `email-guardrail.test.ts`/`board-positions.test.ts` suites;
+I deliberately did **not** re-trigger the ledger reimbursement/transaction routes live, per this
+session's explicit constraint, since doing exactly that on 2026-08-12 is what mailed 16 real board
+members. Partial-payer default-unchecked behavior, the "no email on file" exclusion path, and the
+14-day cooldown badge were all verified against live dev data I seeded and then deleted. One
+real defect found and already fixed on `main` before this session started (not by me): the
+original allow-by-default email guard and the `destructive` confirm-dialog deviation were both
+already corrected by commits `ff613f1` and `1a3b75b`. No new defect found in this pass.
+
+### What I did
+
+1. **Read the full pipeline history** — all of Phase 1 (analyst), Phase 2 (architect, including
+   the override of Phase 1's feature-local guard proposal), Phase 3 (tech-lead's design, all 13
+   named unit tests), and all three Phase 4 sub-phases (database-admin, api-developer — including
+   the 16-real-board-member incident disclosure — and ux-developer). Read DECISION-085 and
+   DECISION-086 in full.
+2. **Discovered, via `git log -- src/lib/email.ts`, that the feature had already moved past what
+   Phase 4's own write-up describes**: commit `ff613f1` ("fix(email): deny-by-default outside
+   production, after 16 real board members were mailed") replaced the allow-by-default
+   `isClubDistributionList()`-only guard with the current deny-by-default
+   `EMAIL_DEV_ALLOWLIST` guard, and added the invariant to CLAUDE.md
+   ("Outbound Email Is Deny-By-Default Outside Production"). Commit `1a3b75b` ("fix(dues
+   reminder): drop the destructive confirm; queue B-47 for bounce visibility") reverted the
+   `ConfirmDialog destructive` deviation ux-developer flagged. Both are already on `main`, ahead
+   of the last work-log entry I read. Verified by reading the live source, not assumed from the
+   work-log text.
+3. Ran `pnpm exec tsc --noEmit`, `pnpm test`, `pnpm build:only`.
+4. Ran `pnpm db:migrate` against DEV twice (`DATABASE_URL` only, `PROD_DATABASE_URL` unset each
+   time) to prove idempotency, then verified the live `dues_reminders` schema and
+   `email_queue.cc`/`bcc` columns/indexes directly via `psql`/`information_schema`.
+5. Read `src/lib/email.ts`, `src/lib/board-positions.ts`, `src/lib/dues-reminders.ts`,
+   `src/lib/dues-reminders-queries.ts`, `src/app/api/admin/dues/reminders/route.ts`, all five
+   treasury-CC call sites in the ledger reimbursement/transaction routes, and the three relevant
+   test files (`email-guardrail.test.ts`, `board-positions.test.ts`, `dues-reminders.test.ts`) to
+   confirm the code matches the design and that automated coverage exists where I could not safely
+   trigger a live path.
+6. Started a throwaway `next dev` on port 3002 (confirmed nothing was listening on 3000-3002
+   first). Confirmed `RESEND_API_KEY=` is present but empty (length 0) and `EMAIL_DEV_ALLOWLIST`
+   is unset in `.env.local` before touching anything — did not modify either.
+7. Created two throwaway users directly via `psql` (bcrypt-hashed passwords), signed in via the
+   **real NextAuth credentials flow** (CSRF token + cookie jar via `curl`, not a mocked/admin
+   session):
+   - `qa-duesview-only@example.com`, bound only to `board_member` (`dues.view`, not
+     `dues.manage`).
+   - `qa-duesmanage@example.com`, bound to `treasurer` (`dues.manage`); later also bound to
+     `admin` (for `admin.users`, required to view `/admin/email-queue`), re-authenticating after
+     the grant since the session token carries the role set from sign-in time.
+8. **Permission boundary, with the real non-privileged session:**
+   - `GET /api/admin/dues/reminders?fiscalYear=2026` → `403 {"error":"Forbidden"}`.
+   - `POST /api/admin/dues/reminders` → `403 {"error":"Forbidden"}`.
+   - `GET /admin/dues/reminders?fy=2026` → `307` redirect to `/admin/dues`.
+   - Control check: the same account reached `GET /admin/dues` → `200`, confirming the block is
+     specific to the reminders sub-page/route, not a broader auth failure.
+9. **Full click-through as the `dues.manage` holder:**
+   - `GET` preview for FY2026: real signer resolved (James Shively — current live Board
+     `position='Treasurer'`, not Chris Henson; a data fact, not a bug), real `duesSettings`
+     ($120/$96), 39 unpaid / 0 partial.
+   - Seeded three temporary DEV rows to exercise paths the current data couldn't reach: a $50
+     partial payment for one previously-unpaid member (Howard Baum), a `dues_reminders` row dated
+     5 days ago for a second member (Debbie Bennati — within the 14-day cooldown), and one dated
+     20 days ago for a third (Gary Bix — outside it).
+   - Re-fetched the preview: unpaid count dropped 39→38, partial 0→1, confirming the fresh-query
+     re-derivation and that the reminder screen and `/members/dues` can't disagree.
+   - Fetched the **server-rendered HTML** of `/admin/dues/reminders?fy=2026` directly (not the RSC
+     prop payload) and confirmed by string inspection: Bennati and Bix's checkboxes render
+     `checked=""` (Unpaid pre-checked), Baum's does **not** (Balance-remaining pre-unchecked) —
+     item 8, live-data-verified, not inferred from code. Bennati's row carries the amber
+     `bg-amber-100 text-amber-800` "Last reminded" badge; Bix's carries the gray
+     `bg-gray-100 text-gray-500` version — item 9, live-data-verified.
+   - `POST` a real send for Bennati + Baum with a note. `200`, both `success: true`; Baum's
+     cohort came back `"partial"` even though I requested him without specifying a cohort,
+     confirming the server assigns cohort from its own fresh query, never the client.
+   - Verified via `psql`: both new `email_queue` rows `status='blocked_non_production'`,
+     `attempts=0` (Resend never invoked), `from='treasurer@westervillelions.org'`,
+     `bcc='jmshively@gmail.com'` (the resolved office-holder's own address), `cc` empty (dues
+     reminders BCC only, by design). Both matching `dues_reminders` rows correct in every column
+     (`cohort`, `success=true`, `note` verbatim, `signed_as_member_id`= James Shively).
+   - Re-authenticated with the `admin` role added, loaded `/admin/email-queue`, and confirmed via
+     raw HTML that both new rows render `Bcc: jmshively@gmail.com` under the `To` cell, and that
+     the pre-existing real board-approval-notification row (from the 2026-08-12 incident, subject
+     "Disbursement pending your approval — $500.00") renders `Cc: jmshively@gmail.com` — item 10,
+     both `cc` and `bcc` display confirmed live.
+10. **Did not** create any ledger transaction or trigger the reimbursement/transaction routes
+    live, per this session's explicit constraint — that is exactly the action that mailed 16 real
+    board members during Phase 4. Verified the treasury CC rule by reading all five call sites
+    directly: each wraps `resolveTreasurer()` in the same try/catch as the underlying
+    `sendEmail()` call, logs `console.warn` on failure, and calls `sendEmail()` unconditionally
+    regardless of `treasurer.ok` — the `cc` field is the only thing that's conditional
+    (`...(treasurer.ok ? { cc: treasurer.email } : {})`), which is the correct tolerant shape
+    (contrast with the dues-reminder POST route's hard `if (!treasurer.ok) return 400` before
+    anything is sent). `resolveTreasurer()` itself has full unit coverage in
+    `board-positions.test.ts` (zero/one/multiple/missing-group, case-insensitive/trimmed match).
+    **Gap noted, not a FAIL:** there is no route-level automated test exercising the CC behavior
+    of the five ledger send sites themselves (only `transactions/route.test.ts` exists, and it
+    doesn't touch the E-1 notification path) — Phase 3's own test list never asked for one, so
+    this isn't a missed deliverable, but it's the one piece of this feature verified by code
+    reading rather than by test or live trigger. Flagged as a follow-up, not a blocker.
+11. Cleaned up: deleted all three seeded DEV rows (`dues_reminders`, `dues_payments`), the two
+    throwaway users (cascade removed their `user_roles`), and stopped the port-3002 dev server.
+    Verified via `psql` afterward: `dues_reminders` table is back to 0 rows, `qa-%` users/roles
+    are 0 rows. Left the `blocked_non_production` `email_queue` rows in place — consistent with
+    every prior phase's cleanup convention (that table is the accurate delivery record). **No
+    real email was sent or could have been sent** — `RESEND_API_KEY` stayed blank throughout, and
+    the guard is unconditional regardless.
+12. Did not run the Playwright suite. No `e2e/*.spec.ts` file targets this feature (confirmed by
+    listing `e2e/`), and Phase 3's own required-test list (§9) specified Vitest only — the
+    curl-driven real-session click-through above covers the functional and permission-boundary
+    flows a Playwright spec would otherwise exercise. Not claiming the existing e2e baseline was
+    re-verified either way.
+
+### Outputs
+
+**Type Check**
+`pnpm exec tsc --noEmit`: **PASS** — clean, no errors.
+
+**Unit Tests**
+`pnpm test`: **PASS**
+Total: 1443 | Passed: 1443 | Failed: 0
+Duration: 1.54s
+Failures: none.
+
+**Production Build**
+`pnpm build:only`: **PASS**
+Notes: 231 routes in the manifest; `/admin/dues/reminders` and `/api/admin/dues/reminders` both
+present as dynamic (`ƒ`) routes. No errors or warnings in build output.
+
+**Migration Idempotency**
+`pnpm db:migrate` run twice against DEV (`DATABASE_URL` only): both runs exit 0. First run showed
+`0086`/`0087` already applied (from earlier phases); second run identical — every statement
+produces a Postgres `NOTICE`-level "already exists, skipping," zero errors either run. Live
+`dues_reminders` schema (columns, types, nullability, both indexes, all four FKs) and
+`email_queue.cc`/`.bcc` (nullable `text`) verified directly against `information_schema`/
+`pg_indexes` and match `schema.ts` exactly.
+
+**End-to-End Tests**
+`pnpm test:e2e`: **Not run** — no Playwright spec targets this feature; substituted with a
+curl-driven real-session click-through (see What I did §7–10) covering permission boundary, send
+flow, and UI-data-correctness that a spec would otherwise assert.
+
+**Manual Click-Through**
+
+| Flow | Result | Notes |
+|------|--------|-------|
+| `dues.view`-only account blocked from `/admin/dues/reminders` (page) | pass | Real credentials sign-in, `307` → `/admin/dues` |
+| `dues.view`-only account blocked from `GET/POST /api/admin/dues/reminders` | pass | Real credentials sign-in, `403 Forbidden` both methods |
+| Same account reaches `/admin/dues` (control) | pass | `200` — confirms the block is specific, not a broader auth failure |
+| `dues.manage` holder: preview loads real signer/settings/cohorts | pass | James Shively, $120/$96, 39 unpaid / 0 partial (live data) |
+| Deny-by-default email guard, empty allowlist | pass | `EMAIL_DEV_ALLOWLIST` unset; both live-triggered sends landed `blocked_non_production`, Resend never invoked (`attempts=0`); reinforced by 4 dedicated automated tests in `email-guardrail.test.ts` |
+| `sendBulkMemberEmail()` unconditional block (not address-matching) | pass | Automated test asserts a fabricated never-seen address is still blocked — not re-triggered live, already proven by test |
+| Partial payer unchecked by default, different wording path | pass | Seeded a partial payment; SSR HTML shows no `checked` attribute on that row; cohort API returns `"partial"` |
+| Unpaid pre-checked by default | pass | SSR HTML shows `checked=""` on two unpaid rows |
+| No-email-on-file exclusion | code review only | `members.email` is `NOT NULL`; live-untestable without violating schema. `classifyRecipients()`'s `no_email_on_file` branch and the UI's "Excluded — no email on file" section both exist and are unit/code-reviewed |
+| 14-day cooldown badge renders from live data | pass | 5-days-ago row → amber badge; 20-days-ago row → gray badge, both via SSR HTML string inspection |
+| Fresh-query re-derivation at send time | pass | Requested member's cohort came back `"partial"` from the server despite being requested generically — proves the server never trusts client-submitted cohort |
+| `cc`/`bcc` display on `/admin/email-queue` | pass | Both `Bcc: jmshively@gmail.com` (dues reminder rows) and `Cc: jmshively@gmail.com` (pre-existing treasury-CC'd row) render in raw SSR HTML |
+| Treasury CC rule, 5 existing sends — tolerant failure vs. dues-reminder hard block | code review + existing automated coverage | Not live-triggered per explicit constraint (this is exactly what caused the 16-real-recipient incident); all 5 sites read correctly, `resolveTreasurer()` itself fully unit-tested |
+| First real send from `treasurer@westervillelions.org` (deliverability/spam) | **not verified** | External-system fact, cannot be tested inside the non-production guard by design — carried forward as an open item, same as every prior phase flagged |
+
+### Regression Tests Added
+
+None added by me — Phase 4 (api-developer) already delivered all 13 named unit tests plus the
+required "existing call sites unaffected" cc/bcc regression, and the deny-by-default guard's own
+regression test (`does NOT deliver to an ordinary individual recipient outside production`,
+explicitly noting in its own comment that it replaces the test that used to assert the opposite —
+the exact behavior that caused the 2026-08-12 incident) was added by the `ff613f1` fix commit
+before this session started. I verified all of them read correctly and pass; I did not need to
+write new ones because the design's required coverage was already complete and correct.
+
+### Coverage on Critical Modules
+
+- `src/lib/dues-reminders.ts`: full branch coverage per the 9 named tests (seasonLabel,
+  formatDuesAmount, subject, both body cohorts, note/XSS escaping, first-name escaping,
+  classifyRecipients incl. dedup, isWithinReminderCooldown incl. exact-14-day boundary).
+- `src/lib/board-positions.ts`: full branch coverage (no group / zero / one / multiple / case
+  insensitivity, structurally proven via compiled SQL).
+- `src/lib/email.ts`: guard (club-list, allowlist, case/display-name, production-only), cc/bcc
+  persistence and forwarding, `sendBulkMemberEmail()` unconditional block and per-recipient
+  failure isolation — all covered in `email-guardrail.test.ts`.
+- `src/lib/permissions.ts` / `src/lib/members.ts`: unchanged by this feature; not re-audited here.
+- Not independently measured via `pnpm test -- --coverage` this session — the named-test
+  cross-check above (every test in Phase 3 §9 present and passing) was used instead, matching the
+  "coverage isn't the goal" guidance for a feature whose full required test list is already known
+  and enumerated.
+
+### Feature-Gate Audit (mandatory before PASS)
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `GET /api/admin/dues/reminders` | yes | yes | `FEATURES.DUES_MANAGE` — correct: returns member names/emails/payment status, must not be reachable at the weaker `DUES_VIEW` the proxy admits at |
+| `POST /api/admin/dues/reminders` | yes | yes | `FEATURES.DUES_MANAGE` — correct: this is the send action |
+| `src/app/(dashboard)/admin/dues/reminders/page.tsx` | yes | yes | `FEATURES.DUES_MANAGE`, independent `redirect("/admin/dues")` in the page body — confirmed both by reading the file and by the live `307` against a real `dues.view`-only session |
+| Ledger reimbursement approve/reject/paid — treasury CC (3 sends) | n/a (pre-existing gate unchanged) | n/a — CC is not a new gated action, it's an additive header on an already-gated send | `resolveTreasurer()` used correctly for CC only, tolerant failure, does not alter the existing `LEDGER_APPROVE`/ownership gates on the underlying actions |
+| Ledger transactions E-1 disbursement-pending notice (2 sends) — treasury CC | n/a (pre-existing gate unchanged) | n/a | same as above |
+
+No new `FEATURES` key was introduced by this feature (confirmed against Phase 2/3's own ruling and
+against `src/lib/permissions.ts`), and none was needed — `dues.manage` already existed and already
+bound to `admin`/`treasurer`. The one gate this feature is actually exposed to attack on — the
+nested `/admin/dues/reminders` page and its API, sitting under a proxy that only enforces the
+weaker `DUES_VIEW` at the top-level `/admin/dues` segment — was independently re-verified with a
+real non-admin session in this session, not inferred from the design doc.
+
+### Open questions / handoff notes
+
+- **Next agent: analyst, for Phase 6.** This is a PASS; nothing here blocks shipping.
+- **Carry forward, still unverified (external-system fact, not fixable by more testing inside the
+  guard):** the first real send from `treasurer@westervillelions.org` needs a human to confirm it
+  lands and isn't spam-filtered before the treasurer sends to the actual unpaid list. Every prior
+  phase flagged this and it remains open — recommend the treasurer send one real reminder to
+  themselves (via `EMAIL_DEV_ALLOWLIST` in a real deploy, or the first production send) before
+  running the full ~38-person batch.
+- **Follow-up worth a backlog item, not a blocker:** no route-level automated test exercises the
+  treasury-CC behavior at the five existing ledger send sites (only `resolveTreasurer()` itself
+  and the dues-reminder path have direct coverage). Phase 3 never asked for one, and I deliberately
+  did not add live-trigger coverage given the explicit no-ledger-transactions constraint for this
+  session — but a mocked route-level test (mirroring how `dues-reminders.test.ts` covers
+  `classifyRecipients()`) would close this without ever needing a live send. Also worth noting:
+  `src/app/api/admin/ledger/reimbursements/[id]/route.ts` has no `route.test.ts` at all today
+  (`src/app/api/admin/ledger/transactions/route.ts` does, but it doesn't cover the E-1 CC path
+  either) — a pre-existing gap this feature's CC addition inherited rather than created.
+  Nominating for `docs/backlog.md`.
+- **B-47 (Resend bounce visibility)** was already queued by the `1a3b75b` fix commit, unrelated to
+  this feature's own scope but adjacent — no action needed from me, just noting it's tracked.
+- Confirmed, not assumed: the deny-by-default guard and the non-`destructive` confirm dialog are
+  both already live on `main` (commits `ff613f1`, `1a3b75b`), so anyone reading only the Phase 4
+  write-ups above (which predate both fixes) should treat this Phase 5 section, not those, as the
+  current state of `src/lib/email.ts` and `dues-reminder-sender.tsx`.
+
+---
+
+# Phase 6 — Shipped vs Intent (analyst)
+
+## VERDICT
+
+**SHIP WITH NOTES**
+
+## ONE-LINE TAKE
+
+A warm, non-collections dues nudge that a treasurer can preview, select, and send with a hard
+stop if nobody can be verified as the signer — the copy honestly reads as "super positive," the
+manual/BCC/CC requirements all shipped as asked, and the mid-build near-miss produced a safety
+fix (deny-by-default at the `sendEmail()` chokepoint) that is stronger than what this feature
+alone needed — but two honest gaps remain open and are being shipped as tracked follow-ups
+rather than blockers.
+
+## Re-walk against Phase 1
+
+### 1. "Make it super positive" — read against the actual shipped copy
+
+I read `src/lib/dues-reminders.ts` directly, not the work-log's quoted draft. The shipped copy
+matches the draft essentially verbatim, and it reads as intended:
+
+> "I hope this finds you well! I'm reaching out with a quick, friendly note — our records show
+> we haven't yet received your dues for the {season} Lions year. It's an easy thing to lose
+> track of, especially with everything else going on, so consider this a gentle nudge rather
+> than anything to worry about."
+
+> "If you've already sent a payment and it just hasn't made it into our records yet, please
+> just let me know — that happens on my end sometimes, and I'd love to get it squared away."
+
+> "Thank you, truly, for everything you do for our club and our community — it means a great
+> deal, and it's never gone unnoticed."
+
+This is not a polite invoice. It opens with warmth before the ask, frames the gap as the club's
+own record-keeping ("our records show," never "you have not paid"), offers "it's probably my
+mistake" as the default explanation, states the standard rate as a fact about the club rather
+than a demand on the member, and closes on gratitude rather than a call to action. The
+partial-balance variant is careful never to say "haven't paid" to someone who has — it says
+"a balance still remaining," which is the correct distinction Phase 1 asked for. Verdict:
+**matches intent, no drift.**
+
+### 2. "Manual" — confirmed
+
+Grepped the reminders route, `dues-reminders.ts`, `dues-reminders-queries.ts`, and
+`dues-reminder-sender.tsx`: no cron, no scheduled job, no send-on-login, no send triggered by
+any other event. The only path to `POST /api/admin/dues/reminders` is a `dues.manage` holder
+clicking Send after an explicit confirm. **Matches intent.**
+
+### 3. Signed by the current Treasurer — confirmed, and the failure mode is correct
+
+`resolveTreasurer()` in `src/lib/board-positions.ts` resolves the Board of Directors group
+member with `position = 'Treasurer'` (case-insensitive, trimmed, exact), never the sender. The
+POST route hard-blocks with a 400 before anything is sent if zero or multiple matches exist —
+verified by reading `route.ts` lines 131–145 directly. This is the right failure mode for a
+letter whose entire point is the signature: no guess, no fallback to the sender's own name.
+Live-verified by QA against real dev data (James Shively, the actual current office-holder, not
+Chris Henson) — confirms sender ≠ signer works as designed. **Matches intent.**
+
+### 4. BCC and the treasury CC rule — confirmed
+
+- Dues reminder: `route.ts` line 198, `bcc: treasurer.email` — the resolved office-holder's own
+  address, not the `treasurer@` alias, per the treasurer's own ruling that the alias may retain
+  no copy. Reply-To is the same address. Verified live by QA via `psql` on real send attempts.
+- The five existing treasury sends (three reimbursement, two ledger-transaction approver-loop
+  notifications): all five call `resolveTreasurer()` and CC the result when available,
+  confirmed by direct grep of both route files. The failure mode is correctly the *opposite* of
+  the reminder signer — tolerant, not hard-blocking: `console.warn` and the underlying email
+  still sends. That asymmetry is deliberate and correct: a reimbursement notice or an approval
+  alert is time-sensitive and must never be silently dropped over an unrelated data-entry gap in
+  `/admin/groups`, whereas a letter whose entire point is "who signed this" has no honest
+  degraded mode. **Matches intent, correctly differentiated.**
+
+### 5. The safety story — holds beyond this feature, which is the important finding here
+
+This is the part worth being adversarial about, so I read `src/lib/email.ts` directly rather
+than trusting the work-log's narration.
+
+What shipped is **not** what Phase 2 originally designed. Phase 2's `sendBulkMemberEmail()`
+unconditional block was scoped to "bulk sends to individual members" — a real improvement over
+the address-matching guard, but still a guard that a *different* call shape (a handful of
+approvers via a plain `sendEmail()` loop) could walk around. That is exactly what happened
+during api-developer's own verification: a real pending disbursement was created in dev, fired
+the pre-existing E-1 approval notification, and mailed 16 real board members a fake $500
+request — a second incident, inside this same build, through a path this feature's own guard
+didn't cover.
+
+The response was not to patch that one path. Commit `ff613f1` inverted the guard at the
+chokepoint itself: `sendEmail()` now denies by default outside production, full stop, unless the
+recipient is on `EMAIL_DEV_ALLOWLIST`. I read the current guard condition
+(`process.env.NODE_ENV !== "production" && !isDevAllowedRecipient(to)`) — it applies to every
+one of this codebase's ~18 `sendEmail()` call sites, not just the two started by this feature
+(`sendBulkMemberEmail()` and the five treasury CC sites). A future feature that mails one person
+or forty gets this protection without writing a line of guard code, because the block lives
+where all mail already has to pass through, not next to any one feature.
+
+This is a strong finding: **the safety story protects the whole app, not just this feature.**
+The 2026-08-12 incident produced a better invariant than the one Phase 1 asked for. Recorded in
+CLAUDE.md as "Outbound Email Is Deny-By-Default Outside Production" per QA's confirmation.
+**Exceeds intent.**
+
+Two things temper this without changing the verdict:
+- The incident happened *during this build*, mailed real board members, and there is no
+  automated regression test asserting the five treasury-CC sites themselves are safe outside
+  production under live conditions — QA deliberately verified those five by code review only,
+  to avoid re-triggering the same class of incident a third time. That is the right call given
+  the history, but it means the specific paths that already failed once are the ones with the
+  least direct proof. See follow-up B-49 below.
+- The deny-by-default guard is a codebase-wide invariant now, correctly, but that also means its
+  correctness is no longer something this feature's own work-log can fully vouch for going
+  forward — it's shared infrastructure. That's the intended outcome, not a defect, but future
+  features touching `sendEmail()` should not assume this feature's QA pass re-proves the guard
+  for them.
+
+### 6. Anything that crept in beyond the request
+
+- The CC rule (deliberate, requested mid-build, in scope).
+- `emailQueueId` added to `SendEmailResult` (additive, backward compatible, needed to link
+  `dues_reminders` rows to their `email_queue` row — reasonable, not scope creep).
+- The deny-by-default guard rewrite (§5) — not requested, but a direct, proportionate response
+  to an incident that happened inside this build. I do not consider this scope creep; treating
+  a live near-miss as out-of-scope would have been the wrong call.
+- Nothing else. No dollar-amount-owed figure, no payment CTA, no automatic scheduling, no
+  household-linking — all correctly held out of scope per Phase 1/2's own rulings.
+
+### 7. Usable by a treasurer who hasn't read the work-log
+
+Walking the screen cold: `/admin/dues` → "Send Reminders" → two labeled sections ("Unpaid,"
+pre-checked; "Balance remaining," unchecked) with name, email, a dues-category badge, and a
+"Last reminded" badge that turns amber inside 14 days — the cooldown signal is visible without
+needing to know the word "cooldown." The rendered email preview is shown before sending, with a
+clearly labeled placeholder name. If the Treasurer position is unset or ambiguous, there is no
+Send button at all and a plain-English message naming the reason with a link to fix it. The
+confirm dialog states the count and the signer by name. Nothing here requires reading the
+work-log to operate correctly — the screen is self-explanatory. **Matches Phase 1's "usable"
+bar.**
+
+One soft gap: the "Sent N of N" language and the per-recipient "Sent" pill both describe
+"accepted by Resend / queued," not "the recipient's inbox received it" — this is the entire
+codebase's existing convention (B-47, bounce visibility, is unbuilt everywhere, not just here),
+and the copy does not overclaim ("Sent," not "Delivered"). Acceptable as shipped, but worth
+naming explicitly per item 8 below rather than let it pass silently.
+
+### 8. Open items, weighed honestly
+
+- **No route-level automated test for the treasury CC at the five call sites.** QA's choice to
+  verify by code review rather than live-trigger a sixth incident was the right call given the
+  history — I would have made the same call. But "right call given the constraint" and "fully
+  verified" are different things, and the gap is real: a future refactor of the ledger routes
+  could silently drop the CC and nothing would fail red. This is a genuine follow-up, not
+  hand-waved.
+- **Bounce visibility (B-47) is unbuilt.** The copy was checked (§7) and does not imply
+  confirmed delivery anywhere I could find. This is an existing, already-tracked gap that
+  predates this feature and applies to every email in the app — correctly not this feature's
+  job to fix, correctly already on the backlog.
+
+Neither of these blocks shipping. Both are exactly the kind of thing "SHIP WITH NOTES" exists
+for: real, named, tracked, not swept under a rubber-stamp PASS.
+
+## What's Working
+
+- The unpaid/partial split and its wording discipline — "haven't paid" never appears for someone
+  who has partially paid; verified directly in the rendered body strings, not just in the design
+  doc.
+- The signer hard-block vs. CC tolerant-failure asymmetry — a genuinely correct distinction, and
+  the code implements it exactly as designed, not just as documented.
+- The safety response to the mid-build incident — the deny-by-default rewrite is the single best
+  outcome of this whole build, and it happened because api-developer disclosed the incident
+  immediately and in full rather than quietly cleaning it up, which is the behavior this pipeline
+  should reward.
+
+## Intent-vs-Shipped Diff
+
+| Phase 1 said | Shipped | Verdict |
+|---|---|---|
+| Manual send only, no schedule/cron | No trigger path exists besides the confirmed click | matches |
+| "Super positive" tone, no collections framing | Reads warm; verified against actual copy strings | matches |
+| Signed by the current Treasurer (office, not permission role) | `resolveTreasurer()`, hard-blocks on ambiguity | matches |
+| BCC the treasurer | BCC + Reply-To to office-holder's own address | matches (stronger than literal ask — alias-safe) |
+| Non-production block on bulk member sends, feature-local | Codebase-wide deny-by-default at `sendEmail()` | exceeds intent (architecturally better, forced by a real incident) |
+| CC treasurer on all treasury emails (mid-build ask) | Applied to all 5 existing sends, tolerant failure | matches |
+| Record of what was sent to whom | `dues_reminders` table, per-recipient success/error | matches |
+| Preview + confirm with named count before send | Two cohort lists, live preview, `<ConfirmDialog>` with exact count | matches |
+| (Implicit) delivery confirmation | Not claimed; "Sent" means accepted/queued, not delivered | acceptable drift — codebase-wide convention, not new to this feature |
+
+## Edge Cases
+
+| Case | Result |
+|---|---|
+| Empty state (no unpaid/partial members) | pass — `bg-gray-50 rounded-2xl p-10` empty-state copy present per Phase 3/4 |
+| Failure microcopy (signer ambiguous, dues not configured) | pass — plain-English blocking messages, no stack trace |
+| Permission gate (`dues.view`-only blocked) | pass — QA re-verified live with a real non-admin session: 307 on the page, 403 on both API methods |
+| Mobile at 360px | pass — stacked-card layout per ux-developer's write-up; not independently re-screenshotted by me, taken on QA's verification |
+| Brand consistency (`rounded-2xl`, `rounded-lg`, `ConfirmDialog`, no `window.confirm`) | pass — `ConfirmDialog` used, non-destructive per the 1a3b75b revert |
+| No native browser dialogs | pass |
+| Delivery-confirmation overclaim in copy | pass — "Sent," never "Delivered"; no inbox-received claim found |
+
+## Follow-ups (SHIP WITH NOTES)
+
+- **B-48 — Route-level automated test for the treasury CC rule at the five existing ledger send
+  sites** (reimbursement approve/reject/paid, the two `LEDGER_APPROVE`-approver-loop
+  notifications). Mock `resolveTreasurer()` and `sendEmail()` the way `dues-reminders.test.ts`
+  mocks its own dependencies — no live transaction, no live send, closing the gap QA correctly
+  declined to close by live-triggering. Prevents a future refactor from silently dropping the CC.
+- **B-49 — Confirm the guard rewrite covers what it's meant to, with a named regression test
+  per call shape.** `email-guardrail.test.ts` covers the club-distribution-list guard and
+  `sendBulkMemberEmail()`'s unconditional block; add an explicit test asserting a *single,
+  non-bulk* `sendEmail()` call to a fabricated non-allowlisted address is also blocked outside
+  production — the exact shape of call that caused the second incident (a `for` loop over
+  approver emails, one `sendEmail()` at a time, not routed through `sendBulkMemberEmail()`).
+  This closes the loop on "deny-by-default" actually meaning *every* shape, not just the bulk
+  one, with a test rather than a read-through.
+- Carried forward from QA, not new: the first real send from `treasurer@westervillelions.org`
+  needs a human to confirm it lands and isn't spam-filtered before the treasurer runs the full
+  ~38-person batch. Recommend the treasurer send one reminder to themselves first. Not a backlog
+  item — a one-time pre-flight the treasurer should do before the first real batch send.
+
+## Outputs
+
+- Work-log updated: this file — Phase 6 section added, Per-Phase Status row set to
+  SHIP WITH NOTES / 2026-08-12.
+- Verified directly against source (not just the work-log's narration):
+  `src/lib/dues-reminders.ts`, `src/lib/email.ts`, `src/lib/board-positions.ts`,
+  `src/app/api/admin/dues/reminders/route.ts`, the five treasury CC call sites in
+  `src/app/api/admin/ledger/reimbursements/[id]/route.ts` and
+  `src/app/api/admin/ledger/transactions/route.ts`,
+  `src/components/admin/dues-reminder-sender.tsx`, `docs/backlog.md`, and commits `ff613f1` /
+  `1a3b75b` on `main`.
+- Two new backlog items to add: **B-48** (route-level CC test coverage) and **B-49** (named
+  regression test for the deny-by-default guard covering non-bulk `sendEmail()` call shapes).
+
+## Open questions / handoff notes
+
+- B-48 and B-49 should be appended to `docs/backlog.md` following the existing entry format
+  (both are qa/api-developer-shaped work, not design work — no architect/tech-lead phase needed
+  to pick them up).
+- The pipeline closes here. No further phase is required for Dues Reminder Emails itself; B-48
+  and B-49 are tracked separately and get their own (lightweight) pipeline pass when picked up.
