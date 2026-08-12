@@ -797,3 +797,27 @@ Design each with the others in view — decisions in one box in the next.
   - Attachment or inline HTML? Minutes email inline by deliberate choice; a tax receipt a donor
     may need to keep for their records is a different case, and worth deciding rather than
     defaulting.
+
+- [ ] **B-46 — Consolidate the copy-pasted scaffolding around every email send.**
+  *(Raised 2026-08-12 by the treasurer, after the guardrail incident.)*
+
+  Not the send sites themselves: ~18 features legitimately send different messages. It is the
+  boilerplate repeated around each one, counted 2026-08-12:
+
+  | Duplicated | Copies |
+  |---|---|
+  | `process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org"` | 12 |
+  | Hand-rolled HTML escaper (3 identical one-liners, 3 multi-line variants) | 6 |
+  | `NEXTAUTH_URL` fallback for building links into emails | 8 |
+
+  **Why it matters beyond tidiness.** A rule that lives in twelve places is twelve places to
+  get it wrong, and no place to change it. The 2026-08-12 incident turned on exactly this
+  class of problem: behaviour that should have been decided once, centrally, was instead
+  scattered and therefore unreviewable. The escaper is worse than untidy — one copy was
+  missing entirely from the proposal emails until it was caught in review, which meant
+  member-supplied text going unescaped into a mail sent to the whole board.
+
+  **Shape of the fix:** a small `src/lib/email-compose.ts` owning the from-address, the app
+  URL, and escaping, so a send site supplies only its recipient, subject and body. Mechanical
+  and well covered by tests, but touches ~18 files, so it wants its own pass rather than being
+  smuggled into a feature.

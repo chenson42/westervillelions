@@ -521,13 +521,32 @@ Seven reviews run on rolling cadences to keep the codebase, docs, security postu
 |--------|---------|-------|---------------|
 | **Test coverage** | 7 d | qa | Coverage drifts faster than any other axis on a fast-moving project; a weekly sweep — Vitest unit tests, Playwright e2e, plus any manual click-throughs for flows the runner can't reach — catches gaps while the context for the missing tests is still recent. |
 | **Retrospective** | 7 d | all agents → tech-lead synthesizes | Pipeline efficacy needs short feedback loops — a weekly retrospective produces concrete edits to agents and to this file before bad patterns calcify. |
-| **Code** | 30 d | architect | Complexity hotspots, dead code, and quiet violations of invariants accumulate over weeks; a monthly pass keeps the codebase shaped the way the project is meant to be shaped. |
+| **Code** | 30 d | architect | Complexity hotspots, dead code, **copy-pasted logic that should be one shared helper**, and quiet violations of invariants accumulate over weeks; a monthly pass keeps the codebase shaped the way the project is meant to be shaped. |
 | **Documentation** | 30 d | tech-lead | Docs drift silently — a monthly audit catches stale environment-variable lists, broken cross-links, and CLAUDE.md sections that no longer match reality. |
 | **Security** | 30 d | api-developer + database-admin | A monthly sweep of auth boundaries (Google OAuth scopes, NextAuth session shape, member-data exposure), Google Group sync surface, OAuth-token storage, dependency CVEs, and OWASP surface area. |
 | **Agent & instruction** | 30 d | tech-lead | Agents and `.claude/` settings accumulate stale guidance, unused tools, and references to features that no longer exist; a monthly review keeps the instruction layer honest. |
 | **Dependencies** | 30 d | deployment-engineer | A monthly review of `pnpm outdated` and `pnpm audit` keeps the dependency graph current without inviting weekly churn. |
 
 Ownership claims for each review are reflected in the relevant agent file under `.claude/agents/` — read the named owner's agent file for the specifics of what each review covers and where its detail file lands.
+
+### Duplication Is a Review Finding, Not a Style Preference
+
+The code review must flag **the same decision implemented in more than two places** and
+require it be consolidated. This is a correctness rule, not tidiness: a rule living in twelve
+places is twelve places to get it wrong and nowhere to change it.
+
+The case that prompted it (2026-08-12): the from-address fallback for outbound mail was
+copy-pasted **12 times**, an HTML escaper **6 times** (in three different shapes), and the app-URL
+fallback **8 times**. One of those escaper copies had simply been omitted, sending
+member-supplied text unescaped into an email delivered to the whole board — caught in review
+by luck rather than by structure.
+
+What is NOT duplication: many features calling the same helper. Eighteen `sendEmail()` call
+sites are eighteen features that legitimately send different messages. The finding is the
+boilerplate repeated *around* each call, not the calls.
+
+When the reviewer finds it, the expected output is a backlog item with a count and a proposed
+shared home — not a note that the code "could be DRYer".
 
 ### Cadence Check at Session Start
 
