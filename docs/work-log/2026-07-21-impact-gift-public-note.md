@@ -32,7 +32,7 @@ note field, or leave as-is. **User chose: separate public note field.**
 **Requirement:** a new optional, treasurer-curated "public description" field
 on ledger transactions, shown on the member-facing impact page (drill-down
 rows; possibly Recent Named Gifts — Phase 1 to recommend), while memos stay
-fully internal. Motivating example: check #8263, $400 to The City of
+fully internal. Motivating example: check #8263 to The City of
 Westerville — the payee alone doesn't convey it sponsored the Westerville
 Autumn Arborfest 2026 (that context lives only in the internal memo today).
 
@@ -96,7 +96,7 @@ explicitly — no "the user" ambiguity in the source request.
 
 **Flow 1 — Treasurer adds/edits a note on an existing transaction (primary flow)**
 Entry: Admin with `LEDGER_RECORD` opens the edit dialog on a posted expense row (e.g., check
-#8263, City of Westerville, $400) from the fund register.
+#8263, City of Westerville) from the fund register.
 Step: sees a new "Public description" field (empty for every pre-existing row today), types
 "Sponsored Westerville Autumn Arborfest 2026" (recommended cap: 200 chars, single line).
 Step: submits PATCH.
@@ -143,7 +143,7 @@ dashboard failure path, unmodified by this feature.
   is the surface the request names directly.
 - **Recent Named Gifts (`ImpactRecentGifts` in `page.tsx`):** recommended. It's the
   highest-visibility surface on the page (always expanded, no click required) and the motivating
-  $400 Arborfest check is exactly the kind of row that lands there. Render the description as an
+  Arborfest check is exactly the kind of row that lands there. Render the description as an
   **additive, separate line** under the existing `$amount to party · cause · date` line — not
   appended inline with more `·` separators. Two reasons: (1) `cause` (beneficiaryCause) is a short
   taxonomy tag while the new field is a free-form sentence — conflating them on one line reads as
@@ -671,10 +671,10 @@ beneficiaries (Pilot Dogs, Eye Bank, OLF, LCIF, VOSH, Camp Echoing Hills, etc.).
 
 **Flagged for treasurer (⚠ unresolved):**
 1. 2025 scholarship recipients (three named individuals — see treasurer's records) — which schools?
-2. American Legion Post 171 ×2 $650 — Buckeye Boys State delegates? confirm.
+2. American Legion Post 171 ×2 — Buckeye Boys State delegates? confirm.
 3. The Big Bus ×2 — purpose unknown; needs treasurer's words.
 4. OSSBPTS Foundation ×2 — Ohio State School for the Blind support? confirm.
-5. Ohio Lions Foundation $200 (6/2025, blank memo) — sensory garden like 2026's,
+5. Ohio Lions Foundation (6/2025, blank memo) — sensory garden like 2026's,
    or different?
 
 The full per-row table was presented in-session; the applier should regenerate
@@ -829,7 +829,7 @@ Increment C JSX was already present in `transaction-form.tsx` (it was — receip
 
 - **Next agent: qa (Phase 5).** Recommended click-through list:
   1. As an admin with `LEDGER_RECORD`, open the edit dialog on check #8263 (The City of Westerville,
-     $400, 2026-05-18 — confirmed present in the local DB via `psql`, `public_note` currently empty)
+     2026-05-18 — confirmed present in the local DB via `psql`, `public_note` currently empty)
      and type `"Sponsored Westerville Autumn Arborfest 2026"` into the new **Public note** field,
      save. **This is the Phase 3 design's named Phase 6 acceptance case** — carrying it forward as
      the first thing qa should exercise, since I did not start a dev server per this task's
@@ -869,7 +869,7 @@ Increment C JSX was already present in `transaction-form.tsx` (it was — receip
 API routes reject overlong (>200 char) and non-expense `publicNote` writes with 400 and the specified
 human copy, and the field is editable on **existing** transactions (the design's named divergence
 from `beneficiaryCause`'s create-only gate) — all confirmed by source read and driven live. Live
-click-through on check #8263 (The City of Westerville, $400, Arborfest sponsorship) confirms the note
+click-through on check #8263 (The City of Westerville, Arborfest sponsorship) confirms the note
 round-trips through PATCH, renders on both `/members/impact` surfaces (cause drill-down under
 "Community & Civic" and Recent Named Gifts), wraps rather than overflows at 360px, and clears back to
 a true SQL `NULL` (not `""`) on both the DB and both member-facing surfaces. A new create-mode expense
@@ -900,7 +900,7 @@ or made — `LEDGER_RECORD` and the impact page's two-tier gate are unchanged an
    `page.request` against the running dev server (see temp Playwright specs, deleted after each run):
    - PATCH with a 201-char `publicNote` on check #8263 → **400**, `error` matched `/200 characters/i`.
    - PATCH with a non-empty `publicNote` on an existing **income** row (`ec700e20-...`, Kroger community
-     rewards, $29.77) → **400**, `error` matched `/expense transactions/i`. Row left untouched (400
+     rewards) → **400**, `error` matched `/expense transactions/i`. Row left untouched (400
      responses never reach the `db.update()` call) — confirmed via psql.
    - POST with a non-empty `publicNote` and `flow: "income"` → **400**, same expense-only message.
 3. **Dev-server click-through** (`signInAsAdmin`, per the recommended flow). Found check #8263 at
@@ -932,7 +932,7 @@ or made — `LEDGER_RECORD` and the impact page's two-tier gate are unchanged an
      `member_id` was empty — this is the documented **B-02** test-infrastructure gap, not a defect in
      this feature). Used the **temporary-linkage approach** from
      `docs/work-log/2026-07-21-impact-cause-drilldown.md` Phase 6: `UPDATE users SET member_id =
-     '55d967c9-...' (A J Westlund, an existing active member with no bearing on page content — the
+     '55d967c9-...' (an existing active member with no bearing on page content — the
      dashboard shows club-wide totals, not the linked member's own data) WHERE id =
      '0063654b-...'` (the e2e admin), confirmed the update, ran the surface checks live in a real
      browser, then reverted (`UPDATE users SET member_id = NULL ... RETURNING id, member_id` — confirmed
@@ -1036,7 +1036,7 @@ key, rendered as a separate plain-text line on both named surfaces (cause
 drill-down, Recent Named Gifts), absent for every un-curated row with no
 placeholder clutter. I re-walked every Phase 1 flow against the live app rather
 than trusting QA's report alone, and performed the Phase 1/3-named acceptance
-case for real: check #8263 (The City of Westerville, $400) now carries the
+case for real: check #8263 (The City of Westerville) now carries the
 treasurer-approved text "Sponsor of the Westerville Autumn Arborfest 2026" in
 the local DB, confirmed rendering on both member-facing surfaces, and it is
 **left in place** (not reverted) per this session's instructions — local now
@@ -1069,7 +1069,7 @@ carries its first real curated note.
     this exact round-trip-persistence check successfully with a different
     test string on the same field/route. Not treated as a new gap.
 - Temporarily linked the e2e admin's `users.member_id` to an existing active
-  member (A J Westlund, `55d967c9-b4c0-4594-9b27-a8220c12da46` — same
+  member (`55d967c9-b4c0-4594-9b27-a8220c12da46` — same
   precedent member used in this work-log's own Phase 5 and in
   `docs/work-log/2026-07-21-impact-cause-drilldown.md` Phase 6) to view
   `/members/impact` as a linked member.
@@ -1161,7 +1161,7 @@ All five Phase 1 gaps closed. No open gap carries forward.
 ### Acceptance-case confirmation
 
 Check #8263 (`id 5ab6494e-707d-46e4-ad75-c53f34484221`, The City of
-Westerville, $400, 2026-05-18) now carries `public_note = "Sponsor of the
+Westerville, 2026-05-18) now carries `public_note = "Sponsor of the
 Westerville Autumn Arborfest 2026"` in the local DB — set through the real
 running app (not a direct SQL insert), confirmed rendering in both **Recent
 Named Gifts** and the **Community & Civic** cause drill-down on

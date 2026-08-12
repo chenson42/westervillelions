@@ -3,8 +3,8 @@
  * FY2025 Charitable-fund actuals (treasurer-approved 2026-07-27/28).
  *
  * WHY THIS SCRIPT EXISTS: the FY2026 Foundation Charitable-fund budget rows
- * for "Charitable donation out" ($15,325.00), "Grant out" ($3,400.00), and
- * "Scholarships" ($7,500.00) currently exist only as lump sums (auto-seeded
+ * for "Charitable donation out", "Grant out", and
+ * "Scholarships" currently exist only as lump sums (auto-seeded
  * from FY2025 actuals — B-17/DECISION-045 Increment A). This script breaks
  * each lump into cause+label child rows (ledger_budget_lines) so the FY2026
  * budget carries the same donor/grantee-level detail the FY2025 actuals do,
@@ -32,7 +32,7 @@
  *   - "Charitable donation out": one labeled line per (cause, party) —
  *     multiple FY2025 rows sharing the same (cause, party) combine into ONE
  *     line (e.g. the two "Gates At Eight" / Youth & Education rows become a
- *     single $1,000 line) — EXCEPT party "Qdoba", whose amount is folded into
+ *     single combined line) — EXCEPT party "Qdoba", whose amount is folded into
  *     that cause's generic (label='') line instead of getting its own label
  *     (a restaurant name isn't a meaningful beneficiary label).
  *   - "Grant out": every row keeps its party as the label (no drops).

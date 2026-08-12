@@ -1457,7 +1457,7 @@ situation.
 
 The treasurer decided both Phase 6 follow-ups get fixed before shipping, not deferred. Fix 1 (priority)
 makes lump-sum `ledgerBudgets` rows — a whole budget category with no `ledgerBudgetLines` children, e.g.
-"Rudolph Run expenses $10,000" — searchable and correctly displayed, superseding DECISION-063 #4's
+"Rudolph Run expenses $9,200" — searchable and correctly displayed, superseding DECISION-063 #4's
 increment-1 scope decision. Fix 2 adds category-name matching to the transaction free-text OR-group so
 both result sections respond consistently to a category-name search term. Both fixes are confined to the
 query layer (`src/lib/ledger-search-queries.ts`) and the budget-lines results component
@@ -1602,8 +1602,8 @@ already covered, no new escape-order edge case introduced by either fix.
 Added to `e2e/ledger-search.spec.ts` (a flow genuinely changed — Fix 1 introduces new on-screen row shape
 and a new highlight-anchor path):
 
-- **New test:** a lump-sum budget category (real FY2025 dev-DB data — "Rudolph Run expenses $10,000" and
-  "Rudolph Run – Sponsorships & Donations $11,468", Foundation/Charitable, zero cause-line children,
+- **New test:** a lump-sum budget category (real FY2025 dev-DB data — "Rudolph Run expenses $9,200" and
+  "Rudolph Run – Sponsorships & Donations $10,610", Foundation/Charitable, zero cause-line children,
   confirmed via read-only query that no cause line anywhere matches "Rudolph" either, so the test is
   unambiguous) is searchable, renders with a "Lump sum" badge and "Not itemized by cause" label text, and
   its `?highlight=` click-through lands on the correct fund+FY budgeting drill-down with the param
@@ -1709,10 +1709,10 @@ raw SQL rather than trusting the query layer under test.
 
 A throwaway harness called `searchBudgetLines()` / `searchTransactions()` directly against the DEV
 database and compared every answer to ground truth computed in raw SQL (34 cause lines + 33 lump sums
-= 67 rows, $57,590.00 expense). All checks passed:
+= 67 rows, $53,140.00 expense). All checks passed:
 
 - **Counts and subtotals span BOTH query branches** — `totalCount` 67 = 67 expected; expense subtotal
-  $57,590.00 exact; income and expense reported separately, never netted.
+  $53,140.00 exact; income and expense reported separately, never netted.
 - **No double-counting** — zero parents-with-children emitted as lump sums; lump-sum row count (33)
   matches the SQL anti-join exactly; lump-sum rows carry null cause AND null label; cause-line rows
   always carry a cause.
@@ -1720,7 +1720,7 @@ database and compared every answer to ground truth computed in raw SQL (34 cause
   out of the database) — 67 rows walked across 2 pages, 67 unique: nothing duplicated, nothing
   dropped. The expense subtotal is byte-identical on page 1 and page 2.
 - **The Phase 6 gap is closed** — "Rudolph" returns 4 lump-sum budget rows; "Scholarships" returns
-  both a $7,500 lump sum and a $500 cause line, correctly distinguished.
+  both a $6,900 lump sum and a $460 cause line, correctly distinguished.
 - **Wildcards stay literal** — a bare `%` matched 0 of 67 budget rows; a bare `_` matched 0 of 281
   transactions.
 - **Fix 2 confirmed** — "Postage" surfaces a transaction that matches ONLY via its category name.
@@ -1834,7 +1834,7 @@ client-side heuristic that could drift out of sync with the data:
   since a lump sum has no `cause`/`label`/line-`note` to match against), which is correct and documented,
   not a hidden gap: a lump sum's honest searchable surface really is smaller than a cause line's.
 - Subtotals are correct across the merge: the Phase 5 re-verify's independent harness reproduced the exact
-  dollar total from raw SQL ($57,590.00 expense across 67 rows) by calling `searchBudgetLines()` directly
+  dollar total from raw SQL ($53,140.00 expense across 67 rows) by calling `searchBudgetLines()` directly
   and comparing against ground truth computed separately — not by trusting the function's own arithmetic.
   I read the `reduce()` calls in the code myself and they match what I'd expect: flow-split, never netted,
   summed over the full merged array before pagination, consistent with the pre-existing

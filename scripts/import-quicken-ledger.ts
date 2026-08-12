@@ -22,7 +22,7 @@
  *   - scripts/backfill-check-numbers.ts — checkNumber column (T-18, DECISION-034)
  *   - Bags-to-Benches → "Program supplies" recategorization (T-22)
  *   - public gift descriptions / public_note (T-23, migration 0058)
- *   - +$250 petty-cash opening adjustment on the club/admin fund (T-20)
+ *   - a petty-cash opening adjustment on the club/admin fund (T-20)
  *
  * Idempotency model (why re-running is DESTRUCTIVE, not merely redundant): on
  * --apply the script DELETES every ledger_transactions row whose memo ends with
@@ -31,7 +31,7 @@
  * reconciled state from the CSV's static "Clr" column. Re-running would wipe
  * every post-seed edit listed above, orphan/cascade-delete acknowledgment
  * letters, and clobber the T-20 petty-cash opening (this script still hard-codes
- * the register-only $19,090.10 club opening). There is NO supported "re-run to
+ * the register-only club opening balance). There is NO supported "re-run to
  * pick up a new derived field" path: new columns on the already-seeded data are
  * added by dedicated additive UPDATE scripts (e.g. backfill-check-numbers.ts),
  * never by this importer. Kept in the repo for provenance/reference only.
@@ -79,12 +79,14 @@ export const ADMIN_CSV =
   "/Users/cshenso/Documents/Treasurer Transfer Documents 07-2024 to 06-2026/Administrative Account/WLC Quicken Register Export 2024-2026.csv";
 
 // Opening balances (cents) per Phase-4 spec.
-const FOUNDATION_CHARITABLE_OPENING_CENTS = 2_856_930; // 29,569.30 carryover - 1,000.00 (check #8022, pre-window)
-const CLUB_ADMINISTRATIVE_OPENING_CENTS = 1_909_010; // register opening 6/30/2024
+// Real figures redacted for the public repo — placeholders only, this script is
+// historical (already applied) and has no supported re-run.
+const FOUNDATION_CHARITABLE_OPENING_CENTS = 999_999; // $9,999.99 (placeholder — carryover minus pre-window check, real figure redacted)
+const CLUB_ADMINISTRATIVE_OPENING_CENTS = 999_999; // $9,999.99 (placeholder — register opening 6/30/2024, real figure redacted)
 
 // Balance targets (cents) the imported data must reconcile to.
-const FOUNDATION_TARGET_ENDING_CENTS = 483_657; // $4,836.57
-const CLUB_TARGET_ENDING_CENTS = 1_621_864; // $16,218.64 (administrative + activity combined)
+const FOUNDATION_TARGET_ENDING_CENTS = 999_999; // $9,999.99 (placeholder — real reconciliation figure redacted)
+const CLUB_TARGET_ENDING_CENTS = 999_999; // $9,999.99 (placeholder — administrative + activity combined, real figure redacted)
 
 // ---------------------------------------------------------------------------
 // CSV parsing
@@ -286,9 +288,12 @@ function deriveCause(args: {
   if (ci(payeeRaw, "westerville caring and sharing")) return CAUSE_HUNGER;
   if (ci(payeeRaw, "cohatch worthington")) return CAUSE_HUNGER;
   if (ci(payeeRaw, "the big bus")) return CAUSE_HUNGER;
-  if (ci(payeeRaw, "howard baum") && (ci(memo, "trash bag") || ci(memo, "bags to benches")))
+  // The next two payee strings originally named two real members reimbursed for
+  // recycling-program supplies; redacted for public release since this script
+  // is historical/frozen (see the header) and will never run against real data again.
+  if (ci(payeeRaw, "a volunteer") && (ci(memo, "trash bag") || ci(memo, "bags to benches")))
     return CAUSE_RECYCLING;
-  if (ci(payeeRaw, "jane enneking")) return CAUSE_RECYCLING;
+  if (ci(payeeRaw, "a second volunteer")) return CAUSE_RECYCLING;
   if (ci(payeeRaw, "costco") && ci(memo, "trash bag")) return CAUSE_RECYCLING;
   if (["Bags to Benches Expenses", "Bags to Benches", "Bench Plaques", "Plastic Bags"].includes(category))
     return CAUSE_RECYCLING;
@@ -428,7 +433,7 @@ function mapFoundation(row: RawRow): { fundKind: string; categoryName: string; p
     }
     if (row.checkNum === "8245") return { fundKind: "charitable", categoryName: "Charitable donation out" }; // Qdoba
     // Bags to Benches supplies mis-filed as Miscellaneous in the register (9/23/2025
-    // Howard Baum $24.99) — belongs with its sibling supply rows in Service projects.
+    // a purchase from an individual) — belongs with its sibling supply rows in Service projects.
     if (/bags to benches/i.test(row.memo)) {
       return { fundKind: "charitable", categoryName: "Service projects" };
     }
@@ -821,7 +826,7 @@ async function main() {
     if (!clubEntity || !foundationEntity) throw new Error("Missing club/foundation ledger_entities rows");
 
     // --- Pre-step 1: delete test transactions (and their acknowledgments) ---
-    const testParties = ["Jane Doe", "Quid Pro Quo Donor", "Small Donor", "A J Westlund"];
+    const testParties = ["Jane Doe", "Quid Pro Quo Donor", "Small Donor", "Fourth Test Party"];
     const testTxns = await tx
       .select({ id: ledgerTransactions.id, party: ledgerTransactions.party, txnDate: ledgerTransactions.txnDate })
       .from(ledgerTransactions)

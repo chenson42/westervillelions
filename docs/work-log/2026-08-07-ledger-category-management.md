@@ -1378,7 +1378,7 @@ comment, and the merge dialog — no schema change, no new endpoint.
 - Read `src/lib/ledger-category-queries.ts` in full (`getCategoryImpact`, `updateCategory`, `determineCategoryUpdateAction`, `mergeCategories`) to confirm the merge/impact transaction-count queries are structurally identical (same `count()` over `ledger_transactions` filtered on `categoryId`), which is *why* the merge refusal message and the impact endpoint's count can never diverge — confirmed this by construction, not just by test.
 - Grepped `src/components/admin/ledger/category-*.tsx` and the new page for `window.confirm|alert|prompt` — zero matches. Confirmed every destructive/retroactive action (`Deactivate`, `Merge`, `countsAsGiving` flip, rename-with-locked-year) routes through `<ConfirmDialog>` by reading each component (`category-rename-dialog.tsx`, `category-flags-dialog.tsx`, `category-merge-dialog.tsx`, `category-deactivate-confirm.tsx`, `category-list.tsx`'s reactivate dialog).
 - Queried the dev DB (`DATABASE_URL` only — never touched `PROD_DATABASE_URL`) read-only to find real fixture categories spanning the scenarios the brief asked for: a category with transactions across three fiscal years (`Charitable donation out`, Foundation, 39 transactions across FY2024/2025/2095), a giving-eligible category with real posted transactions (`Rudolph Run expenses`, 30 transactions), and several zero-transaction categories for merge testing.
-- Computed ground truth independently via SQL for: the multi-FY category's transaction count (39) and budget-line fiscal years (`{2025, 2095, 2097, 2098, 2099}`), and the giving-eligible category's `postedGivingCents` under `getPhilanthropy`'s exact filter (`status='posted'`, no transfer group, `flow='expense'`, fund kind in `activity|charitable|scholarship`) — **$20,434.17 / 2,043,417 cents**.
+- Computed ground truth independently via SQL for: the multi-FY category's transaction count (39) and budget-line fiscal years (`{2025, 2095, 2097, 2098, 2099}`), and the giving-eligible category's `postedGivingCents` under `getPhilanthropy`'s exact filter (`status='posted'`, no transfer group, `flow='expense'`, fund kind in `activity|charitable|scholarship`) — **$18,850.00 / 1,885,000 cents**.
 - Wrote `e2e/ledger-category-management.spec.ts` (13 tests, Playwright/Chromium, real dev server, real sign-in via `signInAsAdmin`) and ran it to a clean pass. This is a **permanent addition to the regression suite**, not a one-off script — see Regression Tests Added.
 - Used the app's own already-shipped, `LEDGER_APPROVE`-gated Approve & Lock / Unlock endpoints (`POST /api/admin/ledger/budget-approvals`, `POST .../unlock`) to create and remove the locked-fiscal-year scenarios the brief required, rather than writing to `ledger_budget_approvals` directly — the same thing a treasurer would do by hand, and consistent with this e2e suite's existing black-box discipline (`admin-security.spec.ts`'s own stated precedent: "no test reaches into the DB directly").
 - Hit two real bugs in my own test authoring during this pass (documented so the next reader doesn't mistake them for app defects): (1) an unscoped `getByLabel` matched the wrong "Counts toward reported community giving" checkbox because the "+ New Category" dialog carries an identically-labeled checkbox even while closed — fixed by scoping to the open dialog's role; (2) two assertions read `GET .../impact` immediately after a UI-driven mutation, racing the browser tab's own in-flight `fetch` against my separate `page.request` call — fixed by polling (`pollImpactField`) instead of a single immediate read. Both were caught, the underlying app behavior was re-verified as correct once the test was fixed, and any dev-DB state the buggy runs left behind was restored (see Manual Click-Through and Outputs).
@@ -1425,13 +1425,13 @@ Per the brief's known-bad baseline note: did **not** run the full `pnpm test:e2e
 | Merge's transaction-count refusal cites the same count as the impact endpoint | pass | Refusal message reads "...has 39 transactions..." — identical figure, same underlying query. |
 | Rename — no locked year | pass | Plain save, no `<ConfirmDialog>`; real category (`Insurance & bonding`) renamed and restored. |
 | Rename — locked fiscal year | pass | Locked Foundation FY2025 via the real Approve & Lock API; rename dialog showed the `FY2025 (locked)` chip and the locked-year disclosure sentence; Save routed through a non-destructive `<ConfirmDialog>` naming FY2025; confirmed; renamed; restored name and unlocked FY2025 afterward. |
-| `countsAsGiving` dollar impact vs. `getPhilanthropy` | pass | `Rudolph Run expenses`: impact endpoint's `postedGivingCents` = 2,043,417 (= $20,434.17), matching an independent SQL sum under `getPhilanthropy`'s exact WHERE clause. Toggling the flag on through the real UI showed the identical dollar figure in both the pre-commit copy and the `<ConfirmDialog destructive>` body, persisted server-side, then was restored to its original value. |
+| `countsAsGiving` dollar impact vs. `getPhilanthropy` | pass | `Rudolph Run expenses`: impact endpoint's `postedGivingCents` = 1,885,000 (= $18,850.00), matching an independent SQL sum under `getPhilanthropy`'s exact WHERE clause. Toggling the flag on through the real UI showed the identical dollar figure in both the pre-commit copy and the `<ConfirmDialog destructive>` body, persisted server-side, then was restored to its original value. |
 | Merge refusal — both sides have a budget row in the same FY | pass | `Event costs` → `Service projects` (both Club, FY2099): 409, message names `FY2099` and says "resolve by hand." |
 | Merge refusal — inactive destination | pass | Deactivated `Eyeglass recycling`, attempted merge into it: 409 "...it is deactivated. Reactivate it first." Reactivated; same merge then previewed successfully. |
 | Merge refusal — current FY locked | pass | Locked Club FY2026 via the real Approve & Lock API; merge attempt in Club scope refused with a lock-related 409; unlocked afterward. |
 | A merge that should succeed | pass | `Event costs` → `Charitable donation out` (Club), driven through the real dialog end to end: plan previewed the FY2099 amount, `<ConfirmDialog destructive>` gated the apply, budget row re-pointed in one transaction, source's transaction count stayed 0 (untouched). Restored by merging the row back (itself a second, symmetric real merge). |
 | Deactivate — no open balance | pass | Plain `<ConfirmDialog destructive>` with no "Warning:" line for a category with zero budget rows. |
-| Deactivate — open, non-locked current-FY balance | pass | Warning line appeared inside the dialog body (`FY2026`, `$1000.00`), Deactivate button stayed enabled (warning, not a block) — deactivation succeeded. |
+| Deactivate — open, non-locked current-FY balance | pass | Warning line appeared inside the dialog body (`FY2026`, `$920.00`), Deactivate button stayed enabled (warning, not a block) — deactivation succeeded. |
 | Reactivate | pass | Recovered the mis-clicked-deactivate category with one click, no SQL needed. |
 | No native browser dialogs | pass | `page.on("dialog", ...)` listener armed for the entire suite; never fired. Backed by a static grep across every new component (zero matches for `window.confirm|alert|prompt`). |
 | Permission gate — unauthenticated | pass | `/admin/ledger/settings/categories` redirects an unauthenticated visitor to `/signin`. |
@@ -1608,8 +1608,8 @@ scoped follow-ups.
 - **Treasurer Decision 4 said:** hard delete is off the table; `isActive = false` is the only safe
   removal path. **Shipped:** no delete route or button exists anywhere in this feature.
   **Verdict: matches.**
-- **The "Supplies → Program supplies" merge also raised the destination's budgeted amount** ($75 →
-  $700) in the same operation, per the script's own header. **Shipped merge only ever re-points
+- **The "Supplies → Program supplies" merge also raised the destination's budgeted amount** ($70 →
+  $645) in the same operation, per the script's own header. **Shipped merge only ever re-points
   `category_id`** — it has no amount field. **Verdict: acceptable drift** (amount edits correctly stay
   the Budget Editor's job, not merge's), but worth naming so nobody expects merge alone to fully
   replicate that specific historical operation — a manual budget-amount edit is still a required
@@ -1658,7 +1658,7 @@ scoped follow-ups.
    asked for in the ux-developer handoff and QA's report doesn't show it was exercised.
 5. **Note in the merge dialog's copy (or the treasurer-facing docs) that merge does not adjust the
    destination's budgeted amount** — the real "Supplies → Program supplies" operation this feature is
-   modeled on also raised the destination's budget by $625 in the same step; that still requires a
+   modeled on also raised the destination's budget by $575 in the same step; that still requires a
    separate Budget Editor edit after merging.
 
 ## Red Flags (if NEEDS REWORK)
@@ -1725,12 +1725,12 @@ touching — has **no** approval row at all, so it reads `locked: false` by the 
 unlocked by default" convention.
 
 Tracing the real merge concretely: `Awards` (Club, Administrative, expense) currently has exactly
-one budget row — FY2025, $200, confirmed 0 transactions. `Member recognition` has no budget rows.
+one budget row — FY2025, $150, confirmed 0 transactions. `Member recognition` has no budget rows.
 Running Awards → Member recognition through the shipped UI today: same scope (pass), destination
 active (pass), current-FY-2026 lock check (pass, unlocked), source transaction count 0 (pass), no
 both-sides collision (destination has no rows) (pass), plan = `[{fiscalYear: 2025, locked: false}]`
 — **step 8 finds no locked years and the merge proceeds**, re-pointing the FY2025 row to `Member
-recognition`. `Supplies` (also FY2025-only, $75, 0 transactions) traces identically against
+recognition`. `Supplies` (also FY2025-only, $60, 0 transactions) traces identically against
 `Program supplies`.
 
 ### Judge Answers
@@ -1889,7 +1889,7 @@ corrected in place, struck through), and unit + e2e coverage using real fixtures
   describe the new coverage. Started a real local dev server against `DATABASE_URL` (never
   `PROD_DATABASE_URL`) and ran the whole spec file: **15/15 passed**, including the new test in
   isolation and again as part of the full 15-test run — confirmed via read-only SQL afterward that
-  `Contingency` still holds its FY2025/$500 row and `Disaster relief` still has zero budget rows
+  `Contingency` still holds its FY2025/$460 row and `Disaster relief` still has zero budget rows
   (the refusal path never writes, as expected). Stopped the dev server and deleted
   `test-results/`/`playwright-report/` afterward.
 - Ran `pnpm exec tsc --noEmit` — clean.

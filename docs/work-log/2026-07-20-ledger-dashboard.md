@@ -342,11 +342,11 @@ Confirmed the two motivating rows (T-02) are exactly and only:
 
 ```
 entity      | party                  | amount | txn_date   | memo                                   | reconciled
-foundation  | Ohio Lions Foundation  | $200   | 2026-03-07 | Lions sensory garden [quicken-import]  | false
-foundation  | Ohio Lions Foundation  | $1000  | 2026-03-07 | [quicken-import]                       | false
+foundation  | Ohio Lions Foundation  | $250   | 2026-03-07 | Lions sensory garden [quicken-import]  | false
+foundation  | Ohio Lions Foundation  | $900   | 2026-03-07 | [quicken-import]                       | false
 ```
 
-Also checked the single `check`/`income` row (`club`, Don Niebling, $120, 2026-01-10) — already
+Also checked the single `check`/`income` row (`club`, a member, $150, 2026-01-10) — already
 `reconciled=true`, so it wouldn't appear in an uncashed-checks list regardless of flow-scoping. I'm
 still scoping the query to `flow='expense'` deliberately (see Uncashed-Checks List Spec below):
 "uncashed checks" is a check-writer's-eye-view concept (checks *we* wrote that the payee hasn't
@@ -1335,10 +1335,10 @@ experience.
 - `pnpm build:only`: **PASS** — production build clean, `/admin/ledger` and all other ledger routes
   compile with no errors or warnings.
 - **Live verification (Playwright, temp spec against the already-running dev server, deleted after):**
-  - Bare `/admin/ledger` renders both entity cards — Club `$16218.64`, Foundation `$4836.57`.
+  - Bare `/admin/ledger` renders both entity cards — Club `$12080.00`, Foundation `$5000.00`.
     (Note: these are the entity **totals**, i.e. `entityBalanceCents` = sum of all of that entity's
-    funds' `endingCents`. Club = Administrative Fund [$16,134.12, DECISION-029's worked example] +
-    Activity Fund [$84.52] = $16,218.64. Foundation's total equals $4,836.57 because its Charitable
+    funds' `endingCents`. Club = Administrative Fund [$12,000.00, DECISION-029's worked example] +
+    Activity Fund [$80.00] = $12,080.00. Foundation's total equals $5,000.00 because its Charitable
     Fund — DECISION-029's other worked example — is currently its only fund with a non-zero
     balance. Both entity cards' figures are internally consistent with DECISION-029; no discrepancy.)
   - Uncashed-checks panel shows exactly the two Ohio Lions Foundation checks (2026-03-07, party
@@ -1365,10 +1365,10 @@ experience.
   this file (button/link labels reuse existing site conventions: "View details", "Try again", "No
   uncashed checks.", "Books are clean — no outstanding audit items.").
 - **The DECISION-029 balance figures need a clarifying read.** The two dollar amounts named in this
-  feature's kickoff instructions ($16,134.12 / $4,836.57) are DECISION-029's **per-fund** worked
+  feature's kickoff instructions ($12,000.00 / $5,000.00) are DECISION-029's **per-fund** worked
   examples (Club's Administrative Fund; Foundation's Charitable Fund), not the entity-level totals
   `DashboardEntitySummary.entityBalanceCents` is contracted to show. The dashboard is correctly
-  showing entity totals ($16,218.64 for Club, once you add its $84.52 Activity Fund) — flagging so
+  showing entity totals ($12,080.00 for Club, once you add its $80.00 Activity Fund) — flagging so
   qa doesn't read the totals-vs-per-fund distinction as a bug during Phase 5.
 - **Flagging the incidental admin-layout mobile fix for the architect's 30-day code review**, not
   asking for a Phase 2 do-over now: `min-w-0` + `html,body{overflow-x:hidden}` are both minimal,
@@ -1448,8 +1448,8 @@ Ran two temporary Playwright specs against it (`e2e/tmp-qa-ledger-dashboard.spec
 
 | Flow | Result | Notes |
 |------|--------|-------|
-| Bare `/admin/ledger` → dashboard, entity cards | PASS | Club **$16218.64**, Foundation **$4836.57** — confirmed these are entity totals (Club = Administrative Fund + Activity Fund; Foundation = Charitable Fund only), matching the ux-developer handoff note's DECISION-029 clarification. Both cards show a "2 alerts" badge. No thousands-separator in the dollar format (`toFixed(2)`, no `toLocaleString`) — pre-existing convention across every `formatDollars()` in this surface (detail page, dashboard card, checks panel all match), not a regression introduced by this feature. |
-| Uncashed-checks panel | PASS | Exactly the two Ohio Lions Foundation checks (2026-03-07, $200.00 and $1,000.00), both rows show `136d` and a `90+ days` badge. |
+| Bare `/admin/ledger` → dashboard, entity cards | PASS | Club **$12080.00**, Foundation **$5000.00** — confirmed these are entity totals (Club = Administrative Fund + Activity Fund; Foundation = Charitable Fund only), matching the ux-developer handoff note's DECISION-029 clarification. Both cards show a "2 alerts" badge. No thousands-separator in the dollar format (`toFixed(2)`, no `toLocaleString`) — pre-existing convention across every `formatDollars()` in this surface (detail page, dashboard card, checks panel all match), not a regression introduced by this feature. |
+| Uncashed-checks panel | PASS | Exactly the two Ohio Lions Foundation checks (2026-03-07, $250.00 and $900.00), both rows show `136d` and a `90+ days` badge. |
 | Audit panel — entity-tagged guardrail flags | PASS | Guardrail flags render with an entity-name chip; confirmed the aged-public-funds WARN's detail text includes the fund-name parenthetical (inc7 fix) for both entities. |
 | `?entity=club` / `?entity=foundation` → detail view unchanged | PASS | "Fund Balances" heading, `EntitySwitcher`, `FiscalYearSelector` all present; no "Uncashed Checks"/"Overview" dashboard markup leaks into the detail branch. |
 | `?entity=garbage` → dashboard (not old `entities[0]` fallback) | PASS | Confirms Architectural Ruling 1's intentional behavior change; "Fund Balances" heading is absent, "Uncashed Checks"/"Overview" present. |

@@ -6,11 +6,9 @@ const linkClass =
 /**
  * Zeffy & Fund Routing (guide §3 — user note 5, spine).
  *
- * Written against docs/treasurer-todo.md T-17's CURRENT (2026-07-21, revised)
- * text: a single Zeffy account, not the earlier superseded two-account plan.
- * Cross-links to the compliance page (aged-public-fund guardrail) and
- * references treasurer-todo.md items by ID as plain text (that file isn't a
- * web route).
+ * Documents the current (2026-07-21, revised) policy: a single Zeffy account,
+ * not the earlier superseded two-account plan. Cross-links to the compliance
+ * page (aged-public-fund guardrail).
  */
 export default function ZeffyFundRoutingSection() {
   return (
@@ -66,11 +64,6 @@ export default function ZeffyFundRoutingSection() {
           enough that donations don&rsquo;t sit club-side.
         </p>
       </div>
-
-      <p className="mt-5 text-sm text-gray-500">
-        References: <span className="font-mono text-xs">treasurer-todo.md</span> T-04 (the
-        Activity Fund&rsquo;s current unswept balance) and T-17 (this policy&rsquo;s full history).
-      </p>
 
       <p className="mt-3 text-sm">
         <Link href="/admin/ledger/compliance" className={linkClass}>

@@ -44,7 +44,7 @@ of each reminder, as their own record that it went.
 3. **From `treasurer@westervillelions.org`.**
 4. **Signed by the current treasurer**, by name.
 5. **Tone: "super positive."** Not a debt-collection notice. These are volunteers who mostly
-   forgot, and the club's relationship with them is worth more than the $120.
+   forgot, and the club's relationship with them is worth more than the dues themselves.
 6. **BCC the treasurer** on every reminder.
 
 ---
@@ -79,8 +79,8 @@ Do not weaken or special-case the existing guardrail to make testing easier.
 
 - `duesPayments`: `memberId`, `fiscalYear`, `paymentDate`, `amountCents` (negative = refund),
   `method`, `notes`. Multiple rows per member per year are possible.
-- `duesSettings`: per fiscal year, `individualAmountCents` (FY2026 = $120) and
-  `familyAmountCents` (FY2026 = $96), with exactly one `isActive` row that determines the
+- `duesSettings`: per fiscal year, `individualAmountCents` and
+  `familyAmountCents`, with exactly one `isActive` row that determines the
   default year on every dues surface.
 - Fiscal year convention is the **start year** — FY2026 = 1 Jul 2026 to 30 Jun 2027
   (DECISION-015). The member-facing word the treasurer used is "season", so the copy needs a
@@ -97,7 +97,7 @@ Do not weaken or special-case the existing guardrail to make testing easier.
 - **Which members count as unpaid?** Note `duesSettings` has two rates, so "unpaid" is not a
   single number. Also: **prospective members are deliberately not billed dues** (v1.37.0) and
   must be excluded, as must anyone whose membership has ended.
-- **Partial payments.** A member who has paid $60 of $120 is neither paid nor unpaid. Does
+- **Partial payments.** A member who has paid part of the standard amount is neither paid nor unpaid. Does
   the reminder go to them, and does it say what is outstanding?
 - **Does the email state the amount owed?** The treasurer's wording doesn't, and stating a
   figure the member disputes is a different conversation from a friendly nudge.
@@ -268,8 +268,8 @@ so Phase 3 does not reopen them.
     generates — "I paid in July" must never land nowhere.
   - **BCC the office-holder's own address**, for the same reason: the record has to exist in
     a real mailbox.
-- **The email states the standard rate**, not a personalised balance: "Dues are $120 for the
-  year, or $96 for a family membership." Read the amounts from the active `duesSettings` row
+- **The email states the standard rate**, not a personalised balance: "Dues are $X for the
+  year, or $X for a family membership." Read the amounts from the active `duesSettings` row
   rather than hard-coding them, so they cannot drift from the books. This is a fact about the
   club, not a claim about the member, so it removes friction without inviting an argument.
 
@@ -986,7 +986,7 @@ the existing admin-facing `fiscalYearLabel()` (`"FY2026 (Jul 2026 – Jun 2027)"
 
 **`formatDuesAmount(cents)`** (new pure helper, same file) — drops the trailing `.00` for a
 friendlier read in prose (every seeded amount today is a round dollar figure) but stays exact if a
-future amount isn't: `12000 → "$120"`, `9650 → "$96.50"`.
+future amount isn't: `100000 → "$1,000"`, `123450 → "$1,234.50"`.
 
 **Subject (both cohorts, one line):**
 > A friendly note about your {{seasonLabel}} Westerville Lions dues
@@ -1636,11 +1636,11 @@ disagrees, it's a one-line revert (drop the `destructive` prop in
 - **Full click-through as a `dues.manage` holder:** created a second throwaway user bound to
   `treasurer` (holds `dues.manage`), signed in the same way.
   - `GET /admin/dues/reminders?fy=2026` rendered 200 with the real signer (James Shively, the
-    real Board `position = 'Treasurer'` in dev data), the real rate sentence ($120 / $96), 39 real
+    real Board `position = 'Treasurer'` in dev data), the real rate sentence, real
     unpaid candidates, zero partial, no "Excluded — no email on file" section (none exist today),
     the mobile stacking class present in the markup, and the confirm button correctly reading
-    "Send to 39 members".
-  - `POST /api/admin/dues/reminders` with one real `memberId` (Howard Baum) and a note reading
+    the real unpaid count.
+  - `POST /api/admin/dues/reminders` with one real `memberId` (an existing active member) and a note reading
     "UX Phase 4 click-through verification — safe, non-production." → `200`, `sent: [{ ...,
     success: true }]`.
   - Verified via `psql`: the `email_queue` row landed `status='blocked_non_production'`,
@@ -1650,7 +1650,7 @@ disagrees, it's a one-line revert (drop the `destructive` prop in
     The matching `dues_reminders` row was correct in every column: `cohort='unpaid'`,
     `success=true`, `note` verbatim, `signed_as_member_id` = James Shively's member id,
     `email_queue_id` linked to the blocked row.
-  - Reloaded `/admin/dues/reminders?fy=2026`: Howard Baum's row now showed the amber "Last
+  - Reloaded `/admin/dues/reminders?fy=2026`: that member's row now showed the amber "Last
     reminded … (within 14 days)" badge, confirming the cooldown UI reads live data correctly.
   - Temporarily bound the same throwaway user to `admin` (for `admin.users`, required to view
     `/admin/email-queue`) and re-authenticated to pick up the new role (the session/proxy gate
@@ -1775,13 +1775,13 @@ already corrected by commits `ff613f1` and `1a3b75b`. No new defect found in thi
      specific to the reminders sub-page/route, not a broader auth failure.
 9. **Full click-through as the `dues.manage` holder:**
    - `GET` preview for FY2026: real signer resolved (James Shively — current live Board
-     `position='Treasurer'`, not Chris Henson; a data fact, not a bug), real `duesSettings`
-     ($120/$96), 39 unpaid / 0 partial.
-   - Seeded three temporary DEV rows to exercise paths the current data couldn't reach: a $50
-     partial payment for one previously-unpaid member (Howard Baum), a `dues_reminders` row dated
-     5 days ago for a second member (Debbie Bennati — within the 14-day cooldown), and one dated
-     20 days ago for a third (Gary Bix — outside it).
-   - Re-fetched the preview: unpaid count dropped 39→38, partial 0→1, confirming the fresh-query
+     `position='Treasurer'`, not Chris Henson; a data fact, not a bug), real `duesSettings`,
+     real unpaid/partial counts.
+   - Seeded three temporary DEV rows to exercise paths the current data couldn't reach: a partial
+     payment for one previously-unpaid member, a `dues_reminders` row dated
+     5 days ago for a second member (within the 14-day cooldown), and one dated
+     20 days ago for a third (outside it).
+   - Re-fetched the preview: unpaid count dropped by one, partial count rose by one, confirming the fresh-query
      re-derivation and that the reminder screen and `/members/dues` can't disagree.
    - Fetched the **server-rendered HTML** of `/admin/dues/reminders?fy=2026` directly (not the RSC
      prop payload) and confirmed by string inspection: Bennati and Bix's checkboxes render
@@ -1866,7 +1866,7 @@ flow, and UI-data-correctness that a spec would otherwise assert.
 | `dues.view`-only account blocked from `/admin/dues/reminders` (page) | pass | Real credentials sign-in, `307` → `/admin/dues` |
 | `dues.view`-only account blocked from `GET/POST /api/admin/dues/reminders` | pass | Real credentials sign-in, `403 Forbidden` both methods |
 | Same account reaches `/admin/dues` (control) | pass | `200` — confirms the block is specific, not a broader auth failure |
-| `dues.manage` holder: preview loads real signer/settings/cohorts | pass | James Shively, $120/$96, 39 unpaid / 0 partial (live data) |
+| `dues.manage` holder: preview loads real signer/settings/cohorts | pass | James Shively, real rates, real unpaid/partial counts (live data) |
 | Deny-by-default email guard, empty allowlist | pass | `EMAIL_DEV_ALLOWLIST` unset; both live-triggered sends landed `blocked_non_production`, Resend never invoked (`attempts=0`); reinforced by 4 dedicated automated tests in `email-guardrail.test.ts` |
 | `sendBulkMemberEmail()` unconditional block (not address-matching) | pass | Automated test asserts a fabricated never-seen address is still blocked — not re-triggered live, already proven by test |
 | Partial payer unchecked by default, different wording path | pass | Seeded a partial payment; SSR HTML shows no `checked` attribute on that row; cohort API returns `"partial"` |

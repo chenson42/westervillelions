@@ -9,8 +9,8 @@
  *
  * The 3 items (banner/peace-poster/tent, costume cleaning, eyeglass collection
  * boxes) are small, mixed club program/service supplies — "Program supplies" is
- * their honest explicit home. Leaves the admin Misc INCOME items alone (the
- * $563.80 PayPal transfer is unresolved T-07; the $100 COhatch refund is a
+ * their honest explicit home. Leaves the admin Misc INCOME items alone (a
+ * PayPal transfer is an unresolved open item; a COhatch refund is a
  * Marketing contra) — those need their own decision.
  */
 

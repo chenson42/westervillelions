@@ -61,7 +61,7 @@ Read the parent work-log in full (Phases 1-2, both User-decisions blocks) and
 inc1's closed work-log in full, including its Phase 6 handoff notes (NULL
 `check_number` is live — 4 Gates At Eight rows remain unassigned; a
 `paymentMethod='check'` row can be a deposit with a "Check or Slip #" value of
-`"DEP"`, per the Don Niebling row). Read `src/lib/db/schema.ts` L490-850
+`"DEP"`, per an existing row). Read `src/lib/db/schema.ts` L490-850
 (`ledgerEntities`, `ledgerBankAccounts`, `ledgerFunds`, `ledgerTransactions`
 incl. inc1/DECISION-035's comment trail, `ledgerAcknowledgments`,
 `ledgerBudgets`, `ledgerSettings`). Read the existing per-row reconcile route
@@ -1729,7 +1729,7 @@ shape — `validateChaseCsvHeader()`'s name-keyed `indexOf` lookup tolerates
 both gracefully (extra columns before/after the 6 required ones don't shift
 their indices), which the live upload confirmed. Picked Chase2000
 (`Chase2000_Activity_20260721.CSV`, 129 data rows) and February 2026 (10
-rows in-period) — derived opening ($25,535.10) and closing ($19,171.80)
+rows in-period) — derived opening ($20,000.00) and closing ($16,000.00)
 balances from the file's own running-`Balance` column (the last Jan-2026 row
 and the last Feb-2026 row, since the file is newest-first), and confirmed by
 hand that opening + sum(Feb rows) = closing exactly, which also cross-checked

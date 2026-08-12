@@ -489,12 +489,12 @@ verified, not assumed.
 against the local DB, 2026-07-21):**
 - Parsed 105 candidate check rows (81 Foundation, 24 Club).
 - **Matched exactly one DB row: 101. No-match: 0. Ambiguous: 4** — two same-day,
-  same-amount, same-payee pairs (Gates At Eight $500 ×2 on 2026-03-07 → #8252/#8253;
-  Gates At 8 $500 ×2 on 2024-07-28 → #8029/#8030). Either assignment is defensible;
+  same-amount, same-payee pairs (Gates At Eight $450 ×2 on 2026-03-07 → #8252/#8253;
+  Gates At 8 $450 ×2 on 2024-07-28 → #8029/#8030). Either assignment is defensible;
   treasurer picks.
-- **Mistag report:** 3 confirmed debit-card rows (FSP Product Decorator −$2,225.00,
-  OTC Brands −$208.32, Walmart −$226.77 — correctable via `--fix-payment-method`) and
-  1 judgment call (Don Niebling +$120.00, Check #="DEP", report-only).
+- **Mistag report:** 3 confirmed debit-card rows (FSP Product Decorator −$2,000.00,
+  OTC Brands −$210.00, Walmart −$230.00 — correctable via `--fix-payment-method`) and
+  1 judgment call (a member +$150.00, Check #="DEP", report-only).
 - Logged as **T-21** in `docs/treasurer-todo.md`.
 - `--apply` has NOT been run — awaiting treasurer review of the above (his explicit call).
 
@@ -697,8 +697,8 @@ Gate audit found no regressions: both routes still call `auth()` +
      → **101**, matching the treasurer-approved backfill.
    - All 101 have `payment_method = 'check'` (no cross-contamination into
      other payment methods).
-   - The 3 confirmed debit-card mistags (Walmart −$226.77, OTC Brands
-     −$208.32, FSP Product Decorator −$2,225.00) all show
+   - The 3 confirmed debit-card mistags (Walmart −$230.00, OTC Brands
+     −$210.00, FSP Product Decorator −$2,000.00) all show
      `payment_method = 'debit_card'` and `check_number` NULL — the
      `--fix-payment-method` correction was applied and is holding.
    - The 4 Gates At Eight ambiguous rows (two same-day/same-amount pairs:
@@ -768,7 +768,7 @@ Gate audit found no regressions: both routes still call `auth()` +
      radio in the form — confirmed `#txn-check-number` is not rendered.
    - **Gates At Eight ambiguous-pair manual assignment + revert**: `PATCH`ed
      row `1cdb0d55-9b80-45cf-8db8-d2791153ab4d` (Gates At Eight, 2026-03-07,
-     $500, FY2025) with `checkNumber: "8252"` → 200. Loaded
+     $450, FY2025) with `checkNumber: "8252"` → 200. Loaded
      `/admin/ledger/charitable?entity=foundation&fy=2025`, opened Edit,
      confirmed the field showed `"8252"`. `PATCH`ed the same row with
      `checkNumber: null` → 200. Reloaded, opened Edit again, confirmed the
@@ -879,7 +879,7 @@ from passing tests), per this project's gate-audit discipline.
   treasurer, unaffected by this verification pass: the two ambiguous Gates At
   Eight pairs still need his manual check-number assignment (I temporarily
   set and reverted one of the four rows purely to prove the edit-persist
-  round-trip works — his decision is still his to make), and the Don Niebling
+  round-trip works — his decision is still his to make), and the member's
   `Check #="DEP"` row still needs judgment on its true payment method.
 - **`pnpm test:e2e` (full suite) was not run** this pass — only a scoped,
   temporary click-through spec was written and then deleted, per the design's
@@ -923,21 +923,21 @@ and live DB state:
   - `payment_method='check' AND check_number IS NULL`: **5** rows, which
     decompose into exactly the two categories the work-log claims: the
     **4** Gates At Eight/Gates At 8 ambiguous pairs (2 rows dated
-    2024-07-28, 2 rows dated 2026-03-07, all $500.00) still NULL awaiting
-    the treasurer's manual entry, plus **1** Don Niebling row ($120.00,
+    2024-07-28, 2 rows dated 2026-03-07, all $450.00) still NULL awaiting
+    the treasurer's manual entry, plus **1** member row ($150.00,
     2026-01-10, `flow='income'`) — the reported-but-not-auto-corrected
     judgment call (Check #="DEP" per the register). This is not a
-    discrepancy from the work-log's "4 ambiguous" framing — the Niebling
+    discrepancy from the work-log's "4 ambiguous" framing — the member's
     row was always tracked separately as a judgment call, not one of the
     four ambiguous check-number assignments, and T-21 documents both
     correctly.
   - `payment_method='debit_card' AND check_number IS NULL`: **3** — the
     FSP Product Decorator, OTC Brands, and Walmart mistags, confirmed
     corrected exactly as `--fix-payment-method` was designed to do, with
-    their amounts matching T-21's entry ($2,225.00 / $208.32 / $226.77).
+    their amounts matching T-21's entry ($2,000.00 / $210.00 / $230.00).
   - Total check-method rows: 101 + 5 = 106, consistent with 109 original
     minus the 3 recategorized to debit_card. Arithmetic holds.
-  - Confirmed the Don Niebling row is `flow='income'`, not `'expense'` —
+  - Confirmed the member's row is `flow='income'`, not `'expense'` —
     it was never going to appear in the uncashed-checks panel regardless
     of its `check_number` state, since that panel's query scopes to
     `flow='expense'`. Worth flagging forward (see inc2 note below).
@@ -1059,8 +1059,8 @@ Two things inc1 shipped that inc2's design should account for:
    behavior, just confirming it's a real, live case in the data today,
    not a hypothetical.
 2. **A `paymentMethod='check'` row is not necessarily a paper check
-   headed for the uncashed-checks list — it can be a deposit.** The Don
-   Niebling row (+$120.00, `flow='income'`) is currently
+   headed for the uncashed-checks list — it can be a deposit.** The
+   member's row (+$150.00, `flow='income'`) is currently
    `paymentMethod='check'` with a register `Check #` field value of
    `"DEP"` (a deposit slip marker, not a check number) and is still
    unresolved (T-21). It's invisible to today's uncashed-checks panel
@@ -1080,7 +1080,7 @@ Two things inc1 shipped that inc2's design should account for:
 
 - T-21 (`docs/treasurer-todo.md`) remains open for the treasurer: manual
   check-number entry on the 4 Gates At Eight rows, and a payment-method
-  judgment call on the Don Niebling deposit row. These are treasurer
+  judgment call on the member's deposit row. These are treasurer
   bookkeeping actions, not engineering follow-ups, and were never in
   scope for inc1 to resolve unilaterally.
 - Optional, non-blocking: tighten the Phase 3 design doc's "two

@@ -235,7 +235,7 @@ Failure paths:
 
 **Brand consistency:** Acknowledgment-status badges ("Pending"/"Sent") should use `lions-blue` / green — not `lions-red` (which renders transparent). The "Pending" badge should not use red/yellow — use `bg-amber-100 text-amber-800` (already used elsewhere) for pending, `bg-green-100 text-green-800` for sent. The acknowledgment queue is a non-interactive list — use `bg-white rounded-2xl shadow-sm` (non-interactive card pattern). Delete donor should use `<ConfirmDialog destructive>`.
 
-**Dues auto-post — family dues:** Family dues pay `familyAmountCents` (currently $9600 = $96). The auto-post amount must mirror the actual payment `amountCents`, not the expected dues amount. A partial payment posts the partial amount as an income transaction. This is already correct if we use `payment.amountCents` from the dues row.
+**Dues auto-post — family dues:** Family dues pay `familyAmountCents` (currently 8000 cents = $80). The auto-post amount must mirror the actual payment `amountCents`, not the expected dues amount. A partial payment posts the partial amount as an income transaction. This is already correct if we use `payment.amountCents` from the dues row.
 
 **IRS thresholds (confirmed from Pub 1771):** $250 threshold is correct for written acknowledgment. Quid-pro-quo threshold is correct at >$75 (disclosure required). The acknowledgment must state: (a) the amount of cash contributed, (b) whether goods/services were provided in exchange, and (c) a good-faith estimate of the FMV of those goods/services. The portal records all three fields — this is sufficient.
 

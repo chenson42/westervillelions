@@ -626,8 +626,8 @@ Powers the Budget/Actual/Variance columns in the fund report. `categoryId` nulla
 id                          uuid PK
 philanthropyVisibility      text notNull default 'board'    -- 'board' | 'members'
 treasurerBonded             boolean notNull default false
-reserveWarnThresholdCents   integer notNull default 2500000  -- $25,000
-disbApprovalThresholdCents  integer notNull default 25000    -- $250
+reserveWarnThresholdCents   integer notNull default 2000000  -- $20,000
+disbApprovalThresholdCents  integer notNull default 20000    -- $200
 retentionYears              integer notNull default 7
 createdAt / updatedAt
 ```
@@ -1478,7 +1478,7 @@ PASS. All four automated gates cleared. The three ledger pages and all four API 
 **DB seed verification:** Confirmed via direct DB query:
 - 4 funds seeded: club/administrative, club/activity, foundation/charitable, foundation/scholarship; all opening balances = 0 (placeholder, editable via LEDGER_MANAGE).
 - 30 categories seeded across 8 fund-kind/flow groups.
-- ledger_settings singleton seeded with correct defaults (reserveWarnThresholdCents=2500000, treasurerBonded=false, retentionYears=7).
+- ledger_settings singleton seeded with correct defaults (reserveWarnThresholdCents=2000000, treasurerBonded=false, retentionYears=7).
 - 6 role-feature bindings: ledger.view→admin,treasurer,board_member; ledger.record→admin,treasurer; ledger.manage→admin.
 
 **Transfer atomicity + FY boundary (code + DB verification):**
@@ -1614,7 +1614,7 @@ Verdict: matches.
 **Flow F — View entity overview (guardrails + 990 chip + fund balances)**
 Phase 1 said: fund balance cards linking to ledger lists, gross receipts, `determine990` chip, 6 inc1 guardrail checks (negative fund HIGH, reserves WARN, treasurer-not-bonded WARN, itemized-source WARN, cash-disbursement WARN, receipt retention INFO).
 Shipped: `getOverview` computes all six guardrail checks. The overview page renders: 990 chip (e.g., "Files: 990-N"), guardrail flags with HIGH/WARN/INFO severity badges (red/yellow/gray), gross receipts YTD card, fund balance cards with opening/income/expense/ending. Fund cards link to the ledger list with entity+FY params. "Record Transaction" button gated `canRecord`. Fund report quick-links section.
-One observation: the reserves guardrail fires when `entityBalanceCents < reserveWarnThresholdCents`. At seed state (all opening balances = 0, no transactions), this means the reserves WARN fires immediately because $0 < $25,000. This is technically correct — the club does need reserves — but on a fresh install it will always show a WARN until the treasurer inputs real opening balances. This is expected and not a defect; it is a consequence of the placeholder opening balances. The `FundManageDialog` (editable opening balances) resolves this for real use.
+One observation: the reserves guardrail fires when `entityBalanceCents < reserveWarnThresholdCents`. At seed state (all opening balances = 0, no transactions), this means the reserves WARN fires immediately because $0 is below the threshold. This is technically correct — the club does need reserves — but on a fresh install it will always show a WARN until the treasurer inputs real opening balances. This is expected and not a defect; it is a consequence of the placeholder opening balances. The `FundManageDialog` (editable opening balances) resolves this for real use.
 Verdict: matches.
 
 **Flow G — Entity switcher and FY selector**

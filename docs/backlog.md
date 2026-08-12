@@ -5,9 +5,8 @@ have **no work-log entry yet** — when one is picked up, run `/new-feature`, cr
 its work-log, and check it off here (append date + work-log slug rather than
 deleting). Stable `B-nn` IDs for cross-referencing.
 
-This complements (doesn't replace) `treasurer-todo.md`, which tracks books and
-compliance follow-ups rather than product features. Phase 6 "SHIP WITH NOTES"
-follow-ups may also land here when they don't warrant an immediate work-log.
+Phase 6 "SHIP WITH NOTES" follow-ups may also land here when they don't warrant an
+immediate work-log.
 
 ---
 
@@ -404,8 +403,7 @@ follow-ups may also land here when they don't warrant an immediate work-log.
   **RESOLVED 2026-07-28** — `scripts/enter-fy2025-approved-budget.ts` (dry-run
   reconciled to the penny, then `--apply`'d to production): 28 `ledger_budgets`
   category-grain rows entered at fiscal_year=2025 across Club Administrative
-  (income $6,980.00 / expense $11,773.00) and Foundation Charitable (income
-  $32,500.00 / expense $42,062.00), matching the approved-budget PDF totals
+  and Foundation Charitable, matching the approved-budget PDF totals
   exactly. No `ledger_budget_lines` (cause/beneficiary) detail was entered for
   FY2025 — category grain only, per the treasurer-approved scope.
 
@@ -577,11 +575,11 @@ Design each with the others in view — decisions in one box in the next.
   feed anything it surfaces back here as new B-items.
 
 - [ ] **B-33 — Decouple "supports cause/line-item breakdown" from `countsAsGiving`.**
-  (added 2026-07-29, from `docs/2026-07-29-budget-actuals-mapping-and-category-cleanup.md` finding #3;
+  (added 2026-07-29, from a books-cleanup review finding #3;
   priority: medium — needs Phase 1) Today `isCauseEligibleCategory` = `expense && countsAsGiving`,
   and `countsAsGiving` *also* drives `/members/impact` giving-by-cause (`bucketGivingByCause`). Chris's
   rule "Rudolph expenses should be for a cause, storage should not" breaks the coupling: Rudolph Run
-  event costs need cause/line-item breakdown (14 vendors, ~$10.8k) but must **not** count as
+  event costs need cause/line-item breakdown (multiple vendors) but must **not** count as
   philanthropic giving (that would inflate impact reporting with event-vendor invoices). Add a
   separate cause-breakdown-eligibility concept (e.g. a `supportsBreakdown`/`causeEligible` column, or
   make eligibility an explicit per-category opt-in) independent of `countsAsGiving`, so a non-giving
@@ -595,7 +593,7 @@ Design each with the others in view — decisions in one box in the next.
   mechanics) and feeds B-31 (print) + T-25 (category cleanup). Does not block B-29.
 
 - [ ] **B-34 — Explicit inter-fund transfers (Zeffy pass-through: Club Activity → Foundation).**
-  (added 2026-07-29, from `docs/2026-07-29-budget-actuals-mapping-and-category-cleanup.md` §G6;
+  (added 2026-07-29, from the same books-cleanup review, §G6;
   priority: medium — needs Phase 1) Zeffy is wired to the **Club** bank account, so online public
   donations land in the Club's **Activity fund** and must transfer to the **Foundation**. Chris wants
   this modeled **explicitly**, not via `Public donations`/`Misc`. Minimum: dedicated categories
@@ -604,7 +602,7 @@ Design each with the others in view — decisions in one box in the next.
   `Public donations`). The real design question: whether a transfer is just a **pair of ordinary
   entries in explicit categories** (simplest) or a **recognized "transfer" type** that auto-pairs the
   two legs and is **eliminated from any consolidated/org-wide income roll-up** (the same dollar is
-  income in two funds, so a naive total double-counts). Also retroactively re-files the $552
+  income in two funds, so a naive total double-counts). Also retroactively re-files the
   "tailtwisting transfer" currently booked as Foundation `Public donations`. Keep the Activity fund
   as a **zeroed-out balanced pass-through** (don't retire it — corrects an earlier §G3 draft). Pairs
   with T-25 (category cleanup) and the "no Miscellaneous" cleanup (§G7).
@@ -616,7 +614,7 @@ Design each with the others in view — decisions in one box in the next.
   Foundation leg to `Public donations` with an override picker, so this is now a category-catalog task,
   not a code task; (b) **eliminating paired transfer legs from any consolidated/org-wide income
   roll-up** (the swept dollar is income in two funds — a naive cross-entity total double-counts; the
-  sweep is a new vector for this and it is NOT handled yet); (c) retroactive re-file of the $552
+  sweep is a new vector for this and it is NOT handled yet); (c) retroactive re-file of the
   tailtwisting transfer.
 
 - [ ] **B-35 — Cause-line label lost when amount then label are committed back-to-back.**

@@ -232,7 +232,7 @@ async function main() {
 
     // Primary key per design (entity, date, amount, paymentMethod, flow, import
     // marker). Several same-day board-approved disbursement batches (e.g. three
-    // $2,500 checks cut the same day) collide on this key alone — before
+    // checks of the same amount cut the same day) collide on this key alone — before
     // falling back to the ambiguous review list, narrow using `party`, which is
     // an EXACT (not guessed) secondary filter: it's the same deriveParty()
     // output the importer itself wrote into the row's party column, not an
@@ -308,7 +308,7 @@ async function main() {
   // debit-card purchases (Walmart, OTC Brands, FSP Product Decorator per
   // DECISION-034's investigation) — these are the only ones --fix-payment-method
   // is allowed to correct, and only to 'debit_card'. Any OTHER non-numeric
-  // marker (e.g. the "DEP" value found on a $120 Club Dues INCOME row —
+  // marker (e.g. the "DEP" value found on a Club Dues INCOME row —
   // itself a genuine but differently-shaped anomaly: a deposit that got
   // Action="Check" in the source register) is reported for the treasurer's
   // attention but is never auto-corrected, since the correct paymentMethod
@@ -344,7 +344,7 @@ async function main() {
     }
     console.log(
       `\n  This increment's scope is check_number only — correcting paymentMethod is a separate,\n` +
-        `  independently-scoped fix (see docs/treasurer-todo.md T-21) gated behind --fix-payment-method.`,
+        `  independently-scoped fix gated behind --fix-payment-method.`,
     );
   }
 

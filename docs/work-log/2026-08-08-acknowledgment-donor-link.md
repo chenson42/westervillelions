@@ -603,7 +603,7 @@ but does not block this fix.
   theoretical because donor-linking from Acknowledge silently failed to
   persist; now that the link path actually works end-to-end, a treasurer
   could accidentally acknowledge "Trucco Construction Co" as the source of
-  a $14,451.90 batch deposit that isn't Trucco's gift at all, which is a
+  a $13,200.00 batch deposit that isn't Trucco's gift at all, which is a
   real IRS Pub. 1771 substantiation problem (the acknowledgment must name
   the actual donor of the actual gift). This is pre-existing query scope,
   not something introduced or worsened by either increment, and the
@@ -664,7 +664,7 @@ but does not block this fix.
 1. **Aggregate/batch deposits in the ack queue.** `listPendingAcknowledgments()`
    surfaces any Foundation income ≥ $250 with no distinction between a
    single donor's gift and a batch deposit (e.g., "Rudolph Run Entry
-   Receipts," $14,451.90, many small registrations). Now that donor-linking
+   Receipts," $13,200.00, many small registrations). Now that donor-linking
    from Acknowledge actually persists, this is a live risk of producing an
    incorrect written acknowledgment, not just a cosmetic queue oddity.
    Recommend a normal-pipeline (non-bug-fix) work-log entry to either flag

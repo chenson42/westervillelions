@@ -32,7 +32,7 @@
 - **New `dues.manage` write key** (separate from `membership.manage`). Bound to **`treasurer` + `admin` ONLY** — membership managers do NOT get dues write. Write routes (create/edit/delete payment, configure amounts) gate on `dues.manage`. Read stays `dues.view` (admin + board_member + treasurer). `membership.manage` is no longer the dues write gate.
 - **Year-varying amounts:** confirmed (per-fiscal-year `dues_settings`).
 - **Family discount:** new **per-member `dues_category`** field on `members` (`individual | family`, default `individual`), set by treasurer/admin. `dues_settings` holds **two amounts per fiscal year** (individual + family). Status compares the member's payment sum to the rate matching their `dues_category`.
-- **FY2026 amounts (seed):** individual **$120.00** (12000 cents), family **$96.00** (9600 cents).
+- **FY2026 amounts (seed):** individual **$100.00** (10000 cents), family **$80.00** (8000 cents).
 - **Named treasurers:** assign the `treasurer` role to **Chris Henson** (user `4fbd2463-09b0-4007-a3a2-a6644840f5b8`) and **James Shively** (user `774a217f-60e5-45be-a77d-6601c08703b2`). Both have user accounts. Recommend an idempotent migration binding `user_roles` by email (ensures production parity; repo is private).
 
 **Scope expansion 3 (2026-06-24, post-ship increment — user-added):**
@@ -302,7 +302,7 @@ The Phase 1 analyst notes that the membership-year definition, paid/unpaid rollu
 
 ### Summary
 
-Two new tables — `dues_payments` (one row per payment event, FK to `members`) and `dues_settings` (one row per fiscal year, two amounts: individual + family) — carry all persistent state. A new `dues_category` column on `members` (`individual | family`, default `individual`) determines which amount applies to each member. Dues status (Paid / Partial / Unpaid) is computed on read by comparing a member's payment sum for the year to the amount matching their `dues_category`. A new `treasurer` role is seeded (sort_order 3, bumping `member` to 4 and `volunteer` to 5). Two new permission keys: `DUES_VIEW = "dues.view"` (read, bound to admin + board_member + treasurer) and `DUES_MANAGE = "dues.manage"` (write, bound to admin + treasurer only — membership managers do NOT get this). Three surfaces: admin list page, admin per-member detail, member-portal self-view at `/members/dues`. FY2026 seed: individual $120.00 (12000 cents), family $96.00 (9600 cents). The treasurer role is assigned to Chris Henson and James Shively via idempotent migration.
+Two new tables — `dues_payments` (one row per payment event, FK to `members`) and `dues_settings` (one row per fiscal year, two amounts: individual + family) — carry all persistent state. A new `dues_category` column on `members` (`individual | family`, default `individual`) determines which amount applies to each member. Dues status (Paid / Partial / Unpaid) is computed on read by comparing a member's payment sum for the year to the amount matching their `dues_category`. A new `treasurer` role is seeded (sort_order 3, bumping `member` to 4 and `volunteer` to 5). Two new permission keys: `DUES_VIEW = "dues.view"` (read, bound to admin + board_member + treasurer) and `DUES_MANAGE = "dues.manage"` (write, bound to admin + treasurer only — membership managers do NOT get this). Three surfaces: admin list page, admin per-member detail, member-portal self-view at `/members/dues`. FY2026 seed: individual $100.00 (10000 cents), family $80.00 (8000 cents). The treasurer role is assigned to Chris Henson and James Shively via idempotent migration.
 
 ---
 
@@ -423,9 +423,9 @@ export const duesSettings = pgTable("dues_settings", {
   id: uuid("id").primaryKey().defaultRandom(),
   fiscalYear: integer("fiscal_year").notNull().unique(),
   individualAmountCents: integer("individual_amount_cents").notNull(),
-    // Standard annual dues in cents. FY2026 seed: 12000 ($120.00).
+    // Standard annual dues in cents. FY2026 seed: 10000 ($100.00).
   familyAmountCents: integer("family_amount_cents").notNull(),
-    // Family/discounted annual dues in cents. FY2026 seed: 9600 ($96.00).
+    // Family/discounted annual dues in cents. FY2026 seed: 8000 ($80.00).
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -720,7 +720,7 @@ Gate: `session.user.memberId` non-null; response scoped to that member only. Omi
 
 **Negative amounts (refunds):** `deriveStatus(negative, expected)` → "unpaid" (correct — net negative means money was returned). Payment list shows negatives in red with a "Refund" label.
 
-**FY2026 amounts:** The FY2026 seed is $120 individual / $96 family. If the club changes these before implementation ships, the treasurer can edit them via the Configure modal after deploy — no migration rewrite needed.
+**FY2026 amounts:** The FY2026 seed is $100 individual / $80 family. If the club changes these before implementation ships, the treasurer can edit them via the Configure modal after deploy — no migration rewrite needed.
 
 **Treasurer role sort_order:** The UPDATE statements for member (3→4) and volunteer (4→5) use a conditional (`WHERE sort_order = 3 / 4`) to avoid double-bumping on re-run. This is idempotent: if already bumped, the WHERE clause matches nothing and the UPDATE is a no-op.
 
@@ -1000,7 +1000,7 @@ Performance note: `listMemberDuesStatus(fy)` returns all active members for the 
   4. Click "Export CSV" — verify download with correct column headers and data.
   5. Click "Configure Dues Amounts" — change individual rate, save, verify page reflects new value.
   6. Click a member's "View" link — verify detail page with payment log.
-  7. Click "Add Payment" — record a check payment of $120 for the current FY, verify status badge changes to Paid.
+  7. Click "Add Payment" — record a check payment of $100 for the current FY, verify status badge changes to Paid.
   8. Edit the payment, change the date; verify update toast and row reflects change.
   9. Delete the payment; confirm ConfirmDialog appears (not window.confirm), confirm deletion, verify row removed.
   10. Change the member's category from Individual to Family — verify expected amount updates.
@@ -1218,7 +1218,7 @@ The permission split is clean in practice. The `canManage` boolean is derived se
 | Delete uses `<ConfirmDialog>` not `window.confirm` | `dues-payment-actions.tsx` line 83: `<ConfirmDialog destructive>` with title "Delete this payment?" | matches |
 | CSV columns: Member Number, Last Name, First Name, Email, Category, Total Paid ($), Expected ($), Status, Payment Count | Export route emits those columns plus "Fiscal Year" (10 columns total — one extra, non-breaking) | acceptable drift |
 | Export gated on `DUES_MANAGE OR REPORTS_EXPORT` (board members with only `DUES_VIEW` cannot export) | Route checks `hasAnyFeature([DUES_MANAGE, REPORTS_EXPORT])`; board members excluded | matches |
-| FY2026 seed: individual $120.00 / family $96.00 | Seeded in `0040` as `12000` / `9600` cents | matches |
+| FY2026 seed: individual $100.00 / family $80.00 | Seeded in `0040` as `10000` / `8000` cents | matches |
 | `dues-queries.ts` has `listKnownFiscalYears()` returning union of payment + settings years | Implemented; includes current FY if missing (member portal page patches the list: `knownYears.includes(fy) ? knownYears : [fy, ...knownYears]`) | matches |
 
 ---

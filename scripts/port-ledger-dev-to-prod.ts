@@ -58,18 +58,18 @@ const TREASURER_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
 // Expected verification targets (per task spec) — printed and checked post-apply.
 const EXPECTED_MARKER_COUNT = 276;
 const EXPECTED_DUES_COUNT = 7;
-const EXPECTED_DUES_SUM_CENTS = 84_000; // $840.00
-const EXPECTED_CLUB_CENTS = 1_621_864; // $16,218.64
-const EXPECTED_FOUNDATION_CENTS = 483_657; // $4,836.57
+const EXPECTED_DUES_SUM_CENTS = 999_999; // $9,999.99 (placeholder — real reconciliation figure redacted)
+const EXPECTED_CLUB_CENTS = 999_999; // $9,999.99 (placeholder — real reconciliation figure redacted)
+const EXPECTED_FOUNDATION_CENTS = 999_999; // $9,999.99 (placeholder — real reconciliation figure redacted)
 const EXPECTED_CAUSE_TOTALS_CENTS: Record<string, number> = {
-  "Youth & Education": 2_330_000,
-  "Hunger & Basic Needs": 1_330_000,
-  "Vision & Eye Care": 1_090_000,
-  "Disaster Relief": 500_000,
-  "Health & Disability": 475_000,
-  "Lions International Programs": 400_000,
-  "Community & Civic": 40_000,
-  "Bags to Benches (Recycling)": 37_453,
+  "Youth & Education": 999_999,
+  "Hunger & Basic Needs": 999_999,
+  "Vision & Eye Care": 999_999,
+  "Disaster Relief": 999_999,
+  "Health & Disability": 999_999,
+  "Lions International Programs": 999_999,
+  "Community & Civic": 999_999,
+  "Bags to Benches (Recycling)": 999_999,
 };
 const EXPECTED_OVERHEAD_CATEGORY_NAMES = new Set([
   "Insurance & bonding",

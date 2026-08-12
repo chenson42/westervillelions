@@ -3,7 +3,7 @@
  * can be re-derived cleanly from the finished FY2025 reference model.
  *
  * WHY: the only FY2026 budget data today is one speculative "Charitable donation
- * out → Environment → City of Westerville – Arbor Fest" ($400) line entered
+ * out → Environment → City of Westerville – Arbor Fest" line entered
  * during earlier analysis. Chris chose to clear FY2026 and rebuild it from the
  * clean FY2025 model (decision 2026-07-29). This removes budget rows only — it
  * NEVER touches ledger_transactions (the actual Arbor Fest check 8263 stays).

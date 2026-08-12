@@ -201,7 +201,7 @@ Standing reminders (static, surfaced on the compliance screen): raffle **50% to 
 
 ## 9. Integration with existing features
 
-- **Dues → Admin-fund income.** A recorded dues payment posts a Club/Administrative income transaction (category "Club dues", party = member). The dues feature is effectively the Admin-fund income side; the **family ($96) vs individual ($120)** rate mirrors the **family ½ per-capita** discount in the doc. (Auto-post on dues create, or batch import — decision below.)
+- **Dues → Admin-fund income.** A recorded dues payment posts a Club/Administrative income transaction (category "Club dues", party = member). The dues feature is effectively the Admin-fund income side; the **family vs individual** rate mirrors the **family ½ per-capita** discount in the doc. (Auto-post on dues create, or batch import — decision below.)
 - **Zeffy / `/donate` → Activity or Charitable income + donor record + acknowledgment.** Club fundraisers (Rudolph Run "Race registrations (Zeffy)") → Activity fund; Foundation appeals → Charitable fund. Donations ≥ $250 trigger a written acknowledgment; quid-pro-quo > $75 a disclosure.
 - **Causes/Campaigns.** `beneficiaryCause` maps to the existing causes taxonomy → powers the `/impact` by-cause breakout.
 

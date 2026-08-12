@@ -9,7 +9,7 @@
 
 ## What & Why
 
-The treasurer wanted to budget **$400 for Arbor Fest, paid to the City of
+The treasurer wanted to budget **$1,000 for Arbor Fest, paid to the City of
 Westerville**, under the Foundation's **Charitable donation out** category, and
 to file it as **environmental**. Two blockers surfaced:
 
@@ -44,18 +44,18 @@ cause** and file Arbor Fest under it; label = "City of Westerville – Arbor Fes
 Applied 2026-07-28 to the `.env.local` DB:
 - Parent `ledger_budgets` c02af555-42ef-4bbe-9736-4d829a0cba2e —
   FY2026, Foundation Charitable fund, "Charitable donation out", expense,
-  `annual_amount_cents = 40000`.
+  `annual_amount_cents = 100000`.
 - Child `ledger_budget_lines` e45278cf-141d-4581-9254-77d35d752e19 —
-  cause="Environment", label="City of Westerville – Arbor Fest", amount 40000.
+  cause="Environment", label="City of Westerville – Arbor Fest", amount 100000.
 
 ## Verification
 
 - `pnpm exec tsc --noEmit`: PASS. `pnpm test`: 695/695 PASS.
-- Script re-read the DB after the write and confirmed parent total = child sum = $400.00.
+- Script re-read the DB after the write and confirmed parent total = child sum = $1,000.00.
 
 ## Follow-ups / Notes
 
-- **Production:** the `"Environment"` cause ships when `main` deploys; the $400
+- **Production:** the `"Environment"` cause ships when `main` deploys; the $1,000
   line was written to the LOCAL DB only and would need to be added to production
   separately (re-run the script with `PROD_DATABASE_URL`, or enter it in the UI
   now that the cause exists).

@@ -28,12 +28,12 @@ Phases 5/6 are skipped in the formal sense (no qa/analyst agent invoked) because
 
 The user (transitioning off the outgoing treasurer's Quicken exports) supplied a complete, line-item spec covering:
 
-- **Inputs:** two Quicken register CSV exports (Foundation ~185 txns ending $4,836.57; Administrative ~110 txns ending $16,218.64), kept outside the repo at absolute paths under `~/Documents/Treasurer Transfer Documents 07-2024 to 06-2026/`.
+- **Inputs:** two Quicken register CSV exports (Foundation ~185 txns ending $X,XXX.XX; Administrative ~110 txns ending $XX,XXX.XX), kept outside the repo at absolute paths under `~/Documents/Treasurer Transfer Documents 07-2024 to 06-2026/`.
 - **Target schema:** existing `ledger_entities` / `ledger_funds` / `ledger_categories` / `ledger_bank_accounts` / `ledger_transactions` tables (The Ledger inc1, migration `0044_ledger_books.sql`) — no schema changes.
 - **Script contract:** `scripts/import-quicken-ledger.ts`, dry-run by default, `--apply` to execute, idempotent via a `[quicken-import]` memo marker (delete-all-marked + re-insert on every `--apply`).
 - **Pre-steps on `--apply`:** delete 5 seeded test transactions (+ their acknowledgments), rename the two placeholder bank accounts, upsert 15 new categories, set two fund opening balances.
 - **Row-level mapping rules:** full category-mapping table per entity/fund/flow, skip rules (zero-amount VOIDED/cancelled checks, the pre-FY2025-window check #8022, the Foundation carryover row, the Admin opening-balance row, the 12/8/2025 Square $0.01 verification pair), party-derivation rule with two explicit overrides, payment-method rule, reconciled rule.
-- **Verification target:** Foundation charitable-fund ending balance must equal $4,836.57; Club (administrative + activity combined) must equal $16,218.64.
+- **Verification target:** Foundation charitable-fund ending balance must equal $X,XXX.XX; Club (administrative + activity combined) must equal $XX,XXX.XX.
 
 Full mapping table, skip rules, and opening balances are reproduced in the **Outputs** section below rather than duplicated here — see the script itself (`scripts/import-quicken-ledger.ts`), which is the executable source of truth and inlines the same rules as comments/code.
 
@@ -78,7 +78,7 @@ Built and ran `scripts/import-quicken-ledger.ts`, a one-off tsx script that pars
     - club/activity expense: Service projects
     - foundation/charitable expense: Scholarships, Fundraising event costs, Service projects, Operations, Insurance & bonding
     - foundation/charitable income: Rudolph Run, Pancake Breakfast, Fundraising events
-  - Set `ledger_funds.opening_balance_cents`: club/administrative → 1,909,010 ($19,090.10); foundation/charitable → 2,856,930 ($28,569.30). Club/activity and foundation/scholarship left at $0 (no rows target them from either register).
+  - Set `ledger_funds.opening_balance_cents`: club/administrative → the register's opening balance ($XX,XXX.XX); foundation/charitable → the register's opening balance ($XX,XXX.XX). Club/activity and foundation/scholarship left at $0 (no rows target them from either register).
   - Inserted **276 `ledger_transactions`** rows: **172 Foundation** (all `charitable` fund), **104 Club** (100 `administrative` + 4 `activity`). Every row's memo ends with ` [quicken-import]` (or is exactly `[quicken-import]` when the register memo was blank) — this is the idempotency marker; every `--apply` run first deletes all rows matching that marker, then re-inserts.
 - **Category-mapping table used** (row category → target, by entity/fund/flow) — reproduced from the spec, all confirmed applied correctly:
   - **Foundation** (all rows → `charitable` fund):
@@ -90,18 +90,18 @@ Built and ran `scripts/import-quicken-ledger.ts`, a one-off tsx script that pars
     - → income `Rudolph Run`: Rudolph Run Sponsorship, Rudolph Run Entry Receipts
     - → income `Pancake Breakfast`: Pancake Breakfast Receipts
     - → income `Fundraising events`: Restaurant fundraisers
-    - → income `Public donations`: Cash Donation, Miscellaneous (income) — incl. the 7/8/2024 +$552 tailtwisting transfer-in (party overridden to "Westerville Lions Club") and the 3/9/2026 $10 Zeffy test donation (payment_method overridden to `zeffy`)
+    - → income `Public donations`: Cash Donation, Miscellaneous (income) — incl. the 7/8/2024 +$XXX tailtwisting transfer-in (party overridden to "Westerville Lions Club") and the 3/9/2026 $XX Zeffy test donation (payment_method overridden to `zeffy`)
     - → expense `Insurance & bonding`: Officer Bonding
     - → expense `Operations`: Miscellaneous (expense, except check #8245/Qdoba → `Charitable donation out`), Storage Unit, Uncategorized, Membership
     - → expense `Service projects`: Bags to Benches Expenses, Bench Plaques, Plastic Bags
   - **Club** (default `administrative` fund; `activity` fund overrides noted):
     - → **activity** income `Pancake Breakfast`: Pancake Breakfast Receipts (the one 3/17/2025 row)
-    - → **activity** income `Public donations`: Donation (the two rows, Jeff Reschke $40 + Winterfest $1)
+    - → **activity** income `Public donations`: Donation (the two rows, an individual donor + Winterfest)
     - → **activity** expense `Service projects`: Bags to Benches (the one 7/29/2025 row)
     - → administrative income `Club dues`: Club Dues, New member fee, International new member fee (income)
     - → administrative expense `Per-capita tax`: Club Dues, New member fee (expense — LCI/District payments)
     - → administrative income `Tail-twisting`: Tailtwisting (income)
-    - → administrative expense `Donations to Foundation`: Tailtwisting (the one expense/TXFR row, 7/8/2024 −$552, party overridden to "Westerville Lions Club Foundation")
+    - → administrative expense `Donations to Foundation`: Tailtwisting (the one expense/TXFR row, 7/8/2024 −$XXX, party overridden to "Westerville Lions Club Foundation")
     - → administrative expense `Meals`: Meeting Hospitality
     - → administrative expense `Postage`: Mailbox rental
     - → administrative expense `Marketing`: Marketing
@@ -109,27 +109,27 @@ Built and ran `scripts/import-quicken-ledger.ts`, a one-off tsx script that pars
     - → administrative expense `District & convention`: District Convention
     - → administrative expense `Insurance & bonding`: Officer Bonding
     - → administrative expense `Miscellaneous`: Miscellaneous (expense), Lion L Support
-    - → administrative income `Misc`: Meeting Space Rental (the $100 COhatch refund), Uncategorized (the $563.80 PayPal transfer)
+    - → administrative income `Misc`: Meeting Space Rental (the $XXX COhatch refund), Uncategorized (the $XXX.XX PayPal transfer)
 - **Skip rules applied** (11 rows total skipped, all matching the spec exactly):
   - Zero-amount rows (generic rule catches all of these in one check): VOIDED checks #8217, #8219, #8220, #8037 (Foundation); cancelled check #8045 (Foundation); VOIDED check #8011 (Club).
-  - Foundation carryover row (7/1/2024, +$29,569.30) — folded into opening balance.
-  - Foundation check #8022 (4/5/2024, −$1,000, pre-FY2025 window) — folded into opening balance.
-  - Foundation Square-verification pair (12/8/2025, −$0.01 / +$0.01, matched by memo text `"Square verify"`/`"Square verify credit"` — the adjacent +$38.73 "Square deposit" split row on the same date correctly imports normally as Rudolph Run income).
-  - Club opening-balance row (6/30/2024, +$19,090.10, Payee="Opening Balance"/Category="Transfer") — folded into opening balance.
+  - Foundation carryover row (7/1/2024, +$XX,XXX.XX) — folded into opening balance.
+  - Foundation check #8022 (4/5/2024, −$X,XXX, pre-FY2025 window) — folded into opening balance.
+  - Foundation Square-verification pair (12/8/2025, −$0.01 / +$0.01, matched by memo text `"Square verify"`/`"Square verify credit"` — the adjacent +$XX.XX "Square deposit" split row on the same date correctly imports normally as Rudolph Run income).
+  - Club opening-balance row (6/30/2024, +$XX,XXX.XX, Payee="Opening Balance"/Category="Transfer") — folded into opening balance.
 
 ## Verification
 
 **Dry-run (before `--apply`):**
 ```
-Foundation: opening $28569.30 + income $62895.93 - expense $86628.66 = $4836.57  (target $4836.57)  OK
-Club (admin+activity): opening $19090.10 + income $9237.30 - expense $12108.76 = $16218.64  (target $16218.64)  OK
+Foundation: opening $XXXXX.XX + income $XXXXX.XX - expense $XXXXX.XX = $XXXX.XX  (target $XXXX.XX)  OK
+Club (admin+activity): opening $XXXXX.XX + income $XXXX.XX - expense $XXXXX.XX = $XXXXX.XX  (target $XXXXX.XX)  OK
 ```
 Reconciled exactly on the first attempt — no mapping/parsing bugs found during development (the CSVs were hand-verified against the spec category-by-category before the script was written, which paid off here).
 
 **Post-apply DB verification (queried live from `ledger_transactions`/`ledger_funds`, not the script's in-memory numbers):**
 ```
-Foundation Charitable fund DB balance: $4836.57  (target $4836.57)  OK
-Club (Administrative + Activity) DB balance: $16218.64  (target $16218.64)  OK
+Foundation Charitable fund DB balance: $XXXX.XX  (target $XXXX.XX)  OK
+Club (Administrative + Activity) DB balance: $XXXXX.XX  (target $XXXXX.XX)  OK
 ```
 
 **Idempotency re-run** (`--apply` run a second time): deleted the 276 previously-imported rows (matched by the `[quicken-import]` memo suffix), re-inserted 276, reconciled identically. Confirms the "delete-and-reimport-safe" property the spec required.
@@ -137,20 +137,20 @@ Club (Administrative + Activity) DB balance: $16218.64  (target $16218.64)  OK
 **Per-FY totals** (fiscal year computed via the same start-year convention as `src/lib/fiscal-year.ts` — `FY2025 = Jul 2025–Jun 2026`):
 ```
 Foundation:
-  FY2024: income $35,083.78  expense $49,227.80  net -$14,144.02
-  FY2025: income $27,812.15  expense $37,400.86  net -$9,588.71
+  FY2024: income $XX,XXX.XX  expense $XX,XXX.XX  net -$XX,XXX.XX
+  FY2025: income $XX,XXX.XX  expense $XX,XXX.XX  net -$X,XXX.XX
 Club:
-  FY2024: income $5,647.50  expense $4,575.95  net $1,071.55
-  FY2025: income $3,589.80  expense $7,532.81  net -$3,943.01
+  FY2024: income $X,XXX.XX  expense $X,XXX.XX  net $X,XXX.XX
+  FY2025: income $X,XXX.XX  expense $X,XXX.XX  net -$X,XXX.XX
 ```
 Note: the register data spans calendar Jul 2024–Jun 2026, which under this codebase's start-year FY convention is **FY2024 and FY2025** (not "FY2025/FY2026" as the task brief's parenthetical guessed) — `FY2026 = Jul 2026–Jun 2027` per `src/lib/fiscal-year.ts`, so the two full fiscal years actually covered by the data are FY2024 (Jul 2024–Jun 2025) and FY2025 (Jul 2025–Jun 2026). Flagging this explicitly since it diverges from the brief's illustrative labels — the balances and category math are unaffected either way.
 
 **Treasurer-review flag list** (rows mapped to `Operations` / `Miscellaneous` / `Misc` — catch-all categories that may deserve more specific categorization later; 16 rows):
-- Foundation → Operations (8): Howard Baum −$24.99 (9/23/25, source cat "Miscellaneous"), Westerville North Self Storage −$948.00 (5/29/25, "Miscellaneous"), The J. C. Manny Co. −$250.00 (4/13/25, "Membership"), U.S. Postal Service −$256.00 (12/11/24, "Miscellaneous"), Ohio Attorney General −$50.00 (8/1/24, "Miscellaneous"), Costco Wholesale −$47.94 (7/31/24, "Uncategorized"), Home Depot −$249.00 (7/31/24, "Uncategorized"), Westerville North Self Storage −$794.00 (7/22/24, "Storage Unit")
-- Club → Miscellaneous (6): Lions Clubs International −$102.86 (6/10/26), J. C. Manny Co. −$239.60 (5/19/26), Clintonville Coin Laundry −$42.80 (5/4/26, source cat "Lion L Support"), Kris Thompson −$195.80 (10/17/25), Miriam Reinhoudt −$55.08 (10/1/25), Howard Baum −$422.12 (9/23/25)
-- Club → Misc (2): Transfer from PayPal +$563.80 (11/25/25, source cat "Uncategorized"), "Refund of rent from COhatch" +$100.00 (7/23/24, source cat "Meeting Space Rental")
+- Foundation → Operations (8): an individual member −$XX.XX (9/23/25, source cat "Miscellaneous"), Westerville North Self Storage −$XXX.XX (5/29/25, "Miscellaneous"), The J. C. Manny Co. −$XXX.XX (4/13/25, "Membership"), U.S. Postal Service −$XXX.XX (12/11/24, "Miscellaneous"), Ohio Attorney General −$XX.XX (8/1/24, "Miscellaneous"), Costco Wholesale −$XX.XX (7/31/24, "Uncategorized"), Home Depot −$XXX.XX (7/31/24, "Uncategorized"), Westerville North Self Storage −$XXX.XX (7/22/24, "Storage Unit")
+- Club → Miscellaneous (6): Lions Clubs International −$XXX.XX (6/10/26), J. C. Manny Co. −$XXX.XX (5/19/26), Clintonville Coin Laundry −$XX.XX (5/4/26, source cat "Lion L Support"), an individual member −$XXX.XX (10/17/25), an individual member −$XX.XX (10/1/25), an individual member −$XXX.XX (9/23/25)
+- Club → Misc (2): Transfer from PayPal +$XXX.XX (11/25/25, source cat "Uncategorized"), "Refund of rent from COhatch" +$XXX.XX (7/23/24, source cat "Meeting Space Rental")
 
-**Rows whose original register category was `Uncategorized` or `VOIDED`** (3 imported + the VOIDED zero-amount rows already covered in the skip list above): Costco Wholesale −$47.94, Home Depot −$249.00 (both Foundation, "Uncategorized" → Operations), Transfer from PayPal +$563.80 (Club, "Uncategorized" → Misc).
+**Rows whose original register category was `Uncategorized` or `VOIDED`** (3 imported + the VOIDED zero-amount rows already covered in the skip list above): Costco Wholesale −$XX.XX, Home Depot −$XXX.XX (both Foundation, "Uncategorized" → Operations), Transfer from PayPal +$XXX.XX (Club, "Uncategorized" → Misc).
 
 ## Open questions / handoff notes
 
@@ -179,7 +179,7 @@ Extended `scripts/import-quicken-ledger.ts` to stamp `beneficiaryCause` on every
 - Added `beneficiaryCause: string | null` to the `MappedTxn` type; computed at row-build time, gated to `flow === "expense" && fundKind in (charitable, activity)` — administrative-fund rows and all income rows are left `null` unconditionally, per spec.
 - Wired `beneficiaryCause` into the `--apply` insert payload.
 - Added `printCauseReport()`: prints per-cause dollar/row totals plus two distinct buckets — genuinely **unmatched** public-fund expense rows (would indicate a taxonomy gap) vs. **deliberately null** rows (categoryName `Operations` or `Insurance & bonding`, which the spec explicitly excludes). Wired into the existing dry-run report output.
-- Ran a **dry-run first** — reconciliation passed exactly ($4,836.57 / $16,218.64) and 0 unmatched rows on the first attempt, because every row had already been hand-verified against the CSVs.
+- Ran a **dry-run first** — reconciliation passed exactly ($X,XXX.XX / $XX,XXX.XX) and 0 unmatched rows on the first attempt, because every row had already been hand-verified against the CSVs.
 - Hit a schema/DB mismatch on the first `--apply` attempt: `ledger_categories.counts_as_giving` (an uncommitted `schema.ts` column from the other in-flight session, per the task's warning) wasn't yet present on the local DB at that moment, and the transaction rolled back cleanly (confirmed via `psql` — transaction count unchanged before/after). By the time I checked, the column already existed (the other session's `db:push` had landed concurrently) — added nothing myself beyond confirming via `\d ledger_categories`, then retried `--apply`, which succeeded.
 - **Did not touch any `src/` file** — confirmed via `git diff src/lib/db/schema.ts` that the only relevant unstaged change was the `countsAsGiving` column addition (unrelated to this task; the script doesn't reference it).
 - Verified post-apply via **independent SQL** (not the script's own numbers): per-cause `SUM`/`COUNT` grouped over the exact giving predicate (`flow='expense' AND transfer_group_id IS NULL AND status='posted' AND fund.kind IN ('activity','charitable','scholarship')`), and a second query confirming the 9 null-cause rows are exactly the 7 `Operations` + 2 `Insurance & bonding` rows — both queries matched the script's dry-run output to the penny.
@@ -195,26 +195,26 @@ Extended `scripts/import-quicken-ledger.ts` to stamp `beneficiaryCause` on every
 
 | Cause | Rows | Dollars |
 |---|---|---|
-| Youth & Education | 14 | $23,300.00 |
-| Fundraising event costs | 33 | $21,689.17 |
-| Hunger & Basic Needs | 9 | $13,300.00 |
-| Vision & Eye Care | 15 | $10,900.00 |
-| Disaster Relief | 2 | $5,000.00 |
-| Health & Disability | 8 | $4,750.00 |
-| Lions International Programs | 4 | $4,000.00 |
-| *(null — Operations/Insurance, deliberate)* | 9 | $2,968.94 |
-| Community & Civic | 1 | $400.00 |
-| Bags to Benches (Recycling) | 7 | $374.53 |
+| Youth & Education | 14 | $XX,XXX.XX |
+| Fundraising event costs | 33 | $XX,XXX.XX |
+| Hunger & Basic Needs | 9 | $XX,XXX.XX |
+| Vision & Eye Care | 15 | $XX,XXX.XX |
+| Disaster Relief | 2 | $X,XXX.XX |
+| Health & Disability | 8 | $X,XXX.XX |
+| Lions International Programs | 4 | $X,XXX.XX |
+| *(null — Operations/Insurance, deliberate)* | 9 | $X,XXX.XX |
+| Community & Civic | 1 | $XXX.XX |
+| Bags to Benches (Recycling) | 7 | $XXX.XX |
 
 (102 total public-fund expense rows across Foundation + club-activity combined; not directly comparable to the Foundation-only reconciliation figure below, which is scoped to the Foundation entity's charitable fund only.)
 
-**Reconciliation after re-import:** Foundation Charitable fund DB balance $4,836.57 (target $4,836.57) — OK. Club (Administrative + Activity) DB balance $16,218.64 (target $16,218.64) — OK. Both confirmed via the script's own post-apply DB verification and independently via `psql`.
+**Reconciliation after re-import:** Foundation Charitable fund DB balance $X,XXX.XX (target $X,XXX.XX) — OK. Club (Administrative + Activity) DB balance $XX,XXX.XX (target $XX,XXX.XX) — OK. Both confirmed via the script's own post-apply DB verification and independently via `psql`.
 
 **Unmatched public-fund expense rows: 0.** Every row eligible for a cause (Foundation any category + club-activity expense) matched a taxonomy rule or fell into the deliberate-null Operations/Insurance set.
 
 ## Judgment calls
 
-- **Category `"Sensory Garden"` (standalone, line 88 of the Foundation CSV — Ohio Lions Foundation, −$200, 6/20/2025, no memo)**: the supplied taxonomy only explicitly covered "Ohio Lions Foundation rows whose *memo* mentions sensory garden" (matching line 18, the 3/7/2026 −$200 row with memo "Lions sensory garden"). This row instead carries the register category `"Sensory Garden"` itself with no memo. Treated it as Vision & Eye Care by direct category match — same payee, same $200 amount as the memo-tagged sibling row, clearly the same annual sensory-garden pledge, just categorized differently by the treasurer in that fiscal year. Flagging in case the treasurer intended something else by using a distinct category string.
+- **Category `"Sensory Garden"` (standalone, line 88 of the Foundation CSV — Ohio Lions Foundation, −$XXX, 6/20/2025, no memo)**: the supplied taxonomy only explicitly covered "Ohio Lions Foundation rows whose *memo* mentions sensory garden" (matching line 18, the 3/7/2026 −$XXX row with memo "Lions sensory garden"). This row instead carries the register category `"Sensory Garden"` itself with no memo. Treated it as Vision & Eye Care by direct category match — same payee, same $XXX amount as the memo-tagged sibling row, clearly the same annual sensory-garden pledge, just categorized differently by the treasurer in that fiscal year. Flagging in case the treasurer intended something else by using a distinct category string.
 - Everything else matched the supplied taxonomy unambiguously after reading every row in both CSVs — no other judgment calls were needed; all 102 eligible rows were traceable to an explicit rule in the brief (payee, category, or memo condition).
 
 ## Open questions / handoff notes
@@ -252,8 +252,8 @@ re-verified. Every verification number specified in the task matched exactly on 
   `run_sql`, project `tiny-fog-13725730`, branch `production`) directly to confirm current state
   before writing code: entities, funds, categories (all 45 dev / 30 prod, diffed by natural key),
   bank accounts, the treasurer's user row in both DBs, the 276 dev marker-row count, the
-  7 existing production dues-ledger rows ($840 total, all dated 2026-07-20 — confirmed these must
-  be left untouched), and the 21 production `dues_payments` rows (7 linked, 14 unlinked, $1,661
+  7 existing production dues-ledger rows ($XXX total, all dated 2026-07-20 — confirmed these must
+  be left untouched), and the 21 production `dues_payments` rows (7 linked, 14 unlinked, $X,XXX
   unlinked total) via a `LEFT JOIN ... IS NULL`.
 - Confirmed via direct query that none of the 276 dev marker rows have `donor_id`,
   `transfer_group_id`, `approved_by_user_id`, `approved_at`, `board_minute`, or `rejection_reason`
@@ -316,9 +316,9 @@ re-verified. Every verification number specified in the task matched exactly on 
   `--apply` → ran the script's own post-apply verification (all seven checks OK) → ran a fully
   independent second verification via Neon MCP `run_sql` (separate queries, not reusing the
   script's connection or logic) confirming the same numbers.
-- Ran Task 2 dry-run (14 rows, $1,661.00, matched the task's numbers exactly) → `--apply` → the
-  script's own post-apply verification (all OK) — dues total $2,501.00, overall club balance
-  $18,719.64 ($16,218.64 historical + $2,501.00 dues), explanation printed per the task's
+- Ran Task 2 dry-run (14 rows, $X,XXX.XX, matched the task's numbers exactly) → `--apply` → the
+  script's own post-apply verification (all OK) — dues total $X,XXX.XX, overall club balance
+  $XX,XXX.XX ($XX,XXX.XX historical + $X,XXX.XX dues), explanation printed per the task's
   requirement that exceeding the register's historical ending balance is expected here.
 
 ## Outputs
@@ -336,8 +336,8 @@ re-verified. Every verification number specified in the task matched exactly on 
   `production` — this IS the live production database):**
   - Task 1: upserted 15 `ledger_categories` rows; synced `counts_as_giving` to `false` on the 3
     overhead categories (Insurance & bonding ×2, Fundraising event costs, Operations); updated
-    `ledger_funds.opening_balance_cents` for club/administrative ($0 → $19,090.10) and
-    foundation/charitable ($0 → $28,569.30); renamed both `ledger_bank_accounts` rows
+    `ledger_funds.opening_balance_cents` for club/administrative ($0 → $XX,XXX.XX) and
+    foundation/charitable ($0 → $XX,XXX.XX); renamed both `ledger_bank_accounts` rows
     ("Primary Checking" → "Administrative Checking" / "Foundation Checking", institution → NULL);
     inserted 276 `ledger_transactions` rows (0 deleted — first run). The 7 pre-existing live
     dues-auto-post rows were never touched by this script (structurally impossible — its delete/
@@ -350,19 +350,19 @@ re-verified. Every verification number specified in the task matched exactly on 
 ```
 Task 1:
   Marker rows: 276  (expected 276)  OK
-  Dues rows (untouched): 7 / $840.00  (expected 7 / $840.00)  OK
-  Club historical balance (excl. dues rows): $16,218.64  (expected $16,218.64)  OK
-  Foundation historical balance (excl. dues rows): $4,836.57  (expected $4,836.57)  OK
-  Per-cause totals: Youth & Education $23,300.00 · Hunger & Basic Needs $13,300.00 ·
-    Vision & Eye Care $10,900.00 · Disaster Relief $5,000.00 · Health & Disability $4,750.00 ·
-    Lions International Programs $4,000.00 · Community & Civic $400.00 ·
-    Bags to Benches (Recycling) $374.53 — all OK, all matched dev exactly
+  Dues rows (untouched): 7 / $XXX.XX  (expected 7 / $XXX.XX)  OK
+  Club historical balance (excl. dues rows): $XX,XXX.XX  (expected $XX,XXX.XX)  OK
+  Foundation historical balance (excl. dues rows): $X,XXX.XX  (expected $X,XXX.XX)  OK
+  Per-cause totals: Youth & Education $XX,XXX.XX · Hunger & Basic Needs $XX,XXX.XX ·
+    Vision & Eye Care $XX,XXX.XX · Disaster Relief $X,XXX.XX · Health & Disability $X,XXX.XX ·
+    Lions International Programs $X,XXX.XX · Community & Civic $XXX.XX ·
+    Bags to Benches (Recycling) $XXX.XX — all OK, all matched dev exactly
   counts_as_giving = false on exactly: Fundraising event costs, Insurance & bonding, Operations  OK
 
 Task 2:
   Dues payments with no ledger row: 0  (expected 0)  OK
-  Ledger dues total: 21 rows / $2,501.00  (expected $2,501.00)  OK
-  Overall club balance: $18,719.64 = $16,218.64 historical + $2,501.00 dues  (expected $18,719.64)  OK
+  Ledger dues total: 21 rows / $X,XXX.XX  (expected $X,XXX.XX)  OK
+  Overall club balance: $XX,XXX.XX = $XX,XXX.XX historical + $X,XXX.XX dues  (expected $XX,XXX.XX)  OK
     (Register export predates these Zeffy/check deposits — exceeding the register's historical
     ending balance is expected, not an error.)
 

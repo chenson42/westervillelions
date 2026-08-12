@@ -28,7 +28,7 @@
 
 ## Summary
 
-Wrote `scripts/seed-fy2026-foundation-budget.ts`, a dry-run-first, idempotent, `--apply`-gated script that derives cause+label `ledger_budget_lines` children for the three eligible FY2026 Foundation Charitable-fund budget rows ("Charitable donation out" $15,325.00, "Grant out" $3,400.00, "Scholarships" $7,500.00) from FY2025 posted actuals, per the treasurer-approved mapping rules. Ran it dry-run against **production** (Neon project `tiny-fog-13725730`, branch `production`, verified via `mcp__Neon__describe_project`/`get_connection_string` before connecting) and confirmed every derived line set sums exactly to its existing budget lump — zero mismatches, zero taxonomy warnings, nothing written.
+Wrote `scripts/seed-fy2026-foundation-budget.ts`, a dry-run-first, idempotent, `--apply`-gated script that derives cause+label `ledger_budget_lines` children for the three eligible FY2026 Foundation Charitable-fund budget rows ("Charitable donation out" $XX,XXX.XX, "Grant out" $X,XXX.XX, "Scholarships" $X,XXX.XX) from FY2025 posted actuals, per the treasurer-approved mapping rules. Ran it dry-run against **production** (Neon project `tiny-fog-13725730`, branch `production`, verified via `mcp__Neon__describe_project`/`get_connection_string` before connecting) and confirmed every derived line set sums exactly to its existing budget lump — zero mismatches, zero taxonomy warnings, nothing written.
 
 ## What I did
 
@@ -59,52 +59,52 @@ Target budget: FY2026 Foundation Charitable-fund expense budget rows
 Categories in scope: Charitable donation out, Grant out, Scholarships
 
 Resolved FY2026 budget rows (existing lump sums):
-  "Grant out"                 $3400.00
-  "Charitable donation out"   $15325.00
-  "Scholarships"              $7500.00
+  "Grant out"                 $X,XXX.XX
+  "Charitable donation out"   $XX,XXX.XX
+  "Scholarships"              $X,XXX.XX
 
 Fetched 26 FY2025 posted expense actuals across the 3 target categories.
 
 CATEGORY: "Grant out"
-  Hunger & Basic Needs   Westerville Area Resource Ministry   $2500.00
-  Hunger & Basic Needs   Heritage Middle School PTSA            $500.00
-  Community & Civic      The City of Westerville                $400.00
-  Derived child sum: $3400.00  |  Existing parent lump: $3400.00  |  MATCH
+  Hunger & Basic Needs   Westerville Area Resource Ministry   $X,XXX.XX
+  Hunger & Basic Needs   Heritage Middle School PTSA            $XXX.XX
+  Community & Civic      The City of Westerville                $XXX.XX
+  Derived child sum: $X,XXX.XX  |  Existing parent lump: $X,XXX.XX  |  MATCH
 
 CATEGORY: "Charitable donation out"
-  Hunger & Basic Needs           Westerville Area Resource Ministry    $2000.00
-  Youth & Education              Gates At Eight (combines 2 rows)      $1000.00
-  Hunger & Basic Needs           Westerville Caring and Sharing        $1000.00
-  Vision & Eye Care              Pilot Dogs, Inc.                      $1000.00
-  Vision & Eye Care              Central Ohio Lions Eye Bank           $1000.00
-  Vision & Eye Care              OLF Eye Care Fund                     $1000.00
-  Vision & Eye Care              Foundation Fighting Blindness         $1000.00
-  Health & Disability            Ohio Lions Pediatric Cancer Foundation $1000.00
-  Lions International Programs   Lions Clubs International Foundation  $1000.00
-  Lions International Programs   Ohio Lions Foundation                 $1000.00
-  Vision & Eye Care              Ohio Lions Eye Research Foundation     $750.00
-  Health & Disability            Camp Echoing Hills Campership          $750.00
-  Youth & Education              (generic — folds Qdoba)                $500.00
-  Hunger & Basic Needs           The Big Bus                            $500.00
-  Vision & Eye Care              VOSH/Ohio                               $500.00
-  Vision & Eye Care              OSSBPTS Foundation                      $500.00
-  Health & Disability            Westerville Special Olympics            $500.00
-  Vision & Eye Care              Ohio Lions Foundation (Vision, distinct cause) $200.00
-  Health & Disability            Central Ohio Diabetes Association       $125.00
-  Derived child sum: $15325.00  |  Existing parent lump: $15325.00  |  MATCH
+  Hunger & Basic Needs           Westerville Area Resource Ministry    $X,XXX.XX
+  Youth & Education              Gates At Eight (combines 2 rows)      $X,XXX.XX
+  Hunger & Basic Needs           Westerville Caring and Sharing        $X,XXX.XX
+  Vision & Eye Care              Pilot Dogs, Inc.                      $X,XXX.XX
+  Vision & Eye Care              Central Ohio Lions Eye Bank           $X,XXX.XX
+  Vision & Eye Care              OLF Eye Care Fund                     $X,XXX.XX
+  Vision & Eye Care              Foundation Fighting Blindness         $X,XXX.XX
+  Health & Disability            Ohio Lions Pediatric Cancer Foundation $X,XXX.XX
+  Lions International Programs   Lions Clubs International Foundation  $X,XXX.XX
+  Lions International Programs   Ohio Lions Foundation                 $X,XXX.XX
+  Vision & Eye Care              Ohio Lions Eye Research Foundation     $XXX.XX
+  Health & Disability            Camp Echoing Hills Campership          $XXX.XX
+  Youth & Education              (generic — folds Qdoba)                $XXX.XX
+  Hunger & Basic Needs           The Big Bus                            $XXX.XX
+  Vision & Eye Care              VOSH/Ohio                               $XXX.XX
+  Vision & Eye Care              OSSBPTS Foundation                      $XXX.XX
+  Health & Disability            Westerville Special Olympics            $XXX.XX
+  Vision & Eye Care              Ohio Lions Foundation (Vision, distinct cause) $XXX.XX
+  Health & Disability            Central Ohio Diabetes Association       $XXX.XX
+  Derived child sum: $XX,XXX.XX  |  Existing parent lump: $XX,XXX.XX  |  MATCH
 
 CATEGORY: "Scholarships"
-  Youth & Education   (generic — combines 3 rows: Arden Heckman, Emilie Clark, Imani Akita)   $7500.00
-  Derived child sum: $7500.00  |  Existing parent lump: $7500.00  |  MATCH
+  Youth & Education   (generic — combines 3 individual scholarship recipients)   $X,XXX.XX
+  Derived child sum: $X,XXX.XX  |  Existing parent lump: $X,XXX.XX  |  MATCH
 
-GRAND TOTAL: existing lumps $26225.00  ==  derived children $26225.00
+GRAND TOTAL: existing lumps $XX,XXX.XX  ==  derived children $XX,XXX.XX
 
 No taxonomy or missing-cause warnings — every FY2025 row in scope carried a valid BUDGET_CAUSES value.
 
 DRY RUN COMPLETE — no DB writes.
 ```
 
-All three categories reconcile exactly; the "Charitable donation out" 20 source rows (18 single rows + Gates At Eight's 2 combined rows) match the treasurer's stated count exactly, and Ohio Lions Foundation correctly produced two distinct lines (Lions International Programs $1,000 / Vision & Eye Care $200) since grouping is by `(cause, party)`, not `party` alone.
+All three categories reconcile exactly; the "Charitable donation out" 20 source rows (18 single rows + Gates At Eight's 2 combined rows) match the treasurer's stated count exactly, and Ohio Lions Foundation correctly produced two distinct lines (Lions International Programs $X,XXX.XX / Vision & Eye Care $XXX.XX) since grouping is by `(cause, party)`, not `party` alone.
 
 ### Local apply command (for reference — NOT run this session)
 

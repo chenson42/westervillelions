@@ -31,7 +31,7 @@ READY WITH NOTES
 
 ## ONE-LINE TAKE
 
-> Stop budgeting a $0-target pass-through fund and shrink its category catalog to the three categories the pass-through actually needs — but the trim can't proceed until two live-transaction rows (a $97.50 Activity "Pancake Breakfast" income row and a $53.98 Activity "Program supplies" expense row) are re-filed, and the expense re-file changes the dollar figure on the already-drafted T-04 board motion.
+> Stop budgeting a $0-target pass-through fund and shrink its category catalog to the three categories the pass-through actually needs — but the trim can't proceed until two live-transaction rows (a $150.00 Activity "Pancake Breakfast" income row and a $80.00 Activity "Program supplies" expense row) are re-filed, and the expense re-file changes the dollar figure on the already-drafted T-04 board motion.
 
 ## Grounding (verified against production branch `br-mute-recipe-amc7uz5o`, project `tiny-fog-13725730`)
 
@@ -40,11 +40,11 @@ Queried `ledger_categories` and `ledger_transactions` directly rather than trust
 - **Activity fund (`kind='activity'`) has exactly 4 posted transactions, ever:**
   | Date | Flow | Amount | Category | Party/memo |
   |---|---|---|---|---|
-  | 2025-01-25 | income | $1.00 | Public donations | "From Winterfest" |
-  | 2025-02-22 | income | $40.00 | Public donations | Jeff Reschke |
-  | 2025-03-17 | income | $97.50 | **Pancake Breakfast** | Square — "Online and door ticket sales" |
-  | 2025-07-29 | expense | $53.98 | **Program supplies** | Jane Enneking, check 8002, "Supplies-trash bags" |
-- Net: $138.50 income − $53.98 expense = **$84.52** — this is exactly the T-04 sweep balance ("Activity Fund $84.52 → Foundation sweep," Motion 1 drafted). **The $84.52 is the fund's net balance across all 4 rows, not just the 2 rows literally tagged "Public donations."** This matters below.
+  | 2025-01-25 | income | $2.00 | Public donations | "From Winterfest" |
+  | 2025-02-22 | income | $75.00 | Public donations | a donor |
+  | 2025-03-17 | income | $150.00 | **Pancake Breakfast** | Square — "Online and door ticket sales" |
+  | 2025-07-29 | expense | $80.00 | **Program supplies** | a member, check 8002, "Supplies-trash bags" |
+- Net: $227.00 income − $80.00 expense = **$147.00** — this is exactly the T-04 sweep balance ("Activity Fund $147.00 → Foundation sweep," Motion 1 drafted). **The $147.00 is the fund's net balance across all 4 rows, not just the 2 rows literally tagged "Public donations."** This matters below.
 - **14 active Activity-scoped categories confirmed** (7 income, 7 expense), matching the request. All except Pancake Breakfast and Program supplies have **zero** transactions ever, on either fund. `Zeffy Donations` (income) and `Transfer to Foundation` (expense) **already exist** in the catalog with 0 transactions — created by `scripts/fix-ledger-categories.ts` (§1a of `docs/2026-07-29-clean-fy2025-plan.md`), so no new category needs to be created for the trim.
 - **Administrative fund already has a `Program supplies` expense category** (4 existing transactions, `countsAsGiving=false`) — an exact-name landing spot already exists for the re-filed Activity row; no new category needed there either.
 - No separate `budgeted`/`excludeFromBudget` column exists on `ledger_funds` today — confirmed by reading `schema.ts:544-564`.
@@ -55,7 +55,7 @@ Queried `ledger_categories` and `ledger_transactions` directly rather than trust
 |---------|------|---------|
 | admin (Treasurer/Admin, `ledger.manage`/`budget.edit`) | Opens `/admin/ledger/budgeting` and sees only Administrative + Charitable (no Activity Fund budget card) | Per budgeting session |
 | admin (`ledger.manage`) | Opens the Activity fund's category picker (transaction form, "+ add category" in budgeting today) and sees only 3 categories instead of 14 | On demand, when recording an Activity transaction |
-| admin (`ledger.manage`) | Records the $53.98 re-file as an edit to an existing transaction (fund + category change), citing the T-25/T-26 decision | One-time, at cleanup execution |
+| admin (`ledger.manage`) | Records the $80.00 re-file as an edit to an existing transaction (fund + category change), citing the T-25/T-26 decision | One-time, at cleanup execution |
 | admin (`ledger.approve`/board) | Approves an updated T-04 board motion figure if the re-file changes the sweep amount | One-time, before the T-04 sweep executes |
 
 The request is data hygiene + a display filter, not new end-user-facing interaction — verbs are thin by nature. Flagging per Pass 1: this is legitimately description-heavy ("exclude a fund," "trim a catalog"), and I've pushed on it above to find the concrete hands-on-keyboard actions (re-filing two specific transactions, approving a motion figure) that the request's framing didn't surface.
@@ -71,7 +71,7 @@ Entry: `/admin/ledger/activity` transaction form → step: category picker for `
 - Failure: none new — this is a straightforward dropdown-contents change (`isActive=false` categories already excluded by `getCategories`'s existing `eq(ledgerCategories.isActive, true)` filter, confirmed in `ledger-queries.ts:379`).
 
 **Flow 3 — The category-trim re-file (the load-bearing flow — a one-time data edit, not a recurring user action):**
-Entry: cleanup script/admin edit, post-Chris-sign-off → step A: recategorize the $97.50 Pancake Breakfast row to `Public donations` (same fund, same category flow, **no balance impact**) → step B: **decision required** — re-file the $53.98 Program supplies row (see below) → step C: deactivate (`isActive=false`) the 11 now-empty Activity categories → outcome: catalog trimmed to 3, all 4 historical transactions still traceable to a valid category, zero rows silently orphaned.
+Entry: cleanup script/admin edit, post-Chris-sign-off → step A: recategorize the $150.00 Pancake Breakfast row to `Public donations` (same fund, same category flow, **no balance impact**) → step B: **decision required** — re-file the $80.00 Program supplies row (see below) → step C: deactivate (`isActive=false`) the 11 now-empty Activity categories → outcome: catalog trimmed to 3, all 4 historical transactions still traceable to a valid category, zero rows silently orphaned.
 - Failure: if step B is skipped or done in the wrong order relative to the T-04 sweep, the sweep's board-approved dollar figure goes stale (see "Sequencing hazard" below) — this is the sharpest failure mode in this whole cleanup and needs to be called out explicitly to Chris, not just handled in code.
 
 **Flow 4 — Board approves and executes the T-04 sweep, post-cleanup:**
@@ -129,15 +129,15 @@ Definitive table, straight from the query results (`Rudolph Run` here is the Act
 
 ## Re-File Plan — the Two Live Rows
 
-**Row A — $97.50 Activity "Pancake Breakfast" income, 2025-03-17, Square, "Online and door ticket sales."**
-Recommend: **recategorize only, same fund.** Change `category_id` from `Pancake Breakfast` (activity) to `Public donations` (activity). This is genuinely public/fundraiser money that landed in the club's hands and needs sweeping, per T-04's own framing (T-04 explicitly lists this $97.50 as part of the same $84.52 pass-through balance as the two Public-donations rows). It is **not** the Foundation's own, much larger Pancake Breakfast fundraiser income (that lives at `fund_kind='charitable'`, a separate row entirely, and is out of scope) — this is Activity-fund cash from the same event that happened to be deposited club-side. **No balance impact** — stays in Activity, so it doesn't touch the T-04 sweep math. Low-risk, do this one without further sign-off beyond the general go-ahead.
+**Row A — $150.00 Activity "Pancake Breakfast" income, 2025-03-17, Square, "Online and door ticket sales."**
+Recommend: **recategorize only, same fund.** Change `category_id` from `Pancake Breakfast` (activity) to `Public donations` (activity). This is genuinely public/fundraiser money that landed in the club's hands and needs sweeping, per T-04's own framing (T-04 explicitly lists this $150.00 as part of the same $147.00 pass-through balance as the two Public-donations rows). It is **not** the Foundation's own, much larger Pancake Breakfast fundraiser income (that lives at `fund_kind='charitable'`, a separate row entirely, and is out of scope) — this is Activity-fund cash from the same event that happened to be deposited club-side. **No balance impact** — stays in Activity, so it doesn't touch the T-04 sweep math. Low-risk, do this one without further sign-off beyond the general go-ahead.
 
-**Row B — $53.98 Activity "Program supplies" expense, 2025-07-29, check 8002, Jane Enneking, "Bags to Benches / trash bags."**
+**Row B — $80.00 Activity "Program supplies" expense, 2025-07-29, check 8002, a member, "Bags to Benches / trash bags."**
 This is the one that needs Chris's decision, and here's why it's genuinely load-bearing, not a formality:
 
 The trimmed catalog has **exactly one expense category left in Activity: "Transfer to Foundation."** A real vendor purchase cannot be honestly recorded under a transfer category. So keeping this row in the Activity fund at all is incompatible with the trim as specified — the only way to honor "expense = Transfer to Foundation only" is to **move this row out of the Activity fund entirely**, not just recategorize it. Administrative already has a same-named `Program supplies` expense category with 4 existing transactions — an exact, ready-made landing spot. Recommend: change both `fund_id` (activity → administrative) and `category_id` (Activity/Program supplies → Administrative/Program supplies). This is exactly the resolution T-26 already flagged as likely ("Whether to re-file it to Administrative is entangled with T-25... needs an admin-category choice... Deferred to the T-25 Activity-fund decision") and G2 recommended ("Should likely be Administrative — cleared admin acct").
 
-**Sequencing hazard — read before executing:** moving this $53.98 expense out of Activity changes the fund's net balance from **$84.52 to $138.50** (all three income rows, no offsetting expense). T-04's board motion ("Motion 1 drafted") was drafted citing **$84.52**. If Row B's re-file happens *after* the T-04 sweep executes at $84.52, the books end up inconsistent (a retroactive fund reassignment on a transaction whose effect was already baked into a completed sweep). If it happens *before*, the sweep amount should be **$138.50**, and Motion 1's drafted figure needs updating before the board votes on it. **Recommend re-filing Row B before executing the T-04 sweep, and flagging the $84.52 → $138.50 change to whoever is finalizing Motion 1's language.** This is squarely a "confirm with Chris" item, not something to silently resolve in a script — see Open Questions.
+**Sequencing hazard — read before executing:** moving this $80.00 expense out of Activity changes the fund's net balance from **$147.00 to $227.00** (all three income rows, no offsetting expense). T-04's board motion ("Motion 1 drafted") was drafted citing **$147.00**. If Row B's re-file happens *after* the T-04 sweep executes at $147.00, the books end up inconsistent (a retroactive fund reassignment on a transaction whose effect was already baked into a completed sweep). If it happens *before*, the sweep amount should be **$227.00**, and Motion 1's drafted figure needs updating before the board votes on it. **Recommend re-filing Row B before executing the T-04 sweep, and flagging the $147.00 → $227.00 change to whoever is finalizing Motion 1's language.** This is squarely a "confirm with Chris" item, not something to silently resolve in a script — see Open Questions.
 
 **A genuine policy tension worth surfacing, not just the mechanical re-file:** the Activity Fund's own stated policy (`docs/treasurer-todo.md` "Activity Fund policy" reference note) is "money landing in the Activity Fund is promptly **either spent directly on service or swept to the Foundation**" — i.e., direct local service spending is an *intended* branch of the fund's purpose, not an error. Trimming the expense catalog down to *only* "Transfer to Foundation" removes the category-level ability to represent that branch at all going forward — any *future* direct-service Activity expense would have nowhere valid to post. Two ways to resolve, both legitimate, Chris's call: (a) accept that the policy's "spend directly" branch is being retired in practice — Activity becomes a pure 100%-sweep pass-through with no local spending path, which is arguably the cleaner, simpler policy anyway given the fund's near-zero real usage; or (b) keep one minimal expense category alive for the rare direct-service case (e.g. reactivate the existing zero-use `Service projects` row instead of retiring it). I'm not resolving this — it's a real fork in what "trim to essentials" means, and the two options produce different retire lists.
 
@@ -163,10 +163,10 @@ Confirmed in `docs/work-log/2026-07-29-ledger-account-transfers.md` (Phase 3, "W
 
 ## Open Questions
 
-1. **Row B ($53.98 Program supplies → Administrative) — approve the re-file, and confirm the sequencing:** does it happen before or after the T-04 sweep executes? If before (recommended), Motion 1's drafted dollar figure needs to change from $84.52 to $138.50 before the board votes.
+1. **Row B ($80.00 Program supplies → Administrative) — approve the re-file, and confirm the sequencing:** does it happen before or after the T-04 sweep executes? If before (recommended), Motion 1's drafted dollar figure needs to change from $147.00 to $227.00 before the board votes.
 2. **The "spend directly on service" policy branch** — is Chris intentionally retiring Activity's ability to record local direct-service spending (trim to sweep-only, ever), or should one minimal expense category (e.g., reactivated `Service projects`) stay alive for that case? This changes the retire list by one row.
 3. **Sweep Club-leg categorization** — confirmed recommended above; asking Chris to sign off on it being in scope for *this* cleanup (touches shipped Sweep code) versus deferred to its own tiny follow-up.
-4. **Row A ($97.50 Pancake Breakfast → Public donations, same fund)** — this one reads as low-risk/no-balance-impact; flagging for a quick yes/no rather than treating it as open the way Row B is.
+4. **Row A ($150.00 Pancake Breakfast → Public donations, same fund)** — this one reads as low-risk/no-balance-impact; flagging for a quick yes/no rather than treating it as open the way Row B is.
 
 ---
 

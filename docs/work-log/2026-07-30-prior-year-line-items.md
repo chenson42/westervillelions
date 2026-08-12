@@ -52,12 +52,12 @@ Ohio Lions Eye Research Fund lines in the FY2025 data, which all carry both figu
 I queried the dev/prod Neon project (`tiny-fog-13725730`) directly:
 
 - **FY2025 already has a `ledger_budget_lines` row**: `cause='Vision & Eye Care'`, `label='Pilot Dogs'`,
-  `amountCents=100000`, under the **same** `fund_id` (`d0e4bade-...`) and **same** `category_id`
+  `amountCents=X0000`, under the **same** `fund_id` (`d0e4bade-...`) and **same** `category_id`
   (`91165dec-...`, "Charitable donation out") as the FY2026 line the treasurer just added — an
-  **exact key match**. Per the code above, this should populate `priorBudgetCents = $1,000` on a
+  **exact key match**. Per the code above, this should populate `priorBudgetCents = $X,XXX` on a
   correct render.
 - **FY2025 and FY2024 both have posted `ledger_transactions`** with `beneficiary_cause='Vision & Eye
-  Care'`, `amount_cents=100000`, same `category_id` — but `party = 'Pilot Dogs, Inc.'` (note the
+  Care'`, `amount_cents=X0000`, same `category_id` — but `party = 'Pilot Dogs, Inc.'` (note the
   `", Inc."` suffix). `normalizeBudgetLineLabel` is trim-only, so the key for the transaction
   (`...::Pilot Dogs, Inc.`) does **not** match the key for the budget label (`...::Pilot Dogs`). This
   half is a genuine, confirmed accuracy gap — real payee-name drift, exactly the class of problem
@@ -69,7 +69,7 @@ So the two reference cells have two **different** root causes:
 | Cell | Root cause | Is it a bug? |
 |---|---|---|
 | Prior Actual | `label` ("Pilot Dogs") vs. `party` ("Pilot Dogs, Inc.") — punctuation drift breaks the exact-match key | Confirmed accuracy gap (real, not hypothetical — same club, same gift, two spellings) |
-| Prior Budget | Data matches exactly (same fund, category, cause, label, both FYs) — should render $1,000 | **This one is a bug, not a data gap — see below.** |
+| Prior Budget | Data matches exactly (same fund, category, cause, label, both FYs) — should render $X,XXX | **This one is a bug, not a data gap — see below.** |
 
 ### 3. The Prior Budget bug: newly-added cause lines never pick up their reference values client-side
 

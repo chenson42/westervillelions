@@ -31,7 +31,7 @@ const GUARDRAILS: GuardrailRow[] = [
   {
     title: "Treasurer not bonded",
     severity: "warn",
-    whatToDo: "Confirm the fidelity bond is active (see treasurer-todo.md T-05), then check the “treasurer bonded” box in Settings.",
+    whatToDo: "Confirm the fidelity bond is active, then check the “treasurer bonded” box in Settings.",
   },
   {
     title: "Income entries missing itemized source",
@@ -81,12 +81,12 @@ const GUARDRAILS: GuardrailRow[] = [
   {
     title: "Public fund(s) holding undisbursed balance past threshold",
     severity: "warn",
-    whatToDo: "Disburse or sweep the balance, or — if earmarked for a specific multi-year project — document that in board minutes (see treasurer-todo.md T-16).",
+    whatToDo: "Disburse or sweep the balance, or — if earmarked for a specific multi-year project — document that in board minutes.",
   },
   {
     title: "Public-category income posted directly to Administrative fund",
     severity: "warn",
-    whatToDo: "Reclassify to an Activity/Charitable fund — public money can't post directly to Administrative (see treasurer-todo.md T-04).",
+    whatToDo: "Reclassify to an Activity/Charitable fund — public money can't post directly to Administrative.",
   },
 ];
 

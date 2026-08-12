@@ -1,6 +1,6 @@
 /**
  * Category-structure cleanup + transaction re-tags for the "clean FY2025" model.
- * Follows docs/2026-07-29-clean-fy2025-plan.md (Script 1). Dry-run by default.
+ * Dry-run by default.
  *
  *   pnpm exec tsx scripts/fix-ledger-categories.ts            # dry run (no writes)
  *   pnpm exec tsx scripts/fix-ledger-categories.ts --apply    # writes (one transaction)
@@ -14,14 +14,18 @@
  *     - Rudolph Run income -> the 3 new categories (entry-receipts deposit ->
  *       Registration, fixing its mis-imported party; Square -> Day-of; rest ->
  *       Sponsorships & Donations). Closes T-09.
- *     - $552 "tailtwisting transfer from club" -> Transfer from Club (was Public donations).
- *     - $3,655 4/9/2025 -> keep Pancake Breakfast; fix party/memo (was "Rudolph Run Sponsorships").
- *     - Ohio Lions Foundation $200 (check 8257) -> cause Community & Civic, label "Lions Sensory Garden".
+ *     - A specific tailtwisting transfer from the club -> Transfer from Club (was Public donations).
+ *     - A specific 4/9/2025 Pancake Breakfast deposit -> keep category; fix party/memo (was "Rudolph Run Sponsorships").
+ *     - A specific Ohio Lions Foundation gift (check 8257) -> cause Community & Civic, label "Lions Sensory Garden".
  *     - Admin Misc member-recognition items (pins, polos, speaker gifts) -> Member recognition.
  *
  * NEVER touches budgets, only categories + transactions. NEVER deletes a transaction.
  * Emptied old categories (Rudolph Run, and any Misc leftovers) are left in place and
  * flagged — deactivating/removing them is a follow-up once confirmed empty.
+ *
+ * HISTORICAL: already run against production. The exact dollar amounts this script
+ * matched on below have been replaced with placeholders for public release, since
+ * this is a one-off script that will never be re-run against real data again.
  */
 
 import { config } from "dotenv";
@@ -112,9 +116,9 @@ async function main() {
     let reg = 0, spon = 0, day = 0;
     for (const t of rud) {
       const p = (t.party ?? "").toLowerCase();
-      // Entry receipts: the mis-imported $14,451.90 (party wrongly "Rudolph Run Sponsorships")
+      // Entry receipts: the mis-imported deposit (party wrongly "Rudolph Run Sponsorships")
       // and any row already labeled entry receipts.
-      const isEntry = p.includes("entry receipt") || t.amount_cents === 1445190;
+      const isEntry = p.includes("entry receipt") || t.amount_cents === 999999;
       const isSquare = p.includes("square");
       const target = isEntry ? "Registration" : isSquare ? "Day-of" : "Sponsorships";
       if (target === "Registration") reg++;
@@ -122,16 +126,16 @@ async function main() {
       else spon++;
     }
     console.log(`   Rudolph Run income (${rud.length} txns) -> Registration:${reg}  Sponsorships:${spon}  Day-of:${day}`);
-    console.log(`     (incl. fixing the $14,451.90 entry-receipts deposit's party -> "Rudolph Run Entry Receipts"; closes T-09)`);
+    console.log(`     (incl. fixing a mis-imported entry-receipts deposit's party -> "Rudolph Run Entry Receipts"; closes T-09)`);
     if (APPLY) {
       if (!regId || !sponId || !dayId) throw new Error("Rudolph target categories missing — step A must have created them.");
       for (const t of rud) {
         const p = (t.party ?? "").toLowerCase();
-        const isEntry = p.includes("entry receipt") || t.amount_cents === 1445190;
+        const isEntry = p.includes("entry receipt") || t.amount_cents === 999999;
         const isSquare = p.includes("square");
         if (isEntry) {
           await sql`UPDATE ledger_transactions SET category_id = ${regId},
-                    party = CASE WHEN ${t.amount_cents} = 1445190 THEN 'Rudolph Run Entry Receipts' ELSE party END,
+                    party = CASE WHEN ${t.amount_cents} = 999999 THEN 'Rudolph Run Entry Receipts' ELSE party END,
                     updated_at = now() WHERE id = ${t.id}`;
         } else if (isSquare) {
           await sql`UPDATE ledger_transactions SET category_id = ${dayId}, updated_at = now() WHERE id = ${t.id}`;
@@ -144,33 +148,33 @@ async function main() {
     console.log("   (no 'Rudolph Run' income category — already split?)");
   }
 
-  // $552 tailtwisting transfer -> Transfer from Club
+  // A specific tailtwisting transfer -> Transfer from Club
   const transfer552 = await sql<{ id: string; category_id: string | null; party: string | null }[]>`
     SELECT t.id, t.category_id, t.party FROM ledger_transactions t
     JOIN ledger_funds f ON f.id = t.fund_id
-    WHERE f.slug = 'charitable' AND t.flow = 'income' AND t.amount_cents = 55200
+    WHERE f.slug = 'charitable' AND t.flow = 'income' AND t.amount_cents = 99999
       AND t.txn_date = '2024-07-08' AND t.party ILIKE '%Westerville Lions Club%'`;
-  console.log(`   $552 tailtwisting transfer -> Transfer from Club: ${transfer552.length} match(es)`);
+  console.log(`   Tailtwisting transfer -> Transfer from Club: ${transfer552.length} match(es)`);
   if (APPLY && transfer552.length === 1) {
     if (!transferFromClubId) throw new Error("Transfer from Club category missing.");
     await sql`UPDATE ledger_transactions SET category_id = ${transferFromClubId}, updated_at = now() WHERE id = ${transfer552[0].id}`;
   }
 
-  // $3,655 Pancake Breakfast — fix mis-imported party/memo
+  // A specific Pancake Breakfast deposit — fix mis-imported party/memo
   const pancake3655 = await sql<{ id: string; party: string | null; memo: string | null }[]>`
     SELECT t.id, t.party, t.memo FROM ledger_transactions t JOIN ledger_funds f ON f.id = t.fund_id
-    WHERE f.slug = 'charitable' AND t.flow = 'income' AND t.amount_cents = 365500 AND t.txn_date = '2025-04-09'`;
-  console.log(`   $3,655 Pancake Breakfast party/memo fix: ${pancake3655.length} match(es) (keep category, drop "Rudolph Run" label)`);
+    WHERE f.slug = 'charitable' AND t.flow = 'income' AND t.amount_cents = 300000 AND t.txn_date = '2025-04-09'`;
+  console.log(`   Pancake Breakfast party/memo fix: ${pancake3655.length} match(es) (keep category, drop "Rudolph Run" label)`);
   if (APPLY && pancake3655.length === 1) {
     await sql`UPDATE ledger_transactions SET party = 'Pancake Breakfast Receipts',
               memo = 'Pancake Breakfast Receipts', updated_at = now() WHERE id = ${pancake3655[0].id}`;
   }
 
-  // Ohio Lions Foundation $200 (check 8257) -> Community & Civic + label Lions Sensory Garden
+  // A specific Ohio Lions Foundation gift (check 8257) -> Community & Civic + label Lions Sensory Garden
   const sensory = await sql<{ id: string; beneficiary_cause: string | null; party: string | null }[]>`
     SELECT id, beneficiary_cause, party FROM ledger_transactions
-    WHERE check_number = '8257' AND amount_cents = 20000 AND flow = 'expense'`;
-  console.log(`   Ohio Lions Foundation $200 (sensory garden) -> cause Community & Civic, label Lions Sensory Garden: ${sensory.length} match(es)`);
+    WHERE check_number = '8257' AND amount_cents = 25000 AND flow = 'expense'`;
+  console.log(`   Ohio Lions Foundation gift (sensory garden) -> cause Community & Civic, label Lions Sensory Garden: ${sensory.length} match(es)`);
   if (APPLY && sensory.length === 1) {
     await sql`UPDATE ledger_transactions SET beneficiary_cause = 'Community & Civic',
               party = 'Lions Sensory Garden', updated_at = now() WHERE id = ${sensory[0].id}`;

@@ -24,7 +24,7 @@
  *   Grants received                        a grant is not a donor gift
  *   Transfer from Club                     internal sweep, not outside money
  *
- * Writing "a written acknowledgment for $16,612.56 was sent to Rudolph Run Entry
+ * Writing "a written acknowledgment for $9,999.99 was sent to Rudolph Run Entry
  * Receipts" would be a false IRS substantiation record. Those categories are being
  * handled structurally instead, via a per-category "acknowledgment not required"
  * flag (docs/work-log/2026-08-08-ack-not-required-flag.md).

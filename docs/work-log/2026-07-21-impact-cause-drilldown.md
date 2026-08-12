@@ -821,8 +821,8 @@ gates on a Vercel deploy from `main`):
   `impact.view` bound (`role_features` join on `features.name='impact.view'`),
   so only the member link was missing — no permission change needed.
 - Temporarily linked it to an existing active member row with no bearing on
-  page content (`UPDATE users SET member_id = '006a1d9f-...' -- Howard Baum
-  WHERE id = '0063654b-...'`) — the impact dashboard shows club-wide
+  page content (`UPDATE users SET member_id = '006a1d9f-...' -- an existing
+  active member WHERE id = '0063654b-...'`) — the impact dashboard shows club-wide
   philanthropy totals, not the linked member's own data, so which member is
   chosen has no privacy implication.
 - A `pnpm dev` server was already running locally (started by concurrent work

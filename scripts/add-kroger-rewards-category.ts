@@ -7,13 +7,8 @@
  *   Kroger Community Rewards is a distinct, recurring, passive revenue stream
  *   with an action attached: households must RE-ENROL ANNUALLY and enrolment
  *   lapses silently. Filed under "Public donations" it is invisible, and the
- *   trend already looks like a slowly lapsing base:
- *
- *     2024-10-12  $35.88
- *     2025-01-25  $31.19
- *     2025-07-02  $26.80
- *     2026-01-10  $29.95
- *     2026-04-21  $29.77
+ *   trend already looks like a slowly lapsing base across five quarterly
+ *   deposits between late 2024 and mid-2026.
  *
  *   It was also five of the twelve rows in "Public donations", diluting both
  *   itself and the genuine one-off gifts (a memorial collection, farmers-market

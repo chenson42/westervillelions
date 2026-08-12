@@ -1650,8 +1650,8 @@ project's own e2e-fixture convention. All test data was restored/deleted afterwa
      page-level gate is correct in isolation; the defect below is specifically about a role that
      legitimately needs the page but never reaches its gate.
 4. **Diff readability, on the real, seeded 642-line by-laws, not synthetic text:** made a single
-   realistic one-line edit (the treasurer's own named stale-dues example — `$60.00` → `$127.00` for
-   Active Member dues) and diffed it both via the admin API and by fetching and inspecting the rendered
+   realistic one-line edit (the treasurer's own named stale-dues example — the outdated Active Member
+   dues figure updated to the current one) and diffed it both via the admin API and by fetching and inspecting the rendered
    admin compare-page HTML. The API response isolated the change to exactly one changed region (plus one
    harmless trailing-newline artifact from my own test-data reconstruction via `psql -t -A`, not a
    product defect — and itself a live confirmation of `documents.test.ts`'s trailing-newline-stability
@@ -1856,8 +1856,8 @@ Answering the four questions carried out of Phase 1/2:
    bundled with it. Publishing the faithful 1998 text first gives every later change something to diff
    against — which is the whole point of the versioning trail.
 4. **The document is due a substantive review.** Confirmed by the treasurer. The transcription surfaced
-   nine internal defects in the original plus real staleness (dues stated as $60.00/yr against roughly
-   $127 actually charged; a Membership Director who appears in the duty list but in no officer list; a
+   nine internal defects in the original plus real staleness (dues stated at an amount well below what's
+   actually charged today; a Membership Director who appears in the duty list but in no officer list; a
    dues deadline given as September 30 in one paragraph and October 1 in the next). That review is a
    board matter, not a software one — the app's job is to record it faithfully once the board acts.
 
@@ -2889,7 +2889,7 @@ closed, not a defect in the governance-documents feature's own design.
 - **The diff view was built for the actual 642-line document, not a toy case**, and it shows: line-level
   jsdiff output is grouped into alternating context/change blocks, unchanged runs longer than 10 lines
   collapse behind a native `<details>` (works without JS), each changed region gets a numbered anchor and
-  a "Jump to N" pill. QA's one live test (`$60.00` → `$127.00`, the treasurer's own stale-dues example)
+  a "Jump to N" pill. QA's one live test (the treasurer's own stale-dues example)
   confirmed the rendering is clean on real content. See the diff note below on what wasn't tested.
 - **The notetaker lockout and the subscriptions PII exposure were both caught before shipping, not
   after** — that's the pipeline working as designed. `src/proxy.ts` deriving its `protectionRules` from
@@ -2970,7 +2970,7 @@ closed, not a defect in the governance-documents feature's own design.
   lost now that this work-log closes. Added to `docs/backlog.md`.
 - **Verify the diff view against a real multi-article amendment, not just a one-line change**, the first
   time the board actually does its "round of updates" (treasurer's decision 3). QA's Phase 5 pass only
-  exercised a single-line diff (`$60.00` → `$127.00`); the multi-region grouping/collapsing logic was
+  exercised a single-line diff (the stale-dues example above); the multi-region grouping/collapsing logic was
   built with the real 642-line document in mind and is unit-tested for "multiple separate changes numbered
   in document order," but has not been watched end-to-end against a real several-article edit. Cheap to
   confirm the first time it's actually used for that purpose — no code change implied unless it surfaces

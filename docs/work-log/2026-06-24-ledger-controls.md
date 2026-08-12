@@ -15,7 +15,7 @@ This is **increment 2 of 6** of The Ledger. Increment 1 ("Books") shipped as **v
 Increment 1 deliberately put the **approval/reconcile fields on `ledger_transactions`** (`status` default 'posted', `approvedByUserId`, `approvedAt`, `reconciled`, `reconciledAt`) but left them unused, and the API delete/edit handlers already contain an inactive `if (txn.approvedAt) return 403` lock. Increment 2 activates all of it. No schema change should be needed beyond possibly a receipts/attachment decision.
 
 **Increment 2 — "Controls" — scope:**
-1. **Approvals workflow.** Disbursements (expenses) over the board threshold (`ledger_settings.disbApprovalThresholdCents`, $250 default) are created with `status='pending'` instead of `'posted'`; a board member approves them (sets `status='posted'`, `approvedByUserId`, `approvedAt`, and a `boardMinute` reference). Pending disbursements are **excluded from posted fund balances**. An **Approvals** screen lists what's pending. Income/small expenses post directly. (Per the transparency doc: the board authorizes all disbursements; may pre-authorize fixed expenses below a limit.)
+1. **Approvals workflow.** Disbursements (expenses) over the board threshold (`ledger_settings.disbApprovalThresholdCents`, $200 default) are created with `status='pending'` instead of `'posted'`; a board member approves them (sets `status='posted'`, `approvedByUserId`, `approvedAt`, and a `boardMinute` reference). Pending disbursements are **excluded from posted fund balances**. An **Approvals** screen lists what's pending. Income/small expenses post directly. (Per the transparency doc: the board authorizes all disbursements; may pre-authorize fixed expenses below a limit.)
 2. **New `ledger.approve` permission** (admin + board_member). Board members were read-only in inc1; they now gain approve (but NOT record). Treasurers record but cannot approve their own disbursements — segregation of duties.
 3. **Immutability lock.** Approved transactions (`approvedAt IS NOT NULL`) become non-editable/non-deletable — activate the existing 403 guard.
 4. **Two-fund firewall guardrail (HIGH).** Activate the deferred firewall check: flag any Activity→Admin flow — transfer pairs (join `transferGroupId` where source fund kind=`activity`, dest kind=`administrative`), and the policy's stricter cases (no percentage allocation even if stated; interest on activity money must stay in activity). Verbatim policy cite.
@@ -307,7 +307,7 @@ The treasurer does NOT get `ledger.approve`. The board member does NOT get `ledg
 - Donors / acknowledgments / dues auto-post / Zeffy auto-post (inc6)
 - Settings management UI for `ledger_settings` (deferred; settings are currently seed-managed — the treasurer cannot change `disbApprovalThresholdCents` through a UI yet; this should ship with inc2 or inc3 so the threshold is configurable without a migration)
 
-**Note on settings UI:** The `disbApprovalThresholdCents` threshold is used in the inc2 approval workflow. If it is not editable from the admin UI, the club is stuck with the $250 default unless a developer changes the migration seed. The context block does not list a settings-management UI in inc2 scope, but the analyst flags this as a practical gap: the treasurer should be able to configure the approval threshold. This is not a blocker for inc2 (the $250 default is reasonable) but it should appear as a Phase 3 note.
+**Note on settings UI:** The `disbApprovalThresholdCents` threshold is used in the inc2 approval workflow. If it is not editable from the admin UI, the club is stuck with the $200 default unless a developer changes the migration seed. The context block does not list a settings-management UI in inc2 scope, but the analyst flags this as a practical gap: the treasurer should be able to configure the approval threshold. This is not a blocker for inc2 (the $200 default is reasonable) but it should appear as a Phase 3 note.
 
 **Open questions / handoff notes for Phase 2 and Phase 3:**
 
@@ -682,7 +682,7 @@ The receipt upload route is new attack surface. The following must be specified 
 - **`status` check constraint on `ledger_transactions`:** Confirm whether inc1's migration wrote a check constraint including `'posted'|'pending'`. If so, the database-admin must add `'rejected'` via a guarded idempotent migration before the reject flow can land. Tech-lead must call this out in the design.
 - **`rejectionReason` column on `ledger_transactions`:** New `text nullable` column needed. Database-admin owns the migration.
 - **Approvals screen URL and nav entry:** Either a new sidebar entry (with a badge count of pending items) or a sub-page under `/admin/ledger/`. The Phase 1 work-log suggests `/admin/ledger/approvals` as a separate page — this review confirms that as the correct placement.
-- **`disbApprovalThresholdCents` settings UI:** The threshold is consumed by inc2 but has no UI for the treasurer to change it. The $250 default is acceptable as a shipped default, but the tech-lead should add a "Settings" note in the Phase 3 design flagging this as a near-term follow-up (inc3 or a standalone sub-increment).
+- **`disbApprovalThresholdCents` settings UI:** The threshold is consumed by inc2 but has no UI for the treasurer to change it. The $200 default is acceptable as a shipped default, but the tech-lead should add a "Settings" note in the Phase 3 design flagging this as a near-term follow-up (inc3 or a standalone sub-increment).
 - **Email notification for over-threshold pending disbursement on creation:** Not in the confirmed scope per the context block, but operationally valuable. Tech-lead should decide yes/no in Phase 3 and document.
 - **Magic-byte file-type check:** Decide in Phase 3 whether to use `file-type` npm package (small, well-maintained, MIT) or a hand-rolled first-bytes check. Either is acceptable; document the decision.
 - **`file-type` dependency evaluation (if chosen):** ~50 KB ESM-only package; Node-compatible; MIT. If the tech-lead selects it, log an implementation decision for it. It does not require a new architectural decision entry — it is below the architect threshold (no new top-level directory, no structural change).
@@ -1286,7 +1286,7 @@ In order (each builds on the schema from Step 1):
 
 **`boardMinute` on `ledger_transactions` vs. reimbursements:** The `boardMinute` column is added to `ledger_transactions` to support the approve flow for ordinary pending disbursements. The `ledger_reimbursements` table also has its own `board_minute` column (for the reimbursement approval step). These are independent: a reimbursement approval uses `ledger_reimbursements.board_minute`, and when the reimbursement is paid and a `ledger_transactions` row is created, the transactions row's `boardMinute` is copied from the reimbursement's `boardMinute`. No confusion if the column name is consistent.
 
-**`disbApprovalThresholdCents` settings UI:** The $250 default is reasonable and hardcoded in the seed. There is no UI for a treasurer to change it without a developer running a migration. This is acknowledged as a near-term gap. Flag it: add a "Settings" section to the ledger manage page in inc3 or as a standalone sub-increment. Do NOT add it to inc2 — it would expand scope. Log as FU-4 in the work-log handoff.
+**`disbApprovalThresholdCents` settings UI:** The $200 default is reasonable and hardcoded in the seed. There is no UI for a treasurer to change it without a developer running a migration. This is acknowledged as a near-term gap. Flag it: add a "Settings" section to the ledger manage page in inc3 or as a standalone sub-increment. Do NOT add it to inc2 — it would expand scope. Log as FU-4 in the work-log handoff.
 
 **Transfer notification email:** When `POST /api/admin/ledger/transactions` creates a `status='pending'` row, the approval email (E-1) is enqueued. However, transfers always post directly — there is no pending path for transfers. The email notification is only triggered when `status='pending'`, so transfers are never notified. Correct.
 
@@ -1506,7 +1506,7 @@ Key query helpers available to Server Components:
 - **"Reconcile all displayed" button:** The Phase 3 design says the UI POSTs to the per-row reconcile route once per visible row (small club, N < 30/month). The ux-developer implements the "Reconcile all displayed" convenience pattern in the client component.
 - **`disbApprovalThresholdCents` for the pending toast:** When a transaction is submitted and the server responds `{ id, derivedFiscalYear, status: 'pending' }`, the ux-developer should show a toast "Disbursement submitted — awaiting board approval" (not the generic success toast). The new `status` field in the response enables this.
 - **`pendingExpenseCents` display:** The overview should show this as "Encumbered (pending): $X" below the posted balance for each fund. The field is now on every `FundSummary` in the `EntityOverview`.
-- **FU-4 deferred:** Settings UI for `disbApprovalThresholdCents` is not in inc2 scope. Treasurer must contact a developer to change the $250 default. Log as inc3 follow-up.
+- **FU-4 deferred:** Settings UI for `disbApprovalThresholdCents` is not in inc2 scope. Treasurer must contact a developer to change the $200 default. Log as inc3 follow-up.
 
 ---
 
@@ -1610,7 +1610,7 @@ Built the full UI layer for inc2: two new admin pages (Approvals, Reimbursements
 
 3. **Receipt streaming**: After submission, click "View receipt" in both admin inbox and member portal. Verify the browser displays the file (PDF inline or JPEG/PNG image) without the storage key or blob URL appearing in the URL bar.
 
-4. **Pending disbursements flow**: Record an expense over $250 → verify "awaiting board approval" toast → verify Pending badge on fund ledger list → verify Approvals page shows the row → approve it (enter board minute) → verify it disappears from Approvals, appears as Posted in fund ledger.
+4. **Pending disbursements flow**: Record an expense over $200 → verify "awaiting board approval" toast → verify Pending badge on fund ledger list → verify Approvals page shows the row → approve it (enter board minute) → verify it disappears from Approvals, appears as Posted in fund ledger.
 
 5. **Self-approval hiding on Approvals page**: Record a transaction as User A (who also has `ledger.approve`) — verify the "Cannot self-approve" label replaces the Approve button for that row.
 
@@ -1840,7 +1840,7 @@ All gates are present and use the correct keys. The member portal routes correct
 - **Next agent: analyst** for Phase 6 — Shipped vs Intent sign-off.
 - The following flows are verified by code audit but not exercised with real data. Before production deploy, the implementing team should manually verify at minimum: (1) submit a reimbursement and confirm it appears in the admin inbox; (2) approve it and confirm the email queue row appears; (3) mark paid and confirm the expense transaction is created with `status='posted'`; (4) record an over-threshold expense and confirm the `status='pending'` response and the Approvals screen badge.
 - `getReceiptStorage()` factory is not unit-testable in the current Vitest ESM setup (uses synchronous `require()` — cannot resolve relative modules). The factory correctness is verified by: the LocalReceiptStorage unit tests (the class works), and manual local dev startup (dev server uses LocalReceiptStorage with `.receipt-store/`). This is a documentation note, not a defect.
-- Inc3 follow-up FU-4: settings UI for `disbApprovalThresholdCents` is still deferred. The $250 default is hardcoded via migration seed.
+- Inc3 follow-up FU-4: settings UI for `disbApprovalThresholdCents` is still deferred. The $200 default is hardcoded via migration seed.
 - The 2026-05-27 security review carry-forward "page-level auth gap on 8 admin pages" does not apply to any of the new pages — all three new pages have `auth()` + permission checks at the top of the Server Component.
 
 ---
@@ -2016,7 +2016,7 @@ Neither fix requires a schema change or a new route. The deployment-engineer sho
 
 **FU-4 (carried from Phase 3/4) — Settings UI for `disbApprovalThresholdCents`**
 
-Still deferred. The $250 default is hardcoded in the migration seed. Treasurer cannot change it without a developer running a migration. Track for inc3.
+Still deferred. The $200 default is hardcoded in the migration seed. Treasurer cannot change it without a developer running a migration. Track for inc3.
 
 ---
 

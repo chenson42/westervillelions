@@ -1080,7 +1080,7 @@ dynamic route.
 - Read the Phase 1–3 sections and the post-Phase-3 design amendment in full; treated all as
   binding per this task's instructions.
 - Read `docs/treasurer-todo.md` in full, especially T-17's current (2026-07-21, revised)
-  single-Zeffy-account text, T-04 (Activity Fund $84.52), T-02 (uncashed OLF checks), T-05
+  single-Zeffy-account text, T-04 (Activity Fund $80.00), T-02 (uncashed OLF checks), T-05
   (bonding), T-16 (aged public-fund earmarking), and the two reference notes (Activity Fund
   pass-through policy; Zeffy Monday lump-payout practice) — the Zeffy & Fund Routing and
   Uncashed Checks sections are written against this text directly, not a stale mental model.
@@ -1330,7 +1330,7 @@ href on the page is the pre-existing sidebar item, not a guide cross-link). No d
     `getComplianceOverview()`, matching what `/admin/ledger/compliance` computes from the same
     function.
   - Live settings recap renders real current values, not fallback text: Disbursement threshold
-    $100.00, Reserve warning threshold $25,000.00, Public-fund holding period 365 days, Treasurer
+    $150.00, Reserve warning threshold $20,000.00, Public-fund holding period 365 days, Treasurer
     bonded Yes, Philanthropy visibility Board only — sourced from `getSettings()`, the same
     function `/admin/ledger/settings` calls.
   - Donors absent: 0 donor-related cross-links inside the guide's own content; the only

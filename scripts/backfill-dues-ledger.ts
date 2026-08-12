@@ -1,8 +1,8 @@
 /**
  * One-off backfill of missing dues auto-post ledger rows in PRODUCTION.
  *
- * 14 of production's 21 dues_payments rows (recorded 2026-06-24 -> 2026-07-03,
- * $1,661 total) predate the deployed dues-auto-post feature (DECISION-025,
+ * 14 of production's 21 dues_payments rows (recorded 2026-06-24 -> 2026-07-03)
+ * predate the deployed dues-auto-post feature (DECISION-025,
  * src/lib/dues-ledger-sync.ts) and have no linked ledger_transactions row.
  * This script inserts the missing rows, mirroring syncDuesCreate's row shape
  * EXACTLY so the backfilled rows are indistinguishable from auto-posted ones
@@ -43,10 +43,10 @@ const TREASURER_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
 })();
 
 const EXPECTED_BACKFILL_COUNT = 14;
-const EXPECTED_BACKFILL_SUM_CENTS = 166_100; // $1,661.00
-const EXPECTED_DUES_TOTAL_CENTS = 250_100; // $2,501.00 (7 existing + 14 backfilled)
-const EXPECTED_CLUB_HISTORICAL_CENTS = 1_621_864; // $16,218.64 (from the ledger port, Task 1)
-const EXPECTED_CLUB_TOTAL_WITH_DUES_CENTS = EXPECTED_CLUB_HISTORICAL_CENTS + EXPECTED_DUES_TOTAL_CENTS; // $18,719.64
+const EXPECTED_BACKFILL_SUM_CENTS = 999_999; // $9,999.99 (placeholder — real reconciliation figure redacted)
+const EXPECTED_DUES_TOTAL_CENTS = 999_999; // $9,999.99 (placeholder — 7 existing + 14 backfilled)
+const EXPECTED_CLUB_HISTORICAL_CENTS = 999_999; // $9,999.99 (placeholder — from the ledger port, Task 1)
+const EXPECTED_CLUB_TOTAL_WITH_DUES_CENTS = EXPECTED_CLUB_HISTORICAL_CENTS + EXPECTED_DUES_TOTAL_CENTS; // $19,999.98 (placeholder)
 
 function fmt(cents: number): string {
   const sign = cents < 0 ? "-" : "";

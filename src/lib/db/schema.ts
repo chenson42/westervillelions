@@ -542,9 +542,9 @@ export const duesSettings = pgTable("dues_settings", {
   id: uuid("id").primaryKey().defaultRandom(),
   fiscalYear: integer("fiscal_year").notNull().unique(),
   individualAmountCents: integer("individual_amount_cents").notNull(),
-  // Standard annual dues in cents. FY2026 seed: 12000 ($120.00).
+  // Standard annual dues in cents, per fiscal year (see the seed migration for the current rate).
   familyAmountCents: integer("family_amount_cents").notNull(),
-  // Family/discounted annual dues in cents. FY2026 seed: 9600 ($96.00).
+  // Family/discounted annual dues in cents, per fiscal year (see the seed migration for the current rate).
   notes: text("notes"),
   isActive: boolean("is_active").notNull().default(false),
   // Only one row may have is_active = true at a time (enforced by partial unique index in migration 0042).
