@@ -885,3 +885,45 @@ Design each with the others in view — decisions in one box in the next.
   never-allowlisted address> })` call is blocked outside production with `RESEND_API_KEY` unset
   or set — mirroring the loop shape in `transactions/route.ts`'s approver notification, not the
   bulk shape already covered.
+
+- [ ] **B-50 — Commit a Playwright spec for the acknowledgment-letter email-send UI flow.**
+  *(Raised 2026-08-12, Phase 6 of Emailing the Donor Acknowledgment Letter.)*
+
+  QA passed the feature on independently-reproduced API/DB-layer proof (the atomic claim, the
+  permission gate, the deny-by-default guard, all driven live against a real dev DB and a real
+  route) plus a direct read of the unit tests for the two paths that can't be driven live under
+  this codebase's own testing constraints (revert-on-total-failure, the shared-address zip). The
+  existing `acknowledgment-letter-generation.spec.ts` Playwright spec still passes with no
+  regression from this feature's changes to the shared PATCH mark-sent route and selector
+  component. But no *new* committed Playwright spec exists for the email-send flow itself — the
+  Send by Email button, the non-destructive confirm dialog's donor/address-count wording, the
+  results panel's "Emailed never Delivered" copy, and dedup-on-a-second-click **at the UI layer**
+  (as opposed to the already-proven server-side atomic claim). The implementer's own Phase 4 (UI)
+  verification drove this exact flow live via a throwaway Playwright script, but that script was
+  discarded after use rather than committed.
+
+  **Shape of the fix:** a new `e2e/acknowledgment-letter-email.spec.ts`, sibling to the existing
+  generation spec, covering: the Email column's per-row states (address count, "No email on
+  file," and the em-dash for no donor linked), the Send-by-Email button's disabled-with-reason
+  state when nothing is eligible, the confirm dialog's non-red button and count-based copy, the
+  results panel's summary + disclaimer + per-row detail, and a deliberate rapid-double-click on
+  the confirm button to prove the UI-level race lands on the same "second call skipped" outcome
+  already proven at the API layer.
+
+- [ ] **B-51 — Aggregate "N donors in this batch have no email on file" summary on the
+  acknowledgment-letter selector, not just the per-row amber badge.**
+  *(Raised 2026-08-12, Phase 6 of Emailing the Donor Acknowledgment Letter.)*
+
+  Not a gap against what Phase 1 asked for — Phase 1's "at a glance" requirement is satisfied
+  literally by the per-row amber "No email on file" badge, which deliberately mirrors the
+  already-trusted "Missing address" pattern on the same table. But the specific failure mode
+  Phase 1 was written to prevent — "a donor silently gets neither a print nor an email" — is
+  best guarded by a signal a treasurer cannot scroll past, and a batch of 30+ generated letters
+  makes a single amber cell among many rows easier to miss than an aggregate count would be.
+  Low priority: this is an enhancement to an already-correct, already-shipped pattern, not a
+  defect.
+
+  **Shape of the fix:** a one-line summary above or beside the Send-by-Email button — e.g. "3 of
+  22 donors in this batch have no email on file — they'll need a printed letter" — computed from
+  the same `rows` the Email column and eligibility check already read, no new data fetch
+  required.

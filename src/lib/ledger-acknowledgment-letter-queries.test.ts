@@ -19,6 +19,9 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+vi.mock("@/lib/email", () => ({ sendBulkMemberEmail: vi.fn() }));
+vi.mock("@/lib/board-positions", () => ({ resolveTreasurer: vi.fn() }));
+
 const { mockDbState } = vi.hoisted(() => ({
   mockDbState: {
     selectQueue: [] as unknown[][],
@@ -84,9 +87,12 @@ import {
   getLetterTemplate,
   updateLetterTemplate,
   generateAcknowledgmentLetters,
+  emailAcknowledgmentLetters,
   type LetterTemplatePatch,
 } from "./ledger-acknowledgment-letter-queries";
 import { composeAcknowledgmentLetter } from "./ledger-acknowledgment-letter";
+import { sendBulkMemberEmail } from "@/lib/email";
+import { resolveTreasurer } from "@/lib/board-positions";
 
 function resetMockDb() {
   mockDbState.selectQueue = [];
@@ -96,8 +102,19 @@ function resetMockDb() {
   mockDbState.insertCalls = [];
 }
 
+const DEFAULT_TREASURER = {
+  ok: true as const,
+  memberId: "member-treasurer",
+  firstName: "Terry",
+  lastName: "Treasurer",
+  email: "treasurer@westervillelions.org",
+};
+
 beforeEach(() => {
   resetMockDb();
+  vi.mocked(sendBulkMemberEmail).mockReset();
+  vi.mocked(resolveTreasurer).mockReset();
+  vi.mocked(resolveTreasurer).mockResolvedValue(DEFAULT_TREASURER);
 });
 
 // ---------------------------------------------------------------------------
@@ -458,5 +475,336 @@ describe("listGeneratableAcknowledgments", () => {
     const rows = await listGeneratableAcknowledgments({ ackIds: ["ack-1", "ack-2"] });
 
     expect(rows.map((r) => r.ackId).sort()).toEqual(["ack-1", "ack-2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// emailAcknowledgmentLetters — Emailing the Donor Acknowledgment Letter
+// (2026-08-12, DECISION-087/088). Phase 3 design doc, Unit Tests 4-13.
+// ---------------------------------------------------------------------------
+
+describe("emailAcknowledgmentLetters — guards (Tests 4-8)", () => {
+  it("Test 4: skips an id not present in the hydrated rows, reason 'not found', and never attempts a claim UPDATE for it", async () => {
+    mockDbState.selectQueue.push([]); // nothing hydrated
+
+    const results = await emailAcknowledgmentLetters(["ack-missing"]);
+
+    expect(results).toEqual([{ ackId: "ack-missing", status: "skipped", reason: "not found" }]);
+    expect(mockDbState.updateCalls).toHaveLength(0);
+    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+  });
+
+  it("Test 5: skips an ack whose sentAt is already non-null (pre-check), reason 'already sent', without attempting the claim UPDATE at all", async () => {
+    mockDbState.selectQueue.push([
+      joinedRow({
+        ack: ackRow({ sentAt: new Date("2026-01-01"), letterText: "Composed letter." }),
+        donor: donorRow({ emails: ["jane@example.com"] }),
+      }),
+    ]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([{ ackId: "ack-1", status: "skipped", reason: "already sent" }]);
+    // The pre-check short-circuits BEFORE the write, not merely produces the
+    // same outcome as if it hadn't — no claim UPDATE was even attempted.
+    expect(mockDbState.updateCalls).toHaveLength(0);
+    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+  });
+
+  it("Test 6: skips an ack with letterText === null, reason 'letter not yet generated'", async () => {
+    mockDbState.selectQueue.push([
+      joinedRow({
+        ack: ackRow({ letterText: null }),
+        donor: donorRow({ emails: ["jane@example.com"] }),
+      }),
+    ]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      { ackId: "ack-1", status: "skipped", reason: "letter not yet generated" },
+    ]);
+    expect(mockDbState.updateCalls).toHaveLength(0);
+  });
+
+  it("Test 7: skips an ack with donor === null, reason 'no donor linked'", async () => {
+    mockDbState.selectQueue.push([
+      joinedRow({ ack: ackRow({ letterText: "Composed letter." }), donor: null }),
+    ]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([{ ackId: "ack-1", status: "skipped", reason: "no donor linked" }]);
+    expect(mockDbState.updateCalls).toHaveLength(0);
+  });
+
+  it("Test 8: skips an ack whose donor has emails: [], reason 'donor has no email on file'", async () => {
+    mockDbState.selectQueue.push([
+      joinedRow({
+        ack: ackRow({ letterText: "Composed letter." }),
+        donor: donorRow({ emails: [] }),
+      }),
+    ]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      { ackId: "ack-1", status: "skipped", reason: "donor has no email on file" },
+    ]);
+    expect(mockDbState.updateCalls).toHaveLength(0);
+  });
+});
+
+describe("emailAcknowledgmentLetters — the atomic claim (Test 9, load-bearing)", () => {
+  it("Test 9: a second send for the same not-yet-sent ack is skipped 'already sent' by the atomic claim, never double-sent, even when its pre-check read is stale", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+
+    // Call 1: pre-check sees sentAt IS NULL, the claim UPDATE succeeds
+    // (returns the row), the send succeeds.
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    });
+
+    const firstResults = await emailAcknowledgmentLetters(["ack-1"]);
+
+    // Call 2: pre-check STILL sees sentAt IS NULL — a stale read that
+    // started before call 1's claim committed, exactly the race this guard
+    // exists for — but its claim UPDATE returns ZERO rows, because call 1
+    // already claimed the row. This is what must produce the skip, not the
+    // (stale) pre-check.
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([]);
+
+    const secondResults = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(firstResults).toEqual([
+      {
+        ackId: "ack-1",
+        status: "emailed",
+        addresses: [{ to: "donor@example.com", success: true }],
+      },
+    ]);
+    expect(secondResults).toEqual([
+      { ackId: "ack-1", status: "skipped", reason: "already sent" },
+    ]);
+    // The second call's claim lost the race BEFORE any send was attempted
+    // for it — sendBulkMemberEmail was invoked exactly once across both
+    // calls, never twice for the same ack.
+    expect(sendBulkMemberEmail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("emailAcknowledgmentLetters — revert on total failure (Test 10)", () => {
+  it("Test 10: every address failing reverts sentAt/sentVia to NULL, reports 'failed', and a later call is retried as a fresh candidate (not skipped 'already sent')", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]); // claim succeeds
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [
+        { to: "donor@example.com", success: false, error: "Resend rejected", emailQueueId: "q-1" },
+      ],
+    });
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "failed",
+        reason: "delivery failed for all addresses — not marked sent, safe to retry",
+      },
+    ]);
+
+    // Two update calls: the claim, then the compensating revert — the
+    // revert is proven by asserting the ACTUAL write the code issued, not
+    // by re-reading a persisted value (the hermetic mock has no store to
+    // re-read).
+    expect(mockDbState.updateCalls).toHaveLength(2);
+    expect(mockDbState.updateCalls[0].values).toMatchObject({
+      sentAt: expect.any(Date),
+      sentVia: "email",
+    });
+    expect(mockDbState.updateCalls[1].values).toMatchObject({ sentAt: null, sentVia: null });
+
+    // A later call for the same ackId is NOT skipped "already sent" — the
+    // revert means it's a fresh candidate again.
+    mockDbState.selectQueue.push([row]); // sentAt still null (as reverted)
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-2" }],
+    });
+
+    const retryResults = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(retryResults[0].status).toBe("emailed");
+  });
+});
+
+describe("emailAcknowledgmentLetters — partial multi-address success (Test 11)", () => {
+  it("Test 11: one of two addresses succeeding keeps the claim, reports 'emailed' with per-address detail, both success and failure shown", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["a@example.com", "b@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [
+        { to: "a@example.com", success: true, emailQueueId: "q-1" },
+        { to: "b@example.com", success: false, error: "bounced", emailQueueId: "q-2" },
+      ],
+    });
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "emailed",
+        addresses: [
+          { to: "a@example.com", success: true },
+          { to: "b@example.com", success: false, error: "bounced" },
+        ],
+      },
+    ]);
+    // Claim kept — exactly ONE update call (the claim), no revert.
+    expect(mockDbState.updateCalls).toHaveLength(1);
+  });
+});
+
+describe("emailAcknowledgmentLetters — shared address across two donors (Test 12)", () => {
+  it("Test 12: results are zipped by array index, never by address string, so two donors sharing one inbox each get their own outcome", async () => {
+    const row1 = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Letter for donor A." }),
+      donor: donorRow({ id: "donor-a", name: "Donor A", emails: ["shared@example.com"] }),
+    });
+    const row2 = joinedRow({
+      ack: ackRow({ id: "ack-2", letterText: "Letter for donor B." }),
+      donor: donorRow({ id: "donor-b", name: "Donor B", emails: ["shared@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row1, row2]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]); // ack-1's claim
+    mockDbState.updateReturningQueue.push([{ id: "ack-2" }]); // ack-2's claim
+    // The mock's behavior is keyed by CALL POSITION, not by the address
+    // string — both entries use the identical "to" value. If the
+    // implementation regrouped results by looking up the "to" address
+    // instead of the parallel meta[]/sendResults[] index, both acks would
+    // incorrectly collapse onto the same outcome.
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [
+        { to: "shared@example.com", success: false, error: "mailbox full", emailQueueId: "q-1" },
+        { to: "shared@example.com", success: true, emailQueueId: "q-2" },
+      ],
+    });
+
+    const results = await emailAcknowledgmentLetters(["ack-1", "ack-2"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "failed",
+        reason: "delivery failed for all addresses — not marked sent, safe to retry",
+      },
+      {
+        ackId: "ack-2",
+        status: "emailed",
+        addresses: [{ to: "shared@example.com", success: true }],
+      },
+    ]);
+  });
+});
+
+describe("emailAcknowledgmentLetters — one sendBulkMemberEmail() call per batch (Test 13)", () => {
+  it("Test 13: calls sendBulkMemberEmail exactly once per invocation for a multi-ack batch, not once per ack", async () => {
+    const row1 = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Letter 1" }),
+      donor: donorRow({ id: "donor-1", emails: ["a@example.com"] }),
+    });
+    const row2 = joinedRow({
+      ack: ackRow({ id: "ack-2", letterText: "Letter 2" }),
+      donor: donorRow({ id: "donor-2", emails: ["b@example.com"] }),
+    });
+    const row3 = joinedRow({
+      ack: ackRow({ id: "ack-3", letterText: "Letter 3" }),
+      donor: donorRow({ id: "donor-3", emails: ["c@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row1, row2, row3]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-2" }]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-3" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [
+        { to: "a@example.com", success: true, emailQueueId: "q-1" },
+        { to: "b@example.com", success: true, emailQueueId: "q-2" },
+        { to: "c@example.com", success: true, emailQueueId: "q-3" },
+      ],
+    });
+
+    await emailAcknowledgmentLetters(["ack-1", "ack-2", "ack-3"]);
+
+    expect(sendBulkMemberEmail).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(sendBulkMemberEmail).mock.calls[0][0];
+    expect(call.recipients).toHaveLength(3);
+  });
+});
+
+describe("emailAcknowledgmentLetters — envelope (from/subject/replyTo/bcc) and tolerant resolveTreasurer()", () => {
+  it("uses the fixed From/subject and puts the resolved Treasurer on Reply-To and BCC only — never as body prose", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    });
+
+    await emailAcknowledgmentLetters(["ack-1"]);
+
+    const call = vi.mocked(sendBulkMemberEmail).mock.calls[0][0];
+    expect(call.from).toBe("treasurer@westervillelions.org");
+    expect(call.subject).toBe(
+      "Your Official Gift Acknowledgment — Thank You for Your Generosity",
+    );
+    expect(call.replyTo).toBe(DEFAULT_TREASURER.email);
+    expect(call.bcc).toBe(DEFAULT_TREASURER.email);
+    // The composed HTML body is the letter itself plus the lead-in — the
+    // Treasurer's name never appears as a second signature inside it.
+    expect(call.recipients[0].html).not.toContain(DEFAULT_TREASURER.firstName);
+  });
+
+  it("a resolveTreasurer() failure is tolerant — logs and sends without replyTo/bcc rather than blocking the donor's receipt", async () => {
+    vi.mocked(resolveTreasurer).mockResolvedValueOnce({ ok: false, reason: "none" });
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    });
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results[0].status).toBe("emailed");
+    const call = vi.mocked(sendBulkMemberEmail).mock.calls[0][0];
+    expect(call.replyTo).toBeUndefined();
+    expect(call.bcc).toBeUndefined();
   });
 });

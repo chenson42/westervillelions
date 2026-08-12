@@ -5,7 +5,10 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { formatBudgetReferenceCents } from "@/lib/ledger";
-import type { GeneratableAcknowledgmentRow } from "@/lib/ledger-acknowledgment-letter-queries";
+import type {
+  GeneratableAcknowledgmentRow,
+  EmailLetterResult,
+} from "@/lib/ledger-acknowledgment-letter-queries";
 import AcknowledgmentLettersPrint, {
   type PrintableAcknowledgmentLetter,
 } from "./acknowledgment-letters-print";
@@ -92,8 +95,31 @@ export default function AcknowledgmentLetterSelector({
     Map<string, PrintableAcknowledgmentLetter>
   >(new Map());
 
+  const [emailing, setEmailing] = useState(false);
+  const [emailResults, setEmailResults] = useState<EmailLetterResult[] | null>(null);
+  const [emailConfirmOpen, setEmailConfirmOpen] = useState(false);
+
   const rowsById = useMemo(() => new Map(rows.map((r) => [r.ackId, r])), [rows]);
   const printableLetters = useMemo(() => Array.from(generatedByAckId.values()), [generatedByAckId]);
+
+  // Eligibility is computed from `rows` directly, NOT scoped to
+  // `generatedByAckId` ("generated this session") the way printableLetters
+  // is — Print needs the letter text held in client memory to render it,
+  // but the send route re-fetches letterText fresh from the DB server-side,
+  // so a letter drafted in an earlier visit is just as emailable as one
+  // generated a moment ago (Phase 3 UI Plan).
+  const emailEligible = useMemo(
+    () => rows.filter((r) => r.letterText !== null && (r.donor?.emails.length ?? 0) > 0),
+    [rows],
+  );
+  const emailAddressCount = useMemo(
+    () => emailEligible.reduce((n, r) => n + (r.donor?.emails.length ?? 0), 0),
+    [emailEligible],
+  );
+  const multiAddressDonorCount = useMemo(
+    () => emailEligible.filter((r) => (r.donor?.emails.length ?? 0) > 1).length,
+    [emailEligible],
+  );
 
   function toggle(ackId: string) {
     setSelected((prev) => {
@@ -174,6 +200,47 @@ export default function AcknowledgmentLetterSelector({
     }
   }
 
+  async function runEmail() {
+    if (emailEligible.length === 0) return;
+    setEmailing(true);
+    try {
+      const res = await fetch("/api/admin/ledger/acknowledgments/letters/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ackIds: emailEligible.map((r) => r.ackId) }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to email letters.");
+      }
+      const data: { results: EmailLetterResult[] } = await res.json();
+      setEmailResults(data.results);
+
+      const emailedCount = data.results.filter((r) => r.status === "emailed").length;
+      const notSentCount = data.results.length - emailedCount;
+      if (notSentCount === 0) {
+        toast.success(`${emailedCount} letter${emailedCount !== 1 ? "s" : ""} emailed.`);
+      } else if (emailedCount === 0) {
+        toast.error(`No letters were emailed — see details below.`);
+      } else {
+        toast.warning(`${emailedCount} emailed, ${notSentCount} not sent — see details below.`);
+      }
+
+      // Successfully emailed acks now have sentAt set and drop out of the
+      // unscoped listGeneratableAcknowledgments() result set on their own —
+      // the same way a printed/marked-sent row already disappears from this
+      // screen today. No client-side filtering needed beyond this refresh.
+      const refreshed = await fetch("/api/admin/ledger/acknowledgments/letters/generatable")
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+      if (refreshed?.rows) setRows(refreshed.rows);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not email letters. Try again.");
+    } finally {
+      setEmailing(false);
+    }
+  }
+
   return (
     <>
       <div className="print:hidden space-y-4">
@@ -232,6 +299,9 @@ export default function AcknowledgmentLetterSelector({
                       <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                         Donor
                       </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                        Email
+                      </th>
                       <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
                         Amount
                       </th>
@@ -281,6 +351,18 @@ export default function AcknowledgmentLetterSelector({
                             )}
                             {blocked && (
                               <div className="mt-0.5 text-xs font-medium text-amber-700">{blocked}</div>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-4 text-xs">
+                            {!row.donor ? (
+                              <span className="text-gray-300">—</span>
+                            ) : row.donor.emails.length === 0 ? (
+                              <span className="font-medium text-amber-700">No email on file</span>
+                            ) : (
+                              <span className="text-gray-600">
+                                {row.donor.emails.length} address
+                                {row.donor.emails.length === 1 ? "" : "es"}
+                              </span>
                             )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-4 text-right text-sm font-medium tabular-nums text-green-700">
@@ -348,18 +430,81 @@ export default function AcknowledgmentLetterSelector({
               </div>
             )}
 
-            {printableLetters.length > 0 && (
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="inline-flex items-center justify-center gap-2 border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
-                >
-                  <span aria-hidden="true">🖨️</span>
-                  Print / Save as PDF ({printableLetters.length})
-                </button>
+            {emailResults && (
+              <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4 text-sm text-blue-900">
+                <p className="font-semibold">
+                  {emailResults.filter((r) => r.status === "emailed").length} of{" "}
+                  {emailResults.length} letter{emailResults.length !== 1 ? "s" : ""} emailed
+                  {emailResults.some((r) => r.status !== "emailed")
+                    ? ` — ${emailResults.filter((r) => r.status !== "emailed").length} not sent.`
+                    : "."}
+                </p>
+                <p className="mt-1 text-xs text-blue-700">
+                  &ldquo;Emailed&rdquo; means the message was accepted for sending — it is not
+                  confirmation the donor received it. A bounce after acceptance isn&rsquo;t visible
+                  in this system yet.
+                </p>
+                {emailResults.some(
+                  (r) => r.status !== "emailed" || r.addresses.some((a) => !a.success),
+                ) && (
+                  <ul className="mt-2 list-disc pl-5 space-y-0.5">
+                    {emailResults
+                      .filter((r) => r.status !== "emailed" || r.addresses.some((a) => !a.success))
+                      .map((r) => {
+                        const row = rowsById.get(r.ackId);
+                        const donorName = row?.donor?.name ?? "This gift";
+                        if (r.status === "emailed") {
+                          const failed = r.addresses.filter((a) => !a.success).map((a) => a.to);
+                          return (
+                            <li key={r.ackId}>
+                              {donorName} — emailed, but failed to reach {failed.join(", ")}
+                            </li>
+                          );
+                        }
+                        return (
+                          <li key={r.ackId}>
+                            {donorName} — {r.reason}
+                          </li>
+                        );
+                      })}
+                  </ul>
+                )}
               </div>
             )}
+
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex flex-wrap justify-end gap-3">
+                {printableLetters.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="inline-flex items-center justify-center gap-2 border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+                  >
+                    <span aria-hidden="true">🖨️</span>
+                    Print / Save as PDF ({printableLetters.length})
+                  </button>
+                )}
+                {canRecord && (
+                  <button
+                    type="button"
+                    onClick={() => setEmailConfirmOpen(true)}
+                    disabled={emailEligible.length === 0 || emailing}
+                    className="inline-flex items-center justify-center gap-2 border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue/5 transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px]"
+                  >
+                    <span aria-hidden="true">✉️</span>
+                    {emailing
+                      ? "Emailing…"
+                      : `Send by Email${emailEligible.length > 0 ? ` (${emailEligible.length})` : ""}`}
+                  </button>
+                )}
+              </div>
+              {canRecord && emailEligible.length === 0 && (
+                <p className="max-w-sm text-right text-xs text-gray-500">
+                  0 letters ready to email — generate a letter for a donor with an email on file
+                  first.
+                </p>
+              )}
+            </div>
           </>
         )}
       </div>
@@ -373,6 +518,23 @@ export default function AcknowledgmentLetterSelector({
         onConfirm={() => {
           setConfirmOpen(false);
           runGenerate();
+        }}
+      />
+
+      <ConfirmDialog
+        open={emailConfirmOpen}
+        onOpenChange={setEmailConfirmOpen}
+        title={`Email ${emailEligible.length} acknowledgment letter${emailEligible.length === 1 ? "" : "s"}?`}
+        description={
+          (multiAddressDonorCount > 0
+            ? `This will send to ${emailAddressCount} address${emailAddressCount === 1 ? "" : "es"} (${multiAddressDonorCount} donor${multiAddressDonorCount === 1 ? "" : "s"} on file with more than one). `
+            : `This will send to ${emailAddressCount} address${emailAddressCount === 1 ? "" : "es"}. `) +
+          `Sending cannot be undone — each acknowledgment record will show as emailed. Emailing confirms the message was accepted for sending, not that the donor received it.`
+        }
+        confirmLabel={`Email ${emailEligible.length} Letter${emailEligible.length === 1 ? "" : "s"}`}
+        onConfirm={() => {
+          setEmailConfirmOpen(false);
+          runEmail();
         }}
       />
 

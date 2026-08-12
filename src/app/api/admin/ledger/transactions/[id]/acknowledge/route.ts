@@ -307,12 +307,20 @@ export async function PATCH(
     // Build update patch
     const patch: Partial<{
       sentAt: Date;
+      sentVia: string;
       letterStorageKey: string | null;
       letterText: string | null;
       quidProQuoValueCents: number | null;
       type: string;
       updatedAt: Date;
-    }> = { updatedAt: new Date() };
+    }> = {
+      // This route is the print-side half of the sentAt/sentVia
+      // disambiguation (DECISION-087 item 3) — the email send path
+      // (emailAcknowledgmentLetters()) sets 'email' via its own atomic
+      // claim; this manual mark-sent flow is always 'print'.
+      sentVia: "print",
+      updatedAt: new Date(),
+    };
 
     // sentAt defaults to now
     if (sentAt !== undefined) {

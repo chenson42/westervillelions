@@ -31,7 +31,12 @@ import {
   type NewLedgerLetterTemplate,
 } from "@/lib/db/schema";
 import { eq, and, isNull, inArray, desc } from "drizzle-orm";
-import { composeAcknowledgmentLetter } from "@/lib/ledger-acknowledgment-letter";
+import {
+  composeAcknowledgmentLetter,
+  composeAcknowledgmentEmailHtml,
+} from "@/lib/ledger-acknowledgment-letter";
+import { sendBulkMemberEmail } from "@/lib/email";
+import { resolveTreasurer } from "@/lib/board-positions";
 
 // ---------------------------------------------------------------------------
 // listGeneratableAcknowledgments
@@ -54,11 +59,16 @@ export type GeneratableAcknowledgmentRow = {
   quidProQuoValueCents: number | null;
   quidProQuoDescription: string | null;
   sentAt: Date | null;
-  donor: { id: string; name: string; address: string | null } | null;
+  donor: { id: string; name: string; address: string | null; emails: string[] } | null;
   entity: { id: string; name: string; ein: string | null; taxClassification: string };
   // false when the txn has no category (safer default, matches
   // listPendingAcknowledgments()'s own "include it" default).
   categoryAckNotRequired: boolean;
+  // The composed letter text, if generateAcknowledgmentLetters() has ever
+  // written one for this ack. NULL means "not yet generated" —
+  // emailAcknowledgmentLetters() uses this to produce its "letter not yet
+  // generated" skip reason (Phase 3 design doc / DECISION-088 item 4).
+  letterText: string | null;
 };
 
 /**
@@ -119,7 +129,9 @@ export async function listGeneratableAcknowledgments(
     quidProQuoValueCents: r.ack.quidProQuoValueCents,
     quidProQuoDescription: r.ack.quidProQuoDescription,
     sentAt: r.ack.sentAt,
-    donor: r.donor ? { id: r.donor.id, name: r.donor.name, address: r.donor.address } : null,
+    donor: r.donor
+      ? { id: r.donor.id, name: r.donor.name, address: r.donor.address, emails: r.donor.emails }
+      : null,
     entity: {
       id: r.entity.id,
       name: r.entity.name,
@@ -127,6 +139,7 @@ export async function listGeneratableAcknowledgments(
       taxClassification: r.entity.taxClassification,
     },
     categoryAckNotRequired: r.categoryAckNotRequired ?? false,
+    letterText: r.ack.letterText,
   }));
 
   // Unscoped (listing) mode: apply the ackNotRequired exclusion in code —
@@ -364,4 +377,210 @@ export async function generateAcknowledgmentLetters(
   }
 
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// emailAcknowledgmentLetters
+// ---------------------------------------------------------------------------
+
+export type EmailLetterResult =
+  | {
+      ackId: string;
+      status: "emailed";
+      addresses: Array<{ to: string; success: boolean; error?: string }>;
+    }
+  | { ackId: string; status: "skipped"; reason: string }
+  | { ackId: string; status: "failed"; reason: string };
+
+const EMAIL_SUBJECT = "Your Official Gift Acknowledgment — Thank You for Your Generosity";
+const EMAIL_FROM = "treasurer@westervillelions.org";
+
+/**
+ * Emails the already-composed letterText for one or more acknowledgments,
+ * to every address on file for each ack's donor. Phase 3 design doc / Guard
+ * order (docs/work-log/2026-08-12-acknowledgment-letter-email.md):
+ *   1. not found
+ *   2. already sent          (pre-check; the atomic claim below is the
+ *                              authoritative backstop for the same race)
+ *   3. letter not yet generated
+ *   4. no donor linked
+ *   5. donor has no email on file
+ *
+ * THE ATOMIC CLAIM (DECISION-087 item 4 / DECISION-088 item 1): every
+ * surviving candidate is claimed with ONE conditional
+ * `UPDATE ... WHERE id = $ackId AND sent_at IS NULL RETURNING id`, run
+ * BEFORE any email is sent. A candidate whose claim returns zero rows lost
+ * the race to a concurrent request and is reported skipped/"already sent" —
+ * it is never included in the send. This is the one place this module
+ * cannot reuse generateAcknowledgmentLetters()'s read-then-batch-write
+ * shape: overwriting letterText is idempotent-safe to repeat, emailing a
+ * donor is not.
+ *
+ * Only claimed candidates proceed to a SINGLE sendBulkMemberEmail() call
+ * for the whole batch (never one call per ack — DECISION-088 item 3), with
+ * results regrouped back to their ack by ARRAY INDEX against a parallel
+ * `{ackId, to}` tracking array, never by looking up the `to` address
+ * string — two different donors can legitimately share one email address,
+ * and an address-keyed lookup would misattribute one donor's delivery
+ * result to the other.
+ *
+ * Per claimed ack, once results are back:
+ *   - at least one address succeeded -> keep the claim, report "emailed"
+ *     with full per-address detail (a donor who received it at one of two
+ *     addresses did receive it — Phase 1's recommended partial-failure
+ *     rule, adopted as final).
+ *   - every address failed -> revert the claim (`sent_at`/`sent_via` back
+ *     to NULL, guarded by `sent_via = 'email'` so this can never clear a
+ *     legitimate 'print' row) and report "failed" — never leave a row
+ *     saying "sent" with nothing delivered.
+ */
+export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<EmailLetterResult[]> {
+  const rows = await listGeneratableAcknowledgments({ ackIds });
+  const rowsById = new Map(rows.map((r) => [r.ackId, r]));
+
+  // Keyed by ackId, then reconstructed in the caller's original ackIds
+  // order at the end — several of the steps below resolve at different
+  // times (pre-check skips immediately, claim-lost skips after Step 2,
+  // emailed/failed after Step 3/4), so building the response directly in a
+  // single ordered array as we go would scramble the caller's requested
+  // order.
+  const resultByAckId = new Map<string, EmailLetterResult>();
+  type Candidate = {
+    ackId: string;
+    letterText: string;
+    emails: string[];
+  };
+  const candidates: Candidate[] = [];
+
+  for (const ackId of ackIds) {
+    const row = rowsById.get(ackId);
+
+    if (!row) {
+      resultByAckId.set(ackId, { ackId, status: "skipped", reason: "not found" });
+      continue;
+    }
+    if (row.sentAt !== null) {
+      resultByAckId.set(ackId, { ackId, status: "skipped", reason: "already sent" });
+      continue;
+    }
+    if (row.letterText === null) {
+      resultByAckId.set(ackId, { ackId, status: "skipped", reason: "letter not yet generated" });
+      continue;
+    }
+    if (!row.donor) {
+      resultByAckId.set(ackId, { ackId, status: "skipped", reason: "no donor linked" });
+      continue;
+    }
+    if (row.donor.emails.length === 0) {
+      resultByAckId.set(ackId, {
+        ackId,
+        status: "skipped",
+        reason: "donor has no email on file",
+      });
+      continue;
+    }
+
+    candidates.push({ ackId, letterText: row.letterText, emails: row.donor.emails });
+  }
+
+  // Step 2 — the atomic claim, one statement per candidate, sequential,
+  // BEFORE any email is sent.
+  const claimed: Candidate[] = [];
+  for (const candidate of candidates) {
+    const [claim] = await db
+      .update(ledgerAcknowledgments)
+      .set({ sentAt: new Date(), sentVia: "email", updatedAt: new Date() })
+      .where(
+        and(eq(ledgerAcknowledgments.id, candidate.ackId), isNull(ledgerAcknowledgments.sentAt)),
+      )
+      .returning({ id: ledgerAcknowledgments.id });
+
+    if (!claim) {
+      // Lost the race — someone else claimed this row between our read and
+      // now. Same skip reason as the pre-check; the caller cannot and
+      // should not distinguish the two.
+      resultByAckId.set(candidate.ackId, {
+        ackId: candidate.ackId,
+        status: "skipped",
+        reason: "already sent",
+      });
+      continue;
+    }
+    claimed.push(candidate);
+  }
+
+  if (claimed.length === 0) {
+    return ackIds.map((ackId) => resultByAckId.get(ackId)!);
+  }
+
+  // Step 3 — one sendBulkMemberEmail() call for the whole surviving batch.
+  const treasurer = await resolveTreasurer();
+  if (!treasurer.ok) {
+    console.warn(`[Ledger email] Acknowledgment send: Treasurer CC skipped (${treasurer.reason})`);
+  }
+
+  const recipients: { to: string; html: string }[] = [];
+  const meta: { ackId: string; to: string }[] = [];
+  for (const candidate of claimed) {
+    const html = composeAcknowledgmentEmailHtml(candidate.letterText);
+    for (const to of candidate.emails) {
+      meta.push({ ackId: candidate.ackId, to });
+      recipients.push({ to, html });
+    }
+  }
+
+  const { results: sendResults } = await sendBulkMemberEmail({
+    from: EMAIL_FROM,
+    subject: EMAIL_SUBJECT,
+    ...(treasurer.ok ? { replyTo: treasurer.email, bcc: treasurer.email } : {}),
+    recipients,
+  });
+
+  // Step 4 — regroup by ack via array-index zip (never by address string —
+  // see the function doc comment), decide keep-vs-revert.
+  const addressesByAckId = new Map<string, Array<{ to: string; success: boolean; error?: string }>>();
+  for (let i = 0; i < meta.length; i++) {
+    const { ackId, to } = meta[i];
+    const sendResult = sendResults[i];
+    const list = addressesByAckId.get(ackId) ?? [];
+    list.push({
+      to,
+      success: sendResult.success,
+      ...(sendResult.error ? { error: sendResult.error } : {}),
+    });
+    addressesByAckId.set(ackId, list);
+  }
+
+  for (const candidate of claimed) {
+    const addresses = addressesByAckId.get(candidate.ackId) ?? [];
+    const anySucceeded = addresses.some((a) => a.success);
+
+    if (anySucceeded) {
+      resultByAckId.set(candidate.ackId, {
+        ackId: candidate.ackId,
+        status: "emailed",
+        addresses,
+      });
+      continue;
+    }
+
+    // Every address failed — revert the claim. Guarded by sent_via = 'email'
+    // so this can never accidentally clear a legitimate 'print' sentVia.
+    await db
+      .update(ledgerAcknowledgments)
+      .set({ sentAt: null, sentVia: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(ledgerAcknowledgments.id, candidate.ackId),
+          eq(ledgerAcknowledgments.sentVia, "email"),
+        ),
+      );
+    resultByAckId.set(candidate.ackId, {
+      ackId: candidate.ackId,
+      status: "failed",
+      reason: "delivery failed for all addresses — not marked sent, safe to retry",
+    });
+  }
+
+  return ackIds.map((ackId) => resultByAckId.get(ackId)!);
 }

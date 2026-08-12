@@ -249,3 +249,56 @@ export function composeAcknowledgmentLetter(args: {
     .filter((part) => part.length > 0)
     .join("\n\n");
 }
+
+// ---------------------------------------------------------------------------
+// composeAcknowledgmentEmailHtml — the send path's one new composer
+// (Emailing the Donor Acknowledgment Letter, 2026-08-12, DECISION-088)
+// ---------------------------------------------------------------------------
+
+/**
+ * HTML-escapes free text for embedding in the email body. Local, private
+ * copy of the same four-line shape src/lib/dues-reminders.ts already has
+ * for the identical class of problem (plain template/free text into an
+ * HTML email) — this is that pattern's third occurrence, not a fourth
+ * variant. Not imported from dues-reminders.ts: that module is
+ * feature-local, not a shared utility, and reaching into a sibling
+ * feature's private helper would create the wrong kind of coupling. B-46
+ * tracks giving this a single shared home (src/lib/email-compose.ts) as its
+ * own, separately-scoped pass — not attempted here.
+ */
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Wraps an already-composed letterText (verbatim — never re-derived, never
+ * re-worded) into an HTML email body: one short lead-in paragraph, then the
+ * letter's own paragraphs, each escaped and wrapped in <p>. Pure and
+ * deterministic — no Date.now()/Math.random() dependency, same input
+ * always produces byte-identical output.
+ *
+ * Newline convention: composeAcknowledgmentLetter()'s own doc comment
+ * states its output is "paragraphs separated by blank lines (\n\n)" — this
+ * function's \n\n split consumes that exact, already-documented contract,
+ * not a new assumption.
+ */
+export function composeAcknowledgmentEmailHtml(letterText: string): string {
+  const leadIn =
+    "Please find your official gift acknowledgment below — you may want to save or print this " +
+    "email for your tax records.";
+  const paragraphs = letterText
+    .split("\n\n")
+    .filter((p) => p.length > 0)
+    .map((p) => `<p style="margin:0 0 12px;line-height:1.5;">${escapeHtml(p)}</p>`)
+    .join("\n");
+
+  return `<div style="font-family:Arial, Helvetica, sans-serif;color:#1a1a1a;font-size:14px;max-width:640px;">
+<p style="margin:0 0 16px;line-height:1.5;">${leadIn}</p>
+${paragraphs}
+</div>`;
+}

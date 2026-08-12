@@ -6,7 +6,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { composeAcknowledgmentLetter, type ComposeLetterTemplate } from "./ledger-acknowledgment-letter";
+import {
+  composeAcknowledgmentLetter,
+  composeAcknowledgmentEmailHtml,
+  type ComposeLetterTemplate,
+} from "./ledger-acknowledgment-letter";
 
 const ENTITY = {
   name: "Westerville Lions Club Foundation",
@@ -356,5 +360,53 @@ describe("composeAcknowledgmentLetter — Markdown-special-character escaping (T
 
     // The treasurer's own real Markdown is left alone.
     expect(letter).toContain("This is **real bold** text the treasurer wrote intentionally.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// composeAcknowledgmentEmailHtml — Emailing the Donor Acknowledgment Letter
+// (2026-08-12, DECISION-088). Phase 3 design doc, Unit Tests 1-3.
+// ---------------------------------------------------------------------------
+
+describe("composeAcknowledgmentEmailHtml", () => {
+  it("Test 1: includes the exact lead-in sentence, followed by every paragraph of letterText unchanged", () => {
+    const letterText = "Dear Jane,\n\nThank you for your gift.\n\nWith gratitude,\nJane Treasurer";
+
+    const html = composeAcknowledgmentEmailHtml(letterText);
+
+    expect(html).toContain(
+      "Please find your official gift acknowledgment below — you may want to save or print this " +
+        "email for your tax records.",
+    );
+    expect(html).toContain("<p style=\"margin:0 0 12px;line-height:1.5;\">Dear Jane,</p>");
+    expect(html).toContain(
+      "<p style=\"margin:0 0 12px;line-height:1.5;\">Thank you for your gift.</p>",
+    );
+    expect(html).toContain(
+      "<p style=\"margin:0 0 12px;line-height:1.5;\">With gratitude,\nJane Treasurer</p>",
+    );
+    // Lead-in appears before the letter's own first paragraph.
+    expect(html.indexOf("Please find your official")).toBeLessThan(html.indexOf("Dear Jane,"));
+  });
+
+  it("Test 2: HTML-escapes &, <, >, \", and ' appearing inside letterText", () => {
+    const letterText = 'Dear J&R "Landscaping" <Contractors>, thanks for it\'s gift.';
+
+    const html = composeAcknowledgmentEmailHtml(letterText);
+
+    expect(html).not.toContain("<Contractors>");
+    expect(html).toContain("J&amp;R");
+    expect(html).toContain("&lt;Contractors&gt;");
+    expect(html).toContain("&quot;Landscaping&quot;");
+    expect(html).toContain("it&#39;s gift");
+  });
+
+  it("Test 3: is pure and deterministic — same letterText in, byte-identical HTML out", () => {
+    const letterText = "Dear Donor,\n\nRequired legal block text.\n\nWith gratitude,\nTreasurer";
+
+    const first = composeAcknowledgmentEmailHtml(letterText);
+    const second = composeAcknowledgmentEmailHtml(letterText);
+
+    expect(first).toBe(second);
   });
 });

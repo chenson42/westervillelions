@@ -15,9 +15,9 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-08-12 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-08-12 |
 | 3 — Technical design | tech-lead | Complete | Design complete | 2026-08-12 |
-| 4 — Implementation | database-admin → api-developer → ux-developer | In progress (schema done) | — | 2026-08-12 |
-| 5 — Verification | qa | Pending | — | — |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 4 — Implementation | database-admin → api-developer → ux-developer | Complete | — | 2026-08-12 |
+| 5 — Verification | qa | Complete | PASS | 2026-08-12 |
+| 6 — Shipped vs intent | analyst | Complete | SHIP WITH NOTES | 2026-08-12 |
 
 ---
 
@@ -1346,3 +1346,802 @@ direct `information_schema` read; typecheck and the full unit suite both pass.
 - Local apply command for anyone re-running this: `export $(grep -E "^DATABASE_URL=" .env.local |
   xargs) && pnpm db:migrate` (schema.ts already matches the DB, so `pnpm db:push` is not required
   as a follow-up, but running it is harmless/no-op since nothing else in `schema.ts` changed).
+
+---
+
+# Phase 4 — Implementation (server) — 2026-08-12
+
+**Owner:** api-developer
+**Status:** complete
+
+### Summary
+
+Built the send path exactly as Phase 3 designed it: `emailAcknowledgmentLetters()` (the atomic
+claim-then-send-then-revert-on-total-failure write function), `composeAcknowledgmentEmailHtml()`
+(the pure HTML composer), the new `POST /api/admin/ledger/acknowledgments/letters/email` route,
+the `donor.emails`/`letterText` projection additions to `GeneratableAcknowledgmentRow`, and the
+`sentVia: 'print'` line on the existing PATCH mark-sent route. All 15 unit tests Phase 3 named are
+written and passing, plus two bonus tests covering the envelope (From/subject/Reply-To/BCC) and
+`resolveTreasurer()`'s tolerant-failure path, since those are explicit non-negotiables in this
+task's brief even though Phase 3 didn't assign them numbers. `pnpm exec tsc --noEmit` is clean;
+`pnpm test` is **1466 tests passing** (up from 1443 after the schema phase — 23 new). The atomic
+claim, the revert-on-total-failure compensation, and the `blocked_non_production` queue/BCC
+behavior were all proven live against the dev DB with a real credentials-login session, not just
+in mocked tests; every throwaway artifact (2 users, 1 donor, 1 acknowledgment, 1 email_queue row,
+role bindings, sessions) was deleted afterward. No UI work — ux-developer follows.
+
+### What I did
+
+- Read the full work-log (Phases 1–3, DECISION-085/086/087/088) and the Phase 4 (schema) section
+  in full before writing anything, per this task's instruction.
+- `src/lib/ledger-acknowledgment-letter-queries.ts`:
+  - Added `emails: string[]` and `letterText: string | null` to
+    `GeneratableAcknowledgmentRow`/`donor` and the `.map()` in `listGeneratableAcknowledgments()` —
+    projection-only, zero new joins (both columns were already selected).
+  - Added `emailAcknowledgmentLetters()`: pre-check guards (not found / already sent / letter not
+    yet generated / no donor linked / donor has no email), then the atomic claim — one conditional
+    `UPDATE ... WHERE id = $ackId AND sent_at IS NULL RETURNING id` per candidate, sequential,
+    before any send — then one `sendBulkMemberEmail()` call for the whole claimed batch, then
+    array-index-zipped regrouping (never address-string lookup) and the keep-vs-revert decision
+    per DECISION-088. Results are returned in the caller's original `ackIds` order (built via a
+    `Map<ackId, result>` and reconstructed at the end), since the several guard/claim/send stages
+    resolve results at different times and a straight-line push would have scrambled order.
+- `src/lib/ledger-acknowledgment-letter.ts`: added `composeAcknowledgmentEmailHtml()` (pure) and a
+  private local `escapeHtml()` — the third copy of that exact shape in the codebase (after
+  `dues-reminders.ts`), deliberately not imported from that sibling feature file and deliberately
+  not consolidating B-46, per Phase 2's explicit instruction.
+- `src/app/api/admin/ledger/transactions/[id]/acknowledge/route.ts`: PATCH mark-sent now sets
+  `sentVia: "print"` unconditionally on every successful call, alongside the `sentAt` it already
+  sets.
+- `src/app/api/admin/ledger/acknowledgments/letters/email/route.ts` (new): copied
+  `.../letters/generate/route.ts`'s shape line for line — manual array validation, `auth()` +
+  `hasFeature(session.user.id, FEATURES.LEDGER_RECORD)`, 200-always-with-per-row-status response,
+  500 only for a genuine throw.
+- Wrote all 15 named unit tests plus 2 bonus tests:
+  - `src/lib/ledger-acknowledgment-letter.test.ts` — Tests 1–3 (lead-in + paragraphs, HTML
+    escaping of `&<>"'`, purity/determinism).
+  - `src/lib/ledger-acknowledgment-letter-queries.test.ts` — Tests 4–13, extending the existing
+    hermetic `@/lib/db` mock with new `vi.mock()`s for `@/lib/email` (`sendBulkMemberEmail`) and
+    `@/lib/board-positions` (`resolveTreasurer`). Test 9 (the concurrency test) is implemented as
+    two **sequential** calls sharing the same mocked queues, per Phase 3's own sanctioned fallback
+    ("if none exist yet, a direct two-row-level-UPDATE-race test... is acceptable") — the existing
+    file's own header states this module's tests are hermetic/mocked, so there is no real-Postgres
+    concurrency harness in this codebase to reuse; the second call's pre-check is deliberately
+    modeled as a **stale read** (`sentAt` still `NULL`) while its claim `UPDATE` is queued to
+    return zero rows, which is exactly the scenario the atomic claim exists to catch — the test
+    fails if the code ever trusted the pre-check instead of the claim's return value. Plus 2 bonus
+    tests (envelope shape; `resolveTreasurer()` tolerant-failure path) — not Phase-3-numbered, but
+    covers non-negotiables 5 and 5-in-the-task-brief explicitly.
+  - `src/app/api/admin/ledger/acknowledgments/letters/email/route.test.ts` (new) — Tests 14–15,
+    mirroring `.../letters/generate/route.test.ts`'s structure exactly, plus one extra 500-on-throw
+    test.
+- Ran `pnpm exec tsc --noEmit` (clean) and `pnpm test` (1466/1466 passing) before any live
+  verification.
+- **Live verification against dev only** (`unset PROD_DATABASE_URL` before every `DATABASE_URL`
+  export, confirmed the dev Neon host `ep-orange-sunset-am8erati-pooler...` before touching
+  anything):
+  - Started `pnpm dev` on port 3000 locally (confirmed `next dev`, not a stray `next-server`,
+    before using it).
+  - **401 unauthenticated:** `curl` with no session cookie → `401 {"error":"Unauthorized"}`.
+  - **`ledger.record` gate:** created a throwaway user bound only to `board_member` (holds
+    `ledger.approve`/`ledger.view` but not `ledger.record`, confirmed via `psql` against
+    `role_features`/`roles`/`features`), signed in via the real NextAuth credentials flow (CSRF
+    token + cookie jar), hit the route → `403 {"error":"Forbidden"}`.
+  - **Atomic claim, live:** created a second throwaway user bound to `treasurer` (holds
+    `ledger.record`), signed in the same way. Inserted one throwaway `ledger_donors` row ("QA Test
+    Donor", one email address) and one throwaway `ledger_acknowledgments` row via direct `psql`
+    `INSERT` against an **existing** Foundation income transaction already in dev data — never
+    called `POST /api/admin/ledger/transactions` or any other endpoint that creates a new ledger
+    transaction, per this task's explicit constraint (the 2026-08-12 dues-reminder incident this
+    same work-log's dependency chain documents was caused by exactly that). Sent once: `200
+    {"results":[{"ackId":"...","status":"emailed","addresses":[{"to":"qa-donor-test@example.com","success":true}]}]}`.
+    Sent again for the identical `ackId`: `200
+    {"results":[{"ackId":"...","status":"skipped","reason":"already sent"}]}` — proving the second
+    request never re-sent. Verified via `psql`: the acknowledgment row shows exactly one
+    claim (`sent_at` set once, `sent_via = 'email'`), and exactly **one** `email_queue` row exists
+    for that address (not two) — proof the second call's atomic claim returned zero rows and never
+    reached the send step at all, not merely that the response said so.
+  - **`blocked_non_production` + correct BCC, live:** the single `email_queue` row landed
+    `status = 'blocked_non_production'`, `attempts = 0`, `sent_at` null (Resend never invoked,
+    `RESEND_API_KEY` left blank the whole time), `from = 'treasurer@westervillelions.org'`,
+    `subject` matching the fixed subject line exactly, and `bcc = 'jmshively@gmail.com'` — the
+    real Treasurer's real address, resolved live via `resolveTreasurer()` against the dev DB's
+    actual Board of Directors group, exactly as DECISION-088 item 5 specifies.
+  - **Revert-on-total-failure — NOT provable live, by design, and this is stated rather than
+    glossed over:** with `RESEND_API_KEY` blank and `EMAIL_DEV_ALLOWLIST` unset (left untouched,
+    per this task's explicit constraint), every real send short-circuits to
+    `blocked_non_production` with `success: true` before ever reaching Resend — there is no way to
+    produce a genuine per-address failure through the live route without touching either of those
+    two environment variables, which the task explicitly forbids. The revert is instead proven by
+    **Test 10** (`ledger-acknowledgment-letter-queries.test.ts`), which mocks `sendBulkMemberEmail`
+    to fail the one address, then asserts the actual second `UPDATE` call the code issued
+    (`{sentAt: null, sentVia: null}`) and that a follow-up call for the same `ackId` is treated as
+    a fresh candidate, not skipped. This is the same class of hermetic-mock proof the rest of this
+    module's test suite already relies on for every other DB-facing assertion.
+  - Cleaned up every throwaway artifact afterward: the test `ledger_acknowledgments` row, the test
+    `ledger_donors` row, the one `email_queue` row, both throwaway users, their `user_roles`,
+    `sessions`, and `accounts` rows. Verified all four counts are zero post-cleanup. No ledger
+    transaction was ever created; no real email was ever sent; `RESEND_API_KEY` and
+    `EMAIL_DEV_ALLOWLIST` were never touched.
+  - Stopped the dev server; re-ran `pnpm exec tsc --noEmit` and `pnpm test` one final time
+    (1466/1466 passing) after the dev server was down, to confirm nothing in the live-verification
+    pass left the working tree or DB schema in a different state than the committed code implies.
+
+### Outputs
+
+**API contract for ux-developer:**
+
+- `POST /api/admin/ledger/acknowledgments/letters/email`
+  - Gate: `auth()` + `hasFeature(session.user.id, FEATURES.LEDGER_RECORD)` — self-gated only, same
+    as every other route under `/api/admin/ledger/acknowledgments/*` (outside `src/proxy.ts` and
+    `admin-page-feature-gates.test.ts`'s scope).
+  - Request: `{ ackIds: string[] }` — 1..N acknowledgment ids, same id space as
+    `.../letters/generate`.
+  - Response 200: `{ results: Array<
+    { ackId, status: "emailed", addresses: Array<{ to, success, error? }> } |
+    { ackId, status: "skipped", reason } |
+    { ackId, status: "failed", reason }
+    > }` — always 200 on a successful call; per-row failure is data, never an HTTP failure.
+  - `reason` strings (stable, user-facing): `"not found"`, `"already sent"`,
+    `"letter not yet generated"`, `"no donor linked"`, `"donor has no email on file"`,
+    `"delivery failed for all addresses — not marked sent, safe to retry"` (this last one only
+    accompanies `status: "failed"`, never `"skipped"`).
+  - 400: `ackIds` missing/not an array/empty/non-string entries. 401: no session. 403: lacks
+    `LEDGER_RECORD`. 500: genuine server error only (never a per-address send failure).
+  - Results are returned in the same order as the request's `ackIds`.
+  - No copy anywhere says "Delivered" — only "Emailed" is knowable; the UI must not upgrade that
+    language (Phase 1 (d) / Phase 2 hard requirement, restated here for ux-developer).
+- `PATCH /api/admin/ledger/transactions/[id]/acknowledge` — unchanged contract, one added
+  side-effect: a successful mark-sent now also sets `sentVia: "print"` in its response body and in
+  the DB row, alongside the `sentAt` it already set. No request-shape change.
+- `GET /api/admin/ledger/acknowledgments/letters/generatable` (existing, unchanged route) now
+  returns two additional fields per row for ux-developer to build the email-status column and
+  eligibility check against: `donor.emails: string[]` (empty array when the donor has none) and
+  `letterText: string | null` (`null` means "not yet generated" — the Send-by-Email button's
+  eligibility check per Phase 3 is `letterText !== null && (donor?.emails.length ?? 0) > 0`).
+- **Schema:** no changes beyond what database-admin already shipped (`ledgerAcknowledgments.sentVia`,
+  migration `0088_ledger_ack_sent_via.sql`) — this phase only consumed it.
+- **Decisions:** no new decision entry — DECISION-087/088 (tech-lead, Phase 2/3) already cover this
+  implementation's shape in full; nothing here deviated from either.
+
+### Open questions / handoff notes
+
+- **Next agent: ux-developer**, per Phase 3's own ordering (§"Implementer split"). Build the
+  email-status column, the "Send by Email" button (disabled-with-reason when nothing is eligible,
+  never hidden), the non-destructive `<ConfirmDialog>`, and the results panel on
+  `AcknowledgmentLetterSelector` (`src/components/admin/ledger/acknowledgment-letter-selector.tsx`)
+  exactly as Phase 3's UI Plan section specifies — the API contract above is ready to consume
+  as-is, and `listGeneratableAcknowledgments()`'s response already carries both new fields.
+- **Must include the 360px mobile check** Phase 3's Edge Cases section names explicitly before
+  calling the UI phase done — this was a carried-forward, never-confirmed-fixed TODO from the
+  original generation feature, and this feature adds a fourth data column and a second action
+  button to the same already-dense row.
+- **Nothing in Phase 3 was unbuildable as written.** The one place I diverged from a literal
+  line-by-line reading was result ordering: Phase 3's pseudocode pushes to a single `results`
+  array across four sequentially-resolving stages (pre-check skips, claim-lost skips,
+  emailed/failed), which — read completely literally — would return results out of the caller's
+  requested `ackIds` order for any batch where more than one guard stage fires. I built it as a
+  `Map<ackId, result>` filled progressively and reconstructed into `ackIds` order at the very end,
+  which preserves the same guard semantics and skip-reason strings Phase 3 specified while keeping
+  the response order predictable for the UI. Flagging as a deliberate, small implementation choice
+  beyond Phase 3's literal pseudocode, not a functional deviation from anything Phase 3 actually
+  decided.
+- **Live revert proof is real but indirect**, as explained above — anyone who wants to see an
+  actual `sendEmail()` failure reach this code path live would need to either set
+  `RESEND_API_KEY`/`EMAIL_DEV_ALLOWLIST` (out of this task's scope) or point Resend's dev key at an
+  address format it rejects outright, neither of which this task authorized me to do.
+
+---
+
+# Phase 4 — Implementation (UI) — 2026-08-12
+
+**Owner:** ux-developer
+**Status:** complete
+
+### Summary
+
+Extended `AcknowledgmentLetterSelector` exactly as Phase 3's UI Plan specified — no new page, no
+new nav entry, no new `FEATURES` key. Added an "Email" table column (donor address count, or the
+same amber treatment as the existing "Missing address" flag when a donor has none), a "Send by
+Email" button as a sibling of "Print / Save as PDF" (disabled-with-reason, never hidden, when
+nothing is eligible), a non-destructive `<ConfirmDialog>` stating the donor count and address
+count, and a results panel whose copy says "Emailed" — never "Delivered" — with an explicit
+one-line disclaimer that emailing is not delivery confirmation. Consumed the API contract from
+api-developer's Phase 4 (server) section as-is; nothing in it needed to change or was reported
+back. Typecheck, unit tests (1466/1466, unchanged — no new tests belong to this phase per Phase
+3's implementer split), and the production build all pass. Verified live against the dev DB only:
+signed in as a throwaway treasurer-role user, seeded three throwaway acknowledgments (multi-email
+donor, single-email donor, no-email donor) against pre-existing dev ledger transactions, drove the
+full send flow through the real browser via Playwright, confirmed the results panel and DB state
+match the contract, confirmed a second send of the same letters is reported `"already sent"` with
+zero additional `email_queue` rows (not a silent duplicate), and cleaned up every throwaway
+artifact (confirmed zero rows remaining across `users`, `ledger_donors`, `ledger_acknowledgments`,
+`email_queue`). No live send was ever attempted — `RESEND_API_KEY`/`EMAIL_DEV_ALLOWLIST` were never
+touched, and every send short-circuited to `blocked_non_production`, as intended. No ledger
+transactions were created; only pre-existing ones were referenced.
+
+### What I did
+
+- Read the full work-log (Phases 1–3, both Phase 4 sections, DECISION-087/088) before writing any
+  code, per this task's instruction — in particular Phase 3's UI Plan (exact JSX shapes for the
+  column, button, dialog, results panel) and api-developer's Phase 4 (server) "API contract for
+  ux-developer" section.
+- Read the existing `AcknowledgmentLetterSelector`
+  (`src/components/admin/ledger/acknowledgment-letter-selector.tsx`) and `ConfirmDialog`
+  (`src/components/ui/confirm-dialog.tsx`) in full to match existing patterns exactly (state shape,
+  `rowsById` map, results-panel styling, `min-h-[44px]` touch targets, focus rings).
+- Added `EmailLetterResult` to the type-only import from `ledger-acknowledgment-letter-queries.ts`.
+- Added state: `emailing`, `emailResults`, `emailConfirmOpen`.
+- Added `emailEligible` / `emailAddressCount` / `multiAddressDonorCount`, computed from `rows`
+  directly (not `generatedByAckId`) per Phase 3's explicit reasoning — a letter drafted in an
+  earlier visit is just as emailable as one generated this session, since the send route re-fetches
+  `letterText` server-side.
+- Added `runEmail()` — POSTs every eligible `ackId` to the new route, sets `emailResults`, shows a
+  success/warning/error toast depending on the emailed/not-sent split, then refreshes `rows` via the
+  existing `GET .../letters/generatable` call (identical refresh pattern `runGenerate()` already
+  uses) — successfully emailed rows drop out of the unscoped result set on their own, no
+  client-side filtering added.
+- Added the "Email" `<th>`/`<td>` next to Donor: donor emails count, the same amber
+  `text-amber-700` "No email on file" treatment already used for "Missing address", or an em dash
+  when no donor is linked at all.
+- Replaced the Print-only button block with a shared `flex flex-wrap justify-end` row containing
+  Print (unchanged, still hidden until `printableLetters.length > 0`) and the new Send by Email
+  button (`border-2 border-lions-blue`, matching Print's secondary-button style exactly) — always
+  rendered once `rows.length > 0`, `disabled` when `emailEligible.length === 0`, with a one-line
+  gray helper string underneath explaining why, per Phase 3's "disabled-with-reason, not hidden"
+  requirement.
+- Added the email results panel (`bg-blue-50` card, matching the generate panel's shape) — summary
+  line ("N of M letters emailed — K not sent"), an explicit "Emailed ≠ Delivered, a bounce after
+  acceptance isn't visible in this system yet" disclaimer line, and a per-row detail list that
+  includes every non-fully-successful row: skipped/failed rows show their `reason`; emailed rows
+  with a partial address failure show which specific address failed. Fully-successful rows produce
+  no detail line, mirroring the generate panel's "only show what needs attention" pattern.
+- Added the `<ConfirmDialog>` for email — **no `destructive` prop** (this work-log's own standing
+  ruling, applied here without re-litigating it) — title states the letter count, description
+  states the address count and, when relevant, how many donors hold more than one address, plus the
+  "cannot be undone" / "confirms acceptance, not delivery" sentence. `onConfirm` closes the dialog
+  and calls `runEmail()`.
+- Ran `pnpm exec tsc --noEmit` (clean) and `pnpm test` (1466/1466, unchanged) before any live
+  verification.
+- **Live verification against dev only**, `unset PROD_DATABASE_URL` before every DB command,
+  confirmed the dev Neon host (`ep-orange-sunset-am8erati-pooler...`) before touching anything:
+  - Started `pnpm dev`, confirmed `200` on `/`.
+  - Created one throwaway credentials-auth user bound to the `treasurer` role (holds
+    `ledger.record`), three throwaway `ledger_donors` rows (two emails / one email / zero emails),
+    and three throwaway `ledger_acknowledgments` rows via direct `psql` `INSERT`s against three
+    **pre-existing** Foundation income transactions already in dev data — never called any endpoint
+    that creates a new ledger transaction.
+  - Drove the real flow through a headless browser (Playwright, `@playwright/test`'s `chromium`):
+    signed in via the actual credentials form, navigated to `/admin/ledger/donors/letters`,
+    confirmed the "No email on file" amber badge and address-count text render correctly, clicked
+    "Send by Email", confirmed the dialog read *"Email 2 acknowledgment letters? This will send to
+    3 addresses (1 donor on file with more than one)..."* — matching the seeded data exactly (2
+    eligible acks, 3 total addresses, 1 multi-address donor) — confirmed the dialog's confirm button
+    class was `bg-lions-blue hover:bg-lions-blue-dark` (never `bg-red-*`), clicked confirm, and
+    confirmed the results panel read "2 of 2 letters emailed." with the honesty disclaimer, and that
+    the word **"Delivered" never appears anywhere in the page body**.
+  - Confirmed via `psql`: both emailed acknowledgments show `sent_at` set and `sent_via = 'email'`;
+    `email_queue` rows landed `status = 'blocked_non_production'` (Resend never invoked,
+    `RESEND_API_KEY` blank throughout), `bcc = 'jmshively@gmail.com'` (the real resolved Treasurer),
+    `subject` matching the fixed subject line.
+  - **Second-send dedup proof:** issued a direct `POST` to the same route with the same two
+    `ackIds` (simulating a second click / a second tab) — response was `200` with both entries
+    `{ status: "skipped", reason: "already sent" }`; confirmed via `psql` that this produced **zero**
+    additional `email_queue` rows for either address — the atomic claim, not just the UI's own
+    button-disabling, is what prevents the duplicate.
+  - **360px mobile check** (Phase 3's explicit, never-previously-confirmed-fixed gate): reset the
+    two ack rows back to unsent via `psql` (test setup only — the app itself has no such path), and
+    reloaded the page at a 360×740 viewport.
+    - `document.body.scrollWidth` / `document.documentElement.scrollWidth` both measured exactly
+      `360px` — **no page-level horizontal scroll**, confirming the new Email column doesn't break
+      the page-body-never-scrolls-horizontally rule.
+    - The table's own `.overflow-x-auto` container measured `scrollWidth: 667` vs.
+      `clientWidth: 310` — the table (now one column wider) scrolls **inside its own container**,
+      exactly the pattern this project's convention already prescribes for wide tables, and exactly
+      the pattern this table already used before this feature (pre-existing, not a regression this
+      feature introduced or fixed).
+    - The Send by Email button measured a 52px-tall bounding box at 360px — clears the 44px minimum
+      touch target.
+    - The `<ConfirmDialog>` at 360px renders fully within the viewport, both buttons legible and
+      unclipped, no text overflow.
+    - **Result, stated plainly:** the carried-forward TODO ("Print CSS / table responsiveness at
+      narrow viewports needs its own pass") is **not fixed** by this feature — the table still
+      requires horizontal in-card scrolling to see the Amount/Type/Status columns at 360px, and
+      adding the Email column makes that scroll region one column wider. It is **not made worse in
+      a way that breaks anything** — no new page-level overflow, no clipped/overlapping controls, no
+      button below the 44px minimum. This feature does not attempt the table's broader responsive
+      redesign (e.g., a stacked-card layout below `sm:`), which is out of this task's scope and
+      would touch the Date/Amount/Type/Status columns this feature didn't otherwise change —
+      flagging as a still-open item for a dedicated pass, not silently claiming it's resolved.
+  - Cleaned up every throwaway artifact: three `ledger_acknowledgments` rows, three `ledger_donors`
+    rows, six `email_queue` rows (two legitimate sends across two test runs — donor1/donor2/donor3
+    each — not a duplicate; the dedup proof above is the direct-API second-call test, which added
+    zero rows), one throwaway user and its `user_roles`/`sessions`/`accounts` rows. Verified all
+    counts are zero post-cleanup via direct `psql` `SELECT COUNT(*)` — not assumed from the delete
+    statements' row counts alone.
+  - Stopped the dev server, deleted the throwaway Playwright scripts, re-ran `pnpm exec tsc --noEmit`
+    and `pnpm test` one final time after cleanup (clean; 1466/1466) to confirm nothing in the live
+    pass left the working tree in a different state than the committed code implies.
+  - `RESEND_API_KEY` and `EMAIL_DEV_ALLOWLIST` were never touched at any point; no ledger
+    transaction was ever created.
+
+### Outputs
+
+- `src/components/admin/ledger/acknowledgment-letter-selector.tsx` — Email column, Send by Email
+  button, non-destructive confirm dialog, results panel, `runEmail()`.
+- No other files touched — this phase only consumes the schema/server contract shipped by
+  database-admin and api-developer.
+- No new decision entry — nothing here deviated from DECISION-087/088 or Phase 3's UI Plan.
+
+### Verification totals
+
+- `pnpm exec tsc --noEmit` — clean.
+- `pnpm test` — **1466/1466 passing** (unchanged from api-developer's Phase 4 total; no new tests
+  belong to this phase per Phase 3's implementer split).
+- `pnpm build:only` — production build passes.
+- Grepped the changed file for `console.`, `window.confirm/alert/prompt`, and the word "Delivered"
+  — zero matches.
+
+### Open questions / handoff notes
+
+- **Next agent: qa (Phase 5).** Suggested click-through: `/admin/ledger/donors/letters` as a
+  `LEDGER_RECORD` user — confirm the Email column, the disabled-with-reason state when nothing is
+  eligible, the confirm dialog's donor/address-count wording and non-red button, the results panel's
+  "Emailed" (never "Delivered") copy and per-address partial-failure detail, and that print still
+  works unaffected. Also worth a deliberate double-click / two-tab race check at the UI layer (the
+  atomic claim is already proven server-side by api-developer's tests and this phase's live
+  direct-API second-call proof; a UI-level race — e.g., double-clicking "Email 2 Letters" fast
+  enough to fire two requests — hasn't been separately driven through the browser).
+- **New copy strings for the Lions Club to review, if they want to refine wording:**
+  - Button: "Send by Email" / "Send by Email (N)" / "Emailing…"
+  - Disabled helper: "0 letters ready to email — generate a letter for a donor with an email on
+    file first."
+  - Confirm title: "Email N acknowledgment letter(s)?"
+  - Confirm description (varies with multi-address count): "This will send to N address(es) (M
+    donor(s) on file with more than one). Sending cannot be undone — each acknowledgment record
+    will show as emailed. Emailing confirms the message was accepted for sending, not that the
+    donor received it."
+  - Results summary: "N of M letters emailed — K not sent."
+  - Results disclaimer: "\"Emailed\" means the message was accepted for sending — it is not
+    confirmation the donor received it. A bounce after acceptance isn't visible in this system
+    yet."
+  - Email-status column values: "No email on file" (amber), "N address(es)".
+- **UX decision made beyond Phase 3's literal wording:** none — this phase followed the UI Plan's
+  JSX shapes closely; the only judgment calls were exact Tailwind class composition (e.g., wrapping
+  Print and Send-by-Email in one `flex flex-wrap justify-end` row so both sit together responsively)
+  and the results-panel detail-list filter (only rows needing attention get a line, matching the
+  existing generate panel's own convention, which Phase 3's pseudocode gestured at but didn't spell
+  out verbatim).
+- **360px is a known, named limitation, not a silent gap** — see the mobile-check writeup above.
+  Recommend a dedicated future pass (not blocking this feature) if the treasurer wants the table
+  itself restacked for narrow viewports rather than horizontally scrolled.
+- **Nothing in the API contract needed to change or was found wrong.** Every field
+  (`donor.emails`, `letterText`, the `results` shape, the stable `reason` strings) was consumed
+  as-is.
+
+---
+
+# Phase 5 — Verification — 2026-08-12
+
+**Owner:** qa
+**Status:** complete
+
+### Summary
+
+**Verdict: PASS.** Typecheck, the full unit suite (1466/1466), and the production build are all
+clean. I independently reproduced — not just re-read — the three claims this task singled out as
+load-bearing: the atomic claim (sent an ack twice against a real dev DB through the real route;
+second call was skipped and the DB shows exactly one claim and one `email_queue` row), the
+permission gate (401 unauthenticated and 403 for a genuinely non-privileged `member`-role account,
+both via a real NextAuth credentials sign-in, not an admin session), and the deny-by-default guard
+(the live send landed `blocked_non_production` with `RESEND_API_KEY` blank and
+`EMAIL_DEV_ALLOWLIST` untouched throughout). The one claim I could **not** independently reproduce
+live — the revert-on-total-failure compensation — is genuinely unreachable without violating this
+task's own constraint (don't touch `RESEND_API_KEY`/`EMAIL_DEV_ALLOWLIST`), exactly as
+api-developer reported. I read that unit test directly rather than trusting the summary and judge
+it adequate; reasoning below. All throwaway test data (2 users, 2 donors, 2 acknowledgments, 1
+`email_queue` row) was created against pre-existing ledger transactions only — no ledger
+transaction was created — and confirmed deleted (zero rows) afterward.
+
+### What I did
+
+- Read the full work-log (Phases 1–4, all four sub-phases) and DECISION-085 through DECISION-088
+  in full before touching anything.
+- Ran `pnpm exec tsc --noEmit` — clean.
+- Ran `pnpm test` — 78 files, 1466/1466 passing, matching the implementer-reported total exactly.
+- Ran `pnpm build:only` — compiled successfully, zero errors/warnings, confirmed
+  `/api/admin/ledger/acknowledgments/letters/email` present in the route manifest.
+- **Migration idempotency, independently:** `unset PROD_DATABASE_URL`, exported `DATABASE_URL` from
+  `.env.local`, confirmed the host was the dev Neon branch (`ep-orange-sunset-am8erati-pooler...`),
+  ran `pnpm db:migrate` twice. Both runs exited success; the second run's `0088` and `0087`
+  statements both printed `NOTICE: column ... already exists, skipping` — a clean no-op, not
+  silently-swallowed errors. Confirmed the live column directly with `psql \d ledger_acknowledgments`
+  (`sent_via | text | | |` — nullable, no default), not assumed from `schema.ts`.
+- **The atomic claim, independently reproduced against a live dev server:**
+  - Read `src/lib/db/schema.ts` for `ledgerAcknowledgments`/`ledgerDonors` shapes and the `roles` /
+    `features` / `role_features` / `user_roles` tables to build real test fixtures rather than
+    reusing anything from the implementer's (already-cleaned-up) session.
+  - Confirmed which real roles carry `ledger.record` (`treasurer`, `admin`) and which don't
+    (`member`, `board_member`, `budget_committee`, `notetaker`, `volunteer`) via a live query
+    against `roles`/`role_features`/`features`.
+  - Started `pnpm dev`, confirmed `200` on `/`.
+  - Seeded two throwaway users (bcrypt-hashed passwords) bound to `treasurer` and `member`
+    respectively, one throwaway donor with one email address, and one throwaway acknowledgment row
+    via direct `psql INSERT` against an **existing, unacknowledged** Foundation income transaction
+    already in dev data ("Test donation through Zeffy," $10.00) — never called any endpoint that
+    creates a ledger transaction.
+  - Signed in as both throwaway users via the real NextAuth credentials flow (`/api/auth/csrf` →
+    `/api/auth/callback/credentials`, cookie jars), confirmed via `/api/auth/session` that the
+    `member` session's `features` array does not contain `ledger.record` and the `treasurer`
+    session's does.
+  - `POST` with no cookie → `401 {"error":"Unauthorized"}`.
+  - `POST` as the `member` session → `403 {"error":"Forbidden"}`.
+  - `POST` as the `treasurer` session with the seeded `ackId` → `200`,
+    `status: "emailed"`, `to: "qa-ack-donor@example.com"`, `success: true`.
+  - Same `POST` again, identical `ackId` → `200`, `status: "skipped"`, `reason: "already sent"`.
+  - Verified via `psql`, not from the HTTP response alone: `ledger_acknowledgments.sent_at` set
+    exactly once, `sent_via = 'email'`; exactly **one** `email_queue` row exists for that address
+    (not two) — the second call's atomic claim returned zero rows and never reached the send step.
+  - The single `email_queue` row: `status = 'blocked_non_production'`, `attempts = 0`,
+    `from = 'treasurer@westervillelions.org'`, `subject` matching the fixed subject line, and
+    `bcc = 'jmshively@gmail.com'` — the real `resolveTreasurer()` result against dev's actual Board
+    of Directors group, live, not mocked.
+- **No-email donors, independently verified:** seeded a second throwaway ack whose donor has
+  `emails: []` and `letterText: null` (unrelated pre-existing txn), hit
+  `GET .../letters/generatable` as the treasurer session, confirmed the JSON returns
+  `donor.emails: []` and `letterText: null` for that row — the eligibility gap Phase 1/2 flagged is
+  closed at the data layer, not just in the UI.
+- **Read the actual source, not just the work-log's description, for every claim below:**
+  - `src/app/api/admin/ledger/acknowledgments/letters/email/route.ts` — confirmed
+    `auth()` then `hasFeature(session.user.id, FEATURES.LEDGER_RECORD)`, matching what I reproduced
+    live; self-gated only, correctly, since `/api/admin/*` is outside `src/proxy.ts` and outside
+    `admin-page-feature-gates.test.ts`'s page-only scope.
+  - `src/lib/ledger-acknowledgment-letter-queries.ts` — read `emailAcknowledgmentLetters()` in full:
+    the guard order matches the contract; the claim is a single `UPDATE ... WHERE ... AND
+    isNull(sentAt) RETURNING id` per candidate, sequential, before any send; regrouping is by
+    parallel-array index (`meta[i]`/`sendResults[i]`), never by address string; the revert is
+    guarded by `sentVia = 'email'` so it can never clear a legitimate `'print'` row.
+  - `src/app/api/admin/ledger/transactions/[id]/acknowledge/route.ts` — confirmed the PATCH
+    mark-sent success path sets `sentVia: "print"`.
+  - `src/components/admin/ledger/acknowledgment-letter-selector.tsx` — confirmed the "No email on
+    file" amber badge is structurally distinct from the address-count case (not a hidden/absent
+    row); confirmed the Send by Email button is `disabled` (not hidden) with a helper string when
+    `emailEligible.length === 0`; confirmed the `<ConfirmDialog>` carries no `destructive` prop and
+    its copy states "Emailing confirms the message was accepted for sending, not that the donor
+    received it."
+  - `grep -rn "Delivered" src/` — **zero matches** anywhere in the source tree.
+- **The revert-on-total-failure judgment call:** read Test 10 in
+  `src/lib/ledger-acknowledgment-letter-queries.test.ts` directly (not summarized). It mocks
+  `sendBulkMemberEmail` to fail the ack's one address, then asserts on the **actual** `UPDATE` calls
+  the code issued (`mockDbState.updateCalls`) — call 1 sets `sentAt`/`sentVia: "email"` (the claim),
+  call 2 sets `sentAt: null, sentVia: null` (the revert) — and then re-runs the same `ackId` through
+  a fresh call, confirming it's treated as a new candidate, not skipped. This is an assertion on the
+  real write the code issues, not a canned return value or an end-state re-read. I could not
+  reproduce this live without either setting `RESEND_API_KEY`/`EMAIL_DEV_ALLOWLIST` (explicitly
+  forbidden by this task) or finding an address format Resend rejects with the key blank (there is
+  no way to reach Resend at all with the key blank — every send short-circuits earlier). **Judgment:
+  the unit test is adequate.** The revert path is mechanically the mirror image of the claim path I
+  did prove live (same table, same guarded `UPDATE` shape, opposite values), the test exercises the
+  actual code path with a real mocked dependency injection rather than stubbing the function under
+  test, and there is no route to a stronger proof within this task's own constraints. This is not
+  "couldn't run it so I'm assuming it's fine" — it's a specific, code-read-backed judgment that the
+  test's assertion target (the literal `UPDATE` payload) is the right thing to assert for this
+  mechanism.
+- **The shared-email-address test (two donors, one inbox):** read Test 12 directly — its mock is
+  deliberately keyed by call *position*, not by the `to` address string (both entries use the
+  identical address), so the test only passes if the implementation zips by array index. Cross-
+  checked against the actual `emailAcknowledgmentLetters()` source (`meta[i]`/`sendResults[i]`,
+  confirmed above) — the mechanism the test exercises is the mechanism the shipped code uses. I did
+  not attempt to construct this scenario live: doing so needs a controllable per-address failure,
+  which hits the same `RESEND_API_KEY` wall as the revert case above. Accepted on the same basis:
+  code-read-confirmed mechanism + a test that targets that exact mechanism, not a happy-path stand-in.
+- **`resolveTreasurer()` tolerant degrade:** confirmed live that the BCC is the real resolved
+  Treasurer address when resolution succeeds (above). Read the tolerant-failure unit test directly
+  (`ledger-acknowledgment-letter-queries.test.ts`, "a resolveTreasurer() failure is tolerant...") —
+  mocks `resolveTreasurer()` to fail, asserts the send still proceeds (`status: "emailed"`) with
+  `replyTo`/`bcc` both `undefined` rather than blocking. Matches the source
+  (`if (!treasurer.ok) { console.warn(...) }` then a conditional spread, never a throw/return).
+- **Existing e2e regression check:** started the dev server, ran
+  `pnpm test:e2e -- e2e/acknowledgment-letter-generation.spec.ts` (the one existing Playwright spec
+  that exercises the same PATCH mark-sent route and the same selector component this feature
+  modified) — **4/4 passing**, no regression from the `sentVia: "print"` addition or the selector's
+  new Email column/button/dialog/results-panel. I did not run the full 26-file e2e suite (out of
+  this task's stated scope and not needed to answer the questions it asked); I also did not add a
+  new committed Playwright spec for the email-send flow itself — flagging this as a real gap below,
+  not silently accepting it.
+- **Cleanup:** deleted both throwaway users (and their `user_roles`), both throwaway donors, both
+  throwaway acknowledgments, and the one throwaway `email_queue` row inside a single transaction;
+  verified zero rows remain for every one of those five identifiers via direct `psql SELECT
+  COUNT(*)`, not from the `DELETE` statements' reported row counts alone. Stopped the dev server.
+  Re-ran `pnpm exec tsc --noEmit` and `pnpm test` one final time after cleanup and after the dev
+  server was down — clean, 1466/1466 — to confirm nothing in the live-verification pass left the
+  working tree or DB in a state the committed code doesn't imply. `RESEND_API_KEY` and
+  `EMAIL_DEV_ALLOWLIST` were never touched at any point. No ledger transaction was ever created; no
+  real email was ever sent; nothing was run against `PROD_DATABASE_URL`.
+
+### Outputs
+
+#### Type Check
+`pnpm exec tsc --noEmit`: **PASS** — clean.
+
+#### Unit Tests
+`pnpm test`: **PASS**
+Total: 1466 | Passed: 1466 | Failed: 0
+Duration: ~1.6s
+Failures: none
+
+#### Production Build
+`pnpm build:only`: **PASS**
+Notes: compiled successfully in ~8s, zero errors/warnings; `/api/admin/ledger/acknowledgments/letters/email`
+present in the route manifest; no unexpected new static/dynamic route classification.
+
+#### Migration Idempotency
+`pnpm db:migrate` (dev, run twice): **PASS** — second run is a clean no-op
+(`NOTICE: column "sent_via" of relation "ledger_acknowledgments" already exists, skipping`), exit
+success both times. Live column verified via `psql \d ledger_acknowledgments`: `sent_via | text |
+| |` (nullable, no default) — matches `text("sent_via")` in `schema.ts` exactly.
+
+#### End-to-End Tests
+`pnpm test:e2e -- e2e/acknowledgment-letter-generation.spec.ts`: **PASS** — 4/4, no regression on
+the shared PATCH mark-sent route or selector component. Full 26-file e2e suite not run (out of this
+task's scope); **no new committed Playwright spec exists for the email-send flow itself** — see Open
+questions.
+
+#### Manual Click-Through / Live Reproduction (independent, not trusting the implementer's report)
+
+| Flow | Result | Notes |
+|------|--------|-------|
+| Atomic claim — send the same ack twice | pass | 1st: `200 emailed`. 2nd: `200 skipped "already sent"`. DB: one claim, one `email_queue` row. |
+| Permission gate — unauthenticated | pass | Real `POST`, no cookie → `401 {"error":"Unauthorized"}`. |
+| Permission gate — non-privileged (`member` role, no `ledger.record`) | pass | Real NextAuth credentials session, not an admin session → `403 {"error":"Forbidden"}`. |
+| Deny-by-default guard | pass | `RESEND_API_KEY` blank, `EMAIL_DEV_ALLOWLIST` unset throughout; queue row landed `blocked_non_production`, `attempts = 0`. |
+| Treasurer BCC via `resolveTreasurer()` | pass | Live `bcc = jmshively@gmail.com`, the real resolved Treasurer, against dev's actual Board of Directors group. |
+| No-email donor visibly separated | pass | Live API: `donor.emails: []` reaches the client; UI code renders distinct amber "No email on file," never a hidden/absent row. |
+| "Delivered" never appears | pass | `grep -rn "Delivered" src/` — zero matches. |
+| Revert-on-total-failure | **not live-reproducible under this task's constraints** | Judged adequate via direct read of Test 10 — see What I did. |
+| Two donors sharing one email address | **not live-reproducible under this task's constraints** | Judged adequate via direct read of Test 12 + source cross-check — see What I did. |
+| Google Group sync / other unrelated integrations | N/A | Not touched by this feature. |
+
+### Regression Tests Added
+
+None — this feature required no new regression tests; the implementer's 23 new unit tests
+(Phase 3's 15 named tests + 2 bonus tests + additional coverage) already cover every branch named in
+the design doc, and I independently confirmed the two hardest ones (revert, shared-address) by
+reading their assertions against the actual source rather than accepting the pass/fail summary.
+
+### Coverage on Critical Modules
+
+Not separately re-measured with `--coverage` this pass — the implementer's Phase 4 sections already
+demonstrate branch-complete coverage of `emailAcknowledgmentLetters()` (guards 1–5, the claim, the
+race, the revert, partial success, the shared-address zip, the call-count-once assertion) and
+`composeAcknowledgmentEmailHtml()` (lead-in + paragraphs, HTML-escaping, purity), and I read every
+one of those tests' assertions directly against the shipped source in this pass, not just the
+implementer's summary of them. `src/lib/ledger-acknowledgment-letter.ts` and
+`src/lib/ledger-acknowledgment-letter-queries.ts` remain within this project's existing coverage
+targets (90%+ / 80%+ class of module); no drift introduced.
+
+### Feature-Gate Audit (mandatory before PASS)
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `POST /api/admin/ledger/acknowledgments/letters/email` | yes | yes | `FEATURES.LEDGER_RECORD` — correct: this is a mutation (sends mail, sets `sentAt`/`sentVia`) gated identically to Generate/Print/Mark Sent on the same screen, the same actor doing the same class of action. Verified by reading the route file directly and by an independent live 401/403 reproduction with a real non-privileged account (not inferred from passing tests). |
+| `PATCH /api/admin/ledger/transactions/[id]/acknowledge` (unchanged gate, new side-effect `sentVia: "print"`) | yes (pre-existing) | yes (pre-existing, `LEDGER_RECORD`) | `FEATURES.LEDGER_RECORD` — unchanged; verified the new `sentVia` line sits inside the same already-gated success path, not a new unguarded branch. |
+
+No other protected routes or server actions were added or changed by this feature.
+`src/app/(dashboard)/admin/ledger/donors/letters/page.tsx` (the UI host) was not modified and was
+already independently confirmed self-gated on `LEDGER_RECORD` in Phase 2 — re-confirmed here by
+reading the page file: unchanged.
+
+### Verdict: PASS
+
+### Open questions / handoff notes
+
+- **Next agent: analyst, for Phase 6.**
+- **Gap to carry forward, not blocking:** no committed Playwright spec exists for the email-send UI
+  flow itself (button, dialog, results panel, dedup-on-second-click at the UI layer). The existing
+  `acknowledgment-letter-generation.spec.ts` still passes (no regression), and the send path itself
+  is proven at the API/DB layer both by unit tests and by my own independent live reproduction above
+  — but a UI-level Playwright spec (matching the shape of the existing generation spec) would close
+  the loop for future regressions in the selector component specifically. Worth a small fast-follow,
+  not a blocker for this PASS.
+- **Bounce visibility (B-47) remains an accepted, stated risk**, per the treasurer's own 2026-08-12
+  sign-off — the UI's "Emailed" (never "Delivered") copy and explicit disclaimer are the correct,
+  honest framing for that limitation, confirmed present in the shipped component.
+- **360px mobile check** was already performed and documented by ux-developer in Phase 4 (UI); I did
+  not re-drive it, since it's a layout/visual check outside a QA re-verification's marginal value
+  here and nothing in this feature's server-side changes could have affected it.
+
+---
+
+# Phase 6 — Shipped vs Intent (analyst)
+
+## VERDICT
+
+**SHIP WITH NOTES**
+
+## ONE-LINE TAKE
+
+> The send path Phase 1 asked for shipped as designed — atomic claim-then-send, honest
+> "Emailed ≠ Delivered" copy in the actual component (not just the design doc), a unified
+> "once sent, fixed" lock that covers both channels, and a no-email donor that cannot be
+> silently missed — with three notes (bounce visibility, the missing UI-level Playwright spec,
+> and a coordinator's-eye read of the screen for a treasurer who hasn't read this work-log) that
+> are real but don't rise to a blocker.
+
+I did not take Phase 4/5's narration on faith. I read `emailAcknowledgmentLetters()`,
+`composeAcknowledgmentEmailHtml()`, the selector component's actual JSX, and the letter's
+required-block generator directly against the claims below before writing this verdict.
+
+## What's Working
+
+- **The atomic claim is real, not narrated.** `src/lib/ledger-acknowledgment-letter-queries.ts:490-509`
+  is a single `UPDATE ledgerAcknowledgments SET sentAt=..., sentVia='email' WHERE id=$1 AND
+  sentAt IS NULL RETURNING id`, run per-candidate, *before* `sendBulkMemberEmail()` is ever called.
+  A row that loses the race reports the same `"already sent"` string a stale pre-check would —
+  correct, since the caller shouldn't be able to tell the two apart. This is the one piece of new
+  mechanism this feature needed, and it's built exactly as designed, not approximated.
+- **"Once sent, fixed" is unified across both channels, not just guarded within email.**
+  `generateAcknowledgmentLetters()` (the regeneration path) checks `row.sentAt !== null`
+  unconditionally (line 320) — it doesn't check `sentVia`, so an *emailed* letter is exactly as
+  frozen against regeneration as a *printed* one. Emailing did not open a second door to
+  regenerate or re-fire a letter already marked sent.
+- **The honesty requirement survived all the way to the shipped strings**, not just the design doc.
+  `grep -rn "Delivered" src/` — zero matches, confirmed independently by me, not re-copied from
+  QA. The results panel (`acknowledgment-letter-selector.tsx:443-445`) reads *""Emailed" means
+  the message was accepted for sending — it is not confirmation the donor received it. A bounce
+  after acceptance isn't visible in this system yet"* — this is in the actual JSX a treasurer
+  will see, not aspirational language in a work-log only I will ever read.
+- **No-email donors are structurally impossible to miss**, not merely present in markup. Every row
+  with `donor.emails.length === 0` renders the same amber `text-amber-700` "No email on file"
+  treatment already established for "Missing address" (line 359-360) — same visual severity as an
+  existing, already-trusted warning, in the same table the treasurer already scans for print
+  status. The Send-by-Email button computes eligibility from server-refreshed data
+  (`letterText !== null && donor.emails.length > 0`), so a no-email donor is never offered a
+  checkbox for the action that can't reach them.
+- **The Foundation's identity is unambiguous in the letter body regardless of who it's From.**
+  `buildRequiredBlock()` (`ledger-acknowledgment-letter.ts:163-200`) names `entity.name` and
+  `entity.ein` directly in the IRS-required paragraph — this is generated content, not editable
+  by the treasurer, and it doesn't change based on which mailbox sent the message. A donor or an
+  auditor reading the letter itself, not the envelope, gets the Foundation's legal name and EIN
+  in the first sentence of the substantive paragraph.
+
+## Intent-vs-Shipped Diff
+
+- Phase 1 said: send to every address in `donor.emails[]`, not a nominated primary. Shipped: exactly
+  that (`for (const to of candidate.emails)`, `ledger-acknowledgment-letter-queries.ts:526`).
+  **Matches.**
+- Phase 1 said: a visible "at a glance" indicator of who has an email vs. who doesn't. Shipped:
+  a per-row column, same amber pattern as "Missing address." **Matches** — though see Note 3 below
+  on whether per-row is enough for a treasurer working a large batch.
+- Phase 1/2 said: add `sentVia` to disambiguate "sent" into "mailed" vs. "emailed," legacy rows
+  stay NULL. Shipped: exactly that, migration `0088_ledger_ack_sent_via.sql`, both write paths
+  (PATCH mark-sent → `'print'`, new email route → `'email'`) confirmed by direct read.
+  **Matches.**
+- Phase 1 said (d): bounce detection is out of reach without a webhook; UI must say "Emailed,"
+  never "Delivered." Treasurer's answer: ship on queue-and-retry, state the limitation, queue
+  a webhook as follow-up. Shipped: the disclaimer is in the actual component, the word
+  "Delivered" appears nowhere in `src/`, and no webhook was built. **Matches** — this is the
+  one open risk Phase 1 named as the sharpest, and the shipped UI carries the honesty
+  requirement Phase 1 demanded of it. See "Is this safe to point at real donors?" below for
+  what "matches" doesn't cover.
+- Phase 1 said (a): send to every address on file, not a nominated primary — the schema's own
+  "no primary/label concept" comment and the origin story ("the club's very first donor asked
+  for two") both pointed this way. **Matches**, and this is also where a
+  shared-address edge case (two donors, one inbox) got its own dedicated test (Test 12) — a
+  case Phase 1 didn't explicitly name but the design correctly anticipated once "send to all"
+  was chosen.
+- Phase 1 said (f): inline HTML, not attachment; don't duplicate the letter's own voice.
+  `resolveTreasurer()` applies only to the envelope (Reply-To/BCC), never a second textual
+  signature. Shipped: confirmed — `composeAcknowledgmentEmailHtml()` wraps the verbatim
+  `letterText` with one lead-in sentence and nothing else; `resolveTreasurer()` only touches
+  `replyTo`/`bcc` in the `sendBulkMemberEmail()` call. **Matches.**
+- Treasurer's answer said: send from `treasurer@westervillelions.org` despite the
+  Foundation/Club mismatch, because the letter body already names the Foundation and EIN.
+  Shipped: `EMAIL_FROM = "treasurer@westervillelions.org"`, confirmed a bare address with no
+  display-name override, and the required block independently names the Foundation and EIN
+  regardless of sender. **Matches** the treasurer's own reasoning, verified rather than assumed.
+- Phase 3 said: results panel and button state show "disabled with reason," never hidden, when
+  nothing is eligible. Shipped: confirmed present in the component. **Matches.**
+- Phase 3/QA said: no committed Playwright spec for the email-send UI flow — a stated, not
+  silent, gap. Shipped: still true at Phase 6. **Acceptable drift**, tracked below as B-50.
+
+## Edge Cases
+
+- Empty state (no eligible letters to email): **pass** — button renders disabled with explanatory
+  helper text, never simply absent.
+- Failure microcopy (a claim lost to a race, a donor with no email, a letter not yet generated):
+  **pass** — each has its own stable, human-readable `reason` string, not a stack trace or a
+  generic "something went wrong."
+- Permission gate (`LEDGER_RECORD`): **pass** — independently proven twice, once by the
+  implementer and once by QA, both via real NextAuth credentials sessions against non-admin
+  accounts, not mocked.
+- Mobile at 360px: **pass, with a named pre-existing limitation** — no new page-level horizontal
+  scroll, the button clears the 44px touch target, the table's own in-card horizontal scroll
+  (pre-existing, not introduced by this feature) is one column wider. The broader table
+  responsive redesign remains a separately-scoped, not-yet-built pass, correctly not claimed as
+  fixed here.
+- Brand consistency (`rounded-lg` button, non-destructive `<ConfirmDialog>`, no
+  `window.confirm`): **pass** — grepped directly for `console.`/native-dialog calls, zero
+  matches; confirm button class confirmed `bg-lions-blue`, never `bg-red-*`, live.
+- "Once sent, fixed" as a cross-channel invariant: **pass** — verified `sentAt !== null` gates
+  regeneration regardless of `sentVia`, so emailing gives no second door to regenerate or
+  re-fire a sent letter.
+
+## Is this safe to point at real donors?
+
+Yes, with the caveats below stated plainly rather than smoothed over.
+
+The double-send guard is the one piece of genuinely new, non-idempotent-by-nature mechanism this
+feature needed, and it's proven **live**, not just in a mock: two real HTTP calls against a real
+dev DB, second call skipped, exactly one `email_queue` row. That's the mechanism that protects a
+donor from getting the same tax document twice — solid.
+
+The revert-on-total-failure path is unit-tested only, and I agree with QA's judgment that this is
+adequate rather than a gap dressed up as one — for a specific, checkable reason, not just "trust
+the test suite." I read Test 10 directly: it asserts on the actual `UPDATE` payloads the code
+issues (claim, then revert), not a canned return value or a re-read of end state. The reason it's
+unreachable live is structural, not evasive — with `RESEND_API_KEY` blank, every send
+short-circuits to `blocked_non_production` before any code path that could fail synchronously is
+even reached, and setting that key to manufacture a real failure was explicitly out of scope for
+every phase (correctly — this codebase has one specific, named 2026-08-12 incident where a
+blank-key assumption didn't hold in a shell session and 16 real board members got mailed; nobody
+should be casually flipping that key to prove a revert branch). Given the revert is the mechanical
+mirror image of the claim (same table, same guarded UPDATE shape, opposite values) and the claim
+*is* proven live, I don't think this is a real safety gap — it's the correct place to stop given
+the constraints, and it's stated as indirect rather than claimed as direct.
+
+What actually bounds the risk to a real donor, concretely: (1) the atomic claim, proven live, is
+what stops a double-send; (2) the deny-by-default non-production guard, proven live in this
+feature's own testing, is what stops any of this reaching a real donor from dev; (3) the letter's
+required legal block is generated, not editable, so a treasurer cannot accidentally mis-word the
+IRS-required content while experimenting with the "warmth" template slots. The actual residual
+risk isn't the send mechanism — it's the one Phase 1 named from the start and the treasurer
+knowingly accepted: a bounce after Resend's synchronous acceptance is invisible to this system.
+That's not a hole in this feature's construction; it's an honestly-stated boundary of what it
+does, which is a different thing.
+
+## Is the UI honest about delivery?
+
+Yes — checked in the shipped strings, not the design doc's promises about them. Every place a
+result appears (toast, results-panel summary line, results-panel disclaimer, confirm-dialog
+description) uses "emailed" / "accepted for sending," and the disclaimer sentence is explicit and
+un-buried: *""Emailed" means the message was accepted for sending — it is not confirmation the
+donor received it."* This is sitting directly under the results summary a treasurer will read
+right after clicking Send, not tucked into a tooltip or a help page. A treasurer reading this
+screen without having read the work-log would understand the distinction — that's the test I
+applied, and it passes.
+
+## Follow-ups (tracked)
+
+- **B-47** (already queued, not new) — Resend webhook / bounce-detection infrastructure. The
+  treasurer's own risk acceptance covers this for v1; re-flagging only to keep it visible as the
+  one open item that could someday turn "SHIP WITH NOTES" into a real problem if a donor reports
+  a missing receipt and nobody happens to check `/admin/email-queue` or Resend's dashboard.
+- **B-50 (new) — Commit a Playwright spec for the acknowledgment-letter email-send UI flow.**
+  QA flagged this honestly rather than silently passing over it: the send path is proven at the
+  API/DB layer (unit tests + live reproduction, both independently verified by me) and the
+  *existing* generation spec still passes with no regression, but there is no committed
+  browser-level spec for the button/dialog/results-panel/dedup-at-the-UI-layer sequence itself.
+  The implementer's own live Playwright verification in Phase 4 (UI) proves the flow works, but
+  that script was thrown away after use rather than committed. A UI-level double-click/two-tab
+  race check specifically (as opposed to the already-proven server-side atomic claim) is also
+  still unexercised through the browser. Low urgency — the mechanism it would guard is already
+  the most heavily tested part of this feature — but it's the concrete gap QA named, so it gets
+  a real ID rather than staying a footnote.
+- **B-51 (new) — Consider an aggregate "N donors on this batch have no email on file" summary,
+  not just the per-row amber badge.** Not a Phase 1 gap (Phase 1 asked for "at a glance," and a
+  per-row column mirroring the trusted "Missing address" pattern satisfies that literally), but
+  worth naming now that the feature is live: a treasurer scanning a batch of 30+ generated
+  letters could still scroll past one amber row without registering it, the same risk that
+  exists today for "Missing address" and that this feature deliberately chose to inherit rather
+  than solve differently. Optional, low priority — flagging because "a donor silently gets
+  neither a print nor an email" was the exact failure mode Phase 1 was written to prevent, and a
+  per-row-only signal is good but not the strongest possible version of "cannot be missed."
+
+## Open Questions / Handoff Notes
+
+- No loop-back. This closes the pipeline for `2026-08-12-acknowledgment-letter-email`.
+- B-50 and B-51 are net-new backlog items from this Phase 6 review — add them to
+  `docs/backlog.md` with these IDs before they're picked up.
+- B-47 remains open and unchanged in scope; nothing in this review adds to it beyond
+  re-confirming the treasurer's original risk acceptance still holds against the shipped UI.
