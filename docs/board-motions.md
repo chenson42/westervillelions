@@ -110,6 +110,42 @@ standing expectation of openness that would make it awkward to handle such a mat
 assumes **yes, all members** per the Treasurer's direction; changing it later is more work than
 deciding it now.
 
+
+### Q2 — May we encourage members to add the Lions Club to their Kroger Community Rewards?
+
+> **Status:** OPEN — for the next board meeting. (Raised 2026-08-12 by the Treasurer.)
+
+**What is being asked.** Kroger Community Rewards pays the Foundation a quarterly amount based
+on the grocery spending of households who have nominated us on their loyalty card. It costs the
+member nothing, changes nothing about how they shop, and takes about a minute to set up. The
+Treasurer would like the board's agreement before actively asking members to enrol, and before
+promoting it at a meeting or in the welcome packet.
+
+**What it is worth today.** The books show five quarterly payments since October 2024:
+
+| | |
+|---|---|
+| Oct 2024 | $35.88 |
+| Jan 2025 | $31.19 |
+| Jul 2025 | $26.80 |
+| Jan 2026 | $29.95 |
+| Apr 2026 | $29.77 |
+
+That is **$153.59 all-time**, roughly $120 a year, from a small number of households.
+
+**Why it is worth asking now rather than leaving it.** Kroger requires households to
+**re-enrol every year**, and enrolment lapses silently when they don't. The trend above is
+consistent with a slowly lapsing base rather than growth. With 41 members, even modest
+participation would multiply this, and it is the rare income line that costs a member nothing
+at all.
+
+These payments now have their own category in the books (previously they were mixed into
+"Public donations"), so the effect of any push will be visible quarter by quarter.
+
+**What the board needs to decide:** whether the Treasurer may promote enrolment to members —
+and if so, whether it belongs in the welcome packet, as a standing item at a General Meeting,
+or as an annual reminder timed to Kroger's re-enrolment window.
+
 ---
 
 ## To Bring to the Next Board Meeting (agenda items, not motions)

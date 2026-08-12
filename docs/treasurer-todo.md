@@ -274,6 +274,12 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
   holding period. LCI guidance allows aged public funds when earmarked for specific projects —
   document any such earmarks in board minutes. (In-app earmark support is a tracked feature follow-up.)
 
+- [ ] **T-31 — Ask the board about promoting Kroger Community Rewards enrolment.** Worth about
+  $120/yr today from a handful of households, and Kroger requires annual re-enrolment, so the
+  base lapses silently. Now has its own income category (split out of "Public donations"
+  2026-08-12, five historical payments totalling $153.59 moved with it), so the effect of any
+  push is measurable quarter by quarter. Raised as **Q2** in `docs/board-motions.md` for the
+  next board meeting.
 - [ ] **T-17 — Zeffy donations flow through the Activity Fund (plan revised 2026-07-21).**
   ~~Original plan: open a second Zeffy account so the club account backs the dues form and the
   Foundation account backs donation forms.~~ **2026-07-21 — treasurer decision: do NOT open a
