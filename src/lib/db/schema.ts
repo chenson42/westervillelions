@@ -316,6 +316,8 @@ export const emailQueue = pgTable("email_queue", {
   id: uuid("id").primaryKey().defaultRandom(),
   to: text("to").notNull(),
   from: text("from").notNull(),
+  cc: text("cc"),
+  bcc: text("bcc"),
   subject: text("subject").notNull(),
   html: text("html").notNull(),
   status: text("status").notNull().default("pending"), // 'pending' | 'sent' | 'failed'
@@ -478,6 +480,62 @@ export const duesPayments = pgTable(
 
 export type DuesPayment = typeof duesPayments.$inferSelect;
 export type NewDuesPayment = typeof duesPayments.$inferInsert;
+
+// One row per member per send attempt of a dues reminder email — answers
+// "when was THIS member last reminded for THIS fiscal year" (Flow 3 of
+// docs/work-log/2026-08-12-dues-reminder-emails.md) without a fragile join
+// against email_queue's free-text `to` column, which has no memberId/
+// fiscalYear of its own. `cohort` records which template variant ('unpaid'
+// | 'partial') was actually sent, since dues status is mutable and a member
+// who was unpaid at send time may be partial by the time anyone reads the
+// log. `success`/`error` make the row self-describing even if its
+// email_queue row is later pruned (emailQueueId is nullable, onDelete: "set
+// null", matching the existing nullable-FK idiom used elsewhere in this
+// file). `note` persists the treasurer's optional per-send free-text note
+// verbatim so it doesn't depend on email_queue.html still existing.
+//
+// sentAt uses timestamp(..., { withTimezone: true }) — the current,
+// deliberate convention (see the `proposals` table comment above, and
+// 0084_proposals.sql), confirmed live on DEV as `timestamp with time zone`
+// for proposals/proposal_decisions. Not reproducing the older minutes-table
+// drift where schema.ts declares a naive timestamp but the live column is
+// actually timestamptz.
+export const duesReminders = pgTable(
+  "dues_reminders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    fiscalYear: integer("fiscal_year").notNull(),
+    // Convention: starting calendar year, same as duesPayments.fiscalYear.
+    cohort: text("cohort").notNull(),
+    // 'unpaid' | 'partial' — which template variant was actually sent.
+    sentByUserId: uuid("sent_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // Who clicked Send (any dues.manage holder).
+    signedAsMemberId: uuid("signed_as_member_id").references(() => members.id, {
+      onDelete: "set null",
+    }),
+    // The resolved Board `position = 'Treasurer'` office-holder at send time.
+    emailQueueId: uuid("email_queue_id").references(() => emailQueue.id, {
+      onDelete: "set null",
+    }),
+    success: boolean("success").notNull(),
+    error: text("error"),
+    note: text("note"),
+    // The treasurer's optional per-send free-text note, verbatim.
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_dues_reminders_member_fy").on(t.memberId, t.fiscalYear),
+    index("ix_dues_reminders_fy_sent").on(t.fiscalYear, t.sentAt),
+  ],
+);
+
+export type DuesReminder = typeof duesReminders.$inferSelect;
+export type NewDuesReminder = typeof duesReminders.$inferInsert;
 
 // Dues settings — one row per fiscal year, two amount columns (individual + family)
 export const duesSettings = pgTable("dues_settings", {

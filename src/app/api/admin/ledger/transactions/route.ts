@@ -64,6 +64,7 @@ import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation } from
 import { sendEmail } from "@/lib/email";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
+import { resolveTreasurer } from "@/lib/board-positions";
 
 const BOARD_MINUTE_MAX_LEN = 500;
 const PUBLIC_DONATIONS_CATEGORY_NAME = "Public donations";
@@ -373,12 +374,18 @@ export async function POST(request: NextRequest) {
       })
       .returning({ id: ledgerTransactions.id });
 
-    // E-1: Notify LEDGER_APPROVE holders when a disbursement is pending approval
+    // E-1: Notify LEDGER_APPROVE holders when a disbursement is pending
+    // approval. Treasury CC rule (DECISION-086): resolved once, reused for
+    // every approver in the loop — tolerant failure, never blocks the send.
     if (derivedStatus === "pending") {
       try {
         const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
         const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
         const amountDollars = (amountCents / 100).toFixed(2);
+        const treasurer = await resolveTreasurer();
+        if (!treasurer.ok) {
+          console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
+        }
         for (const email of approverEmails) {
           await sendEmail({
             to: email,
@@ -392,6 +399,7 @@ export async function POST(request: NextRequest) {
   ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
 </ul>
 <p>Please review and approve or reject this disbursement from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`,
+            ...(treasurer.ok ? { cc: treasurer.email } : {}),
           });
         }
       } catch {
@@ -677,12 +685,18 @@ async function handleTransfer(
 
   // E-1: Notify LEDGER_APPROVE holders when a Transfer/Sweep pair is pending
   // approval — same mechanism as an ordinary over-threshold expense.
+  // Treasury CC rule (DECISION-086): resolved once, reused for every
+  // approver in the loop — tolerant failure, never blocks the send.
   if (derivedStatus === "pending") {
     try {
       const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
       const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
       const amountDollars = ((amountCents as number) / 100).toFixed(2);
       const label = direction.mode === "sweep" ? "Sweep" : "Transfer";
+      const treasurer = await resolveTreasurer();
+      if (!treasurer.ok) {
+        console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
+      }
       for (const email of approverEmails) {
         await sendEmail({
           to: email,
@@ -695,6 +709,7 @@ async function handleTransfer(
   ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
 </ul>
 <p>Please review and approve or reject this ${label.toLowerCase()} from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`,
+          ...(treasurer.ok ? { cc: treasurer.email } : {}),
         });
       }
     } catch {

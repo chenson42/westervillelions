@@ -74,6 +74,7 @@ import {
 } from "@/lib/ledger-queries";
 import { sendEmail } from "@/lib/email";
 import { getFiscalYear } from "@/lib/fiscal-year";
+import { resolveTreasurer } from "@/lib/board-positions";
 
 const BOARD_MINUTE_MAX_LEN = 500;
 const REASON_MAX_LEN = 1000;
@@ -193,11 +194,20 @@ export async function PATCH(
         })
         .where(eq(ledgerReimbursements.id, id));
 
-      // E-3: Notify the submitting member
+      // E-3: Notify the submitting member. Any email sent as part of running
+      // the club's money CCs the treasurer (treasurer's own scope-widening
+      // ask, docs/work-log/2026-08-12-dues-reminder-emails.md) — resolved
+      // via the same resolveTreasurer() the dues-reminder signer uses
+      // (DECISION-086). Tolerant failure: a resolver miss never blocks the
+      // member's notification, it just logs and sends without a CC.
       try {
         const memberEmail = await getUserEmail(reimb.submittedByUserId);
         if (memberEmail) {
           const amountDollars = (reimb.amountCents / 100).toFixed(2);
+          const treasurer = await resolveTreasurer();
+          if (!treasurer.ok) {
+            console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
+          }
           await sendEmail({
             to: memberEmail,
             from: fromEmail,
@@ -205,6 +215,7 @@ export async function PATCH(
             html: `<p>Your reimbursement request for <strong>$${amountDollars}</strong> has been approved.</p>
 <p><strong>Description:</strong> ${reimb.description}</p>
 <p>The treasurer will process payment shortly. You can track the status of your request at <a href="${appUrl}/members/reimbursements">${appUrl}/members/reimbursements</a>.</p>`,
+            ...(treasurer.ok ? { cc: treasurer.email } : {}),
           });
         }
       } catch {
@@ -253,11 +264,16 @@ export async function PATCH(
         })
         .where(eq(ledgerReimbursements.id, id));
 
-      // E-3: Notify the submitting member
+      // E-3: Notify the submitting member. Treasury CC rule — see approve
+      // branch above for the full rationale (DECISION-086).
       try {
         const memberEmail = await getUserEmail(reimb.submittedByUserId);
         if (memberEmail) {
           const amountDollars = (reimb.amountCents / 100).toFixed(2);
+          const treasurer = await resolveTreasurer();
+          if (!treasurer.ok) {
+            console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
+          }
           await sendEmail({
             to: memberEmail,
             from: fromEmail,
@@ -266,6 +282,7 @@ export async function PATCH(
 <p><strong>Description:</strong> ${reimb.description}</p>
 <p><strong>Reason for rejection:</strong> ${rejectionReason}</p>
 <p>If you have questions, please contact the treasurer. You may submit a new request at <a href="${appUrl}/members/reimbursements">${appUrl}/members/reimbursements</a>.</p>`,
+            ...(treasurer.ok ? { cc: treasurer.email } : {}),
           });
         }
       } catch {
@@ -445,11 +462,16 @@ export async function PATCH(
         }
       });
 
-      // E-4: Notify the submitting member
+      // E-4: Notify the submitting member. Treasury CC rule — see approve
+      // branch above for the full rationale (DECISION-086).
       try {
         const memberEmail = await getUserEmail(reimb.submittedByUserId);
         if (memberEmail) {
           const amountDollars = (reimb.amountCents / 100).toFixed(2);
+          const treasurer = await resolveTreasurer();
+          if (!treasurer.ok) {
+            console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
+          }
           await sendEmail({
             to: memberEmail,
             from: fromEmail,
@@ -458,6 +480,7 @@ export async function PATCH(
 <p><strong>Description:</strong> ${reimb.description}</p>
 <p><strong>Payment date:</strong> ${paymentDate}</p>
 <p>You can view the full history of your requests at <a href="${appUrl}/members/reimbursements">${appUrl}/members/reimbursements</a>.</p>`,
+            ...(treasurer.ok ? { cc: treasurer.email } : {}),
           });
         }
       } catch {

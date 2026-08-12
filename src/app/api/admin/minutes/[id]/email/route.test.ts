@@ -95,7 +95,7 @@ describe("POST /api/admin/minutes/[id]/email", () => {
 
   it("Phase 3 test 6c: board + draft -> 200, rendered HTML contains the DRAFT banner text", async () => {
     vi.mocked(getMinutesDetail).mockResolvedValue(makeDetail("board", "draft"));
-    vi.mocked(sendEmail).mockResolvedValue({ success: true });
+    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-1" });
 
     const response = await POST(makeRequest(), makeParams("min-1"));
 
@@ -109,7 +109,7 @@ describe("POST /api/admin/minutes/[id]/email", () => {
 
   it("Phase 3 test 6d: general + approved -> 200, rendered HTML has NO DRAFT banner", async () => {
     vi.mocked(getMinutesDetail).mockResolvedValue(makeDetail("general", "approved"));
-    vi.mocked(sendEmail).mockResolvedValue({ success: true });
+    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-1" });
 
     const response = await POST(makeRequest(), makeParams("min-1"));
 
@@ -121,7 +121,7 @@ describe("POST /api/admin/minutes/[id]/email", () => {
 
   it("board + approved -> 200, still no DRAFT banner (already-official record)", async () => {
     vi.mocked(getMinutesDetail).mockResolvedValue(makeDetail("board", "approved"));
-    vi.mocked(sendEmail).mockResolvedValue({ success: true });
+    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-1" });
 
     const response = await POST(makeRequest(), makeParams("min-1"));
 
@@ -132,13 +132,13 @@ describe("POST /api/admin/minutes/[id]/email", () => {
 
   it("DECISION-075 §6: a send FAILURE is surfaced to the caller at 200, not swallowed as a 500 or hidden behind a generic success", async () => {
     vi.mocked(getMinutesDetail).mockResolvedValue(makeDetail("board", "approved"));
-    vi.mocked(sendEmail).mockResolvedValue({ success: false, error: "Resend API error" });
+    vi.mocked(sendEmail).mockResolvedValue({ success: false, error: "Resend API error", emailQueueId: "eq-1" });
 
     const response = await POST(makeRequest(), makeParams("min-1"));
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toEqual({ success: false, error: "Resend API error" });
+    expect(body).toEqual({ success: false, error: "Resend API error", emailQueueId: "eq-1" });
   });
 
   it("a soft-deleted minutes record 404s rather than emailing a removed record", async () => {
@@ -158,7 +158,7 @@ describe("POST /api/admin/minutes/[id]/email", () => {
       ...makeDetail("board", "approved"),
       notetakerNameSnapshot: "Jane Doe",
     });
-    vi.mocked(sendEmail).mockResolvedValue({ success: true });
+    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-1" });
 
     const response = await POST(makeRequest(), makeParams("min-1"));
 
@@ -175,7 +175,7 @@ describe("POST /api/admin/minutes/[id]/email", () => {
 
   it("an optional note is passed through and appears in the rendered HTML", async () => {
     vi.mocked(getMinutesDetail).mockResolvedValue(makeDetail("board", "draft"));
-    vi.mocked(sendEmail).mockResolvedValue({ success: true });
+    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-1" });
 
     const response = await POST(makeRequest({ note: "Please review before Tuesday." }), makeParams("min-1"));
 

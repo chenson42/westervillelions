@@ -200,6 +200,7 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 - `GOOGLE_CLIENT_SECRET` - Google OAuth client secret (sign-in)
 - `RESEND_API_KEY` - Resend API key (outbound email)
 - `RESEND_FROM_EMAIL` - From-address for outbound mail (e.g., `Lions Club <noreply@your-domain>`)
+- `EMAIL_DEV_ALLOWLIST` - Comma-separated addresses a **non-production** process may email. Unset or empty means nothing sends. Club distribution lists are refused even if listed. See *Outbound Email Is Deny-By-Default Outside Production*.
 - `TURNSTILE_SECRET_KEY` / `NEXT_PUBLIC_TURNSTILE_SITE_KEY` - Cloudflare Turnstile (optional)
 - `GOOGLE_GROUPS_CLIENT_ID` - OAuth client ID used by `src/lib/google-groups.ts` for Group sync
 - `GOOGLE_GROUPS_CLIENT_SECRET` - OAuth client secret for Group sync
@@ -622,6 +623,31 @@ The project uses a single feature-based permission system:
 | Permission | `FEATURES` + `hasFeature()` | "Is this *user* allowed to do X?" |
 
 There is **no separate environment-flag system**. If a feature should ship "off by default for everyone except admins," that's a role-binding choice in the migration — bind the new `FEATURES.*` key only to the `Admin` role until you're ready to widen it.
+
+### Outbound Email Is Deny-By-Default Outside Production
+
+`sendEmail()` refuses to deliver to **any** address from a non-production process unless that
+address is in `EMAIL_DEV_ALLOWLIST`. Blocked messages are still queued and still return
+success, so callers and their tests behave exactly as in production; the message simply never
+reaches Resend, and shows at `/admin/email-queue` as `blocked_non_production`.
+
+This is deny-by-default because the deny-list version failed twice:
+
+- **2026-08-09** — a QA run of the minutes email sent a real message to
+  `club@westervillelions.org`, the ~44-person Google Group. The fix was to deny-list that
+  address and `board@`.
+- **2026-08-12** — a QA run created a pending disbursement in dev, which fired the existing
+  board-approval notification and mailed **16 real board members** a fake $500 approval
+  request. That path was neither a distribution list nor a bulk send, so nothing caught it.
+
+A deny-list only protects the paths somebody remembered to enumerate, and there are ~18
+`sendEmail()` call sites. `.env.local` carries the production `RESEND_API_KEY` and `next dev`
+re-reads it, so a shell-level override does not survive — the block has to live in code.
+
+**To receive test mail while developing,** put your own address in `EMAIL_DEV_ALLOWLIST`.
+Never add another member's address, and never add a club distribution list (those are refused
+even if allowlisted). **To email many members at once, use `sendBulkMemberEmail()`** — never a
+hand-rolled loop over `sendEmail()`.
 
 ### No Secrets in Committed Files
 

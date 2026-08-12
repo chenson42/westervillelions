@@ -28,6 +28,48 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-086: Dues Reminder Emails — shared `resolveTreasurer()` extracted to `src/lib/board-positions.ts`; `sendEmail()`/`email_queue` gain `cc`/`bcc`; migration numbers split 0086/0087
+
+**Status:** Resolved
+**Date:** 2026-08-12
+
+**Decision:** Phase 3 of the Dues Reminder Emails feature
+(`docs/work-log/2026-08-12-dues-reminder-emails.md`) makes three implementation calls beyond what
+Phase 2 specified. (1) The "who is the Treasurer" lookup — needed by the dues-reminder signer and
+now, per the treasurer's own scope-widening ask, by five existing treasury emails' new CC — is
+extracted once into a new `src/lib/board-positions.ts` (`resolveTreasurer()`), rather than
+duplicated inside `dues-reminders-queries.ts` a second time. This is exactly the "third consumer"
+trigger Phase 2 itself named as the condition for extraction (it declined to extract out of
+`/api/public/leadership/route.ts` with only two consumers of differing semantics). (2)
+`sendEmail()` gains `cc`/`bcc` options and returns the persisted `email_queue` row's id on every
+call; `email_queue` gains matching nullable `cc`/`bcc` columns. `sendBulkMemberEmail()` (from
+DECISION-085) is implemented as a thin per-recipient wrapper around `sendEmail()` using a new
+internal-only `_bulkMemberSend` flag that widens the existing non-production guard's condition by
+one clause (`isClubDistributionList(to) || options._bulkMemberSend`) rather than adding a second
+code path — no persistence logic is duplicated. (3) Migration numbering: `0086_dues_reminders.sql`
+keeps the number DECISION-085 already assigned it; the new `email_queue` `cc`/`bcc` migration
+becomes `0087_email_queue_cc_bcc.sql` rather than colliding with it.
+
+**Rationale:** A resolver duplicated between `dues-reminders-queries.ts` and the ledger routes
+would immediately create two places that could disagree about who "the Treasurer" is — the exact
+failure mode DECISION-085's own module-boundary reasoning exists to prevent, just one layer up.
+The five treasury emails' CC failure mode is deliberately *tolerant* (log and send without a CC)
+where the dues-reminder signer is *hard-blocking* (no Send button at all) — two different callers
+of the same single source of truth, not two definitions of it. Extending `sendEmail()`'s guard with
+one added boolean clause, rather than giving `sendBulkMemberEmail()` its own persistence path,
+keeps the "queue insert + blocked-status write" logic in exactly one place, matching DECISION-085's
+own instruction to reuse rather than duplicate it.
+
+**Impact:** New file `src/lib/board-positions.ts`, new file `src/lib/dues-reminders.ts` (pure
+template rendering), new file `src/lib/dues-reminders-queries.ts` (DB-facing), `src/lib/email.ts`
+modified (`cc`/`bcc`, `_bulkMemberSend`, `sendBulkMemberEmail()`), `src/lib/db/schema.ts` modified
+(`emailQueue.cc/bcc`, new `duesReminders` table), two new migrations (`0086_dues_reminders.sql`,
+`0087_email_queue_cc_bcc.sql`), five existing ledger-route sends gain a CC. Full contract —
+API routes, email copy, component plan, edge cases, and the thirteen required unit tests — is in
+the Phase 3 section of the work-log linked above.
+
+---
+
 ## DECISION-085: Dues Reminder Emails — bulk-send safety guard moves into the shared `email.ts` chokepoint, not a feature-local reimplementation; new `dues_reminders` table, not a reuse of `email_queue`
 
 **Status:** Resolved
