@@ -33,7 +33,7 @@
 - **Year-varying amounts:** confirmed (per-fiscal-year `dues_settings`).
 - **Family discount:** new **per-member `dues_category`** field on `members` (`individual | family`, default `individual`), set by treasurer/admin. `dues_settings` holds **two amounts per fiscal year** (individual + family). Status compares the member's payment sum to the rate matching their `dues_category`.
 - **FY2026 amounts (seed):** individual **$120.00** (12000 cents), family **$96.00** (9600 cents).
-- **Named treasurers:** assign the `treasurer` role to **Chris Henson** (user `4fbd2463-09b0-4007-a3a2-a6644840f5b8`, chenson42@gmail.com) and **James Shively** (user `774a217f-60e5-45be-a77d-6601c08703b2`, jmshively@gmail.com). Both have user accounts. Recommend an idempotent migration binding `user_roles` by email (ensures production parity; repo is private).
+- **Named treasurers:** assign the `treasurer` role to **Chris Henson** (user `4fbd2463-09b0-4007-a3a2-a6644840f5b8`) and **James Shively** (user `774a217f-60e5-45be-a77d-6601c08703b2`). Both have user accounts. Recommend an idempotent migration binding `user_roles` by email (ensures production parity; repo is private).
 
 **Scope expansion 3 (2026-06-24, post-ship increment — user-added):**
 - **Explicit "active fiscal year" setting.** Admins/treasurers designate one fiscal year as active; all dues surfaces default to it instead of the calendar-derived `currentFiscalYear()`. Today, June 2026, the calendar function returns FY2025 which is wrong for the club — the club is already in FY2026 and needs it to be the default. Implementation: `is_active boolean` column on `dues_settings`, enforced single-active via partial unique index, seeded FY2026 if nothing is active (idempotent). `getActiveFiscalYear()` in `dues-queries.ts` returns the active FY or falls back to `currentFiscalYear()`. Three pages updated to use this: admin dues list, admin members list (dues filter), and member portal dues page. The configure-modal gains a "Set as active year" checkbox and shows an "Active" badge when viewing the current active year.
@@ -533,14 +533,14 @@ UPDATE roles SET sort_order = 5 WHERE name = 'volunteer' AND sort_order = 4;
 
 #### Treasurer role assignment (named users)
 
-Chris Henson (user `4fbd2463-09b0-4007-a3a2-a6644840f5b8`, chenson42@gmail.com) and James Shively (user `774a217f-60e5-45be-a77d-6601c08703b2`, jmshively@gmail.com) receive the `treasurer` role. The `user_roles` table has columns `(id, user_id, role_id, created_at)` — confirmed from schema.ts.
+Chris Henson (user `4fbd2463-09b0-4007-a3a2-a6644840f5b8`) and James Shively (user `774a217f-60e5-45be-a77d-6601c08703b2`) receive the `treasurer` role. The `user_roles` table has columns `(id, user_id, role_id, created_at)` — confirmed from schema.ts.
 
 Migration sketch (idempotent, email-keyed for production parity):
 ```sql
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'chenson42@gmail.com'
+WHERE u.email = '<Chris Henson's email>'
   AND r.name = 'treasurer'
   AND NOT EXISTS (
     SELECT 1 FROM user_roles ur
@@ -550,13 +550,17 @@ WHERE u.email = 'chenson42@gmail.com'
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'jmshively@gmail.com'
+WHERE u.email = '<James Shively's email>'
   AND r.name = 'treasurer'
   AND NOT EXISTS (
     SELECT 1 FROM user_roles ur
     WHERE ur.user_id = u.id AND ur.role_id = r.id
   );
 ```
+
+(As shipped in `0040_dues_tracking.sql`, and later revised in DECISION-089 to grant via the
+`SEED_ADMIN_EMAIL` environment variable rather than hard-coded addresses — see
+`docs/reviews/2026-08-12-pii-scrub.md`.)
 
 This goes at the end of `0040_dues_tracking.sql`, after the `treasurer` role is seeded. Email-keyed so it works in production without hardcoding UUIDs.
 
@@ -786,7 +790,7 @@ Two new tables (`dues_payments`, `dues_settings`) and one new column (`members.d
 - Added `duesSettings` table with unique constraint on `fiscal_year`.
 - Added `index` import to `schema.ts` (required for the composite index in the table callback).
 - Added `FEATURES.DUES_VIEW`, `FEATURES.DUES_MANAGE` to `src/lib/permissions.ts`; added `FEATURE_CATEGORIES.DUES`; added both to `FEATURE_DESCRIPTIONS`; added `ROLES.TREASURER`.
-- Created `drizzle/migrations/0040_dues_tracking.sql` (DDL, treasurer role seed, sort_order bumps, FY2026 seed, user_roles bindings for chenson42@gmail.com and jmshively@gmail.com).
+- Created `drizzle/migrations/0040_dues_tracking.sql` (DDL, treasurer role seed, sort_order bumps, FY2026 seed, user_roles bindings for the two named treasurers).
 - Created `drizzle/migrations/0041_dues_permissions.sql` (both feature rows + all role bindings inside a single `DO $$ BEGIN ... END $$` block).
 - Created `src/lib/dues.ts` with `getFiscalYear()`, `currentFiscalYear()`, `fiscalYearLabel()`, `deriveStatus()`.
 - Created `src/lib/dues.test.ts` with 13 tests covering fiscal-year boundaries and `deriveStatus` thresholds.
@@ -814,7 +818,7 @@ Two new tables (`dues_payments`, `dues_settings`) and one new column (`members.d
 - Helper functions in `src/lib/dues.ts`: `getFiscalYear(date)`, `currentFiscalYear(now)`, `fiscalYearLabel(fy)`, `deriveStatus(totalPaidCents, expectedCents)` — import from `@/lib/dues` in any route handler.
 - The `deriveStatus` signature takes `(totalPaidCents: number, expectedCents: number)` — the call site resolves `expectedCents` from `dues_settings` by checking `m.dues_category` (individual vs. family) before calling. The function treats `expectedCents <= 0` as "unpaid" (handles the unconfigured-year case).
 - `db:push` has NOT been run — api-developer should run it before writing Drizzle queries against the new tables, or confirm the tables already exist (they do after `db:migrate`).
-- Both named users (chenson42@gmail.com, jmshively@gmail.com) were found in the local DB and received the treasurer role. Production will pick them up on next deploy via the same email-keyed migration.
+- Both named users (Chris Henson, James Shively) were found in the local DB and received the treasurer role. Production will pick them up on next deploy via the same email-keyed migration.
 
 ---
 
@@ -990,7 +994,7 @@ Performance note: `listMemberDuesStatus(fy)` returns all active members for the 
 ### Open questions / handoff notes
 
 - **QA click-through checklist:**
-  1. Sign in as treasurer (chenson42@gmail.com). Check sidebar shows "Dues" link.
+  1. Sign in as treasurer. Check sidebar shows "Dues" link.
   2. Navigate to `/admin/dues` — verify summary stats, year selector, status filter tabs, member rows.
   3. Click "Unpaid" filter — confirm only unpaid members show.
   4. Click "Export CSV" — verify download with correct column headers and data.

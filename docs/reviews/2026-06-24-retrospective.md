@@ -54,8 +54,8 @@ There is no work-log entry for this session; the fix was done inline without one
 After shipping v1.18.6 cleanly to git, Vercel blocked the deployment. Diagnosing the blockage required three rounds of force-pushing `main`:
 
 1. **Wrong theory 1:** Blamed the `Co-Authored-By: Claude` commit trailer. Amended the commit to remove it and force-pushed. Disproven: trailer-free commits with the same author were still blocked.
-2. **Wrong theory 2:** Blamed the commit author email (`chenson42@gmail.com`). Re-authored all commits to `chenson@westervillelions.org` and force-pushed. Made it *worse*: that address is not a verified GitHub email, so Vercel could not match it to any GitHub account at all.
-3. **Reversion:** Reverted authorship back to `chenson42@gmail.com` and force-pushed again.
+2. **Wrong theory 2:** Blamed the commit author's personal email address. Re-authored all commits to a club-domain address instead and force-pushed. Made it *worse*: that address is not a verified GitHub email, so Vercel could not match it to any GitHub account at all.
+3. **Reversion:** Reverted authorship back to the original personal address and force-pushed again.
 
 The actual root cause had nothing to do with the commits: a duplicate Vercel account (`chenson42`) had acquired the same GitHub login as the project-owning Hobby account (`chenson-4144`), causing Vercel's commit-to-account attribution to land on a non-member account. The fix was entirely on the Vercel dashboard — moving the GitHub connection back to `chenson-4144`. Zero git changes were ever needed.
 

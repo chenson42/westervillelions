@@ -1364,7 +1364,7 @@ is therefore NOT covered by the DECISION-085 non-production bulk guard — it se
 `.env.local`. The send succeeded for real: 16 real people (the club's actual board members holding
 `LEDGER_APPROVE`) received a genuine email reading "A disbursement requires board approval... "
 $500.00", Payee: Test Vendor, Memo: QA verify treasurer CC", each correctly CC'd to the real
-Treasurer (jmshively@gmail.com) — which is the feature working exactly as designed, at an
+Treasurer (<treasurer's email>) — which is the feature working exactly as designed, at an
 unacceptable cost. I stopped further live-trigger verification immediately, deleted the test
 transaction row, and cleaned up both throwaway QA user accounts and their `dues_reminders` row. I
 did not attempt to send a follow-up/correction email — that's the user's call, not mine. Full
@@ -1462,7 +1462,7 @@ this feature's scope).
   Shively, real FY2026 `duesSettings`, 39 real unpaid candidates), then `POST` with one real
   member id and a note. Response was 200 `success: true` (guard reports success, per design).
   Verified via `psql`: the `email_queue` row landed with `status='blocked_non_production'`,
-  `attempts=0`, `bcc='jmshively@gmail.com'`, correct `from`/`subject`/`to`; **Resend was never
+  `attempts=0`, `bcc='<treasurer's email>'`, correct `from`/`subject`/`to`; **Resend was never
   invoked** (no `sent_at`). The matching `dues_reminders` row was correct in every column
   (`cohort='unpaid'`, `success=true`, `note` verbatim, `signed_as_member_id` = James Shively's
   member id, `email_queue_id` linked to the blocked row). Both rows deleted afterward
@@ -1471,7 +1471,7 @@ this feature's scope).
 - **cc/bcc persistence, and the treasury CC rule live** — confirmed above for the dues-reminder
   bcc. Separately confirmed the treasury CC rule on the transactions route's E-1 send: created a
   real pending disbursement (see the Incident note above), then queried `email_queue` and found
-  `cc='jmshively@gmail.com'` on all 16 real approval-notification rows. This is the incident —
+  `cc='<treasurer's email>'` on all 16 real approval-notification rows. This is the incident —
   the CC rule itself is proven correct, but proving it this way sent 16 real emails. Did not
   repeat this style of test for the three reimbursement-route sends (approve/reject/pay) — those
   are proven correct by code review + the same `resolveTreasurer()` unit coverage + the identical
@@ -1645,7 +1645,7 @@ disagrees, it's a one-line revert (drop the `destructive` prop in
     success: true }]`.
   - Verified via `psql`: the `email_queue` row landed `status='blocked_non_production'`,
     `attempts=0` (Resend never invoked), `from='treasurer@westervillelions.org'`, `bcc
-    ='jmshively@gmail.com'`, correct subject — this is `sendBulkMemberEmail()`'s unconditional
+    ='<treasurer's email>'`, correct subject — this is `sendBulkMemberEmail()`'s unconditional
     non-production guard working exactly as DECISION-085 designed, not anything this phase built.
     The matching `dues_reminders` row was correct in every column: `cohort='unpaid'`,
     `success=true`, `note` verbatim, `signed_as_member_id` = James Shively's member id,
@@ -1657,8 +1657,8 @@ disagrees, it's a one-line revert (drop the `destructive` prop in
     reads the role set from the sign-in-time token, not a live DB check — re-login was required
     after the `psql` role grant). Loaded `/admin/email-queue` and confirmed via the raw HTML
     (not just the RSC prop payload) that the real board-approval-notification rows from
-    api-developer's earlier incident render `Cc: jmshively@gmail.com` and `Bcc:
-    jmshively@gmail.com` literally in the table — the wiring is live-data-correct, not just
+    api-developer's earlier incident render `Cc: <treasurer's email>` and `Bcc:
+    <treasurer's email>` literally in the table — the wiring is live-data-correct, not just
     type-correct.
   - Cleaned up: deleted the `dues_reminders` test row, both throwaway users and all their
     `user_roles` bindings (verified 0 rows remaining for `email LIKE 'qa-uxdev-%'`). Left the one
@@ -1794,13 +1794,13 @@ already corrected by commits `ff613f1` and `1a3b75b`. No new defect found in thi
      confirming the server assigns cohort from its own fresh query, never the client.
    - Verified via `psql`: both new `email_queue` rows `status='blocked_non_production'`,
      `attempts=0` (Resend never invoked), `from='treasurer@westervillelions.org'`,
-     `bcc='jmshively@gmail.com'` (the resolved office-holder's own address), `cc` empty (dues
+     `bcc='<treasurer's email>'` (the resolved office-holder's own address), `cc` empty (dues
      reminders BCC only, by design). Both matching `dues_reminders` rows correct in every column
      (`cohort`, `success=true`, `note` verbatim, `signed_as_member_id`= James Shively).
    - Re-authenticated with the `admin` role added, loaded `/admin/email-queue`, and confirmed via
-     raw HTML that both new rows render `Bcc: jmshively@gmail.com` under the `To` cell, and that
+     raw HTML that both new rows render `Bcc: <treasurer's email>` under the `To` cell, and that
      the pre-existing real board-approval-notification row (from the 2026-08-12 incident, subject
-     "Disbursement pending your approval — $500.00") renders `Cc: jmshively@gmail.com` — item 10,
+     "Disbursement pending your approval — $500.00") renders `Cc: <treasurer's email>` — item 10,
      both `cc` and `bcc` display confirmed live.
 10. **Did not** create any ledger transaction or trigger the reimbursement/transaction routes
     live, per this session's explicit constraint — that is exactly the action that mailed 16 real
@@ -1874,7 +1874,7 @@ flow, and UI-data-correctness that a spec would otherwise assert.
 | No-email-on-file exclusion | code review only | `members.email` is `NOT NULL`; live-untestable without violating schema. `classifyRecipients()`'s `no_email_on_file` branch and the UI's "Excluded — no email on file" section both exist and are unit/code-reviewed |
 | 14-day cooldown badge renders from live data | pass | 5-days-ago row → amber badge; 20-days-ago row → gray badge, both via SSR HTML string inspection |
 | Fresh-query re-derivation at send time | pass | Requested member's cohort came back `"partial"` from the server despite being requested generically — proves the server never trusts client-submitted cohort |
-| `cc`/`bcc` display on `/admin/email-queue` | pass | Both `Bcc: jmshively@gmail.com` (dues reminder rows) and `Cc: jmshively@gmail.com` (pre-existing treasury-CC'd row) render in raw SSR HTML |
+| `cc`/`bcc` display on `/admin/email-queue` | pass | Both `Bcc: <treasurer's email>` (dues reminder rows) and `Cc: <treasurer's email>` (pre-existing treasury-CC'd row) render in raw SSR HTML |
 | Treasury CC rule, 5 existing sends — tolerant failure vs. dues-reminder hard block | code review + existing automated coverage | Not live-triggered per explicit constraint (this is exactly what caused the 16-real-recipient incident); all 5 sites read correctly, `resolveTreasurer()` itself fully unit-tested |
 | First real send from `treasurer@westervillelions.org` (deliverability/spam) | **not verified** | External-system fact, cannot be tested inside the non-production guard by design — carried forward as an open item, same as every prior phase flagged |
 

@@ -28,13 +28,13 @@
 1. **No `budget.approve` key.** Lock/adopt a budget stays on the board's existing `ledger.approve`.
 2. **Budget Committee role ALSO gets `ledger.view`** (Chris chose broader ledger context). Final `budget_committee` bindings: `budget.view` + `budget.edit` + `ledger.view`.
 3. **Permissions role only** — no member-portal Group, no Google Group sync for Budget Committee.
-4. **Seed James Shively (`jmshively@gmail.com`) into `budget_committee`** in the migration (explicit intent, even though the `treasurer` binding already grants him budget access).
+4. **Seed James Shively into `budget_committee`** in the migration (explicit intent, even though the `treasurer` binding already grants him budget access).
 
 Final role→key bindings to implement:
 - `admin`: budget.view ✓ / budget.edit ✓ (already has via ledger.manage; bind explicitly too)
 - `treasurer`: budget.view ✓ / budget.edit ✓
 - `board_member`: budget.view ✓ / budget.edit — (view only)
-- `budget_committee` (NEW): budget.view ✓ / budget.edit ✓ / ledger.view ✓ — seed jmshively@gmail.com
+- `budget_committee` (NEW): budget.view ✓ / budget.edit ✓ / ledger.view ✓ — seed James Shively
 
 ## VERDICT
 
@@ -56,7 +56,7 @@ I queried the production/dev Neon DB directly (`role_features` join) rather than
 
 **This confirms the bug Chris is reacting to.** `ledger.manage` — the key that currently gates *all* budget building/editing — is bound only to `admin`. The `treasurer` role has no budget access whatsoever today, and `board_member` gets read-only access (via `ledger.approve` admitting the page) but cannot edit a single line.
 
-Checking actual user role assignments: `chenson42@gmail.com` (Chris) holds `admin, board_member, member, treasurer` — so his own account already has full budget access via `admin`, which is why the gap wasn't obvious from his own login. `jmshively@gmail.com` (James Shively, the other treasurer) holds only `board_member, treasurer` — **no `admin`**. Today, James can open `/admin/ledger/budgeting` (via `board_member`'s `ledger.approve`) but cannot edit a single budget line, add a category, or annotate — he can only lock/unlock. He is, in effect, the treasurer who cannot build the budget he's responsible for. That is exactly "we don't have permissions for the budget."
+Checking actual user role assignments: Chris's account holds `admin, board_member, member, treasurer` — so his own account already has full budget access via `admin`, which is why the gap wasn't obvious from his own login. James's account (the other treasurer) holds only `board_member, treasurer` — **no `admin`**. Today, James can open `/admin/ledger/budgeting` (via `board_member`'s `ledger.approve`) but cannot edit a single budget line, add a category, or annotate — he can only lock/unlock. He is, in effect, the treasurer who cannot build the budget he's responsible for. That is exactly "we don't have permissions for the budget."
 
 ## Pass 1 — User Verbs
 
@@ -233,7 +233,7 @@ introduced; lock/adopt stays on `ledger.approve`, board-only, untouched.
   | treasurer | ✓ | ✓ | (already has) |
   | board_member | ✓ | — | (already has) |
   | budget_committee (NEW) | ✓ | ✓ | ✓ (new bind) |
-- `jmshively@gmail.com` (James Shively) seeded into `budget_committee` in the
+- James Shively seeded into `budget_committee` in the
   migration, email-keyed and idempotent (mirrors the `treasurer` seed in
   `0040_dues_tracking.sql`).
 
@@ -439,7 +439,7 @@ handoff overhead disproportionate to the change size.
   feature) reaches the page read-only and gets 403 on PATCH
   `/api/admin/ledger/budgets` if they forge a write request directly — the
   three widened routes reject on `hasAnyFeature` false.
-- James Shively (`jmshively@gmail.com`) will not see his new
+- James Shively will not see his new
   `budget_committee` access until he signs out and back in (JWT/session
   staleness, pre-existing platform behavior, not fixed here) — worth a heads
   up to Chris, not a qa blocker.

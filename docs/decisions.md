@@ -28,6 +28,39 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-089: Personal-data scrub for public release — `SEED_ADMIN_EMAIL` replaces hard-coded person emails in migrations
+
+**Status:** Resolved
+**Date:** 2026-08-12
+
+**Decision:** The repo is moving from a private archive to a fresh public repository (see
+`docs/reviews/2026-08-12-pii-scrub.md`). Three migrations (`0040_dues_tracking.sql`,
+`0069_ledger_budget_permissions.sql`, `0043_dues_family_members.sql`) hard-coded real members'
+personal email addresses in `WHERE u.email = '...'` seeds — two to bootstrap the `treasurer` /
+`budget_committee` roles, one to set three members' dues billing category. `drizzle/run-migrations.mjs`
+now substitutes the literal token `{{SEED_ADMIN_EMAIL}}` from the `SEED_ADMIN_EMAIL` env var before
+executing any migration; left unset, it substitutes to `''`, which matches no real user and is a
+no-op. `0040` and `0069` were rewritten against this token (and `0040` now also grants `admin`, not
+just `treasurer`, closing a pre-existing gap where no migration could bootstrap a fresh install's
+first admin at all). `0043`'s billing-category seed was dropped outright rather than parameterized —
+it isn't an access grant, production already carries the values it set, and the existing admin Dues
+UI (`src/components/admin/dues-category-control.tsx`) is the correct place to set that going forward.
+
+**Rationale:** A hard-coded personal email in a migration is both a public-repo leak and brittle (per
+CLAUDE.md → *No Personal Data in the Repository*, added the same day in DECISION-088's sibling commit
+`7d521f6`). An env-var substitution keeps every migration idempotent and keeps a fresh install able to
+reach a working admin account, without naming anyone. Reusing one token/var across all three grants
+(rather than one var per role) matches the real bootstrap need: one operator standing up a fresh
+install wants admin, treasurer, and budget_committee together, not three separate steps.
+
+**Impact:** `drizzle/run-migrations.mjs`, `drizzle/migrations/0040_dues_tracking.sql`,
+`drizzle/migrations/0043_dues_family_members.sql`, `drizzle/migrations/0069_ledger_budget_permissions.sql`,
+`SETUP.md`, `.env.example`, `CLAUDE.md` (`SEED_ADMIN_EMAIL` documented under Environment Variables).
+Production is unaffected — the historical grants these migrations already applied stay in place;
+`SEED_ADMIN_EMAIL` is unset in production and every substituted statement is therefore a no-op there.
+
+---
+
 ## DECISION-088: Emailing the Donor Acknowledgment Letter — atomic claim-then-send, one `sendBulkMemberEmail()` call per batch, `letterText`/`donor.emails` both added to the read projection, tolerant `resolveTreasurer()`
 
 **Status:** Resolved
@@ -3199,7 +3232,7 @@ Five implementation-level decisions added in the Phase 3 loop-back revision afte
 
 4. **New `members.dues_category` column (`text NOT NULL DEFAULT 'individual'`).** Values: `individual | family`. Set by treasurer/admin on the per-member dues detail page via `PATCH /api/admin/dues/[memberId]/category`. Existing members default to `individual` via the column default. Changing the category retroactively recomputes status for all fiscal years (acceptable at club scale; documented in UI).
 
-5. **Named treasurer role assignments in migration.** Chris Henson (chenson42@gmail.com) and James Shively (jmshively@gmail.com) receive the `treasurer` role via idempotent email-keyed `user_roles` INSERTs in `0040_dues_tracking.sql`. Email keys (not UUID) ensure the migration works in production without hardcoding environment-specific IDs.
+5. **Named treasurer role assignments in migration.** Chris Henson and James Shively receive the `treasurer` role via idempotent email-keyed `user_roles` INSERTs in `0040_dues_tracking.sql`. Email keys (not UUID) ensure the migration works in production without hardcoding environment-specific IDs. (Later revised in DECISION-089 to key off the `SEED_ADMIN_EMAIL` environment variable rather than hard-coded addresses.)
 
 **Rationale:** A separate `treasurer` role with its own permission key keeps financial write access narrowly scoped without requiring new UI for role management. The two-amount design is the minimal extension for a family discount: one row per year, two columns, resolved at query time. Putting `dues_category` on the member (not per payment or per fiscal year) reflects the reality that membership type is a stable attribute of the person, not a per-year decision. Email-keyed user assignments are idempotent across environments.
 

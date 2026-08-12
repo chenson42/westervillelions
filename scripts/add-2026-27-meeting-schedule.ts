@@ -46,6 +46,9 @@ const usingProd = Boolean(process.env.PROD_DATABASE_URL);
 const url = process.env.PROD_DATABASE_URL || process.env.DATABASE_URL || process.env.DB_URL;
 if (!url) throw new Error("No DB URL (PROD_DATABASE_URL / DATABASE_URL / DB_URL).");
 const sql = postgres(url);
+const CREATOR_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+  throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row created_by is set to).");
+})();
 
 const LOCATION_TRAINING = "The Landings of Westerville — 1st Floor Training Room";
 const LOCATION_DINING = "The Landings of Westerville — 2nd Floor Private Dining Room";
@@ -128,8 +131,8 @@ async function main() {
     `TARGET: ${usingProd ? "*** PRODUCTION ***" : "dev"}  |  Mode: ${APPLY ? "APPLY (writes)" : "DRY RUN"}\n`,
   );
 
-  const [creator] = await sql`SELECT id FROM users WHERE email = 'chenson42@gmail.com'`;
-  if (!creator) throw new Error("No users row for chenson42@gmail.com — cannot set created_by.");
+  const [creator] = await sql`SELECT id FROM users WHERE email = ${CREATOR_EMAIL}`;
+  if (!creator) throw new Error(`No users row for ${CREATOR_EMAIL} — cannot set created_by.`);
 
   let toCreate = 0;
   for (const e of events) {

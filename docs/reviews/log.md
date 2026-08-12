@@ -39,6 +39,7 @@ If three retrospectives in a row produce nothing, the cadence itself is suspect 
 ## Entries
 
 <!-- newest entries go here, above the older ones -->
+2026-08-12 | security | ad hoc PII scrub for public release (not a scheduled cycle): removed all 9 known personal email addresses (~73 occurrences) plus one member name tied to dues test data, one line naming three scholarship recipients, and hard-coded person-email seeds in 3 migrations (now driven by `SEED_ADMIN_EMAIL`, no-op when unset); verify grep clean, tsc/1466 tests/build all pass, migrations idempotent (2 dev runs); see 2026-08-12-pii-scrub.md
 2026-06-27 | security | 0 critical, 0 high, 3 medium, 4 low; medium = allowDangerousEmailAccountLinking risk (Ledger raises stakes), dues CSV no formula-injection guard, party names in impact dashboard; low = letterStorageKey leak in ack PATCH response, orphan blobs, page-level gap (downgraded), xlsx devDep; see 2026-06-27-security.md
 2026-06-27 | retrospective | 35-day window (8 features, full specialist-split confirmed real); 3 SHOULD carry-forwards escalated to MUST; new MUST for mid-flight scope routing; qa unit-test gap recurred twice (endorsed agent-instruction fix); 7 proposed edits; see 2026-06-27-retrospective.md
 2026-06-27 | agent-instruction | 4 medium + 2 low findings; 2 new MUSTs (api/full-stack missing test-deliverable checklist, architect lists xlsx not exceljs); 3 SHOULD carry-forwards now at 2 cycles; pipeline healthy, specialist split confirmed real; see 2026-06-27-agent-instruction.md

@@ -51,7 +51,9 @@ import {
 
 const APPLY = process.argv.includes("--apply");
 const MARKER = "[quicken-import]";
-const TREASURER_EMAIL = "chenson42@gmail.com";
+const TREASURER_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+  throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row ported rows are attributed to).");
+})();
 
 // Expected verification targets (per task spec) — printed and checked post-apply.
 const EXPECTED_MARKER_COUNT = 276;

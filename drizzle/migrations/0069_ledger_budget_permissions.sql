@@ -13,7 +13,7 @@
 --   board_member     -> budget.view only (no change to edit — stays
 --                       approve/lock-only via ledger.approve, unchanged)
 --   budget_committee -> budget.view, budget.edit, ledger.view (NEW role;
---                       seeded with James Shively, jmshively@gmail.com)
+--                       seeded from SEED_ADMIN_EMAIL — see item 12 below)
 
 DO $$ BEGIN
   -- 1. Insert budget.view feature
@@ -103,14 +103,14 @@ DO $$ BEGIN
   );
 END $$;
 
--- 12. Seed James Shively (jmshively@gmail.com) into budget_committee.
---     If the user row doesn't exist in a given environment, the SELECT
---     returns no rows and the INSERT is silently skipped — safe and
---     idempotent (mirrors 0040_dues_tracking.sql's treasurer seed).
+-- 12. Seed the bootstrap identity (SEED_ADMIN_EMAIL) into budget_committee.
+--     Same substitution mechanism as 0040_dues_tracking.sql's admin/treasurer
+--     grant — see drizzle/run-migrations.mjs. Left unset, this is a no-op.
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'jmshively@gmail.com'
+WHERE u.email = '{{SEED_ADMIN_EMAIL}}'
+  AND u.email <> ''
   AND r.name = 'budget_committee'
   AND NOT EXISTS (
     SELECT 1 FROM user_roles ur

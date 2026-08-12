@@ -59,7 +59,11 @@ const sql = postgres(url);
 
 const NEW_NAME = "Kroger Community Rewards";
 const SOURCE_NAME = "Public donations";
-const ACTOR_EMAIL = "chenson42@gmail.com"; // the treasurer, who asked for this
+// Attributed to the treasurer, who asked for this. Set to your own account's
+// email before running — see CLAUDE.md -> Environment Variables.
+const ACTOR_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+  throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row this write is attributed to).");
+})();
 const money = (c: number) => "$" + (c / 100).toFixed(2);
 
 async function main() {

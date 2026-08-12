@@ -1,18 +1,16 @@
--- Mark known family-rate members as 'family' so they are billed the discounted
--- family dues amount (FY2026: $96 vs. $120 individual). Their primary-member
--- spouses remain 'individual'.
+-- Historical note: this migration originally marked three specific members as
+-- 'family' rate (FY2026: $96 vs. $120 individual) by hard-coded email, matching
+-- a one-time treasurer request. That hard-coded a personal email address for a
+-- billing decision, which does not belong in a public repository (see CLAUDE.md
+-- -> "No Personal Data in the Repository").
 --
--- Matched by email (members.email is NOT NULL + case-insensitively unique per
--- migration 0035). Idempotent: the `dues_category <> 'family'` guard makes a
--- re-run a no-op (and only touches updated_at when a row actually changes).
--- Like the treasurer bindings in 0040, this re-asserts the value on every
--- deploy; if any of these members ever stops being a family-rate member, remove
--- their line here as well as changing it in the UI.
-UPDATE members
-SET dues_category = 'family', updated_at = now()
-WHERE LOWER(email) IN (
-  'lionaimee@outlook.com',      -- Aimee Westlund
-  'bethrobertson029@gmail.com', -- Beth Robertson
-  'jennifer.henson@gmail.com'   -- Jennifer Henson
-)
-AND dues_category <> 'family';
+-- Production already carries the intended dues_category = 'family' values for
+-- those members from when this migration first ran; removing the seed here
+-- does not undo that. Any future family-rate designation should be made
+-- through the admin Dues UI (per-member dues_category control — see
+-- src/components/admin/dues-category-control.tsx and
+-- src/app/api/admin/dues/[memberId]/category/route.ts), not a migration.
+--
+-- This file is kept (rather than deleted) only so the migrations directory's
+-- numbering stays contiguous; it is intentionally a no-op on every run.
+SELECT 1;

@@ -57,26 +57,33 @@ INSERT INTO dues_settings (fiscal_year, individual_amount_cents, family_amount_c
 SELECT 2026, 12000, 9600
 WHERE NOT EXISTS (SELECT 1 FROM dues_settings WHERE fiscal_year = 2026);
 
--- 7. Assign treasurer role to named users (email-keyed for production parity)
---    If either user doesn't exist in a given environment, the SELECT returns no rows
---    and the INSERT is silently skipped — safe and idempotent.
+-- 7. Bootstrap seed identity — grants 'admin' and 'treasurer' to whatever
+--    email SEED_ADMIN_EMAIL resolves to (see drizzle/run-migrations.mjs for
+--    the substitution mechanism). Left unset, '{{SEED_ADMIN_EMAIL}}'
+--    substitutes to '' and the SELECT matches no user, so this is a no-op.
+--
+--    Fresh install: sign in once (so a users row exists), set
+--    SEED_ADMIN_EMAIL=you@example.com in .env.local, then re-run
+--    `pnpm db:migrate` to grant yourself admin + treasurer. Production
+--    already carries its own historical grants applied before this
+--    migration was parameterized; those are untouched by this change.
 
--- Chris Henson
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'chenson42@gmail.com'
-  AND r.name = 'treasurer'
+WHERE u.email = '{{SEED_ADMIN_EMAIL}}'
+  AND u.email <> ''
+  AND r.name = 'admin'
   AND NOT EXISTS (
     SELECT 1 FROM user_roles ur
     WHERE ur.user_id = u.id AND ur.role_id = r.id
   );
 
--- James Shively
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'jmshively@gmail.com'
+WHERE u.email = '{{SEED_ADMIN_EMAIL}}'
+  AND u.email <> ''
   AND r.name = 'treasurer'
   AND NOT EXISTS (
     SELECT 1 FROM user_roles ur

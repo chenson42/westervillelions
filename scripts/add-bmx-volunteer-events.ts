@@ -61,6 +61,9 @@ const url = process.env.PROD_DATABASE_URL || process.env.DATABASE_URL || process
 if (!url) throw new Error("No DB URL (PROD_DATABASE_URL / DATABASE_URL / DB_URL).");
 
 const sql = postgres(url);
+const CREATOR_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+  throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row this write is attributed to).");
+})();
 
 const LOCATION = "Westerville BMX";
 
@@ -121,7 +124,7 @@ const SLOTS: Slot[] = [
 async function main() {
   console.log(`TARGET: ${usingProd ? "*** PRODUCTION ***" : "dev"}  |  Mode: ${APPLY ? "APPLY (writes)" : "DRY RUN"}\n`);
 
-  const [creator] = await sql`SELECT id, email FROM users WHERE email = 'chenson42@gmail.com'`;
+  const [creator] = await sql`SELECT id, email FROM users WHERE email = ${CREATOR_EMAIL}`;
   if (!creator) throw new Error("Could not resolve the creating user by email.");
 
   for (const s of SLOTS) {

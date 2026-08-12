@@ -93,9 +93,20 @@ The application will be available at [http://localhost:3000](http://localhost:30
 **To log in (Prototype Mode):**
 - Use any email from the imported roster
 - No password required (this is a prototype feature)
-- Example: `baumh@att.net`
+- Example: any email address present in your imported roster file
 
 **Or use Google OAuth** (if configured)
+
+### 7. Become an Admin
+
+A fresh install has no admin user yet. After signing in once (so a `users` row
+exists for your account):
+
+1. Set `SEED_ADMIN_EMAIL=you@example.com` in `.env.local` to your own account's email.
+2. Re-run `pnpm db:migrate` (or `pnpm build:only`, which runs it too).
+
+This grants your account the `admin`, `treasurer`, and `budget_committee` roles.
+See `CLAUDE.md` → Environment Variables for details.
 
 ### Member Portal
 After logging in, you'll have access to:

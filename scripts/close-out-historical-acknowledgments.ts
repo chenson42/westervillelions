@@ -66,7 +66,9 @@ if (!url) throw new Error("No DB URL (PROD_DATABASE_URL / DATABASE_URL / DB_URL)
 const sql = postgres(url);
 const money = (c: number) => `$${(c / 100).toFixed(2)}`;
 
-const ACTOR_EMAIL = "chenson42@gmail.com";
+const ACTOR_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+  throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row this write is attributed to).");
+})();
 const CLOSEOUT_NOTE =
   "Closed out in bulk on 2026-08-08 as a historical gift predating the Ledger. " +
   "Acknowledgment was handled outside this system at the time; no letter was composed here.";

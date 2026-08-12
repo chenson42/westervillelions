@@ -52,7 +52,7 @@ Built and ran `scripts/import-quicken-ledger.ts`, a one-off tsx script that pars
 
 - Read both source CSVs in full (outside the repo, never copied in) to hand-verify every distinct register `Category` value against the user's mapping spec before writing code — confirmed 100% coverage, no unmapped categories, before touching the DB.
 - Read `src/lib/db/schema.ts` (Ledger tables), `drizzle/migrations/0044_ledger_books.sql` (existing seeded categories/funds/entities/bank accounts, so upserts don't collide with what already exists), and `src/lib/ledger-queries.ts` (to confirm no read-path assumptions the import would violate — e.g. fiscal-year derivation from `txn_date`, `flow` being income/expense only).
-- Confirmed via `psql` the exact 5 test transactions to delete (`Jane Doe`, `Quid Pro Quo Donor`, `Small Donor`, 2× `A J Westlund`) and the 2 acknowledgments referencing 2 of them, and the current placeholder bank-account names/entity IDs, and the `chenson42@gmail.com` `users.id`.
+- Confirmed via `psql` the exact 5 test transactions to delete (`Jane Doe`, `Quid Pro Quo Donor`, `Small Donor`, 2× a family-rate member's name) and the 2 acknowledgments referencing 2 of them, and the current placeholder bank-account names/entity IDs, and the treasurer's `users.id`.
 - Wrote `scripts/import-quicken-ledger.ts`:
   - CSV parser: locates the header row by searching for `"Scheduled"`, builds a column-name → index map from the header itself (robust to the Administrative file's extra `Transfer` column vs. Foundation's 11-column layout), and stops at the closing `Balance:` line so the Total Inflows/Outflows/Net Total footer is never read as data.
   - Per-entity mapping functions (`mapFoundation`, `mapClub`) implementing the full category → (fund, category-name) table from the spec, including the flow-dependent branches (`Special Grant` income vs. expense; `Club Dues`/`New member fee` income vs. expense; `Tailtwisting` income vs. the one expense/TXFR row; `Miscellaneous` income vs. expense with the Qdoba exception).
@@ -71,7 +71,7 @@ Built and ran `scripts/import-quicken-ledger.ts`, a one-off tsx script that pars
 
 - **Created:** `/Users/cshenso/git/westervillelions/scripts/import-quicken-ledger.ts` — the import script (no other files touched; no schema changes, no app code changes).
 - **DB writes (via `--apply`, against the local Neon DB in `.env.local` — this is the user's local dev DB, not production; see project memory `feedback_local_db_is_neon`):**
-  - Deleted 5 test `ledger_transactions` rows (`Jane Doe`, `Quid Pro Quo Donor`, `Small Donor`, 2× `A J Westlund`) and their 2 `ledger_acknowledgments` rows.
+  - Deleted 5 test `ledger_transactions` rows (`Jane Doe`, `Quid Pro Quo Donor`, `Small Donor`, 2× a family-rate member's name) and their 2 `ledger_acknowledgments` rows.
   - Renamed `ledger_bank_accounts`: club's placeholder → **"Administrative Checking"**, foundation's placeholder → **"Foundation Checking"**; `institution` set to `NULL` on both.
   - Upserted 15 new `ledger_categories` rows (all previously absent, all 15 created — 0 pre-existing collisions):
     - club/administrative expense: Insurance & bonding, Marketing, Web hosting, District & convention, Miscellaneous, Donations to Foundation
@@ -251,7 +251,7 @@ re-verified. Every verification number specified in the task matched exactly on 
 - Queried both DEV (`psql` against the `.env.local` `DATABASE_URL`) and PRODUCTION (Neon MCP
   `run_sql`, project `tiny-fog-13725730`, branch `production`) directly to confirm current state
   before writing code: entities, funds, categories (all 45 dev / 30 prod, diffed by natural key),
-  bank accounts, the `chenson42@gmail.com` user row in both DBs, the 276 dev marker-row count, the
+  bank accounts, the treasurer's user row in both DBs, the 276 dev marker-row count, the
   7 existing production dues-ledger rows ($840 total, all dated 2026-07-20 — confirmed these must
   be left untouched), and the 21 production `dues_payments` rows (7 linked, 14 unlinked, $1,661
   unlinked total) via a `LEFT JOIN ... IS NULL`.
@@ -273,7 +273,7 @@ re-verified. Every verification number specified in the task matched exactly on 
   - Maps by natural key exactly per the task spec: entity by slug, fund by (entity slug, fund
     slug), category by (entity slug, fund_kind, flow, name), bank account by entity (asserts
     exactly one per entity, throws otherwise), `recorded_by_user_id` → production's
-    `chenson42@gmail.com` row (throws if absent).
+    treasurer row (throws if absent).
   - Upserts missing categories (checked by natural key, not `ON CONFLICT` — the table has no unique
     constraint on the natural key), then syncs `counts_as_giving` on every matching production
     category to dev's value.
@@ -394,5 +394,4 @@ corrections needed.
   `scripts/backfill-dues-ledger.ts` — both are safe to re-run (fully idempotent) if needed, e.g. if
   dev's ledger data is corrected again later, or if more dues payments land before any future
   auto-post gap.
-- **Follow-up not in scope for this task:** T-11 in `docs/treasurer-todo.md` (the two deleted A J
-  Westlund test-data dues rows) is unrelated to this port and remains open.
+- **Follow-up not in scope for this task:** T-11 in `docs/treasurer-todo.md` (the two deleted test-data family dues rows) is unrelated to this port and remains open.

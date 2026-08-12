@@ -25,7 +25,7 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
 | T-07 | ⬜ | Identify the PayPal account (+$563.80) |
 | T-08 | ⬜ | Attribute the $2,344 lump dues deposit |
 | T-10 | ⬜ | Categorize the catch-all Misc rows |
-| T-11 | ⬜ | Re-record the two A J Westlund dues rows if real |
+| T-11 | ⬜ | Re-record the two deleted family-rate-member dues rows if real |
 | T-13 | ⬜ | Reconcile the 24 monthly bank-statement PDFs |
 | T-14 | ⬜ | Upload the Foundation IRS determination letter |
 | T-15 | ⬜ | Scholarship fund accounting decision |
@@ -175,7 +175,7 @@ Legend: ⬜ open · 🔶 in progress / partial. (Detail is in the sections below
   purchases (Costco $47.94, Home Depot $249) and a $50 gift card whose memo reads "Wrapped gift
   card for ????". The $10 "Test donation through Zeffy" (3/9/2026) is real money — decide whether
   it stays labeled a test.
-- [ ] **T-11 — Re-record the two A J Westlund dues rows if they were real.** Two rows dated
+- [ ] **T-11 — Re-record the two deleted family-rate-member dues rows if they were real.** Two rows dated
   6/26/2026 ($60 + $75) were deleted as increment-6a test data during the seed. Their register
   dues ($216 family, 7/19/2025) did import. If the June 2026 rows were genuine FY-2027 dues
   recordings, re-enter them in the Ledger.

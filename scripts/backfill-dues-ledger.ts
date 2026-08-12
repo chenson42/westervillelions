@@ -38,7 +38,9 @@ import {
 } from "../src/lib/db/schema";
 
 const APPLY = process.argv.includes("--apply");
-const TREASURER_EMAIL = "chenson42@gmail.com";
+const TREASURER_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+  throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row backfilled rows are attributed to).");
+})();
 
 const EXPECTED_BACKFILL_COUNT = 14;
 const EXPECTED_BACKFILL_SUM_CENTS = 166_100; // $1,661.00
@@ -101,7 +103,7 @@ async function main() {
     console.warn("WARNING: no 'Club dues' income category found in production — backfilled rows will have categoryId = null (matches syncDuesCreate's graceful fallback)");
   }
 
-  // recorded_by_user_id: production chenson42@gmail.com user
+  // recorded_by_user_id: production treasurer user (SCRIPT_OPERATOR_EMAIL)
   const userRows = await targetDb.select({ id: users.id }).from(users).where(eq(users.email, TREASURER_EMAIL)).limit(1);
   const treasurer = userRows[0];
   if (!treasurer) throw new Error(`Production has no users row for ${TREASURER_EMAIL}`);

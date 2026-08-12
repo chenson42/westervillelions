@@ -670,7 +670,7 @@ hurricane relief; standard purpose lines for the recurring vision/health
 beneficiaries (Pilot Dogs, Eye Bank, OLF, LCIF, VOSH, Camp Echoing Hills, etc.).
 
 **Flagged for treasurer (⚠ unresolved):**
-1. 2025 scholarship recipients (Minter/Tsegay/Davis) — which schools?
+1. 2025 scholarship recipients (three named individuals — see treasurer's records) — which schools?
 2. American Legion Post 171 ×2 $650 — Buckeye Boys State delegates? confirm.
 3. The Big Bus ×2 — purpose unknown; needs treasurer's words.
 4. OSSBPTS Foundation ×2 — Ohio State School for the Blind support? confirm.

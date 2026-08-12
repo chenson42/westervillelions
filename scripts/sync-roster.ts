@@ -58,10 +58,16 @@ async function syncRoster(filePath: string) {
 
     const { firstName, lastName } = parseName(rawName);
 
-    // Handle Robertson shared email
+    // Handle a shared household email in the roster (two members sharing one
+    // email address; the second needs a distinct login). Set
+    // SHARED_HOUSEHOLD_EMAIL / _ALT / _ALT_FIRST_NAME_MATCH in your
+    // environment if your roster has this case — unset, this is a no-op.
     let email = rawEmail.toLowerCase();
-    if (email === "artbethrobertson@gmail.com" && firstName.toLowerCase().includes("beth")) {
-      email = "artbethrobertson+beth@gmail.com";
+    const sharedEmail = process.env.SHARED_HOUSEHOLD_EMAIL?.toLowerCase();
+    const sharedEmailAlt = process.env.SHARED_HOUSEHOLD_EMAIL_ALT;
+    const sharedEmailAltFirstNameMatch = process.env.SHARED_HOUSEHOLD_EMAIL_ALT_FIRST_NAME_MATCH?.toLowerCase();
+    if (sharedEmail && sharedEmailAlt && sharedEmailAltFirstNameMatch && email === sharedEmail && firstName.toLowerCase().includes(sharedEmailAltFirstNameMatch)) {
+      email = sharedEmailAlt;
     }
 
     try {

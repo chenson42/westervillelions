@@ -124,7 +124,7 @@ See `SETUP.md` for detailed instructions.
 
 **Email Login (Prototype Mode):**
 - Go to http://localhost:3000/signin
-- Enter any email from the roster (e.g., `baumh@att.net`)
+- Enter any email from the imported roster
 - No password required
 - Click "Sign In"
 

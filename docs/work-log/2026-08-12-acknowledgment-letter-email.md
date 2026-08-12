@@ -1444,7 +1444,7 @@ role bindings, sessions) was deleted afterward. No UI work — ux-developer foll
   - **`blocked_non_production` + correct BCC, live:** the single `email_queue` row landed
     `status = 'blocked_non_production'`, `attempts = 0`, `sent_at` null (Resend never invoked,
     `RESEND_API_KEY` left blank the whole time), `from = 'treasurer@westervillelions.org'`,
-    `subject` matching the fixed subject line exactly, and `bcc = 'jmshively@gmail.com'` — the
+    `subject` matching the fixed subject line exactly, and `bcc = '<treasurer's email>'` — the
     real Treasurer's real address, resolved live via `resolveTreasurer()` against the dev DB's
     actual Board of Directors group, exactly as DECISION-088 item 5 specifies.
   - **Revert-on-total-failure — NOT provable live, by design, and this is stated rather than
@@ -1622,7 +1622,7 @@ transactions were created; only pre-existing ones were referenced.
     the word **"Delivered" never appears anywhere in the page body**.
   - Confirmed via `psql`: both emailed acknowledgments show `sent_at` set and `sent_via = 'email'`;
     `email_queue` rows landed `status = 'blocked_non_production'` (Resend never invoked,
-    `RESEND_API_KEY` blank throughout), `bcc = 'jmshively@gmail.com'` (the real resolved Treasurer),
+    `RESEND_API_KEY` blank throughout), `bcc = '<treasurer's email>'` (the real resolved Treasurer),
     `subject` matching the fixed subject line.
   - **Second-send dedup proof:** issued a direct `POST` to the same route with the same two
     `ackIds` (simulating a second click / a second tab) — response was `200` with both entries
@@ -1784,7 +1784,7 @@ transaction was created — and confirmed deleted (zero rows) afterward.
     (not two) — the second call's atomic claim returned zero rows and never reached the send step.
   - The single `email_queue` row: `status = 'blocked_non_production'`, `attempts = 0`,
     `from = 'treasurer@westervillelions.org'`, `subject` matching the fixed subject line, and
-    `bcc = 'jmshively@gmail.com'` — the real `resolveTreasurer()` result against dev's actual Board
+    `bcc = '<treasurer's email>'` — the real `resolveTreasurer()` result against dev's actual Board
     of Directors group, live, not mocked.
 - **No-email donors, independently verified:** seeded a second throwaway ack whose donor has
   `emails: []` and `letterText: null` (unrelated pre-existing txn), hit
@@ -1895,7 +1895,7 @@ questions.
 | Permission gate — unauthenticated | pass | Real `POST`, no cookie → `401 {"error":"Unauthorized"}`. |
 | Permission gate — non-privileged (`member` role, no `ledger.record`) | pass | Real NextAuth credentials session, not an admin session → `403 {"error":"Forbidden"}`. |
 | Deny-by-default guard | pass | `RESEND_API_KEY` blank, `EMAIL_DEV_ALLOWLIST` unset throughout; queue row landed `blocked_non_production`, `attempts = 0`. |
-| Treasurer BCC via `resolveTreasurer()` | pass | Live `bcc = jmshively@gmail.com`, the real resolved Treasurer, against dev's actual Board of Directors group. |
+| Treasurer BCC via `resolveTreasurer()` | pass | Live `bcc = <treasurer's email>`, the real resolved Treasurer, against dev's actual Board of Directors group. |
 | No-email donor visibly separated | pass | Live API: `donor.emails: []` reaches the client; UI code renders distinct amber "No email on file," never a hidden/absent row. |
 | "Delivered" never appears | pass | `grep -rn "Delivered" src/` — zero matches. |
 | Revert-on-total-failure | **not live-reproducible under this task's constraints** | Judged adequate via direct read of Test 10 — see What I did. |

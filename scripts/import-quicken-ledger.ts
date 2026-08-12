@@ -808,8 +808,11 @@ async function main() {
 
   await db.transaction(async (tx) => {
     // Recorder user
-    const [recorder] = await tx.select().from(users).where(eq(users.email, "chenson42@gmail.com")).limit(1);
-    if (!recorder) throw new Error("Could not find users row for chenson42@gmail.com");
+    const recorderEmail = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+      throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row imported rows are attributed to).");
+    })();
+    const [recorder] = await tx.select().from(users).where(eq(users.email, recorderEmail)).limit(1);
+    if (!recorder) throw new Error(`Could not find users row for ${recorderEmail}`);
 
     // Entities
     const entityRows = await tx.select().from(ledgerEntities);

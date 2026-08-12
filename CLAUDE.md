@@ -195,6 +195,9 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 - `DATABASE_URL` - PostgreSQL connection string (pooled host)
 - `DB_URL` - Alias for `DATABASE_URL` (some deploy environments use the shorter name)
 - `PROD_DATABASE_URL` - **Scripts only, never read by the app.** The one-off scripts under `scripts/` resolve their target as `PROD_DATABASE_URL || DATABASE_URL || DB_URL` and print a `*** TARGET: PRODUCTION ***` banner when the first is set. They stay dry-run until `--apply`. Because `.env.local` is loaded by every script, setting this there makes production the default target for all of them — including destructive ones like `clear-budget-fy.ts`. Comment it out to make dev the default again.
+- `SEED_ADMIN_EMAIL` - Read by `drizzle/run-migrations.mjs` only, to substitute the `{{SEED_ADMIN_EMAIL}}` token a few migrations embed in a `WHERE u.email = '{{SEED_ADMIN_EMAIL}}'` seed. Grants that email's `users` row the `admin`/`treasurer`/`budget_committee` roles on the next `pnpm db:migrate`. Unset (the default) substitutes to an empty string, which matches no user — a safe no-op. Set this in your own `.env.local` after your first sign-in to bootstrap yourself as admin on a fresh install; not needed in production, where these grants were already applied historically.
+- `SCRIPT_OPERATOR_EMAIL` - Read by several one-off `scripts/*.ts` (ledger corrections, category cleanups, event seeds) to attribute the write to a `users` row (`recorded_by_user_id`, `created_by`, audit-log actor). Required by those scripts; each throws a clear error if unset. Set it to your own account's email before running one.
+- `SHARED_HOUSEHOLD_EMAIL` / `SHARED_HOUSEHOLD_EMAIL_ALT` / `SHARED_HOUSEHOLD_EMAIL_ALT_FIRST_NAME_MATCH` - Optional, read only by `scripts/import-roster.ts` and `scripts/sync-roster.ts`. Handles a roster where two household members share one email — gives the second member (matched by first-name substring) a distinct login. Unset (the default) is a no-op.
 - `NEXTAUTH_URL` - Application URL
 - `NEXTAUTH_SECRET` - NextAuth secret key
 - `AUTH_SECRET` - Alias for `NEXTAUTH_SECRET` (fallback used by `src/lib/auth/index.ts`)
@@ -684,7 +687,7 @@ hand-rolled loop over `sendEmail()`.
 - Officer **names** in a governance context. The club publishes its officers on its own website; a name is not the problem, contact details are.
 - `example.com` / `example.invalid` in tests and fixtures.
 
-**Migrations and scripts must never hard-code a person to grant them access.** A `WHERE u.email = 'someone@gmail.com'` seed is both a leak and brittle — it silently stops working the day that person changes address. Drive it from an environment variable or a CLI argument.
+**Migrations and scripts must never hard-code a person to grant them access.** A `WHERE u.email = 'someone@example.com'` seed is both a leak and brittle — it silently stops working the day that person changes address. Drive it from an environment variable or a CLI argument.
 
 **Why this is an invariant and not a preference.** On 2026-08-12 a `.env.local` backup was swept into a commit by `git add -A` and pushed, carrying every production credential; the same audit found nine personal addresses across 73 places, including inside migrations that ship to every deploy. The private repo is retained as an archive and the public project starts from a scrubbed tree — but that reset only buys one clean slate. `/pre-push` now fails on a personal address, and the 30-day security review owns the recurring check.
 

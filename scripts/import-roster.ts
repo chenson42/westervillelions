@@ -74,12 +74,17 @@ async function importRoster(filePath: string) {
       const { firstName, lastName } = parseName(row.Name);
       const joinDate = parseDate(row["Start Date"]);
 
-      // Handle duplicate email for Robertsons
+      // Handle a shared household email in the roster (two members sharing
+      // one email address; the second needs a distinct login so both get
+      // separate accounts). Set SHARED_HOUSEHOLD_EMAIL / _ALT /
+      // _ALT_FIRST_NAME_MATCH in your environment if your roster has this
+      // case — unset, this is a no-op.
       let email = row.Email.toLowerCase();
-      if (email === "artbethrobertson@gmail.com" && row.Last === "Robertson") {
-        if (firstName.includes("Beth")) {
-          email = "artbethrobertson+beth@gmail.com";
-        }
+      const sharedEmail = process.env.SHARED_HOUSEHOLD_EMAIL?.toLowerCase();
+      const sharedEmailAlt = process.env.SHARED_HOUSEHOLD_EMAIL_ALT;
+      const sharedEmailAltFirstNameMatch = process.env.SHARED_HOUSEHOLD_EMAIL_ALT_FIRST_NAME_MATCH;
+      if (sharedEmail && sharedEmailAlt && sharedEmailAltFirstNameMatch && email === sharedEmail && firstName.includes(sharedEmailAltFirstNameMatch)) {
+        email = sharedEmailAlt;
       }
 
       // Check if user already exists

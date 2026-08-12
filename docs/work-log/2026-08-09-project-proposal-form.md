@@ -1913,8 +1913,8 @@ dev DB and confirmed gone; nothing was run against production.
 3. **Dev-server manual click-through**, driving real browser sessions (Playwright against
    `pnpm dev` on port 3001, `PROD_DATABASE_URL` unset) with three disposable dev-only
    accounts created directly via `psql`/Drizzle (never the admin E2E fixture):
-   - A plain `member`-role proposer (`chenson42+qaproposalproposer@gmail.com` — a Gmail
-     alias of the requesting user's own address, deliberately chosen so the
+   - A plain `member`-role proposer (a Gmail alias of the requesting user's
+     own personal address, deliberately chosen so the
      "proposer emails actually send" check could be verified end-to-end without risking
      any real club member's inbox).
    - A `board_member` reviewer (`qa-reviewer-phase5@westervillelions.invalid`) — **not**
@@ -1951,9 +1951,9 @@ dev DB and confirmed gone; nothing was run against production.
    ```
    to                                       | subject                                                                | status
    board@westervillelions.org               | New Project/Activity Proposal: QA Phase 5 Test Proposal               | blocked_non_production
-   chenson42+qaproposalproposer@gmail.com   | We've received your proposal: QA Phase 5 Test Proposal                | sent
-   chenson42+qaproposalproposer@gmail.com   | Update on your proposal: QA Phase 5 Test Proposal — Now Under Review  | sent
-   chenson42+qaproposalproposer@gmail.com   | Update on your proposal: QA Phase 5 Test Proposal — Approved          | sent
+   <qa tester's Gmail alias>              | We've received your proposal: QA Phase 5 Test Proposal                | sent
+   <qa tester's Gmail alias>              | Update on your proposal: QA Phase 5 Test Proposal — Now Under Review  | sent
+   <qa tester's Gmail alias>              | Update on your proposal: QA Phase 5 Test Proposal — Approved          | sent
    ```
    Board notification correctly `blocked_non_production` — the guardrail fired, was not
    weakened or bypassed. Proposer emails correctly `sent` with the exact subject lines

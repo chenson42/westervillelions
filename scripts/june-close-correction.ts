@@ -95,7 +95,9 @@ const targetDb = drizzle(targetClient, { schema });
 // ---------------------------------------------------------------------------
 
 const CORRECTION_MARKER = "[june-close-correction]";
-const TREASURER_EMAIL = "chenson42@gmail.com";
+const TREASURER_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+  throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row this correction is attributed to).");
+})();
 
 // Check numbers for Correction 2 — the ONLY rows this script's UPDATE may touch.
 const MISTAGGED_CHECK_NUMBERS = ["8203", "8247"] as const;

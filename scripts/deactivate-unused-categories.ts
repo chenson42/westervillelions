@@ -46,7 +46,9 @@ const url = process.env.PROD_DATABASE_URL || process.env.DATABASE_URL || process
 if (!url) throw new Error("No DB URL (PROD_DATABASE_URL / DATABASE_URL / DB_URL).");
 const sql = postgres(url);
 
-const ACTOR_EMAIL = "chenson42@gmail.com";
+const ACTOR_EMAIL = process.env.SCRIPT_OPERATOR_EMAIL ?? (() => {
+  throw new Error("Set SCRIPT_OPERATOR_EMAIL in your environment (the users.email row this write is attributed to).");
+})();
 
 async function main() {
   console.log(
