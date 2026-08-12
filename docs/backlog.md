@@ -821,3 +821,28 @@ Design each with the others in view — decisions in one box in the next.
   URL, and escaping, so a send site supplies only its recipient, subject and body. Mechanical
   and well covered by tests, but touches ~18 files, so it wants its own pass rather than being
   smuggled into a feature.
+
+- [ ] **B-47 — Receive Resend delivery webhooks, so a bounce is visible.**
+  *(Raised 2026-08-12, from the acknowledgment-letter Phase 1.)*
+
+  **The gap, stated precisely,** because it is easy to think retry already covers it:
+  `sendEmail()` retries 3× in-request and, on failure, marks the row `failed` with the error
+  and a `next_retry_at`; `/admin/email-queue` re-sends those. That covers **Resend refusing
+  the message** — API error, bad key, malformed request. It works and is not the problem.
+
+  A **bounce is a different event**. Resend *accepts* the message, returns success, and the
+  row goes to `sent`. Minutes or hours later the recipient's server rejects it: dead address,
+  full mailbox, domain gone. That is asynchronous and after the request has ended. Resend
+  knows; **this codebase has no webhook receiver anywhere**, so it never hears. Retry cannot
+  help, because there was nothing to retry.
+
+  **Why it matters most for acknowledgments.** A donor acknowledgment is a tax document. A
+  mistyped address produces a row that says `sent` and a donor with no valid receipt, and
+  nothing anywhere contradicts it. The same is true, less severely, of dues reminders,
+  reimbursement notifications, and minutes.
+
+  **Shape of the fix:** one public route handler receiving Resend's `email.delivered`,
+  `email.bounced` and `email.complained` events (signature-verified), matched back to the
+  `email_queue` row, plus a status column and a visible state on `/admin/email-queue`.
+  Small — one endpoint, one column — and it improves **every** email in the app rather than
+  one feature. Prerequisite for treating an emailed acknowledgment as reliable.

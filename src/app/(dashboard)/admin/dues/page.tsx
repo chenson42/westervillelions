@@ -90,6 +90,14 @@ export default async function AdminDuesPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          {canManage && (
+            <Link
+              href={`/admin/dues/reminders?fy=${fy}`}
+              className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] inline-flex items-center"
+            >
+              Send Reminders
+            </Link>
+          )}
           {canManage && settings && (
             <DuesConfigureModal
               fiscalYear={fy}

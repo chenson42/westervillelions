@@ -33,6 +33,8 @@ export function StatusPill({ status }: { status: string }) {
 
 interface ViewEmailDialogProps {
   to: string;
+  cc?: string | null;
+  bcc?: string | null;
   subject: string;
   status: string;
   createdAtLabel: string;
@@ -46,7 +48,7 @@ interface ViewEmailDialogProps {
  * script or reach into the admin page's DOM. Email HTML also carries its own inline styles
  * and full-document structure, which an iframe isolates correctly regardless.
  */
-export function ViewEmailDialog({ to, subject, status, createdAtLabel, html }: ViewEmailDialogProps) {
+export function ViewEmailDialog({ to, cc, bcc, subject, status, createdAtLabel, html }: ViewEmailDialogProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -80,6 +82,16 @@ export function ViewEmailDialog({ to, subject, status, createdAtLabel, html }: V
               <span>
                 To: <span className="text-gray-700">{to}</span>
               </span>
+              {cc && (
+                <span>
+                  Cc: <span className="text-gray-700">{cc}</span>
+                </span>
+              )}
+              {bcc && (
+                <span>
+                  Bcc: <span className="text-gray-700">{bcc}</span>
+                </span>
+              )}
               <StatusPill status={status} />
               <span>Queued {createdAtLabel}</span>
             </div>

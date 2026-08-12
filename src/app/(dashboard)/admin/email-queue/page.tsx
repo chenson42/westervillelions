@@ -109,6 +109,12 @@ export default async function AdminEmailQueuePage() {
                   <tr key={item.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 text-sm text-gray-900 font-medium">
                       {item.to}
+                      {item.cc && (
+                        <div className="text-xs font-normal text-gray-500">Cc: {item.cc}</div>
+                      )}
+                      {item.bcc && (
+                        <div className="text-xs font-normal text-gray-500">Bcc: {item.bcc}</div>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-700">
                       {item.subject}
@@ -128,6 +134,8 @@ export default async function AdminEmailQueuePage() {
                     <td className="whitespace-nowrap px-6 py-4 text-sm">
                       <ViewEmailDialog
                         to={item.to}
+                        cc={item.cc}
+                        bcc={item.bcc}
                         subject={item.subject}
                         status={item.status}
                         createdAtLabel={formatDate(item.createdAt)}
@@ -189,6 +197,12 @@ export default async function AdminEmailQueuePage() {
                   <tr key={item.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 text-sm text-gray-900 font-medium">
                       {item.to}
+                      {item.cc && (
+                        <div className="text-xs font-normal text-gray-500">Cc: {item.cc}</div>
+                      )}
+                      {item.bcc && (
+                        <div className="text-xs font-normal text-gray-500">Bcc: {item.bcc}</div>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-700">
                       {item.subject}
@@ -199,6 +213,8 @@ export default async function AdminEmailQueuePage() {
                     <td className="whitespace-nowrap px-6 py-4 text-sm">
                       <ViewEmailDialog
                         to={item.to}
+                        cc={item.cc}
+                        bcc={item.bcc}
                         subject={item.subject}
                         status={item.status}
                         createdAtLabel={formatDate(item.createdAt)}
@@ -252,6 +268,12 @@ export default async function AdminEmailQueuePage() {
                   <tr key={item.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 text-sm text-gray-900 font-medium">
                       {item.to}
+                      {item.cc && (
+                        <div className="text-xs font-normal text-gray-500">Cc: {item.cc}</div>
+                      )}
+                      {item.bcc && (
+                        <div className="text-xs font-normal text-gray-500">Bcc: {item.bcc}</div>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-700">
                       {item.subject}
@@ -265,6 +287,8 @@ export default async function AdminEmailQueuePage() {
                     <td className="whitespace-nowrap px-6 py-4 text-sm">
                       <ViewEmailDialog
                         to={item.to}
+                        cc={item.cc}
+                        bcc={item.bcc}
                         subject={item.subject}
                         status={item.status}
                         createdAtLabel={formatDate(item.createdAt)}

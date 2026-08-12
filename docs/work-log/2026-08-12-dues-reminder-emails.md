@@ -17,7 +17,7 @@
 | 3 — Technical design | tech-lead | Complete | Design complete, implementer named | 2026-08-12 |
 | 4 — Implementation (schema) | database-admin | Complete | — | 2026-08-12 |
 | 4 — Implementation (server) | api-developer | Complete | — | 2026-08-12 |
-| 4 — Implementation (client) | ux-developer | Pending | — | — |
+| 4 — Implementation (client) | ux-developer | Complete | — | 2026-08-12 |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -1511,3 +1511,196 @@ this feature's scope).
   fill-in, flagging it here rather than silently deciding it.
 - Everything else in Phase 3's design built exactly as specified — nothing else was unbuildable
   as written.
+
+---
+
+## Phase 4 — Implementation (UI) — 2026-08-12
+
+**Owner:** ux-developer
+**Status:** complete
+
+### Summary
+
+Built the `/admin/dues/reminders` screen on top of api-developer's contract exactly as shipped —
+no changes needed to the schema, `lib/`, or route handlers. The screen previews the fresh
+unpaid/partial cohorts, lets the treasurer select recipients (Unpaid pre-checked, Balance
+remaining unchecked by default, per Phase 1's ruling), shows a live rendered-HTML preview of both
+email variants, warns on a 14-day re-send cooldown via an amber badge, and gates the actual send
+behind a `<ConfirmDialog destructive>` naming the exact recipient count. Also added the `cc`/`bcc`
+display to the `/admin/email-queue` viewer (table cells + `ViewEmailDialog`) and a "Send
+Reminders" entry point on `/admin/dues`. One deliberate deviation from Phase 3's literal design is
+called out below (destructive confirm styling) — flagged, not silently done.
+
+### What I did
+
+- **`src/app/(dashboard)/admin/dues/reminders/page.tsx`** (new, Server Component) — `auth()` +
+  `hasFeature(FEATURES.DUES_MANAGE)` + `redirect("/admin/dues")` in the page's own body,
+  independent of the proxy's coarser `dues.view`-level gate on this nested route (Phase 2 §6 /
+  Phase 3 Permissions — this nesting depth is not caught by
+  `admin-page-feature-gates.test.ts`). Resolves `?fy=` (default = `getActiveFiscalYear()`), calls
+  `getDuesSettings`, `resolveTreasurer`, `getReminderCandidates`, and `listKnownFiscalYears`
+  directly for first paint (no round-trip through the GET route, per Phase 3's component plan).
+  Reuses the existing `DuesYearSelector` component, pointed at `/admin/dues/reminders`. The client
+  component is keyed by `fy` so switching fiscal years fully remounts selection state instead of
+  carrying stale checkboxes across years.
+- **`src/components/admin/dues-reminder-sender.tsx`** (new, `"use client"`) — the interactive
+  screen:
+  - Two cohort cards ("Unpaid" pre-checked, "Balance remaining" unchecked by default), each a
+    `rounded-2xl` card with a per-row checkbox, name/email, `duesCategory` badge, and a "Last
+    reminded" badge (gray "Never reminded" / gray past-14-days / amber "within 14 days", via the
+    existing pure `isWithinReminderCooldown()`). A "Select all" checkbox per section.
+  - Members with a blank/whitespace email (structurally near-unreachable today —
+    `members.email` is `NOT NULL` — but the GET route doesn't filter them, matching Phase 3 §8's
+    defensive intent) are partitioned into their own "Excluded — no email on file" list per
+    cohort: visible by name, grayed, not selectable — never silently dropped.
+  - Optional free-text note `<textarea>`, capped at 1,000 chars client-side, matching the
+    `MinutesEmailPrompt` precedent.
+  - A live read-only preview of both rendered email bodies (subject + sandboxed
+    `<iframe sandbox="">`, same no-script-execution treatment as `ViewEmailDialog`), re-rendered
+    client-side via the pure `renderDuesReminderSubject()`/`renderDuesReminderBody()` from
+    `src/lib/dues-reminders.ts` as the treasurer types their note — using a placeholder first name
+    ("Alex") with a caption noting real sends personalize it per recipient.
+  - "Refresh list" button hitting `GET /api/admin/dues/reminders` without a full navigation,
+    resetting selection to the refreshed defaults.
+  - If `resolveTreasurer()` came back `ok: false`, no Send button at all — a blocking red message
+    naming the exact reason (`no_board_group` / `none` / `multiple`) with a link to
+    `/admin/groups/[boardGroupId]` when available. If dues amounts aren't configured for the
+    fiscal year, a blocking yellow message links back to `/admin/dues` instead — never a send with
+    a blank rate sentence.
+  - `<ConfirmDialog>` on Send: title states the exact selected count
+    (`"Send this reminder to N members?"`); description names the signer, adds a line when any
+    selected recipient was reminded within the last 14 days, and states the send is irreversible.
+  - After send: a per-recipient results list (name, email, cohort, Sent/Failed pill — failed rows
+    carry the error as a `title` tooltip) plus a separate "Not sent" list mapping each `skipped`
+    reason (`now_paid` / `no_longer_active` / `no_email_on_file`) to plain English — mirrors the
+    minutes-email failure-surfacing precedent, never just an aggregate toast.
+  - Mobile at 360px: each recipient row is `flex-col sm:flex-row` — checkbox/name/email stack
+    above the category/last-reminded badges, not a table.
+- **`src/app/(dashboard)/admin/dues/page.tsx`** — added a "Send Reminders" link
+  (`/admin/dues/reminders?fy=${fy}`), secondary-outlined style, shown only when `canManage`
+  (mirrors the existing `DuesConfigureModal`/`Export CSV` gating already on this page).
+- **`src/app/(dashboard)/admin/email-queue/page.tsx`** — each of the three tables (`Failed`,
+  `Blocked (Non-Production)`, `Recently Sent`) now renders `Cc:`/`Bcc:` as a small line under the
+  `To` cell when present, and passes `cc`/`bcc` through to `ViewEmailDialog`. No new column — Phase
+  3 §1 explicitly called for this to avoid widening three already-wide tables.
+- **`src/app/(dashboard)/admin/email-queue/view-email-dialog.tsx`** — added optional `cc`/`bcc`
+  props, rendered in the existing metadata row (`To: … | Cc: … | Bcc: … | <StatusPill> | Queued …`).
+
+### Deviation from Phase 3's design, flagged rather than silent
+
+Phase 3 §7 explicitly specified the send confirm should **not** use the `destructive` prop
+("sending a reminder isn't a destructive action in the delete-something sense"). My own task brief
+for this phase carried a **non-negotiable constraint** overriding that: "The send confirmation
+uses `<ConfirmDialog destructive>` … Sending mail to dozens of members is irreversible and
+deserves the destructive treatment." I followed the non-negotiable brief and shipped
+`destructive` on the confirm dialog (red confirm button). This is a legitimate style call either
+way — nothing about `destructive` changes the API contract or safety mechanics, it only changes
+button color — but it's a real, deliberate divergence from what Phase 3 wrote down, so tech-lead
+and analyst should know about it rather than discover it in a diff. If Phase 6 or a future review
+disagrees, it's a one-line revert (drop the `destructive` prop in
+`dues-reminder-sender.tsx`).
+
+### Outputs
+
+- `src/app/(dashboard)/admin/dues/reminders/page.tsx` (new)
+- `src/components/admin/dues-reminder-sender.tsx` (new)
+- `src/app/(dashboard)/admin/dues/page.tsx` (modified — "Send Reminders" entry point)
+- `src/app/(dashboard)/admin/email-queue/page.tsx` (modified — Cc/Bcc under the `To` cell, all
+  three tables)
+- `src/app/(dashboard)/admin/email-queue/view-email-dialog.tsx` (modified — `cc`/`bcc` props +
+  metadata-row display)
+- No changes to schema, `src/lib/email.ts`, `src/lib/board-positions.ts`,
+  `src/lib/dues-reminders.ts`, `src/lib/dues-reminders-queries.ts`, or either route handler — the
+  API contract from Phase 4 (server) was consumed as-is, no gaps found.
+
+### Verification performed
+
+- `pnpm exec tsc --noEmit` — clean.
+- `pnpm test` — 77 files, **1443 tests**, all passing (no new tests added in this phase; Phase 3's
+  thirteen named unit tests were already delivered by api-developer in Phase 4 (server) and this
+  phase is UI-only with no new pure logic to unit-test).
+- `pnpm build:only` — clean production build; `/admin/dues/reminders` and
+  `/api/admin/dues/reminders` both appear in the route manifest as dynamic (`ƒ`) routes.
+- Started a throwaway `next dev` on port 3001 (port 3000 is a running production `next-server`,
+  confirmed via `ps` before touching it — same trap api-developer already flagged). Confirmed
+  `RESEND_API_KEY` is blank and `EMAIL_DEV_ALLOWLIST` is unset in `.env.local` before starting
+  anything.
+- **401 unauthenticated:** `GET /api/admin/dues/reminders?fiscalYear=2026` with no session cookie
+  → `401`.
+- **Permission boundary (`dues.view` only, no `dues.manage`):** created a throwaway user bound
+  only to `board_member` (holds `dues.view`, not `dues.manage`, confirmed via `psql` against
+  `role_features`/`features`), signed in via the real NextAuth credentials flow. `GET
+  /api/admin/dues/reminders` → `403 Forbidden`. `GET /admin/dues/reminders?fy=2026` → `307` to
+  `/admin/dues`. Both match the design's independent-of-proxy gate exactly. Deleted the throwaway
+  user and its role binding afterward.
+- **Full click-through as a `dues.manage` holder:** created a second throwaway user bound to
+  `treasurer` (holds `dues.manage`), signed in the same way.
+  - `GET /admin/dues/reminders?fy=2026` rendered 200 with the real signer (James Shively, the
+    real Board `position = 'Treasurer'` in dev data), the real rate sentence ($120 / $96), 39 real
+    unpaid candidates, zero partial, no "Excluded — no email on file" section (none exist today),
+    the mobile stacking class present in the markup, and the confirm button correctly reading
+    "Send to 39 members".
+  - `POST /api/admin/dues/reminders` with one real `memberId` (Howard Baum) and a note reading
+    "UX Phase 4 click-through verification — safe, non-production." → `200`, `sent: [{ ...,
+    success: true }]`.
+  - Verified via `psql`: the `email_queue` row landed `status='blocked_non_production'`,
+    `attempts=0` (Resend never invoked), `from='treasurer@westervillelions.org'`, `bcc
+    ='jmshively@gmail.com'`, correct subject — this is `sendBulkMemberEmail()`'s unconditional
+    non-production guard working exactly as DECISION-085 designed, not anything this phase built.
+    The matching `dues_reminders` row was correct in every column: `cohort='unpaid'`,
+    `success=true`, `note` verbatim, `signed_as_member_id` = James Shively's member id,
+    `email_queue_id` linked to the blocked row.
+  - Reloaded `/admin/dues/reminders?fy=2026`: Howard Baum's row now showed the amber "Last
+    reminded … (within 14 days)" badge, confirming the cooldown UI reads live data correctly.
+  - Temporarily bound the same throwaway user to `admin` (for `admin.users`, required to view
+    `/admin/email-queue`) and re-authenticated to pick up the new role (the session/proxy gate
+    reads the role set from the sign-in-time token, not a live DB check — re-login was required
+    after the `psql` role grant). Loaded `/admin/email-queue` and confirmed via the raw HTML
+    (not just the RSC prop payload) that the real board-approval-notification rows from
+    api-developer's earlier incident render `Cc: jmshively@gmail.com` and `Bcc:
+    jmshively@gmail.com` literally in the table — the wiring is live-data-correct, not just
+    type-correct.
+  - Cleaned up: deleted the `dues_reminders` test row, both throwaway users and all their
+    `user_roles` bindings (verified 0 rows remaining for `email LIKE 'qa-uxdev-%'`). Left the one
+    `blocked_non_production` `email_queue` row from my own test send in place — same reasoning as
+    every prior phase's cleanup: that table is the accurate delivery record, not scratch data.
+    **No real email was sent or could have been sent** at any point — `RESEND_API_KEY` was blank
+    throughout and the non-production bulk guard is unconditional regardless.
+  - Stopped the throwaway dev server on port 3001; confirmed nothing is still listening on it.
+
+### Open questions / handoff notes
+
+- **What a reviewer should click through in the browser:** sign in as a `dues.manage` holder (e.g.
+  the `treasurer` role) → `/admin/dues` → "Send Reminders" button → review the Unpaid/Balance
+  remaining lists, toggle a few checkboxes, add a note, watch the live preview update → click
+  "Send to N members" → confirm in the dialog (note it's red/destructive-styled, see deviation
+  above) → verify the per-recipient results list and the "Not sent" section if anything was
+  skipped → reload the page and confirm the "Last reminded" badge appears/turns amber for anyone
+  just reminded.
+- **New copy strings the Lions Club may want to refine:** none beyond what Phase 3 already wrote
+  (subject/body copy is untouched by this phase) — the only new UI-authored strings are section
+  headers ("Unpaid", "Balance remaining", "Excluded — no email on file", "Not sent"), the
+  skip-reason sentences (`SKIP_REASON_LABEL` in `dues-reminder-sender.tsx`), and the signer-failure
+  messages (`SIGNER_FAILURE_MESSAGE`) — all plain functional microcopy, not marketing copy, but
+  worth a treasurer's read-through.
+- **UX decisions/tradeoffs made:**
+  - The `destructive` ConfirmDialog styling (see Deviation section above) — flagging again here so
+    it isn't missed in a long work-log.
+  - The live preview uses a placeholder first name ("Alex") rather than an actual recipient's name,
+    since the rendered body is otherwise static per FY/signer/settings/note (Phase 3's own
+    framing) — a real name would require picking one specific selected recipient arbitrarily,
+    which seemed more confusing than a clearly-labeled placeholder.
+  - Results list looks up recipient names client-side from the pre-send candidate list snapshot
+    (the API only returns `memberId`/`email` for `sent`, and bare `memberId` for `skipped`) rather
+    than asking the API to include names — kept the API contract exactly as api-developer shipped
+    it rather than requesting a change for a display-only convenience.
+  - No year-aware "send history" view was built (Phase 3's component plan didn't ask for one
+    beyond the per-member "Last reminded" badge) — out of scope for this phase, flagged here in
+    case a future increment wants one; `dues_reminders` is already indexed on
+    `(fiscal_year, sent_at)` for it per Phase 2/3.
+- **Next agent: qa** for Phase 5. Flag forward from Phase 3 (still unresolved by design, an
+  external-system fact): confirm the first real send from `treasurer@westervillelions.org`
+  actually lands and isn't spam-filtered before the treasurer sends to the real unpaid list — this
+  phase's verification stayed entirely inside the non-production guard by design and cannot answer
+  that question. Also re-confirm the `dues.view`-only block manually in your own pass rather than
+  trusting this write-up alone, per CLAUDE.md's "an admin session proves nothing" instruction.
