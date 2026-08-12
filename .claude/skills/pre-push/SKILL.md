@@ -133,7 +133,33 @@ pnpm audit --prod --audit-level=high
 
 Moderate or low CVEs are advisory. Mention any new ones the user hasn't seen, but they don't block the push.
 
-## Step 9: Release Notes and Version Bump
+## Step 9: Personal Data Sweep
+
+**This repository is public. A personal address, phone number, or home address must never be pushed.**
+
+```bash
+git grep -InE "[a-zA-Z0-9._%+-]+@(gmail|hotmail|msn|att|yahoo|sbcglobal|aol|insight|live|outlook|comcast|icloud|me)\\.[a-z.]+" -- . \
+  | grep -v "example\\.\(com\|invalid\|test\)"
+git grep -InE "\\b[0-9]{3}-[0-9]{3}-[0-9]{4}\\b|\\([0-9]{3}\\) ?[0-9]{3}-[0-9]{4}" -- .
+git grep -InE "[0-9]{3,5} [A-Z][a-zA-Z]+ (Circle|Drive|Street|Road|Avenue|Ave|Lane|Court|Blvd|Way)\\b" -- .
+```
+
+**Any hit is a hard stop.** Do not push. See CLAUDE.md → *No Personal Data in the Repository* for
+what is banned and what is allowed. Club-domain addresses (`board@`, `club@`, `info@`,
+`treasurer@`, `noreply@westervillelions.org`) are fine and will not match the pattern above.
+Officer names are fine; their contact details are not.
+
+Also confirm nothing env-shaped is staged — `.env*` is gitignored, but on 2026-08-12 a
+`.env.local.bak-<timestamp>` slipped past that rule and was pushed with every production
+credential in it:
+
+```bash
+git ls-files | grep -E "\\.env" | grep -v "^\\.env\\.example$"
+```
+
+Anything other than `.env.example` is a hard stop.
+
+## Step 10: Release Notes and Version Bump
 
 **Required before every push to `main`.**
 
@@ -145,7 +171,7 @@ Moderate or low CVEs are advisory. Mention any new ones the user hasn't seen, bu
 
 **Documentation-only changes don't need a version bump.** Bug fixes get a PATCH bump. New features get a MINOR. Breaking changes get a MAJOR.
 
-## Step 10: Housekeeping Sweep
+## Step 11: Housekeeping Sweep
 
 Treat these as advisory warnings, not hard blockers (unless the user decides otherwise):
 
@@ -166,7 +192,7 @@ Treat these as advisory warnings, not hard blockers (unless the user decides oth
   git diff --name-only | grep -E "\.env"
   ```
 
-## Step 11: Summary
+## Step 12: Summary
 
 Report results:
 
@@ -176,6 +202,7 @@ Report results:
 - E2E tests: PASS / FAIL / SKIPPED (runner not installed)
 - Schema and migrations: in sync and idempotent / pending (with details)
 - Dependency CVE audit: PASS / FAIL (advisory IDs if any)
+- Personal data sweep: clean / HITS (list them)
 - Release notes + version: updated / missing
 - Housekeeping warnings: list them
 - **Ready to push? yes / no**

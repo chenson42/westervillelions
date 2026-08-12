@@ -525,7 +525,7 @@ Seven reviews run on rolling cadences to keep the codebase, docs, security postu
 | **Retrospective** | 7 d | all agents → tech-lead synthesizes | Pipeline efficacy needs short feedback loops — a weekly retrospective produces concrete edits to agents and to this file before bad patterns calcify. |
 | **Code** | 30 d | architect | Complexity hotspots, dead code, **copy-pasted logic that should be one shared helper**, and quiet violations of invariants accumulate over weeks; a monthly pass keeps the codebase shaped the way the project is meant to be shaped. |
 | **Documentation** | 30 d | tech-lead | Docs drift silently — a monthly audit catches stale environment-variable lists, broken cross-links, and CLAUDE.md sections that no longer match reality. |
-| **Security** | 30 d | api-developer + database-admin | A monthly sweep of auth boundaries (Google OAuth scopes, NextAuth session shape, member-data exposure), Google Group sync surface, OAuth-token storage, dependency CVEs, and OWASP surface area. |
+| **Security** | 30 d | api-developer + database-admin | A monthly sweep of auth boundaries (Google OAuth scopes, NextAuth session shape, member-data exposure), Google Group sync surface, OAuth-token storage, dependency CVEs, OWASP surface area, **and a PII sweep of the repository itself — personal addresses, phone numbers, postal addresses, and any person hard-coded into a migration or script. The repo is public; see *No Personal Data in the Repository*.** |
 | **Agent & instruction** | 30 d | tech-lead | Agents and `.claude/` settings accumulate stale guidance, unused tools, and references to features that no longer exist; a monthly review keeps the instruction layer honest. |
 | **Dependencies** | 30 d | deployment-engineer | A monthly review of `pnpm outdated` and `pnpm audit` keeps the dependency graph current without inviting weekly churn. |
 
@@ -669,6 +669,24 @@ re-reads it, so a shell-level override does not survive — the block has to liv
 Never add another member's address, and never add a club distribution list (those are refused
 even if allowlisted). **To email many members at once, use `sendBulkMemberEmail()`** — never a
 hand-rolled loop over `sendEmail()`.
+
+### No Personal Data in the Repository
+
+**This repository is intended to be public.** Nothing in it may identify a member personally.
+
+**Banned, without exception:**
+- Personal email addresses (`@gmail.com`, `@att.net`, `@outlook.com`, anything not a club domain)
+- Phone numbers, home or postal addresses
+- Anything tying a named person to money, dues, health, or personal circumstances
+
+**Allowed:**
+- Club-domain addresses — `board@`, `club@`, `info@`, `treasurer@`, `noreply@westervillelions.org`. Organizational, already public, and several are load-bearing constants.
+- Officer **names** in a governance context. The club publishes its officers on its own website; a name is not the problem, contact details are.
+- `example.com` / `example.invalid` in tests and fixtures.
+
+**Migrations and scripts must never hard-code a person to grant them access.** A `WHERE u.email = 'someone@gmail.com'` seed is both a leak and brittle — it silently stops working the day that person changes address. Drive it from an environment variable or a CLI argument.
+
+**Why this is an invariant and not a preference.** On 2026-08-12 a `.env.local` backup was swept into a commit by `git add -A` and pushed, carrying every production credential; the same audit found nine personal addresses across 73 places, including inside migrations that ship to every deploy. The private repo is retained as an archive and the public project starts from a scrubbed tree — but that reset only buys one clean slate. `/pre-push` now fails on a personal address, and the 30-day security review owns the recurring check.
 
 ### No Secrets in Committed Files
 

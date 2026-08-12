@@ -127,7 +127,7 @@ This project uses a feature-based permission system (`FEATURES` + `hasFeature()`
 
 ## Ownership
 
-- **30-day security review (joint with database-admin).** Monthly sweep of auth boundaries, secret handling, dependency CVEs, and OWASP surface area. You take the application/auth/route-handler half (session checks, permission gates, OAuth scopes, Google Group sync surface, member-data exposure); database-admin takes the schema/row-level/data half. Log the outcome in `docs/reviews/log.md` and write the detail file at `docs/reviews/YYYY-MM-DD-security.md`.
+- **30-day security review (joint with database-admin).** Monthly sweep of auth boundaries, secret handling, dependency CVEs, and OWASP surface area. You take the application/auth/route-handler half (session checks, permission gates, OAuth scopes, Google Group sync surface, member-data exposure); database-admin takes the schema/row-level/data half. Log the outcome in `docs/reviews/log.md` and write the detail file at `docs/reviews/YYYY-MM-DD-security.md`. **Include a repository-wide personal-data sweep** — personal email addresses, phone numbers, postal addresses, and anyone hard-coded into a route or script. The repo is public; see CLAUDE.md → *No Personal Data in the Repository*. `/pre-push` gates on this, but the monthly review is what catches drift the gate's patterns miss.
 
 ## When You're Done
 
