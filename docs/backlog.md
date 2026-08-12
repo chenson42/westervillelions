@@ -763,3 +763,37 @@ Design each with the others in view — decisions in one box in the next.
   enumeration leak (response doesn't vary by target id for an unlinked account), just a
   narrow edge case Phase 3's Edge Cases section didn't cover. Confirmed via code read,
   not re-tested independently in Phase 6.
+
+- [ ] **B-45 — Email the donor acknowledgment letter, instead of only printing it.**
+  *(Raised 2026-08-12 by the treasurer, on discovering the send path was never built.)*
+
+  **What exists already.** v1.61.0 shipped the whole letter: `ledgerAcknowledgments` rows,
+  IRS Pub. 1771-compliant composition (written-ack ≥$250 and quid-pro-quo ≥$75, including the
+  DESCRIPTION of goods received per DECISION-073), an editable club-wording template whose
+  writable surface is only the four "warmth" slots, batch generation, and `sentAt` to mark a
+  letter sent. Donor email addresses were deliberately captured then — a donor can hold
+  several — with the release note saying they "will be used when emailing arrives." This item
+  is that arrival.
+
+  **What is missing.** There is no `sendEmail` call anywhere under the donors surface. Every
+  letter is printed and handed or posted.
+
+  **Depends on** the `cc`/`bcc` work in `docs/work-log/2026-08-12-dues-reminder-emails.md`,
+  which adds those fields to `sendEmail()` and `email_queue`, and establishes the single
+  Board-position resolver for "who is the treasurer". Build this AFTER that lands, and inherit
+  both: the treasury CC rule, and one definition of the treasurer.
+
+  **Things the design will have to decide, noted now so they are not rediscovered:**
+  - A donor with several addresses: all of them, or a nominated primary? The club's very first
+    donor asked for two, which is why multiple addresses exist at all.
+  - A donor with NO email address still needs a printed letter. The two paths must coexist,
+    and the treasurer needs to see at a glance which donors fall on which side.
+  - `sentAt` currently means "the treasurer says this went". If some letters are emailed and
+    some printed, the record should say WHICH, or the audit trail quietly loses that.
+  - An emailed acknowledgment is a tax document. A bounce is not a cosmetic failure — it means
+    a donor has no valid receipt. Bounces need to be visible, not swallowed.
+  - "A letter, once sent, is fixed" is already the rule. Emailing must not create a second way
+    to regenerate a sent letter.
+  - Attachment or inline HTML? Minutes email inline by deliberate choice; a tax receipt a donor
+    may need to keep for their records is a different case, and worth deciding rather than
+    defaulting.

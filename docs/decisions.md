@@ -28,6 +28,57 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-085: Dues Reminder Emails — bulk-send safety guard moves into the shared `email.ts` chokepoint, not a feature-local reimplementation; new `dues_reminders` table, not a reuse of `email_queue`
+
+**Status:** Resolved
+**Date:** 2026-08-12
+
+**Decision:** The Dues Reminder Emails feature (`docs/work-log/2026-08-12-dues-reminder-emails.md`,
+Phase 2) gets the standard pure/DB-facing module pair — `src/lib/dues-reminders.ts` (template
+rendering, pure) + `src/lib/dues-reminders-queries.ts` (cohort via the existing
+`listMemberDuesStatus()`, Treasurer signer resolution, reminder-log CRUD) — rather than growing
+`dues.ts`/`dues-queries.ts`, following the split DECISION-074 established and DECISION-084
+generalized. More significantly: Phase 1 proposed a second, feature-local non-production guard
+inside the reminders route that hand-rolls `sendEmail()`'s own `email_queue`/
+`blocked_non_production` persistence to keep every real member address from leaving the building
+in dev/QA. That is overridden here. The shared guardrail in `src/lib/email.ts`
+(`isClubDistributionList()`, added after the 2026-08-09 incident) stays untouched and
+address-based for its existing two-distribution-list case, but gains a sibling entrypoint,
+`sendBulkMemberEmail()`, that wraps `sendEmail()` per recipient and unconditionally blocks
+non-production delivery for *any* bulk-individual-recipient send — no address matching, so it
+can't be gamed by a member added to dev data after a list was written — reusing `sendEmail()`'s
+existing queue-insert/blocked-status mechanism rather than duplicating it. Data model: a new
+`dues_reminders` table (`memberId`, `fiscalYear`, `sentAt`, `sentByUserId`, `signedAsMemberId`,
+nullable `emailQueueId` FK with `onDelete: "set null"`, indexed on `(memberId, fiscalYear)` and
+`(fiscalYear, sentAt)`), migration `0086_dues_reminders.sql` — not a reuse of `email_queue`, which
+has no `memberId`/`fiscalYear` columns and is a delivery log, not a domain record. No new
+`FEATURES` key: `dues.manage` already exists and covers the send action; the page and route
+handler must each independently enforce it (stricter than the proxy's coarse `dues.view`-level
+area gate, derived per top-level path segment from `ADMIN_NAVIGATION`).
+
+**Rationale:** A feature-local safety guard makes protection opt-in per feature — the same shape
+that produced the 2026-08-09 incident in the first place, since a future feature that mails
+members in bulk and forgets to build its own wall inherits nothing. The existing guard covering
+only two named distribution lists is itself the signal that the abstraction is too narrow, not a
+reason to keep bolting on parallel walls next to it. Gating on call *shape* (bulk vs.
+transactional) rather than on address is also strictly safer than address-matching (today's
+guard can be defeated by a fresh member row dev data doesn't yet know is "real") while staying
+narrow enough not to break dev testing of every other feature's legitimate single-recipient sends
+(password reset, a single minutes-email recipient). `email_queue` was designed as a delivery log
+(free-text `to`, no member linkage) and matching "who was reminded, for which year" against it
+would be fragile by construction — the badge query in Flow 3 needs a real domain record, not a
+best-effort text match.
+
+**Impact:** `src/lib/email.ts` gains `sendBulkMemberEmail()` as a second sanctioned entrypoint
+alongside `sendEmail()` — any future "email many members at once" feature is expected to reach for
+it rather than looping `sendEmail()` directly; a feature that hand-loops `sendEmail()` instead is a
+visible, reviewable deviation from this precedent. New table `dues_reminders` + migration `0086`.
+No new `FEATURES` key or permissions migration. Full ruling, including the server/client split and
+the `/admin/dues/reminders` nested-page gating nuance (proxy admits at `dues.view`, page/route must
+independently enforce `dues.manage`), is in the Phase 2 section of the work-log linked above.
+
+---
+
 ## DECISION-084: Project/Activity Proposal form — new top-level module pair, one-key permission gate, two-table append-only decision history
 
 **Status:** Resolved
