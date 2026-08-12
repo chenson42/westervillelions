@@ -49,3 +49,12 @@ drizzle/*
 
 # local receipt storage (DECISION-020 — LocalReceiptStorage adapter for dev)
 .receipt-store/
+
+# Timestamped .env backups. On 2026-08-12 a `.env.local.bak-<ts>` created while
+# blanking a key was swept into a commit by `git add -A` and pushed, exposing
+# every production credential. `.env*` alone did not catch it because the
+# existing rule did not anticipate a suffix after the extension.
+.env.local.bak-*
+.env*.bak
+.env.local.*
+*.env.bak
