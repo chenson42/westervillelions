@@ -15,7 +15,7 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-08-12 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-08-12 |
 | 3 — Technical design | tech-lead | Complete | Design complete | 2026-08-12 |
-| 4 — Implementation | database-admin → api-developer → ux-developer | Pending | — | — |
+| 4 — Implementation | database-admin → api-developer → ux-developer | In progress (schema done) | — | 2026-08-12 |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -1234,3 +1234,115 @@ tightly-coupled change.
    360px mobile check named in Edge Cases before calling this done.
 
 No loop-back. Advance to Phase 4, in the order above.
+
+---
+
+# Phase 4 — Implementation (schema) — 2026-08-12
+
+**Owner:** database-admin
+**Status:** complete
+
+### Summary
+
+Added the nullable `sentVia` column to `ledgerAcknowledgments`, exactly as specified in Phase 3 /
+DECISION-087 item 3 / DECISION-088 item 4, and a matching idempotent migration. No backfill, no
+new index, no DB enum/CHECK — plain `text`, validated at the application layer per DECISION-041
+(`minutes.kind`/`minutes.status` precedent). Verified against dev with two migration runs and a
+direct `information_schema` read; typecheck and the full unit suite both pass.
+
+### What I did
+
+- Read the full work-log (Phases 1–3), DECISION-087, and DECISION-088 to confirm the exact column
+  shape and migration number already agreed by tech-lead.
+- Confirmed `0087_email_queue_cc_bcc.sql` is the current highest migration (`ls
+  drizzle/migrations/*.sql | sort | tail`) — `0088` was free, no collision with a parallel feature.
+- Added `sentVia: text("sent_via")` to `ledgerAcknowledgments` in `src/lib/db/schema.ts`, with a
+  comment explaining why it exists (sentAt alone can't say *how* a letter went once two send
+  channels exist) and why it's a plain text column, not an enum/CHECK.
+- Wrote `drizzle/migrations/0088_ledger_ack_sent_via.sql` — a single idempotent `ADD COLUMN IF NOT
+  EXISTS` statement.
+- Ran `pnpm exec tsc --noEmit` — clean.
+- Applied the migration to **dev only**: explicitly `unset PROD_DATABASE_URL` before exporting
+  `DATABASE_URL` from `.env.local`, confirmed the target host was the dev Neon branch
+  (`ep-orange-sunset-am8erati-pooler...`, not a prod hostname) before running.
+- Ran the migration a second time to prove idempotency.
+- Queried `information_schema.columns` directly against dev to confirm the live column's type,
+  nullability, and default match `schema.ts` — did not assume.
+- Ran `pnpm test` — full suite green.
+- Did not create any ledger transactions, did not touch `RESEND_API_KEY` or
+  `EMAIL_DEV_ALLOWLIST`, did not exercise any send path — this phase is schema-only.
+
+### Outputs
+
+- **Schema:** `src/lib/db/schema.ts` — `ledgerAcknowledgments.sentVia`:
+  ```typescript
+  // null = unset (legacy row, or not yet sent); 'email' | 'print' once a
+  // send path succeeds. sentAt alone only says "this went" — once both a
+  // print path and an email path exist, that's no longer enough to answer
+  // "who still needs a printed copy," which the treasurer needs at a
+  // glance (Phase 1 of docs/work-log/2026-08-12-acknowledgment-letter-
+  // email.md). Plain text, not a DB enum/CHECK — validated in application
+  // code, matching this project's minutes.kind/minutes.status convention
+  // (DECISION-041). No backfill: nobody can truthfully say today whether a
+  // pre-this-feature sentAt row was mailed or printed, so legacy rows stay
+  // NULL rather than guess on a document with tax consequences. See
+  // DECISION-087 item 3 / DECISION-088.
+  sentVia: text("sent_via"),
+  ```
+  Inserted immediately after `sentAt` in the column list, matching Phase 3's placement.
+- **Migration:** `drizzle/migrations/0088_ledger_ack_sent_via.sql` (new, next free number —
+  0087 was the prior highest):
+  ```sql
+  ALTER TABLE ledger_acknowledgments
+    ADD COLUMN IF NOT EXISTS sent_via text;
+  ```
+- **Table affected:** `ledger_acknowledgments` (one column added, no other change).
+- **Role bindings / seed rows:** none — no new `FEATURES` key, no new permission surface, per
+  Phase 2/3 (reuses existing `LEDGER_RECORD`).
+- **Idempotency proof:** applied twice against dev.
+  - Command: `unset PROD_DATABASE_URL && export $(grep -E "^DATABASE_URL=" .env.local | xargs) &&
+    pnpm db:migrate`
+  - Run 1: `→ 0088_ledger_ack_sent_via.sql` ... `✅ Migrations completed successfully` (column
+    created).
+  - Run 2 (identical command, immediately after): `→ 0088_ledger_ack_sent_via.sql` →
+    `NOTICE: column "sent_via" of relation "ledger_acknowledgments" already exists, skipping` →
+    `✅ Migrations completed successfully`. No error, no schema drift, exit success both times.
+  - Live-column verification (direct `information_schema` query against the same dev connection,
+    not assumed from `schema.ts`):
+    ```
+    column_name: sent_via
+    data_type:   text
+    is_nullable: YES
+    column_default: null
+    ```
+    Matches `text("sent_via")` with no `.notNull()`/`.default()` exactly.
+- **Verification:**
+  - `pnpm exec tsc --noEmit` — clean, no errors.
+  - `pnpm test` — 77 test files, **1443 tests passed** (matches the expected pre-change total
+    exactly — this phase added no new tests, since unit tests for the new query/route functions
+    belong to api-developer per Phase 3's implementer split).
+  - No email send exercised; `RESEND_API_KEY`/`EMAIL_DEV_ALLOWLIST` untouched; no ledger
+    transactions created.
+
+### Open questions / handoff notes
+
+- **Next agent: api-developer.** `ledgerAcknowledgments.sentVia` is live in both `schema.ts` and
+  the dev DB and ready to consume. No FK — it's a same-table nullable text column, no join
+  required.
+- Per Phase 3 / DECISION-088 item 4, `GeneratableAcknowledgmentRow` in
+  `src/lib/ledger-acknowledgment-letter-queries.ts` still needs `donor.emails: string[]` and
+  `letterText: string | null` added to its projection (the `.map()` at ~line 121) — this is a
+  read-side projection change, not a schema change, so it was correctly left for api-developer
+  rather than done here. The underlying columns (`ledgerDonors.emails`, `ledgerAcknowledgments.letterText`)
+  already exist; nothing new to migrate for that step.
+- The existing PATCH mark-sent route (`.../transactions/[id]/acknowledge`) needs one line added to
+  set `sentVia: 'print'` on success — application code, api-developer's scope per the Phase 3
+  implementer split.
+- The new `emailAcknowledgmentLetters()` write path must use the atomic conditional `UPDATE ...
+  WHERE sent_at IS NULL RETURNING id` shape DECISION-088 item 1 specifies, not a
+  read-then-write — `sentVia` should be set in that same conditional `UPDATE`
+  (`sent_at = now(), sent_via = 'email'`), and reverted (`sent_at = NULL, sent_via = NULL`) in the
+  compensating update if every address fails, per DECISION-088 item 2.
+- Local apply command for anyone re-running this: `export $(grep -E "^DATABASE_URL=" .env.local |
+  xargs) && pnpm db:migrate` (schema.ts already matches the DB, so `pnpm db:push` is not required
+  as a follow-up, but running it is harmless/no-op since nothing else in `schema.ts` changed).
