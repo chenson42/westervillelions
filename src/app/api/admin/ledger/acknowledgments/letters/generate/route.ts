@@ -27,7 +27,7 @@
  * }
  *
  * `reason` strings (stable, user-facing): "not found", "no donor linked",
- * "donor missing address", "category excluded from acknowledgments",
+ * "category excluded from acknowledgments",
  * "already sent", "unrecognized acknowledgment type".
  *
  * Skip-vs-write is decided by a deterministic pre-check for every row

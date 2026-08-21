@@ -6,6 +6,8 @@ import type { PendingAcknowledgmentRow } from "@/lib/ledger-queries";
 import { ackQueueRowAction } from "@/lib/ack-queue-ui";
 import AcknowledgeDialog from "./acknowledge-dialog";
 import MarkSentDialog from "./mark-sent-dialog";
+import LinkDonorDialog from "./link-donor-dialog";
+import GiftPurposeDialog from "./gift-purpose-dialog";
 
 interface AckQueueProps {
   rows: PendingAcknowledgmentRow[];
@@ -35,11 +37,31 @@ function formatDate(d: Date | string | null): string {
  * (2026-08-08, second increment: previously this always rendered "Record
  * acknowledgment" for every row, so state (2) had no reachable Mark Sent
  * control on this screen.)
+ *
+ * Linking a donor is deliberately NOT part of that two-state machine. It is
+ * always available, because a donor can be attached before or after the
+ * acknowledgment is recorded and the two facts are independent.
+ *
+ * Editing the gift purpose (2026-08-12) IS tied to the machine, but to state
+ * (2) only: there is no acknowledgment row to hold a purpose in state (1), so
+ * it is typed in the AcknowledgeDialog instead. It stops being offered the
+ * moment a row leaves this queue, which is exactly when it must stop — a row
+ * leaves by being marked sent, and a sent letter's wording is history.
+ *
+ * (2026-08-12: it used to be reachable only through the AcknowledgeDialog's
+ * optional donor typeahead. Recording an acknowledgment without picking a donor
+ * therefore stranded the row — "No donor linked" rendered as dead text, and the
+ * dialog holding the only donor control was gone for good, because its button
+ * is replaced by Mark Sent the moment the ack exists. The register at
+ * /admin/ledger/[fundSlug] still offered a Link Donor button, so the data was
+ * never unreachable, but nothing on this screen said so.)
  */
 export default function AckQueue({ rows, canRecord }: AckQueueProps) {
   // Track which row's dialog is open, by txnId.
   const [acknowledgeFor, setAcknowledgeFor] = useState<string | null>(null);
   const [markSentFor, setMarkSentFor] = useState<string | null>(null);
+  const [linkDonorFor, setLinkDonorFor] = useState<PendingAcknowledgmentRow | null>(null);
+  const [purposeFor, setPurposeFor] = useState<PendingAcknowledgmentRow | null>(null);
 
   if (rows.length === 0) {
     return (
@@ -115,12 +137,31 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {row.donor ? (
-                        <Link
-                          href={`/admin/ledger/donors/${row.donor.id}`}
-                          className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded text-sm"
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <Link
+                            href={`/admin/ledger/donors/${row.donor.id}`}
+                            className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded text-sm"
+                          >
+                            {row.donor.name}
+                          </Link>
+                          {canRecord && (
+                            <button
+                              type="button"
+                              onClick={() => setLinkDonorFor(row)}
+                              className="text-xs text-gray-500 hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                            >
+                              Change
+                            </button>
+                          )}
+                        </div>
+                      ) : canRecord ? (
+                        <button
+                          type="button"
+                          onClick={() => setLinkDonorFor(row)}
+                          className="text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
                         >
-                          {row.donor.name}
-                        </Link>
+                          Link donor
+                        </button>
                       ) : (
                         <span className="text-gray-400 text-xs italic">No donor linked</span>
                       )}
@@ -128,15 +169,50 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
                     <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-green-700">
                       +{formatDollars(row.txn.amountCents)}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3">
+                    <td className="px-4 py-3">
                       {action === "mark-sent" ? (
-                        <span className="inline-flex items-center rounded-lg px-2.5 py-0.5 text-xs font-semibold bg-blue-50 text-lions-blue border border-blue-200">
+                        <span className="inline-flex items-center whitespace-nowrap rounded-lg px-2.5 py-0.5 text-xs font-semibold bg-blue-50 text-lions-blue border border-blue-200">
                           Acknowledged — not sent
                         </span>
                       ) : (
-                        <span className="inline-flex items-center rounded-lg px-2.5 py-0.5 text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                        <span className="inline-flex items-center whitespace-nowrap rounded-lg px-2.5 py-0.5 text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
                           Pending
                         </span>
+                      )}
+
+                      {/* Gift purpose — only meaningful once an acknowledgment
+                          row exists to hold it (before that it's typed in the
+                          Record Acknowledgment dialog), and only editable
+                          while unsent, which every row in this queue is. */}
+                      {action === "mark-sent" && (
+                        <div className="mt-1.5 max-w-[15rem] text-xs">
+                          {row.ackPurpose ? (
+                            <p className="text-gray-600">
+                              <span className="text-gray-400">In support of </span>
+                              {row.ackPurpose}
+                              {canRecord && (
+                                <>
+                                  {" "}
+                                  <button
+                                    type="button"
+                                    onClick={() => setPurposeFor(row)}
+                                    className="text-gray-500 hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                                  >
+                                    Edit
+                                  </button>
+                                </>
+                              )}
+                            </p>
+                          ) : canRecord ? (
+                            <button
+                              type="button"
+                              onClick={() => setPurposeFor(row)}
+                              className="font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                            >
+                              Add gift purpose
+                            </button>
+                          ) : null}
+                        </div>
                       )}
                     </td>
                     {canRecord && (
@@ -179,6 +255,31 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
           </table>
         </div>
       </div>
+
+      {/* Link-donor dialog — available in both row states, unlike the
+          record/mark-sent pair above. */}
+      {linkDonorFor && (
+        <LinkDonorDialog
+          txnId={linkDonorFor.txn.id}
+          txnAmountCents={linkDonorFor.txn.amountCents}
+          txnDate={String(linkDonorFor.txn.txnDate)}
+          currentDonorId={linkDonorFor.donor?.id ?? null}
+          open={true}
+          onOpenChange={(open) => { if (!open) setLinkDonorFor(null); }}
+        />
+      )}
+
+      {/* Gift-purpose dialog — edit what the letter says the gift supported.
+          Only reachable for rows that already have an unsent acknowledgment;
+          the server 409s a sent one regardless. */}
+      {purposeFor && (
+        <GiftPurposeDialog
+          txnId={purposeFor.txn.id}
+          currentPurpose={purposeFor.ackPurpose}
+          open={true}
+          onOpenChange={(open) => { if (!open) setPurposeFor(null); }}
+        />
+      )}
 
       {/* Acknowledge dialog — create the ack record */}
       {acknowledgeFor && (

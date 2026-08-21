@@ -315,11 +315,15 @@ export default function AcknowledgmentLetterSelector({
                   </thead>
                   <tbody className="divide-y divide-gray-200 bg-white">
                     {rows.map((row) => {
-                      const blocked = !row.donor
-                        ? "No donor linked"
-                        : !row.donor.address || row.donor.address.trim() === ""
-                          ? "Missing address"
-                          : null;
+                      // Only a missing donor actually blocks generation. A missing
+                      // postal address does NOT (2026-08-12): it isn't required by
+                      // Pub. 1771 and never appears in the letter — it only says
+                      // where to mail a printed copy, and letters can be emailed.
+                      // Still surfaced, as a note rather than a blocker, because
+                      // this is the treasurer's last look before printing.
+                      const blocked = !row.donor ? "No donor linked" : null;
+                      const noPostalAddress =
+                        row.donor && (!row.donor.address || row.donor.address.trim() === "");
                       // Not a blocker — generation still succeeds — but the letter will read
                       // generic "goods or services" wording instead of naming what the donor
                       // actually received. Surfaced here (not just in AcknowledgeDialog) because
@@ -351,6 +355,11 @@ export default function AcknowledgmentLetterSelector({
                             )}
                             {blocked && (
                               <div className="mt-0.5 text-xs font-medium text-amber-700">{blocked}</div>
+                            )}
+                            {noPostalAddress && (
+                              <div className="mt-0.5 text-xs text-gray-500">
+                                No postal address — email or hand over
+                              </div>
                             )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-4 text-xs">

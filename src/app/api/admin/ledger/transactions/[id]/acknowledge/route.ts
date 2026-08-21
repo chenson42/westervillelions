@@ -16,6 +16,8 @@
  *      (Acknowledgment Letter Generation, 2026-08-08 — Pub. 1771 requires a
  *      DESCRIPTION of goods/services, not just their FMV; nullable, falls
  *      back to generic wording in composeAcknowledgmentLetter() when absent)
+ *   9. purpose, if provided, must be a string <= 200 chars after trimming;
+ *      blank/whitespace-only stores NULL (Gift Purpose, 2026-08-12)
  *
  * POST side effect: when donorId is provided, ledger_transactions.donor_id is
  * set to match in the SAME db.transaction() as the acknowledgment insert, so
@@ -31,9 +33,32 @@
  * untouched — "leave blank to record without linking a donor" must not clear
  * a link that's already there.
  *
- * PATCH (mark-sent) validates:
- *   1. Acknowledgment exists for this transaction
+ * PATCH has TWO modes, selected by an explicit `mode` field. Absent `mode`
+ * means "mark_sent" — the original and only behaviour before 2026-08-12, kept
+ * as the default so every existing caller (MarkSentDialog) is untouched.
+ *
+ * PATCH mode='mark_sent' (default) validates:
+ *   1. Acknowledgment exists for this transaction — 404
  *   2. ack.sentAt IS NULL — 409 if already sent
+ *
+ * PATCH mode='purpose' (Gift Purpose, 2026-08-12) validates:
+ *   1. Acknowledgment exists for this transaction — 404
+ *   2. ack.sentAt IS NULL — 409 if already sent. This is the whole point of
+ *      the mode: the purpose is prose the donor READ in their acknowledgment
+ *      letter, so once that letter has gone out the stored record of what they
+ *      were told must never change retroactively. Editing is a pre-send
+ *      correction, not a revision. (Same guard, same status code, and
+ *      deliberately the same shape as mark-sent's — an ack is either still
+ *      editable or it is history.)
+ *   3. purpose is a string (or null) of <= 200 chars after trimming — 400
+ *
+ * PATCH mode='purpose' side effect: any already-generated letterText for the
+ * acknowledgment is CLEARED when the purpose actually changes. letterText is a
+ * snapshot of composed prose; leaving a stale one in place would let the
+ * treasurer email or print a letter that contradicts the purpose now on the
+ * row. Clearing costs one click to regenerate (the row is unsent by
+ * definition) and is how the send path — which skips rows whose letterText is
+ * NULL with "letter not yet generated" — is prevented from shipping stale text.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -49,7 +74,33 @@ import {
   ledgerDonors,
 } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { deriveAckType } from "@/lib/ledger";
+import { deriveAckType, GIFT_PURPOSE_MAX_LENGTH } from "@/lib/ledger";
+
+/**
+ * Validates and normalizes a caller-supplied gift purpose. Shared by POST
+ * (create) and PATCH mode='purpose' (edit) so the two entry points cannot
+ * drift into accepting different values. Absent/null/blank/whitespace-only all
+ * normalize to NULL — "" and "   " are not meaningfully different from "the
+ * treasurer didn't name a purpose", and a stored blank string would make the
+ * composer's byte-identical-output guarantee depend on the composer's own trim
+ * rather than on the data.
+ */
+function normalizeGiftPurpose(
+  value: unknown,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (typeof value !== "string") {
+    return { ok: false, error: "purpose must be a string" };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > GIFT_PURPOSE_MAX_LENGTH) {
+    return {
+      ok: false,
+      error: `purpose must be a string of ${GIFT_PURPOSE_MAX_LENGTH} characters or fewer`,
+    };
+  }
+  return { ok: true, value: trimmed.length > 0 ? trimmed : null };
+}
 
 /**
  * POST /api/admin/ledger/transactions/[id]/acknowledge
@@ -58,7 +109,8 @@ import { deriveAckType } from "@/lib/ledger";
  *   donorId?: string,
  *   typeOverride?: 'written_ack_250' | 'quid_pro_quo_75',
  *   quidProQuoValueCents?: number,
- *   quidProQuoDescription?: string
+ *   quidProQuoDescription?: string,
+ *   purpose?: string
  * }
  */
 export async function POST(
@@ -132,7 +184,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { donorId, typeOverride, quidProQuoValueCents, quidProQuoDescription } = body;
+    const { donorId, typeOverride, quidProQuoValueCents, quidProQuoDescription, purpose } = body;
 
     // Validate donorId if provided
     if (donorId !== undefined && donorId !== null) {
@@ -170,6 +222,12 @@ export async function POST(
           { status: 400 },
         );
       }
+    }
+
+    // Validate purpose — same normalizer PATCH mode='purpose' uses.
+    const normalizedPurpose = normalizeGiftPurpose(purpose);
+    if (!normalizedPurpose.ok) {
+      return NextResponse.json({ error: normalizedPurpose.error }, { status: 400 });
     }
 
     // Validate typeOverride
@@ -230,6 +288,7 @@ export async function POST(
             typeof quidProQuoDescription === "string" && quidProQuoDescription.trim()
               ? quidProQuoDescription.trim()
               : null,
+          purpose: normalizedPurpose.value,
           sentAt: null,
           recordedByUserId: session.user.id,
         })
@@ -255,16 +314,22 @@ export async function POST(
 /**
  * PATCH /api/admin/ledger/transactions/[id]/acknowledge
  *
- * Mark the acknowledgment for this transaction as sent. Optional fields to
- * record the letter.
+ * mode='mark_sent' (default when `mode` is absent) — mark the acknowledgment
+ * for this transaction as sent. Optional fields to record the letter.
  *
  * Body: {
+ *   mode?: 'mark_sent',
  *   sentAt?: string (YYYY-MM-DD, defaults to today),
  *   letterStorageKey?: string,
  *   letterText?: string,
  *   quidProQuoValueCents?: number,
  *   typeOverride?: 'written_ack_250' | 'quid_pro_quo_75'
  * }
+ *
+ * mode='purpose' — edit the gift purpose on an UNSENT acknowledgment. Nothing
+ * else is touched; in particular this never sets sentAt/sentVia.
+ *
+ * Body: { mode: 'purpose', purpose: string | null }
  */
 export async function PATCH(
   request: NextRequest,
@@ -281,6 +346,19 @@ export async function PATCH(
 
     const { id: txnId } = await params;
 
+    const body = await request.json();
+    const { mode } = body;
+
+    // Explicit, allowlisted mode. An unrecognized value is rejected rather
+    // than silently falling through to mark-sent — a typo'd mode must never
+    // mark a donor's acknowledgment as delivered.
+    if (mode !== undefined && mode !== "mark_sent" && mode !== "purpose") {
+      return NextResponse.json(
+        { error: "mode must be 'mark_sent' or 'purpose'" },
+        { status: 400 },
+      );
+    }
+
     // Find the acknowledgment for this transaction
     const existingAck = await db.query.ledgerAcknowledgments.findFirst({
       where: eq(ledgerAcknowledgments.donationTxnId, txnId),
@@ -292,16 +370,51 @@ export async function PATCH(
       );
     }
 
-    // Validate: not already sent
+    // Validate: not already sent. Shared by both modes — mark-sent refuses to
+    // re-send, and purpose refuses to rewrite what the donor already read.
     if (existingAck.sentAt !== null) {
       const sentDate = existingAck.sentAt.toISOString().split("T")[0];
       return NextResponse.json(
-        { error: `Acknowledgment already sent on ${sentDate}` },
+        {
+          error:
+            mode === "purpose"
+              ? `This acknowledgment was sent on ${sentDate}. Its gift purpose can no longer be changed — the letter the donor received is a permanent record.`
+              : `Acknowledgment already sent on ${sentDate}`,
+        },
         { status: 409 },
       );
     }
 
-    const body = await request.json();
+    if (mode === "purpose") {
+      const normalizedPurpose = normalizeGiftPurpose(body.purpose);
+      if (!normalizedPurpose.ok) {
+        return NextResponse.json({ error: normalizedPurpose.error }, { status: 400 });
+      }
+
+      const purposeChanged = normalizedPurpose.value !== existingAck.purpose;
+
+      const [updatedAck] = await db
+        .update(ledgerAcknowledgments)
+        .set({
+          purpose: normalizedPurpose.value,
+          // Stale-letter guard — see this file's header. Only when the value
+          // actually changed, so re-saving an unchanged purpose never throws
+          // away a generated letter for nothing.
+          ...(purposeChanged ? { letterText: null } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(ledgerAcknowledgments.id, existingAck.id))
+        .returning();
+
+      // True only when a letter actually existed and was discarded — the UI
+      // tells the treasurer to regenerate, and must not say so when there was
+      // nothing to regenerate.
+      return NextResponse.json({
+        ...updatedAck,
+        letterTextCleared: purposeChanged && existingAck.letterText !== null,
+      });
+    }
+
     const { sentAt, letterStorageKey, letterText, quidProQuoValueCents, typeOverride } = body;
 
     // Build update patch

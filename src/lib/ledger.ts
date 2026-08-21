@@ -762,6 +762,21 @@ export function deriveCauseSeedLines(
 // ---------------------------------------------------------------------------
 
 /**
+ * Longest gift purpose an acknowledgment accepts (Gift Purpose, 2026-08-12).
+ * Lives here, in the pure client-safe ledger module, because three surfaces
+ * need the same number — the acknowledge route's validator, the create dialog's
+ * `maxLength`, and the edit dialog's `maxLength` — and a limit enforced at 200
+ * on the server while an input silently allows more is a rejected save the
+ * treasurer can't explain.
+ *
+ * It is a clause inside one sentence of a tax receipt ("...in support of the
+ * 2026 Rudolph Run."), not a paragraph. Deliberately shorter than
+ * quidProQuoDescription's 500: that field may have to itemize goods and
+ * services, this one names a cause.
+ */
+export const GIFT_PURPOSE_MAX_LENGTH = 200;
+
+/**
  * Derives the IRS Pub 1771 acknowledgment type for a donation.
  *
  * Precedence rules (quid-pro-quo is stricter — always wins when both apply):

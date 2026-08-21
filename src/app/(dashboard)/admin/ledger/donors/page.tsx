@@ -3,13 +3,18 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-import { listDonors, listPendingAcknowledgments } from "@/lib/ledger-queries";
+import {
+  listDonors,
+  listPendingAcknowledgments,
+  listAcknowledgmentsSummary,
+} from "@/lib/ledger-queries";
 import DonorList from "@/components/admin/ledger/donor-list";
 import AckQueue from "@/components/admin/ledger/ack-queue";
+import SentAckList from "@/components/admin/ledger/sent-ack-list";
 
 export const dynamic = "force-dynamic";
 
-type TabParam = "donors" | "acknowledgments";
+type TabParam = "donors" | "acknowledgments" | "sent";
 
 export default async function AdminLedgerDonorsPage({
   searchParams,
@@ -26,17 +31,20 @@ export default async function AdminLedgerDonorsPage({
   const canManage = await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE);
 
   const { tab: tabParam, search } = await searchParams;
-  const validTabs: TabParam[] = ["donors", "acknowledgments"];
+  const validTabs: TabParam[] = ["donors", "acknowledgments", "sent"];
   const activeTab: TabParam =
     tabParam && validTabs.includes(tabParam as TabParam)
       ? (tabParam as TabParam)
       : "donors";
 
   // Always load the pending ack list (for count badge + tab content).
-  // Donors list is only loaded on the donors tab.
-  const [donors, pendingAcks] = await Promise.all([
+  // Donors list and sent-ack list are only loaded on their own tabs.
+  const [donors, pendingAcks, sentAcks] = await Promise.all([
     activeTab === "donors" ? listDonors({ search: search ?? undefined }) : Promise.resolve([]),
     listPendingAcknowledgments(),
+    activeTab === "sent"
+      ? listAcknowledgmentsSummary({ sentOnly: true, includePii: canRecord })
+      : Promise.resolve([]),
   ]);
 
   const pendingAckCount = pendingAcks.length;
@@ -66,9 +74,14 @@ export default async function AdminLedgerDonorsPage({
 
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-0">
-        {(["donors", "acknowledgments"] as TabParam[]).map((tab) => {
+        {(["donors", "acknowledgments", "sent"] as TabParam[]).map((tab) => {
           const isActive = tab === activeTab;
-          const label = tab === "donors" ? "Donors" : "Pending Acknowledgments";
+          const label =
+            tab === "donors"
+              ? "Donors"
+              : tab === "acknowledgments"
+                ? "Pending Acknowledgments"
+                : "Sent Acknowledgments";
           const count = tab === "acknowledgments" ? pendingAckCount : null;
           return (
             <Link
@@ -120,6 +133,10 @@ export default async function AdminLedgerDonorsPage({
           )}
           <AckQueue rows={pendingAcks} canRecord={canRecord} />
         </div>
+      )}
+
+      {activeTab === "sent" && (
+        <SentAckList rows={sentAcks} canRecord={canRecord} />
       )}
     </div>
   );

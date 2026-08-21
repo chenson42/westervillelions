@@ -131,6 +131,7 @@ function ackRow(overrides: Partial<Record<string, unknown>> = {}) {
     type: "written_ack_250",
     quidProQuoValueCents: null,
     quidProQuoDescription: null,
+    purpose: null,
     sentAt: null,
     letterStorageKey: null,
     letterText: null,
@@ -212,26 +213,64 @@ describe("generateAcknowledgmentLetters — guards", () => {
     expect(mockDbState.updateCalls).toHaveLength(0);
   });
 
-  it("Test 11: skips a donor-linked row with no address, reason 'donor missing address'", async () => {
+  // Tests 11 / 11b previously asserted the OPPOSITE — that a donor with no
+  // postal address was skipped with reason "donor missing address". That guard
+  // was removed on 2026-08-12: an address is not required by IRS Pub. 1771
+  // (it is a Form 990 Schedule B field, a different document), and the letter
+  // body never rendered it — composeAcknowledgmentLetter() substitutes
+  // donorName only. Withholding a compliant receipt over an envelope field was
+  // the defect; these now pin the corrected behaviour.
+  it("Test 11: GENERATES for a donor-linked row with no address — an address is not required", async () => {
     mockDbState.selectQueue.push([joinedRow({ donor: donorRow({ address: null }) })]);
     mockDbState.selectQueue.push([templateRow()]);
 
     const results = await generateAcknowledgmentLetters(["ack-1"]);
 
     expect(results).toEqual([
-      { ackId: "ack-1", status: "skipped", reason: "donor missing address" },
+      { ackId: "ack-1", status: "generated", letterText: expect.any(String) },
     ]);
-    expect(mockDbState.updateCalls).toHaveLength(0);
+    expect(mockDbState.updateCalls).toHaveLength(1);
   });
 
-  it("Test 11b: an address that is only whitespace is also treated as missing", async () => {
+  it("signs the generated letter with the Board's Treasurer when the template's signature name is blank", async () => {
+    // Wiring test: the office is resolved via resolveTreasurer() (DECISION-086),
+    // the same single definition the dues reminder signs with — not by whoever
+    // pressed the button. The shipped template default is a BLANK signature
+    // name, so this is the default path.
+    mockDbState.selectQueue.push([joinedRow()]);
+    mockDbState.selectQueue.push([templateRow({ signatureName: "" })]);
+
+    const results = await generateAcknowledgmentLetters(["ack-1"]);
+    const generated = results[0] as { status: string; letterText: string };
+
+    expect(resolveTreasurer).toHaveBeenCalled();
+    expect(generated.status).toBe("generated");
+    expect(generated.letterText).toContain("Terry Treasurer");
+  });
+
+  it("still generates a letter when the Treasurer office cannot be resolved", async () => {
+    // Degrades to the title-only signature. A donor is entitled to the receipt;
+    // Pub. 1771 requires the organization's name, not a named signer. (The dues
+    // reminder hard-blocks instead — different stakes, deliberately different.)
+    vi.mocked(resolveTreasurer).mockResolvedValue({ ok: false, reason: "none" });
+    mockDbState.selectQueue.push([joinedRow()]);
+    mockDbState.selectQueue.push([templateRow({ signatureName: "" })]);
+
+    const results = await generateAcknowledgmentLetters(["ack-1"]);
+    const generated = results[0] as { status: string; letterText: string };
+
+    expect(generated.status).toBe("generated");
+    expect(generated.letterText).toContain("Treasurer, Westerville Lions Club Foundation");
+  });
+
+  it("Test 11b: an address that is only whitespace likewise does not block generation", async () => {
     mockDbState.selectQueue.push([joinedRow({ donor: donorRow({ address: "   " }) })]);
     mockDbState.selectQueue.push([templateRow()]);
 
     const results = await generateAcknowledgmentLetters(["ack-1"]);
 
     expect(results).toEqual([
-      { ackId: "ack-1", status: "skipped", reason: "donor missing address" },
+      { ackId: "ack-1", status: "generated", letterText: expect.any(String) },
     ]);
   });
 
@@ -806,5 +845,93 @@ describe("emailAcknowledgmentLetters — envelope (from/subject/replyTo/bcc) and
     const call = vi.mocked(sendBulkMemberEmail).mock.calls[0][0];
     expect(call.replyTo).toBeUndefined();
     expect(call.bcc).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gift purpose plumbing (2026-08-12) —
+// docs/work-log/2026-08-12-gift-purpose-on-acknowledgments.md
+//
+// The composer's own behaviour is covered in
+// ledger-acknowledgment-letter.test.ts. What is proven HERE is only that the
+// stored column reaches it: a purpose that is right in the database and absent
+// from the letter is the failure this feature is most likely to ship with.
+// ---------------------------------------------------------------------------
+
+describe("gift purpose — column to letter", () => {
+  it("listGeneratableAcknowledgments() selects purpose onto the row", async () => {
+    mockDbState.selectQueue.push([
+      joinedRow({ ack: ackRow({ purpose: "the 2026 Rudolph Run" }) }),
+    ]);
+
+    const rows = await listGeneratableAcknowledgments({ ackIds: ["ack-1"] });
+
+    expect(rows[0].purpose).toBe("the 2026 Rudolph Run");
+  });
+
+  it("listGeneratableAcknowledgments() carries a null purpose through as null", async () => {
+    mockDbState.selectQueue.push([joinedRow()]);
+
+    const rows = await listGeneratableAcknowledgments({ ackIds: ["ack-1"] });
+
+    expect(rows[0].purpose).toBeNull();
+  });
+
+  it("generateAcknowledgmentLetters() writes the purpose clause into the stored letterText", async () => {
+    mockDbState.selectQueue.push([
+      joinedRow({ ack: ackRow({ purpose: "the 2026 Rudolph Run" }) }),
+    ]);
+    mockDbState.selectQueue.push([templateRow()]);
+
+    const results = await generateAcknowledgmentLetters(["ack-1"]);
+    const generated = results[0] as { status: string; letterText: string };
+
+    expect(generated.status).toBe("generated");
+    expect(generated.letterText).toContain(
+      "received a cash contribution of $500.00 from you in support of the 2026 Rudolph Run.",
+    );
+    // letterText is the auditable record — the clause must be in what is
+    // PERSISTED, not merely in what was returned.
+    expect(mockDbState.updateCalls).toHaveLength(1);
+    expect(String(mockDbState.updateCalls[0].values.letterText)).toContain(
+      "in support of the 2026 Rudolph Run.",
+    );
+  });
+
+  it("generateAcknowledgmentLetters() produces byte-identical text to the no-purpose letter when purpose is null", async () => {
+    mockDbState.selectQueue.push([joinedRow()]);
+    mockDbState.selectQueue.push([templateRow()]);
+    const withoutPurpose = (
+      (await generateAcknowledgmentLetters(["ack-1"]))[0] as { letterText: string }
+    ).letterText;
+
+    resetMockDb();
+    mockDbState.selectQueue.push([joinedRow({ ack: ackRow({ purpose: "   " }) })]);
+    mockDbState.selectQueue.push([templateRow()]);
+    const withBlankPurpose = (
+      (await generateAcknowledgmentLetters(["ack-1"]))[0] as { letterText: string }
+    ).letterText;
+
+    expect(withBlankPurpose).toBe(withoutPurpose);
+    expect(withoutPurpose).toContain("received a cash contribution of $500.00 from you.");
+  });
+
+  it("passes the ack's OWN purpose, never a value derived from anything else", async () => {
+    // Two acks in one batch with different purposes — proves the value is
+    // read per row rather than hoisted once for the batch (the shape the
+    // template and treasurer name legitimately use).
+    mockDbState.selectQueue.push([
+      joinedRow({ ack: ackRow({ id: "ack-1", purpose: "the 2026 Rudolph Run" }) }),
+      joinedRow({ ack: ackRow({ id: "ack-2", purpose: "the scholarship fund" }) }),
+    ]);
+    mockDbState.selectQueue.push([templateRow()]);
+
+    const results = (await generateAcknowledgmentLetters(["ack-1", "ack-2"])) as {
+      ackId: string;
+      letterText: string;
+    }[];
+
+    expect(results[0].letterText).toContain("in support of the 2026 Rudolph Run.");
+    expect(results[1].letterText).toContain("in support of the scholarship fund.");
   });
 });

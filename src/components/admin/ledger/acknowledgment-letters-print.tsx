@@ -24,8 +24,15 @@ export interface PrintableAcknowledgmentLetter {
  * mailing block, then the full composed letter body rendered through
  * RichMarkdownContent (the SAME renderer the budget notes print surface
  * uses — Markdown-only, no raw HTML passthrough, per DECISION-073's reuse
- * note; promoted to this neutral name by DECISION-074 Ruling 2). No
- * letterhead/logo — out of scope for this increment.
+ * note; promoted to this neutral name by DECISION-074 Ruling 2).
+ *
+ * The club logo heads every page (2026-08-12; previously deferred as out of
+ * scope). It is rendered HERE rather than baked into `letterText`, because
+ * that string is the stored, auditable record of what the donor was told and
+ * is passed through a Markdown-only renderer with no raw-HTML passthrough —
+ * letterhead is presentation, and each surface applies its own. A real <img>
+ * (not a CSS background) so it survives printing: browsers omit background
+ * images by default.
  *
  * This component renders exactly what generateAcknowledgmentLetters()
  * returned/wrote server-side — it never re-composes or re-derives letter
@@ -46,11 +53,25 @@ export default function AcknowledgmentLettersPrint({
     <div className="hidden print:block text-gray-900">
       {letters.map((letter, i) => (
         <section key={letter.ackId} className={i === 0 ? "mb-8" : "mb-8 break-before-page"}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- print surface:
+              a plain <img> prints predictably at a fixed physical width; next/image's
+              srcset/lazy behaviour is tuned for viewports, not paper. */}
+          <img
+            src="/images/logo-official.png"
+            alt="Westerville Lions Club"
+            width={196}
+            height={72}
+            className="mb-6 h-auto w-[196px]"
+          />
           <p className="text-sm">{formattedTodayDate}</p>
           <p className="mt-4 text-sm whitespace-pre-line">
             {letter.donorName}
-            {"\n"}
-            {letter.donorAddress}
+            {letter.donorAddress.trim().length > 0 && (
+              <>
+                {"\n"}
+                {letter.donorAddress}
+              </>
+            )}
           </p>
           <div className="mt-6">
             <RichMarkdownContent>{letter.letterText}</RichMarkdownContent>

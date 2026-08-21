@@ -913,6 +913,23 @@ export const ledgerAcknowledgments = pgTable(
     // specific. See docs/decisions.md DECISION-073 and docs/work-log/
     // 2026-08-08-acknowledgment-letter-generation.md Phase 3.
     quidProQuoDescription: text("quid_pro_quo_description"),
+    // What the gift was FOR, in the treasurer's own words (e.g. "the 2026
+    // Rudolph Run"). Optional, donor-facing prose: when set,
+    // composeAcknowledgmentLetter() extends the confirmation sentence to
+    // "...received a cash contribution of $500.00 from you in support of the
+    // 2026 Rudolph Run." When NULL or blank the letter is byte-identical to
+    // one composed without it, so every existing letter is unaffected.
+    //
+    // Deliberately NOT derived from the transaction's category, campaign, or
+    // budget line: those are internal accounting labels ("Fundraising Income —
+    // Events"), not language a donor should read in a tax receipt. This is the
+    // treasurer typing what the donor would recognise.
+    //
+    // Editable only while sentAt IS NULL — see the PATCH guard in
+    // src/app/api/admin/ledger/transactions/[id]/acknowledge/route.ts. Once a
+    // letter has gone out, the record of what the donor was told must not
+    // change retroactively.
+    purpose: text("purpose"),
     // null = pending acknowledgment; set to now() when treasurer marks sent
     sentAt: timestamp("sent_at"),
     // null = unset (legacy row, or not yet sent); 'email' | 'print' once a
@@ -1757,6 +1774,82 @@ export const documentVersions = pgTable(
 
 export type DocumentVersion = typeof documentVersions.$inferSelect;
 export type NewDocumentVersion = typeof documentVersions.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Welcome Packet — DB-backed, admin-authored raw HTML
+// docs/work-log/2026-08-21-welcome-packet-live-page.md, DECISION-090.
+//
+// A documented, narrow, admin-only exception to DECISION-076 Ruling 3
+// (governing documents' markdown-only, no-raw-HTML-passthrough policy) — the
+// packet's custom CSS variables, fixed print pagination, and embedded images
+// cannot be expressed as markdown. The entire safety argument rests on
+// welcome_packet.manage staying bound to `admin` only; no sanitization
+// library was added (the user's explicit choice). Do not widen the
+// permission, and do not cite this table as precedent for raw HTML
+// elsewhere, without revisiting DECISION-090 directly.
+//
+// Two sibling tables, NOT `documents`' parent-pointing-at-child shape —
+// welcome packets have no parent identity; each Lions year is a peer row,
+// not a version of one shared document.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const welcomePackets = pgTable(
+  "welcome_packets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Administrative label only (e.g. "2027-28"), validated against
+    // /^\d{4}-\d{2}$/ in src/lib/welcome-packets.ts (DECISION-041 pattern,
+    // no DB CHECK). NOT parsed from rawHtml's <title> — that stays a
+    // display string inside the content, extracted at read time.
+    // NOT unique-constrained — same reasoning as minutes' no-
+    // unique(kind, meetingDate): a redo or correction for one Lions year
+    // must stay representable as a second row, not force an overwrite.
+    lionsYear: text("lions_year").notNull(),
+    // The ENTIRE admin-authored source — <title>/<style>/<div class="deck">
+    // ...</div>, unmodified. One field, not split into title/style/deck
+    // columns: the admin authors and edits this as one raw-HTML textarea,
+    // and extractPacketParts() already parses this exact shape reliably at
+    // read time. Storing three separate columns would just be a redundant,
+    // driftable cache of what one parse of this field already gives for
+    // free.
+    rawHtml: text("raw_html").notNull(),
+    // Attribution only, same convention as minutes.authorUserId /
+    // documentVersions.authorUserId — nullable, ON DELETE SET NULL, never
+    // displayed to members.
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    updatedByUserId: uuid("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    // NO pendingDeleteAt / soft-delete column — no delete verb is scoped in
+    // this feature (Phase 1 Supplemental, Flows A-E). Add one later, against
+    // minutes' or ledgerBudgets' precedent, if a real delete requirement
+    // shows up. Do not build a column for a verb that doesn't exist yet.
+  },
+  (t) => [index("ix_welcome_packets_lions_year").on(t.lionsYear)],
+);
+
+export type WelcomePacket = typeof welcomePackets.$inferSelect;
+export type NewWelcomePacket = typeof welcomePackets.$inferInsert;
+
+// Singleton current-pointer — same convention as ledgerSettings / the
+// ledger acknowledgment-letter-template table (plain uuid PK, "one row"
+// enforced by application convention, not a hardcoded literal id). NOT
+// documents.currentVersionId copied verbatim — that pointer lives ON the
+// parent `documents` row because every documentVersions row belongs to one
+// document identity; welcome packets have no equivalent parent, so the
+// pointer needs its own tiny home. "Mark as current" is a single
+// `UPDATE welcome_packet_current SET packet_id = $id, ...` — structurally
+// race-free, since one column can only ever hold one value (unlike a
+// boolean-per-row model, which needs "unset all others, set this one" as
+// two logical operations).
+export const welcomePacketCurrent = pgTable("welcome_packet_current", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  packetId: uuid("packet_id").references(() => welcomePackets.id, { onDelete: "set null" }),
+  setByUserId: uuid("set_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  setAt: timestamp("set_at"),
+});
+
+export type WelcomePacketCurrent = typeof welcomePacketCurrent.$inferSelect;
 
 // ── Project / Activity Proposals ────────────────────────────────────────────
 // docs/work-log/2026-08-09-project-proposal-form.md (Phase 3, DECISION-084).

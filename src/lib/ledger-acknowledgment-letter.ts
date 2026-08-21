@@ -8,8 +8,9 @@
  *   template.greeting  (tokens substituted)
  *   template.bodyText  (tokens substituted)
  *   REQUIRED BLOCK      <- buildRequiredBlock(), unexported, generated fresh
- *                          from entity/ack data — no parameter, template
- *                          field, or token can reach or suppress this.
+ *                          from entity/ack data (plus the optional
+ *                          `giftPurpose` phrase, below) — no template field
+ *                          or token can reach or suppress this.
  *   template.closing   (tokens substituted)
  *   template.signatureName + template.signatureTitle (tokens substituted)
  *
@@ -24,6 +25,14 @@
  * with a fully-populated template. Proven by the "empty-template fuzz
  * test" in ledger-acknowledgment-letter.test.ts (Phase 3 design doc, Unit
  * Test #7), not just asserted here.
+ *
+ * ONE exception, added 2026-08-12: the optional `giftPurpose` argument. It is
+ * per-acknowledgment data (ledger_acknowledgments.purpose), NOT a template
+ * field, and buildRequiredBlock() interpolates it into one fixed clause
+ * (" in support of X") in one fixed position, Markdown-escaped. It can name
+ * what the gift funded; it cannot reword, relocate, or remove any
+ * substantiation sentence, and omitting it reproduces the previous output
+ * byte-for-byte.
  *
  * No DB import — this module is pure and unit-testable with
  * `environment: "node"` and no Postgres connection. Money formatting reuses
@@ -53,13 +62,16 @@ export interface ComposeLetterEntity {
 export interface ComposeLetterDonor {
   name: string;
   /**
-   * NON-nullable here — the caller (generateAcknowledgmentLetters) must
-   * guarantee a donor with an address before ever calling this function; see
-   * the Phase 3 design doc's §Guards. Making it non-optional in the type is
-   * a second, structural line of defense against calling this with an
-   * unaddressed donor, not just a runtime check upstream.
+   * Nullable since 2026-08-12. This was non-nullable to structurally enforce
+   * an upstream guard that refused to generate a letter for a donor with no
+   * postal address — but that guard was never a legal requirement (IRS
+   * Pub. 1771 does not ask for the donor's address; Schedule B does, and
+   * that is a different document), and the letter body has never rendered
+   * the address in any case: only `donorName` is substituted below. It is
+   * kept on the type because the address is still what a printed letter is
+   * mailed to.
    */
-  address: string;
+  address: string | null;
 }
 
 export interface ComposeLetterAck {
@@ -94,7 +106,7 @@ export interface ComposeLetterTemplate {
  * silently deleting it would produce a grammatically-plausible but
  * silently-wrong sentence instead, which is worse.
  */
-type TokenName = "donorName" | "giftAmount" | "giftDate" | "clubName";
+type TokenName = "donorName" | "giftAmount" | "giftDate" | "clubName" | "treasurerName";
 
 const TOKEN_PATTERN = /\{\{(\w+)\}\}/g;
 
@@ -160,10 +172,36 @@ function formatGiftDate(txnDate: string): string {
 // Structure" section for the required-vs-good-practice sourcing.
 // ---------------------------------------------------------------------------
 
-function buildRequiredBlock(entity: ComposeLetterEntity, ack: ComposeLetterAck): string {
+/**
+ * @param giftPurpose the treasurer's optional phrase naming what the gift was
+ *   FOR ("the 2026 Rudolph Run"). When non-blank it extends the confirmation
+ *   sentence with " in support of {purpose}"; when null/blank/whitespace-only
+ *   the returned block is BYTE-IDENTICAL to what the same entity/ack produced
+ *   before this parameter existed — that equivalence is the contract, pinned by
+ *   a test, because every acknowledgment already in the database has no purpose
+ *   and its letter must not silently change wording.
+ *
+ *   Escaped with escapeMarkdownValue() exactly like a substituted token value:
+ *   this is free text typed into a form that lands in a Markdown-rendered
+ *   document, so a purpose containing `*`, `_`, `[` or a backtick must display
+ *   literally rather than turn the required block into emphasis or a link. The
+ *   surrounding prose here is fixed and unescaped — only the interpolated value
+ *   is untrusted.
+ */
+function buildRequiredBlock(
+  entity: ComposeLetterEntity,
+  ack: ComposeLetterAck,
+  giftPurpose?: string | null,
+): string {
   const taxClass = formatTaxClassification(entity.taxClassification);
   const giftDate = formatGiftDate(ack.txnDate);
   const amount = formatBudgetReferenceCents(ack.amountCents);
+
+  // Empty string (not undefined) so the template literals below concatenate to
+  // the pre-existing sentence exactly, with no stray space to trim away.
+  const trimmedPurpose = giftPurpose?.trim() ?? "";
+  const purposeClause =
+    trimmedPurpose.length > 0 ? ` in support of ${escapeMarkdownValue(trimmedPurpose)}` : "";
 
   // Not required by Pub. 1771's CWA content rule, but included as good
   // practice (aids the donor's own recordkeeping) — see design doc. A null
@@ -190,7 +228,14 @@ function buildRequiredBlock(entity: ComposeLetterEntity, ack: ComposeLetterAck):
         : `Based on our good-faith estimate of that value, no portion of your payment is tax-deductible.`;
 
     return [
-      `${entity.name} is a tax-exempt organization described in Internal Revenue Code Section ${taxClass}. This letter confirms that on ${giftDate}, ${entity.name} received a payment of ${amount} from you, in connection with providing you ${description} with an estimated fair market value of ${fmv}.`,
+      // The purpose clause sits BEFORE the quid-pro-quo disclosure, never
+      // inside or in place of it: "in support of X" says what the donor was
+      // funding, "in connection with providing you Y" is the IRS-required
+      // statement of what they got back. Applying the clause here too (rather
+      // than to the written_ack sentence alone) is deliberate — a treasurer who
+      // types a purpose on a quid-pro-quo acknowledgment would otherwise see it
+      // silently vanish from the letter.
+      `${entity.name} is a tax-exempt organization described in Internal Revenue Code Section ${taxClass}. This letter confirms that on ${giftDate}, ${entity.name} received a payment of ${amount} from you${purposeClause}, in connection with providing you ${description} with an estimated fair market value of ${fmv}.`,
       `Federal tax law requires us to inform you that the amount of your payment that is deductible for federal income tax purposes is limited to the excess of the amount you paid over the value of the goods or services you received. ${deductibleSentence}`,
       einSentence,
     ].join("\n\n");
@@ -198,7 +243,7 @@ function buildRequiredBlock(entity: ComposeLetterEntity, ack: ComposeLetterAck):
 
   // written_ack_250 — no goods or services provided.
   return [
-    `${entity.name} is a tax-exempt organization described in Internal Revenue Code Section ${taxClass}. This letter confirms that on ${giftDate}, ${entity.name} received a cash contribution of ${amount} from you.`,
+    `${entity.name} is a tax-exempt organization described in Internal Revenue Code Section ${taxClass}. This letter confirms that on ${giftDate}, ${entity.name} received a cash contribution of ${amount} from you${purposeClause}.`,
     `No goods or services were provided in exchange for this contribution.`,
     einSentence,
   ].join("\n\n");
@@ -222,21 +267,48 @@ export function composeAcknowledgmentLetter(args: {
   donor: ComposeLetterDonor;
   ack: ComposeLetterAck;
   template: ComposeLetterTemplate;
+  /**
+   * Display name of whoever holds the Board office of Treasurer, from
+   * resolveTreasurer() (DECISION-086) — the same single definition of the
+   * office that signs dues reminders. Null when the office can't be resolved.
+   */
+  treasurerName?: string | null;
+  /**
+   * Optional, treasurer-typed phrase naming what the gift was for — folded
+   * into the required block's confirmation sentence by buildRequiredBlock().
+   * Note this is the ONE piece of caller-supplied prose that reaches the
+   * required block, and it does so through a fixed clause in a fixed position
+   * with its value Markdown-escaped: it can name the purpose, it cannot
+   * restate, reword, or suppress any substantiation sentence. The module's
+   * top-of-file guarantee — that `template.*` never touches the required
+   * block — is unchanged; `giftPurpose` is not a template field and is not
+   * writable from the letter-template screen.
+   */
+  giftPurpose?: string | null;
 }): string {
-  const { entity, donor, ack, template } = args;
+  const { entity, donor, ack, template, treasurerName, giftPurpose } = args;
 
   const tokenValues: Record<TokenName, string> = {
     donorName: donor.name,
     giftAmount: formatBudgetReferenceCents(ack.amountCents),
     giftDate: formatGiftDate(ack.txnDate),
     clubName: entity.name,
+    treasurerName: treasurerName ?? "",
   };
 
   const greeting = substituteTokens(template.greeting, tokenValues);
   const bodyText = substituteTokens(template.bodyText, tokenValues);
-  const requiredBlock = buildRequiredBlock(entity, ack);
+  const requiredBlock = buildRequiredBlock(entity, ack, giftPurpose);
   const closing = substituteTokens(template.closing, tokenValues);
-  const signatureName = substituteTokens(template.signatureName, tokenValues);
+  // An unset signature name falls back to the office-holder. The template
+  // field ships EMPTY (getLetterTemplate()'s defaults), so without this a
+  // letter goes out signed "Treasurer, Westerville Lions Club Foundation"
+  // with no human name at all — which is what production and dev both did
+  // until 2026-08-12. An explicitly typed name still wins: the treasurer may
+  // deliberately have someone else sign a particular batch.
+  const resolvedSignatureName =
+    template.signatureName.trim().length > 0 ? template.signatureName : (treasurerName ?? "");
+  const signatureName = substituteTokens(resolvedSignatureName, tokenValues);
   const signatureTitle = substituteTokens(template.signatureTitle, tokenValues);
 
   // Signature name/title form one signature-block paragraph (name then
@@ -287,7 +359,28 @@ function escapeHtml(input: string): string {
  * function's \n\n split consumes that exact, already-documented contract,
  * not a new assumption.
  */
-export function composeAcknowledgmentEmailHtml(letterText: string): string {
+/**
+ * @param logoUrl ABSOLUTE url of the club logo, or null for no letterhead.
+ *   Must be absolute: a root-relative "/images/..." has nothing to resolve
+ *   against inside a mail client and renders as a broken image. Callers derive
+ *   it from NEXTAUTH_URL — and must use the absolute-origin fallback, never the
+ *   `?? ""` variant that several in-app link builders use, since an empty
+ *   origin yields exactly that broken relative src.
+ *
+ * The logo is deliberately NOT part of `letterText`. That string is the stored,
+ * auditable record of what the donor was told, is rendered on the print surface
+ * through a Markdown-only renderer that passes no raw HTML, and is reproduced
+ * verbatim from the database — letterhead is presentation, applied by each
+ * renderer, and baking markup into it would corrupt the record.
+ *
+ * Remote images are blocked by default in many mail clients, so the letterhead
+ * carries `alt` text and the letter below it is complete and legally sufficient
+ * on its own — a donor whose client blocks the image still has a valid receipt.
+ */
+export function composeAcknowledgmentEmailHtml(
+  letterText: string,
+  logoUrl?: string | null,
+): string {
   const leadIn =
     "Please find your official gift acknowledgment below — you may want to save or print this " +
     "email for your tax records.";
@@ -297,8 +390,13 @@ export function composeAcknowledgmentEmailHtml(letterText: string): string {
     .map((p) => `<p style="margin:0 0 12px;line-height:1.5;">${escapeHtml(p)}</p>`)
     .join("\n");
 
+  const letterhead =
+    logoUrl && logoUrl.startsWith("http")
+      ? `<img src="${escapeHtml(logoUrl)}" alt="Westerville Lions Club" width="196" style="display:block;width:196px;max-width:100%;height:auto;margin:0 0 20px;border:0;" />\n`
+      : "";
+
   return `<div style="font-family:Arial, Helvetica, sans-serif;color:#1a1a1a;font-size:14px;max-width:640px;">
-<p style="margin:0 0 16px;line-height:1.5;">${leadIn}</p>
+${letterhead}<p style="margin:0 0 16px;line-height:1.5;">${leadIn}</p>
 ${paragraphs}
 </div>`;
 }

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { LedgerDonor } from "@/lib/db/schema";
 import { formatEmailList } from "@/lib/utils";
+import GiftPurposeField from "./gift-purpose-field";
 
 interface AcknowledgeDialogProps {
   txnId: string;
@@ -33,6 +34,7 @@ export default function AcknowledgeDialog({
   const [donorId, setDonorId] = useState(initialDonorId ?? "");
   const [qppCents, setQppCents] = useState(""); // quid-pro-quo value in dollars
   const [qppDescription, setQppDescription] = useState(""); // e.g. "one Rudolph Run 5K entry"
+  const [purpose, setPurpose] = useState(""); // e.g. "the 2026 Rudolph Run"
   const [typeOverride, setTypeOverride] = useState<"" | "written_ack_250" | "quid_pro_quo_75">("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -107,6 +109,10 @@ export default function AcknowledgeDialog({
     }
     if (qppValue !== null) body.quidProQuoValueCents = qppValue;
     if (qppDescription.trim()) body.quidProQuoDescription = qppDescription.trim();
+    // Omitted entirely when blank — the server normalizes blank to NULL either
+    // way, but sending nothing keeps "no purpose" and "empty purpose" the same
+    // request.
+    if (purpose.trim()) body.purpose = purpose.trim();
 
     setSubmitting(true);
     try {
@@ -223,6 +229,12 @@ export default function AcknowledgeDialog({
                 Leave blank to record the acknowledgment without linking a donor record.
               </p>
             </div>
+
+            {/* Gift purpose — optional donor-facing prose folded into the
+                letter's confirmation sentence. Editable later (while unsent)
+                from the pending queue, so leaving it blank here is never a
+                dead end. */}
+            <GiftPurposeField id="ack-purpose" value={purpose} onChange={setPurpose} />
 
             {/* Quid-pro-quo value */}
             <div>

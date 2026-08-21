@@ -85,6 +85,19 @@ export default async function MemberRecordsPage({
           </div>
         ) : (
           <>
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">New Member Welcome Packet</h2>
+              <Link
+                href="/members/records/welcome-packet"
+                className="block bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-4 max-w-md focus:outline-none focus:ring-2 focus:ring-lions-blue"
+              >
+                <p className="font-semibold text-gray-900">Welcome Packet</p>
+                <p className="text-sm text-gray-500">
+                  New-member orientation and club overview for the current Lions year.
+                </p>
+              </Link>
+            </div>
+
             {documents.length > 0 && (
               <div className="space-y-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Governing Documents</h2>

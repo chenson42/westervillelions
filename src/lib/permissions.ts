@@ -104,6 +104,14 @@ export const FEATURES = {
   // along on any existing binding (board_member does NOT already hold
   // documents.manage/minutes.manage; verified against production).
   PROPOSALS_REVIEW: "proposals.review",
+
+  // Welcome Packet (docs/work-log/2026-08-21-welcome-packet-live-page.md,
+  // DECISION-090). Raw-HTML admin authoring is a documented, narrow
+  // exception to DECISION-076 Ruling 3 — the safety argument rests entirely
+  // on this key staying admin-only. Do not widen without revisiting
+  // DECISION-090. One key covers create, edit, and mark-current — no
+  // delete verb exists in this design.
+  WELCOME_PACKET_MANAGE: "welcome_packet.manage",
 } as const;
 
 // Type for feature names
@@ -124,6 +132,7 @@ export const FEATURE_CATEGORIES = {
   MINUTES: "minutes",
   DOCUMENTS: "documents",
   PROPOSALS: "proposals",
+  WELCOME_PACKET: "welcome_packet",
 } as const;
 
 // Helper to get features by category
@@ -188,6 +197,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
     "Create document versions, review pending amendments, adopt substantive changes, and link citing minutes",
 
   [FEATURES.PROPOSALS_REVIEW]: "View and decide project/activity proposals",
+
+  [FEATURES.WELCOME_PACKET_MANAGE]: "Author and publish the member welcome packet",
 };
 
 // Default role names (should match database seed data)
@@ -379,6 +390,12 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         href: "/admin/documents",
         icon: "📜",
         requiredFeature: FEATURES.DOCUMENTS_MANAGE,
+      },
+      {
+        name: "Welcome Packet",
+        href: "/admin/welcome-packets",
+        icon: "🧳",
+        requiredFeature: FEATURES.WELCOME_PACKET_MANAGE,
       },
     ],
   },

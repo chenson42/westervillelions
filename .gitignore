@@ -50,6 +50,13 @@ drizzle/*
 # local receipt storage (DECISION-020 — LocalReceiptStorage adapter for dev)
 .receipt-store/
 
+# Club documents kept locally, never committed. The 2026-27 welcome packet and
+# its renderer were deleted in aa3b539 because the packet embeds the club's real
+# giving and budget figures. This repository is public; that content stays on
+# disk (and in the private archive), not in source control.
+docs/club-documents/
+scripts/render-welcome-packet.sh
+
 # Timestamped .env backups. On 2026-08-12 a `.env.local.bak-<ts>` created while
 # blanking a key was swept into a commit by `git add -A` and pushed, exposing
 # every production credential. `.env*` alone did not catch it because the

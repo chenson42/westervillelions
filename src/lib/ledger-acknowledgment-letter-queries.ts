@@ -58,6 +58,13 @@ export type GeneratableAcknowledgmentRow = {
   txnDate: string;
   quidProQuoValueCents: number | null;
   quidProQuoDescription: string | null;
+  /**
+   * The treasurer's optional phrase naming what the gift was for. NULL for
+   * every acknowledgment recorded before 2026-08-12 and for any the treasurer
+   * left blank — composeAcknowledgmentLetter() then produces exactly the
+   * letter it always did.
+   */
+  purpose: string | null;
   sentAt: Date | null;
   donor: { id: string; name: string; address: string | null; emails: string[] } | null;
   entity: { id: string; name: string; ein: string | null; taxClassification: string };
@@ -128,6 +135,7 @@ export async function listGeneratableAcknowledgments(
     txnDate: r.ack.txnDate,
     quidProQuoValueCents: r.ack.quidProQuoValueCents,
     quidProQuoDescription: r.ack.quidProQuoDescription,
+    purpose: r.ack.purpose,
     sentAt: r.ack.sentAt,
     donor: r.donor
       ? { id: r.donor.id, name: r.donor.name, address: r.donor.address, emails: r.donor.emails }
@@ -292,13 +300,23 @@ const KNOWN_ACK_TYPES = new Set(["written_ack_250", "quid_pro_quo_75"]);
  *   3. category excluded from acknowledgments      — fresh JOIN re-check, not
  *      inherited from queue-membership-at-creation-time (Guard §1b)
  *   4. no donor linked
- *   5. donor missing address
- *   6. unrecognized acknowledgment type             — enum sanity check only;
+ *   5. unrecognized acknowledgment type             — enum sanity check only;
  *      the below-threshold guard is deliberately NOT re-derived here
  *      (DECISION-073 item 3 — that decision belongs solely to ack-creation
  *      time / deriveAckType(), re-deriving here could reject a legitimate
  *      manual typeOverride)
- *   7. generated
+ *   6. generated
+ *
+ * A donor with NO postal address on file is deliberately NOT a guard
+ * (2026-08-12). IRS Pub. 1771 lists what a written acknowledgment must
+ * contain — the organization's name, the amount, the no-goods-or-services
+ * statement — and the donor's address is not among them. (Contributor
+ * addresses are a Form 990 Schedule B requirement, which is a filing to the
+ * IRS, not this letter to the donor.) The letter body never renders the
+ * address either: composeAcknowledgmentLetter() substitutes donorName only.
+ * Blocking generation on it withheld a compliant receipt over a field that
+ * is used solely to address an envelope — and since 2026-08-12 a letter can
+ * be emailed instead, so an envelope may never be involved.
  */
 export async function generateAcknowledgmentLetters(
   ackIds: string[],
@@ -306,6 +324,18 @@ export async function generateAcknowledgmentLetters(
   const rows = await listGeneratableAcknowledgments({ ackIds });
   const rowsById = new Map(rows.map((r) => [r.ackId, r]));
   const template = await getLetterTemplate();
+
+  // Who signs. Same single definition of the office as the dues reminder
+  // (DECISION-086) — the signature must track the office, not whoever pressed
+  // the button. Unlike the dues reminder this does NOT hard-block when the
+  // office is unresolvable: a donor is legally entitled to their receipt, and
+  // Pub. 1771 requires the ORGANIZATION's name, not a named signer. An
+  // unresolved office therefore degrades to the title-only signature that was
+  // the previous behaviour, rather than withholding the letter.
+  const treasurer = await resolveTreasurer();
+  const treasurerName = treasurer.ok
+    ? `${treasurer.firstName} ${treasurer.lastName}`.trim()
+    : null;
 
   const results: GenerateLetterResult[] = [];
   const toWrite: { ackId: string; letterText: string }[] = [];
@@ -333,10 +363,6 @@ export async function generateAcknowledgmentLetters(
       results.push({ ackId, status: "skipped", reason: "no donor linked" });
       continue;
     }
-    if (!row.donor.address || row.donor.address.trim().length === 0) {
-      results.push({ ackId, status: "skipped", reason: "donor missing address" });
-      continue;
-    }
     if (!KNOWN_ACK_TYPES.has(row.type)) {
       results.push({ ackId, status: "skipped", reason: "unrecognized acknowledgment type" });
       continue;
@@ -359,6 +385,11 @@ export async function generateAcknowledgmentLetters(
         signatureName: template.signatureName,
         signatureTitle: template.signatureTitle,
       },
+      treasurerName,
+      // Read off the ack row, never re-derived from the transaction's
+      // category/campaign — this is prose the treasurer typed for the donor to
+      // read, not an accounting label (see schema.ts).
+      giftPurpose: row.purpose,
     });
 
     results.push({ ackId, status: "generated", letterText });
@@ -522,7 +553,11 @@ export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<Emai
   const recipients: { to: string; html: string }[] = [];
   const meta: { ackId: string; to: string }[] = [];
   for (const candidate of claimed) {
-    const html = composeAcknowledgmentEmailHtml(candidate.letterText);
+    // Absolute origin, never the `?? ""` fallback other link builders use: an
+    // empty origin yields a root-relative <img src>, which no mail client can
+    // resolve. Falls back to the public site, which serves the same asset.
+    const logoUrl = `${process.env.NEXTAUTH_URL || "https://westervillelions.org"}/images/logo-official.png`;
+    const html = composeAcknowledgmentEmailHtml(candidate.letterText, logoUrl);
     for (const to of candidate.emails) {
       meta.push({ ackId: candidate.ackId, to });
       recipients.push({ to, html });

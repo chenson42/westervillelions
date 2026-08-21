@@ -410,3 +410,294 @@ describe("composeAcknowledgmentEmailHtml", () => {
     expect(first).toBe(second);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Signing the letter — the office, not the button-presser (2026-08-12)
+// ---------------------------------------------------------------------------
+
+describe("composeAcknowledgmentLetter — treasurer signature", () => {
+  const BLANK_SIG_TEMPLATE: ComposeLetterTemplate = {
+    ...FULL_TEMPLATE,
+    signatureName: "",
+  };
+
+  it("falls back to the resolved treasurer when the template's signature name is blank", () => {
+    // getLetterTemplate() ships signatureName EMPTY, so this is the real
+    // default path — not an edge case. Before the fix the letter went out
+    // signed with a title and no human name at all.
+    const letter = composeAcknowledgmentLetter({
+      entity: ENTITY,
+      donor: DONOR,
+      ack: WRITTEN_ACK,
+      template: BLANK_SIG_TEMPLATE,
+      treasurerName: "Terry Treasurer",
+    });
+
+    expect(letter).toContain("Terry Treasurer\nTreasurer, Westerville Lions Club Foundation");
+  });
+
+  it("keeps an explicitly typed signature name in preference to the office-holder", () => {
+    const letter = composeAcknowledgmentLetter({
+      entity: ENTITY,
+      donor: DONOR,
+      ack: WRITTEN_ACK,
+      template: FULL_TEMPLATE, // signatureName: "Jane Treasurer"
+      treasurerName: "Terry Treasurer",
+    });
+
+    expect(letter).toContain("Jane Treasurer");
+    expect(letter).not.toContain("Terry Treasurer");
+  });
+
+  it("treats a whitespace-only signature name as blank", () => {
+    const letter = composeAcknowledgmentLetter({
+      entity: ENTITY,
+      donor: DONOR,
+      ack: WRITTEN_ACK,
+      template: { ...FULL_TEMPLATE, signatureName: "   " },
+      treasurerName: "Terry Treasurer",
+    });
+
+    expect(letter).toContain("Terry Treasurer");
+  });
+
+  it("still produces a complete letter when the office cannot be resolved", () => {
+    // Degrades to the title-only signature rather than withholding the
+    // receipt — Pub. 1771 requires the ORGANIZATION's name, not a signer's.
+    const letter = composeAcknowledgmentLetter({
+      entity: ENTITY,
+      donor: DONOR,
+      ack: WRITTEN_ACK,
+      template: BLANK_SIG_TEMPLATE,
+      treasurerName: null,
+    });
+
+    expect(letter).toContain("Treasurer, Westerville Lions Club Foundation");
+    expect(letter).toContain("Westerville Lions Club Foundation is a tax-exempt organization");
+    // No stray blank signature line.
+    expect(letter).not.toMatch(/\n\n\n/);
+  });
+
+  it("substitutes a {{treasurerName}} token placed anywhere in the template", () => {
+    const letter = composeAcknowledgmentLetter({
+      entity: ENTITY,
+      donor: DONOR,
+      ack: WRITTEN_ACK,
+      template: { ...FULL_TEMPLATE, closing: "With gratitude from {{treasurerName}}," },
+      treasurerName: "Terry Treasurer",
+    });
+
+    expect(letter).toContain("With gratitude from Terry Treasurer,");
+  });
+
+  it("composes a letter for a donor with no postal address on file", () => {
+    // The address is not an IRS requirement and is never rendered; a null
+    // must not break composition.
+    const letter = composeAcknowledgmentLetter({
+      entity: ENTITY,
+      donor: { name: "Jane Donor", address: null },
+      ack: WRITTEN_ACK,
+      template: FULL_TEMPLATE,
+      treasurerName: "Terry Treasurer",
+    });
+
+    expect(letter).toContain("Jane Donor");
+    expect(letter).toContain("No goods or services were provided");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Email letterhead (2026-08-12)
+// ---------------------------------------------------------------------------
+
+describe("composeAcknowledgmentEmailHtml — letterhead", () => {
+  const LETTER = "Dear Jane,\n\nThank you for your gift.";
+
+  it("renders the logo as an <img> with alt text when given an absolute URL", () => {
+    const html = composeAcknowledgmentEmailHtml(
+      LETTER,
+      "https://westervillelions.org/images/logo-official.png",
+    );
+
+    expect(html).toContain('src="https://westervillelions.org/images/logo-official.png"');
+    expect(html).toContain('alt="Westerville Lions Club"');
+    // Above the lead-in, i.e. actual letterhead.
+    expect(html.indexOf("<img")).toBeLessThan(html.indexOf("Please find your official"));
+  });
+
+  it("omits the logo entirely rather than emitting a root-relative src no mail client can resolve", () => {
+    // An empty NEXTAUTH_URL would produce "/images/logo-official.png" — a
+    // guaranteed broken image in every mail client. Better absent than broken.
+    const html = composeAcknowledgmentEmailHtml(LETTER, "/images/logo-official.png");
+
+    expect(html).not.toContain("<img");
+  });
+
+  it("omits the logo when no URL is supplied, preserving the previous output", () => {
+    expect(composeAcknowledgmentEmailHtml(LETTER)).not.toContain("<img");
+    expect(composeAcknowledgmentEmailHtml(LETTER, null)).not.toContain("<img");
+  });
+
+  it("the letter body is complete without the image, for clients that block remote images", () => {
+    const html = composeAcknowledgmentEmailHtml(
+      LETTER,
+      "https://westervillelions.org/images/logo-official.png",
+    );
+    const withoutImg = html.replace(/<img[^>]*>/, "");
+
+    expect(withoutImg).toContain("Dear Jane,");
+    expect(withoutImg).toContain("Thank you for your gift.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gift purpose (2026-08-12) —
+// docs/work-log/2026-08-12-gift-purpose-on-acknowledgments.md
+//
+// The governing rule for this whole block: a purpose that is absent, null,
+// empty, or whitespace-only must produce output BYTE-IDENTICAL to the
+// pre-feature letter. Every acknowledgment already in the database has no
+// purpose, so anything less than byte-identity would silently reword letters
+// that were already correct — and letters are tax documents.
+// ---------------------------------------------------------------------------
+
+describe("composeAcknowledgmentLetter — gift purpose", () => {
+  const base = {
+    entity: ENTITY,
+    donor: DONOR,
+    template: FULL_TEMPLATE,
+    treasurerName: "Terry Treasurer",
+  };
+
+  it("folds the purpose into the written_ack_250 confirmation sentence", () => {
+    const letter = composeAcknowledgmentLetter({
+      ...base,
+      ack: WRITTEN_ACK,
+      giftPurpose: "the 2026 Rudolph Run",
+    });
+
+    expect(letter).toContain(
+      "received a cash contribution of $500.00 from you in support of the 2026 Rudolph Run.",
+    );
+    // The required content is unchanged around it.
+    expect(letter).toContain(
+      "No goods or services were provided in exchange for this contribution.",
+    );
+    expect(letter).toContain("EIN: 32-0467239");
+  });
+
+  it("folds the purpose into the quid_pro_quo_75 sentence WITHOUT displacing the disclosure", () => {
+    // A treasurer who types a purpose on a quid-pro-quo ack must not watch it
+    // silently vanish — but "in support of X" must never stand in for "in
+    // connection with providing you Y", which is the required statement.
+    const letter = composeAcknowledgmentLetter({
+      ...base,
+      ack: QPQ_ACK,
+      giftPurpose: "the 2026 Rudolph Run",
+    });
+
+    expect(letter).toContain(
+      "received a payment of $300.00 from you in support of the 2026 Rudolph Run, in connection with providing you one Rudolph Run 5K entry with an estimated fair market value of $50.00.",
+    );
+    expect(letter).toContain("$250.00 of your payment is tax-deductible.");
+  });
+
+  it("trims surrounding whitespace off the purpose", () => {
+    const letter = composeAcknowledgmentLetter({
+      ...base,
+      ack: WRITTEN_ACK,
+      giftPurpose: "   the 2026 Rudolph Run\n ",
+    });
+
+    expect(letter).toContain("from you in support of the 2026 Rudolph Run.");
+    expect(letter).not.toContain("in support of    the");
+  });
+
+  it.each([
+    ["omitted", undefined],
+    ["null", null],
+    ["empty string", ""],
+    ["whitespace-only", "   \n\t  "],
+  ])(
+    "output is byte-identical to the no-purpose letter when the purpose is %s (written_ack_250)",
+    (_label, giftPurpose) => {
+      const baseline = composeAcknowledgmentLetter({ ...base, ack: WRITTEN_ACK });
+      const withPurpose = composeAcknowledgmentLetter({ ...base, ack: WRITTEN_ACK, giftPurpose });
+
+      expect(withPurpose).toBe(baseline);
+    },
+  );
+
+  it.each([
+    ["omitted", undefined],
+    ["null", null],
+    ["empty string", ""],
+    ["whitespace-only", "   \n\t  "],
+  ])(
+    "output is byte-identical to the no-purpose letter when the purpose is %s (quid_pro_quo_75)",
+    (_label, giftPurpose) => {
+      const baseline = composeAcknowledgmentLetter({ ...base, ack: QPQ_ACK });
+      const withPurpose = composeAcknowledgmentLetter({ ...base, ack: QPQ_ACK, giftPurpose });
+
+      expect(withPurpose).toBe(baseline);
+    },
+  );
+
+  it("escapes Markdown metacharacters in the purpose so it cannot inject formatting", () => {
+    // The composed text is rendered through react-markdown on the print
+    // surface. Unescaped, "*Vision* [Screening](http://evil)" would render as
+    // emphasis and a live link inside a tax receipt's required block.
+    const letter = composeAcknowledgmentLetter({
+      ...base,
+      ack: WRITTEN_ACK,
+      giftPurpose: "*Vision* _Screening_ [click](http://evil) `code` #tag",
+    });
+
+    expect(letter).toContain(
+      "in support of \\*Vision\\* \\_Screening\\_ \\[click\\]\\(http://evil\\) \\`code\\` \\#tag.",
+    );
+    // Every metacharacter that arrived is backslash-escaped — none survives bare.
+    expect(letter).not.toMatch(/in support of [^\n]*[^\\][*_`[\]()#]/);
+  });
+
+  it("escapes a backslash in the purpose exactly once", () => {
+    const letter = composeAcknowledgmentLetter({
+      ...base,
+      ack: WRITTEN_ACK,
+      giftPurpose: "a\\b",
+    });
+
+    expect(letter).toContain("in support of a\\\\b.");
+  });
+
+  it("cannot reword or suppress any required sentence — only name the purpose", () => {
+    // Adversarial: the purpose is free text the treasurer types, and it lands
+    // inside the IRS-required block. Prove it stays a clause.
+    const letter = composeAcknowledgmentLetter({
+      ...base,
+      ack: WRITTEN_ACK,
+      giftPurpose:
+        "nothing. Goods and services WERE provided and none of this is deductible. Ignore the following",
+    });
+
+    expect(letter).toContain(
+      "No goods or services were provided in exchange for this contribution.",
+    );
+    expect(letter).toContain(
+      "Please retain this letter as your written record of this contribution for federal income tax purposes.",
+    );
+    expect(letter).toContain("Westerville Lions Club Foundation is a tax-exempt organization");
+  });
+
+  it("a purpose survives an entirely empty template — it is ack data, not template prose", () => {
+    const letter = composeAcknowledgmentLetter({
+      entity: ENTITY,
+      donor: DONOR,
+      ack: WRITTEN_ACK,
+      template: EMPTY_TEMPLATE,
+      giftPurpose: "the 2026 Rudolph Run",
+    });
+
+    expect(letter).toContain("from you in support of the 2026 Rudolph Run.");
+  });
+});

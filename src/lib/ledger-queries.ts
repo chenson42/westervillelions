@@ -4962,6 +4962,14 @@ export type PendingAcknowledgmentRow = {
    * relying on a caller remembering that invariant.
    */
   ackSentAt: Date | null;
+  /**
+   * The acknowledgment's gift purpose (what the gift was for, in the
+   * treasurer's words), or null when there is no acknowledgment yet or none
+   * was typed. Carried so the queue can show the current value in its edit
+   * control without a second fetch per row. Editable from this queue precisely
+   * because every row here is unsent — see the PATCH mode='purpose' guard.
+   */
+  ackPurpose: string | null;
 };
 
 export type AcknowledgmentSummaryRow = {
@@ -4971,6 +4979,14 @@ export type AcknowledgmentSummaryRow = {
   txnDate: string;
   type: string;
   sentAt: Date | null;
+  /**
+   * 'email' | 'print' | null. Null means either the ack hasn't been sent yet
+   * (sentAt is also null in that case) or it was sent before this column
+   * existed and nobody can truthfully say how (see schema.ts comment on
+   * ledgerAcknowledgments.sentVia) — the caller can't tell those two apart
+   * from sentVia alone, only from sentAt.
+   */
+  sentVia: string | null;
   quidProQuoValueCents: number | null;
   entityName: string;
   fundName: string;
@@ -5006,6 +5022,7 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
       entityName: ledgerEntities.name,
       ackId: ledgerAcknowledgments.id,
       ackSentAt: ledgerAcknowledgments.sentAt,
+      ackPurpose: ledgerAcknowledgments.purpose,
       donor: ledgerDonors,
     })
     .from(ledgerTransactions)
@@ -5047,6 +5064,7 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
     donor: r.donor ?? null,
     ackId: r.ackId ?? null,
     ackSentAt: r.ackSentAt ?? null,
+    ackPurpose: r.ackPurpose ?? null,
   }));
 }
 
@@ -5055,15 +5073,24 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
  * The `includePii` flag controls whether `donorId` and `donorName` are included.
  * Set `includePii = true` only when the caller has LEDGER_RECORD.
  *
- * Pass `pendingOnly = true` to filter to unsent acks only.
+ * Pass `pendingOnly = true` to filter to unsent acks only (sentAt IS NULL).
+ * Pass `sentOnly = true` to filter to sent acks only (sentAt IS NOT NULL) —
+ * added 2026-08-12 (docs/work-log/2026-08-12-sent-acknowledgments-view.md) so
+ * the Donors & Acknowledgments page can show sent acknowledgments, which
+ * previously had no view anywhere in the app once `sentAt` was set. The two
+ * flags are mutually exclusive; if both are passed, `pendingOnly` wins
+ * (matches how every existing caller only ever sets one).
  */
 export async function listAcknowledgmentsSummary(opts: {
   pendingOnly?: boolean;
+  sentOnly?: boolean;
   includePii?: boolean;
 }): Promise<AcknowledgmentSummaryRow[]> {
   const conditions = [];
   if (opts.pendingOnly) {
     conditions.push(isNull(ledgerAcknowledgments.sentAt));
+  } else if (opts.sentOnly) {
+    conditions.push(isNotNull(ledgerAcknowledgments.sentAt));
   }
 
   const rows = await db
@@ -5074,6 +5101,7 @@ export async function listAcknowledgmentsSummary(opts: {
       txnDate: ledgerAcknowledgments.txnDate,
       type: ledgerAcknowledgments.type,
       sentAt: ledgerAcknowledgments.sentAt,
+      sentVia: ledgerAcknowledgments.sentVia,
       quidProQuoValueCents: ledgerAcknowledgments.quidProQuoValueCents,
       donorId: ledgerAcknowledgments.donorId,
       entityName: ledgerEntities.name,
@@ -5099,6 +5127,7 @@ export async function listAcknowledgmentsSummary(opts: {
       txnDate: r.txnDate,
       type: r.type,
       sentAt: r.sentAt,
+      sentVia: r.sentVia ?? null,
       quidProQuoValueCents: r.quidProQuoValueCents,
       entityName: r.entityName ?? "Unknown Entity",
       fundName: r.fundName ?? "Unknown Fund",

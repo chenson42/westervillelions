@@ -102,6 +102,7 @@ import {
   setBudgetCauseLineAnnotation,
   getPendingApprovals,
   listPendingAcknowledgments,
+  listAcknowledgmentsSummary,
 } from "./ledger-queries";
 import { ledgerFunds, ledgerCategories, ledgerBudgets, ledgerBudgetLines } from "./db/schema";
 import { causeLineReferenceKey } from "./ledger";
@@ -2486,5 +2487,137 @@ describe("listPendingAcknowledgments — ack_not_required exclusion", () => {
     expect(sql).toContain('"ack_not_required"');
     expect(sql).toContain('"ledger_categories"');
     expect(params).toContain(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listAcknowledgmentsSummary — sentOnly filter + sentVia passthrough
+// (docs/work-log/2026-08-12-sent-acknowledgments-view.md). Before this fix,
+// a sent acknowledgment (sentAt set) had no view anywhere in the app — the
+// only existing filter, pendingOnly, only ever excluded sent rows, never
+// isolated them. sentOnly is the new "Sent Acknowledgments" tab's query.
+// ---------------------------------------------------------------------------
+describe("listAcknowledgmentsSummary — sentOnly filter", () => {
+  const dialect = new PgDialect();
+
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  it("sentOnly: true compiles a WHERE of sent_at IS NOT NULL, not IS NULL", async () => {
+    mockDbState.queue.push([]);
+
+    await listAcknowledgmentsSummary({ sentOnly: true });
+
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).toContain('"ledger_acknowledgments"."sent_at" is not null');
+  });
+
+  it("pendingOnly still compiles sent_at IS NULL (unchanged) and wins if both flags are passed", async () => {
+    mockDbState.queue.push([]);
+
+    await listAcknowledgmentsSummary({ pendingOnly: true, sentOnly: true });
+
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).toContain('"ledger_acknowledgments"."sent_at" is null');
+    expect(sql).not.toContain("is not null");
+  });
+
+  it("no filter (neither flag) passes an empty condition — the existing 'all acks' caller", async () => {
+    mockDbState.queue.push([]);
+
+    await listAcknowledgmentsSummary({});
+
+    // .where() is still called (matches the existing conditions.length > 0
+    // ? and(...) : undefined idiom), but with no condition — i.e. no rows
+    // are excluded.
+    expect(mockDbState.wheres).toHaveLength(1);
+    expect(mockDbState.wheres[0]).toBeUndefined();
+  });
+
+  it("carries sentVia through per row ('email', 'print', and legacy null all pass through untouched)", async () => {
+    mockDbState.queue.push([
+      {
+        id: "ack-1",
+        donationTxnId: "txn-1",
+        amountCents: 50000,
+        txnDate: "2026-08-01",
+        type: "written_ack_250",
+        sentAt: new Date("2026-08-02"),
+        sentVia: "email",
+        quidProQuoValueCents: null,
+        donorId: "donor-1",
+        entityName: "Foundation",
+        fundName: "Charitable Fund",
+        donorName: "Trucco Construction Co",
+      },
+      {
+        id: "ack-2",
+        donationTxnId: "txn-2",
+        amountCents: 30000,
+        txnDate: "2026-07-15",
+        type: "written_ack_250",
+        sentAt: new Date("2026-07-16"),
+        sentVia: "print",
+        quidProQuoValueCents: null,
+        donorId: null,
+        entityName: "Foundation",
+        fundName: "Charitable Fund",
+        donorName: null,
+      },
+      {
+        id: "ack-3",
+        donationTxnId: "txn-3",
+        amountCents: 25000,
+        txnDate: "2026-03-01",
+        type: "written_ack_250",
+        sentAt: new Date("2026-03-02"),
+        sentVia: null,
+        quidProQuoValueCents: null,
+        donorId: null,
+        entityName: "Foundation",
+        fundName: "Charitable Fund",
+        donorName: null,
+      },
+    ]);
+
+    const rows = await listAcknowledgmentsSummary({ sentOnly: true, includePii: true });
+
+    expect(rows).toHaveLength(3);
+    expect(rows[0].sentVia).toBe("email");
+    expect(rows[0].donorId).toBe("donor-1");
+    expect(rows[1].sentVia).toBe("print");
+    expect(rows[1].donorId).toBeNull();
+    expect(rows[2].sentVia).toBeNull();
+    expect(rows[2].donorId).toBeNull();
+  });
+
+  it("omits donorId/donorName when includePii is not set, even though the row is sent and has a donor", async () => {
+    mockDbState.queue.push([
+      {
+        id: "ack-1",
+        donationTxnId: "txn-1",
+        amountCents: 50000,
+        txnDate: "2026-08-01",
+        type: "written_ack_250",
+        sentAt: new Date("2026-08-02"),
+        sentVia: "email",
+        quidProQuoValueCents: null,
+        donorId: "donor-1",
+        entityName: "Foundation",
+        fundName: "Charitable Fund",
+        donorName: "Trucco Construction Co",
+      },
+    ]);
+
+    const rows = await listAcknowledgmentsSummary({ sentOnly: true, includePii: false });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].donorId).toBeUndefined();
+    expect(rows[0].donorName).toBeUndefined();
+    expect(rows[0].sentVia).toBe("email");
   });
 });

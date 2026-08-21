@@ -69,7 +69,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { ledgerTransactions, ledgerFunds, ledgerCategories, ledgerDonors } from "@/lib/db/schema";
+import {
+  ledgerTransactions,
+  ledgerFunds,
+  ledgerCategories,
+  ledgerDonors,
+  ledgerAcknowledgments,
+} from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
@@ -445,6 +451,14 @@ export async function PATCH(
         return NextResponse.json({ error: "donorId must be a string or null" }, { status: 400 });
       }
     }
+    // Whether this request re-links the donor. The acknowledgment row (if one
+    // exists) carries its OWN donor_id, and the letter and the sent-ack list
+    // both read THAT copy, while the pending queue reads the transaction's.
+    // Setting only one of the two produced a row that looked linked in the
+    // queue but still generated a letter addressed to nobody (2026-08-12).
+    // The POST /acknowledge route already keeps them in step in the other
+    // direction; this is the mirror of that.
+    const donorLinkChanged = body.donorId !== undefined;
 
     // Explicit budget-line link (B-30, DECISION-061). Two cases, keyed on
     // whether the payload represents a genuinely NEW pick — NOT merely on
@@ -594,6 +608,26 @@ export async function PATCH(
             .set(symmetricUpdate)
             .where(eq(ledgerTransactions.id, partnerId));
         }
+
+        if (donorLinkChanged) {
+          await tx
+            .update(ledgerAcknowledgments)
+            .set({ donorId: update.donorId ?? null, updatedAt: new Date() })
+            .where(eq(ledgerAcknowledgments.donationTxnId, id));
+        }
+      });
+    } else if (donorLinkChanged) {
+      // Same-transaction so the two donor links can never diverge.
+      await db.transaction(async (tx) => {
+        await tx
+          .update(ledgerTransactions)
+          .set(update)
+          .where(eq(ledgerTransactions.id, id));
+
+        await tx
+          .update(ledgerAcknowledgments)
+          .set({ donorId: update.donorId ?? null, updatedAt: new Date() })
+          .where(eq(ledgerAcknowledgments.donationTxnId, id));
       });
     } else {
       await db
