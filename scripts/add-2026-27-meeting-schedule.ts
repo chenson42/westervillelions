@@ -12,9 +12,10 @@
  *
  *   General meetings    1st Thursday, 7:00–8:00pm, Training Room, PUBLIC
  *   Activities meetings 3rd Thursday, 7:00–8:00pm, Training Room, PUBLIC
- *   Board meetings      4th Tuesday, 7:00–8:30pm, 2nd-floor Private Dining Room,
+ *   Board meetings      4th Thursday, 7:00–8:30pm, 2nd-floor Private Dining Room,
  *                       INTERNAL (members only) — the sheet notes they are open to
- *                       all active members, but they stay off the public calendar
+ *                       all active members, but they stay off the public calendar.
+ *                       No board meeting in December.
  *   Board retreat       Aug 7 2026, 8:45am–1:30pm, 2nd-floor Private Dining Room, INTERNAL
  *
  * All allow RSVP (`requires_rsvp = true`).
@@ -24,16 +25,34 @@
  * for a 7pm meeting. Converting to UTC here would shift every meeting by four hours
  * in the UI. This is the same naive-timestamp trap this project has hit before.
  *
- * TWO BOARD DATES WERE QUERIED WITH THE SECRETARY (Miriam Reinhoudt) and RESOLVED
- * 2026-08-08:
- *   2026-10-20 — CORRECT as printed. The club counts weeks from the 1st of the month,
- *                and October 1 2026 is a Thursday, so the 20th falls in the 4th week by
- *                that counting even though it is the 3rd Tuesday of the month.
- *   2026-11-26 — TYPO. Corrected to 2026-11-24 (a Tuesday). The printed date was a
- *                Thursday, and Thanksgiving Day.
- * Both are now included below.
+ * BOARD MOVED FROM THE 4th TUESDAY TO THE 4th THURSDAY, 2026-08-23. The board's
+ * original meeting night was the 4th Tuesday (see the superseded historical note
+ * below); it has since switched to the 4th Thursday, and December's board meeting
+ * was dropped entirely rather than moved. The nine 2026-09 through 2027-06 board
+ * rows (and the now-cancelled 2026-12 row) were already corrected directly against
+ * both the dev and production databases the day of the change — this file's
+ * BOARD_DATES below was updated to match so a future re-run of this idempotent
+ * script (by title + start timestamp) recreates the *current* schedule rather than
+ * reintroducing the old Tuesday dates.
  *
- * IDEMPOTENT: skips any event whose title and start timestamp already exist.
+ * SUPERSEDED — kept for history only, no longer reflects live data:
+ *   TWO BOARD DATES WERE QUERIED WITH THE SECRETARY (Miriam Reinhoudt) and RESOLVED
+ *   2026-08-08:
+ *     2026-10-20 — CORRECT as printed. The club counts weeks from the 1st of the month,
+ *                  and October 1 2026 is a Thursday, so the 20th falls in the 4th week by
+ *                  that counting even though it is the 3rd Tuesday of the month.
+ *     2026-11-26 — TYPO. Corrected to 2026-11-24 (a Tuesday). The printed date was a
+ *                  Thursday, and Thanksgiving Day.
+ *
+ * NOVEMBER BOARD MEETING MOVED OFF THANKSGIVING, 2026-08-30. The 4th-Thursday-move
+ * (above) put the board meeting back on 2026-11-26, which is Thanksgiving Day — the
+ * club does not meet that day. November's board meeting is a one-off exception:
+ * Thursday, 2026-11-12, instead of the 4th Thursday. No other month is affected.
+ *
+ * IDEMPOTENT: skips any event whose title and start timestamp already exist. Note
+ * that this only ever ADDS missing rows — it does not update or delete an existing
+ * one, so the already-created 2026-11-26 Board Meeting event needed a manual fix
+ * alongside this file's date change.
  */
 
 import { config } from "dotenv";
@@ -61,10 +80,11 @@ const ACTIVITIES_DATES = [
   "2026-09-17", "2026-10-15", "2026-11-19", "2026-12-17",
   "2027-01-21", "2027-02-18", "2027-03-18", "2027-04-15", "2027-05-20",
 ];
-// 2026-10-20 confirmed correct; 2026-11-24 corrects the sheet's 11-26 typo — see header.
+// Board moved to the 4th Thursday 2026-08-23; no board meeting in December.
+// November is 2026-11-12, not the 4th Thursday (2026-11-26 is Thanksgiving). See header.
 const BOARD_DATES = [
-  "2026-09-22", "2026-10-20", "2026-11-24", "2026-12-22",
-  "2027-01-26", "2027-02-23", "2027-03-23", "2027-04-27", "2027-05-25", "2027-06-22",
+  "2026-09-24", "2026-10-22", "2026-11-12",
+  "2027-01-28", "2027-02-25", "2027-03-25", "2027-04-22", "2027-05-27", "2027-06-24",
 ];
 
 type NewEvent = {
@@ -146,9 +166,9 @@ async function main() {
   }
   console.log(`\n${events.length} in schedule, ${toCreate} to create.`);
   console.log(
-    "\nSecretary-confirmed 2026-08-08:\n" +
-      "  2026-10-20  correct as printed (club counts weeks from the 1st; Oct 1 is a Thursday)\n" +
-      "  2026-11-24  corrects the printed 11-26, which was a Thursday and Thanksgiving Day",
+    "\nNotes:\n" +
+      "  2026-10-20  4th Thursday, correct (club counts weeks from the 1st; Oct 1 is a Thursday)\n" +
+      "  2026-11-12  November Board Meeting exception — 2026-11-26 (the 4th Thursday) is Thanksgiving",
   );
 
   if (!APPLY) {

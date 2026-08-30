@@ -29,4 +29,16 @@ body {
   [data-sonner-toaster] {
     display: none !important;
   }
+
+  /* Any page taller than one viewport (e.g. the Member Directory print sheet)
+     is a live browser scroll container on screen, and Chrome's print engine
+     rasterizes that container's scrollbar into every generated page of the
+     PDF/print job — a UI artifact, not real content. Pagination across pages
+     is a separate mechanism from `overflow` scrolling, so suppressing the
+     scroll container for print removes the artifact without dropping or
+     re-paginating any content. */
+  html,
+  body {
+    overflow: hidden;
+  }
 }
