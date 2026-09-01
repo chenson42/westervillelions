@@ -5,6 +5,7 @@ import {
   type MonthlyStatementCauseLine,
   type MonthlyStatementTotals,
 } from "@/lib/financial-report-queries";
+import CopyableAmount from "./copyable-amount";
 
 /**
  * Server-rendered (no 'use client') three-column Statement of Financial
@@ -250,13 +251,13 @@ function CategoryRow({ line }: { line: MonthlyStatementCategoryLine }) {
           )}
         </td>
         <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800">
-          {formatDollars(line.oneMonthCents)}
+          <CopyableAmount value={formatDollars(line.oneMonthCents)} />
         </td>
         <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800">
-          {formatDollars(line.twelveMonthCents)}
+          <CopyableAmount value={formatDollars(line.twelveMonthCents)} />
         </td>
         <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-500">
-          {line.annualBudgetCents === null ? "—" : formatDollars(line.annualBudgetCents)}
+          {line.annualBudgetCents === null ? "—" : <CopyableAmount value={formatDollars(line.annualBudgetCents)} />}
         </td>
       </tr>
       {line.causeLines?.map((cl) => (
@@ -283,13 +284,13 @@ function CauseLineRow({ cl }: { cl: MonthlyStatementCauseLine }) {
         {cl.isFuzzyFallback && <sup className="ml-0.5 text-gray-400">&dagger;</sup>}
       </td>
       <td className="px-4 py-1.5 text-right tabular-nums whitespace-nowrap text-xs text-gray-500">
-        {formatDollars(cl.oneMonthCents)}
+        <CopyableAmount value={formatDollars(cl.oneMonthCents)} />
       </td>
       <td className="px-4 py-1.5 text-right tabular-nums whitespace-nowrap text-xs text-gray-500">
-        {formatDollars(cl.twelveMonthCents)}
+        <CopyableAmount value={formatDollars(cl.twelveMonthCents)} />
       </td>
       <td className="px-4 py-1.5 text-right tabular-nums whitespace-nowrap text-xs text-gray-400">
-        {cl.annualBudgetCents === null ? "—" : formatDollars(cl.annualBudgetCents)}
+        {cl.annualBudgetCents === null ? "—" : <CopyableAmount value={formatDollars(cl.annualBudgetCents)} />}
       </td>
     </tr>
   );
@@ -300,13 +301,13 @@ function TotalRow({ label, totals }: { label: string; totals: MonthlyStatementTo
     <tr className="border-t-2 border-gray-300 bg-gray-50/60 font-semibold">
       <td className="px-4 py-2.5 text-gray-900">{label}</td>
       <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-900">
-        {formatDollars(totals.oneMonthCents)}
+        <CopyableAmount value={formatDollars(totals.oneMonthCents)} />
       </td>
       <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-900">
-        {formatDollars(totals.twelveMonthCents)}
+        <CopyableAmount value={formatDollars(totals.twelveMonthCents)} />
       </td>
       <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-900">
-        {formatDollars(totals.budgetCents)}
+        <CopyableAmount value={formatDollars(totals.budgetCents)} />
       </td>
     </tr>
   );
@@ -319,17 +320,17 @@ function NetRow({ net }: { net: MonthlyStatementTotals }) {
       <td
         className={`px-4 py-3 text-right tabular-nums whitespace-nowrap ${net.oneMonthCents < 0 ? "text-red-700" : "text-gray-900"}`}
       >
-        {formatDollars(net.oneMonthCents)}
+        <CopyableAmount value={formatDollars(net.oneMonthCents)} />
       </td>
       <td
         className={`px-4 py-3 text-right tabular-nums whitespace-nowrap ${net.twelveMonthCents < 0 ? "text-red-700" : "text-gray-900"}`}
       >
-        {formatDollars(net.twelveMonthCents)}
+        <CopyableAmount value={formatDollars(net.twelveMonthCents)} />
       </td>
       <td
         className={`px-4 py-3 text-right tabular-nums whitespace-nowrap ${net.budgetCents < 0 ? "text-red-700" : "text-gray-900"}`}
       >
-        {formatDollars(net.budgetCents)}
+        <CopyableAmount value={formatDollars(net.budgetCents)} />
       </td>
     </tr>
   );
@@ -350,10 +351,10 @@ function BalanceRow({
     <tr className={emphasize ? "border-t-2 border-gray-300 bg-blue-50/30 font-bold" : "font-semibold"}>
       <td className="px-4 py-3 text-gray-900">{label}</td>
       <td className={`px-4 py-3 text-right tabular-nums whitespace-nowrap ${emphasize ? "text-lions-blue" : "text-gray-900"}`}>
-        {formatDollars(oneMonthCents)}
+        <CopyableAmount value={formatDollars(oneMonthCents)} />
       </td>
       <td className={`px-4 py-3 text-right tabular-nums whitespace-nowrap ${emphasize ? "text-lions-blue" : "text-gray-900"}`}>
-        {formatDollars(twelveMonthCents)}
+        <CopyableAmount value={formatDollars(twelveMonthCents)} />
       </td>
       <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap text-gray-400">&mdash;</td>
     </tr>
