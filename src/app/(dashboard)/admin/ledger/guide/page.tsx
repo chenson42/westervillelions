@@ -13,6 +13,7 @@ import ZeffyFundRoutingSection from "@/components/admin/ledger/guide/zeffy-fund-
 import DuesSection from "@/components/admin/ledger/guide/dues-section";
 import ReimbursementsSection from "@/components/admin/ledger/guide/reimbursements-section";
 import UncashedChecksSection from "@/components/admin/ledger/guide/uncashed-checks-section";
+import CashAndBankAccountsSection from "@/components/admin/ledger/guide/cash-and-bank-accounts-section";
 import ComplianceCalendarSection, {
   type Entity990Determination,
 } from "@/components/admin/ledger/guide/compliance-calendar-section";
@@ -31,6 +32,7 @@ const TOC: { id: string; label: string }[] = [
   { id: "dues", label: "Dues" },
   { id: "reimbursements", label: "Reimbursements & Approvals" },
   { id: "uncashed-checks", label: "Uncashed Checks" },
+  { id: "cash-and-bank-accounts", label: "Cash & Bank Accounts" },
   { id: "compliance-990", label: "Compliance Calendar — Form 990" },
   { id: "guardrails", label: "Compliance Guardrails" },
   { id: "reports", label: "Reports" },
@@ -161,6 +163,7 @@ export default async function TreasuryUsersGuidePage() {
         <DuesSection />
         <ReimbursementsSection />
         <UncashedChecksSection />
+        <CashAndBankAccountsSection />
         <ComplianceCalendarSection entity990s={entity990s} />
         <GuardrailsSection />
         <ReportsSection />
