@@ -316,6 +316,23 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
       {
+        name: "Reimbursements",
+        href: "/admin/ledger/reimbursements",
+        icon: "🧾",
+        requiredFeature: [
+          FEATURES.LEDGER_VIEW,
+          FEATURES.LEDGER_RECORD,
+          FEATURES.LEDGER_MANAGE,
+          FEATURES.LEDGER_APPROVE,
+        ],
+      },
+      {
+        name: "Approvals",
+        href: "/admin/ledger/approvals",
+        icon: "✅",
+        requiredFeature: FEATURES.LEDGER_APPROVE,
+      },
+      {
         name: "Budgeting",
         href: "/admin/ledger/budgeting",
         icon: "🧮",

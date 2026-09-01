@@ -129,6 +129,11 @@ export async function POST(
     const dataLines = lines.slice(1);
     const parsedRows: NewBankLineRow[] = [];
     let outOfPeriodCount = 0;
+    // Tracks how many times each (date/description/amount/check) tuple has
+    // been seen so far in this file — same-day batch deposits (e.g. five
+    // identical "REMOTE ONLINE DEPOSIT # 1" lines) are otherwise
+    // indistinguishable and must not collapse onto one dedupe key.
+    const occurrenceCounts = new Map<string, number>();
 
     for (let i = 0; i < dataLines.length; i++) {
       const rowNumber = i + 1;
@@ -145,7 +150,10 @@ export async function POST(
         row.postingDate <= reconSession.statementPeriodEnd;
       if (!inStatementPeriod) outOfPeriodCount++;
 
-      const dedupeKey = bankLineDedupeKey(row);
+      const baseKey = bankLineDedupeKey(row, 0);
+      const occurrenceIndex = occurrenceCounts.get(baseKey) ?? 0;
+      occurrenceCounts.set(baseKey, occurrenceIndex + 1);
+      const dedupeKey = bankLineDedupeKey(row, occurrenceIndex);
 
       parsedRows.push({
         sessionId,

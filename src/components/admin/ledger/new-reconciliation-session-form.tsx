@@ -30,6 +30,19 @@ function parseSignedDollars(value: string): number | null {
   return Math.round(n * 100);
 }
 
+function toDateInputValue(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Most banks post their statement for the month that just closed, so a new
+ *  session almost always covers the previous calendar month. */
+function previousMonthRange(): { start: string; end: string } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  return { start: toDateInputValue(start), end: toDateInputValue(end) };
+}
+
 /**
  * "New session" trigger + dialog + form. Bundles button/dialog/form in one
  * file, mirroring this codebase's existing dialog-composition convention
@@ -45,18 +58,20 @@ export default function NewReconciliationSessionForm({
 }: NewReconciliationSessionFormProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const defaultRange = previousMonthRange();
   const [bankAccountId, setBankAccountId] = useState(accounts[0]?.id ?? "");
-  const [periodStart, setPeriodStart] = useState("");
-  const [periodEnd, setPeriodEnd] = useState("");
+  const [periodStart, setPeriodStart] = useState(defaultRange.start);
+  const [periodEnd, setPeriodEnd] = useState(defaultRange.end);
   const [openingBalance, setOpeningBalance] = useState("");
   const [closingBalance, setClosingBalance] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   function handleOpenChange(val: boolean) {
     if (val) {
+      const range = previousMonthRange();
       setBankAccountId(accounts[0]?.id ?? "");
-      setPeriodStart("");
-      setPeriodEnd("");
+      setPeriodStart(range.start);
+      setPeriodEnd(range.end);
       setOpeningBalance("");
       setClosingBalance("");
     }

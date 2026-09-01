@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { members, events, campaigns, contactSubmissions, membershipApplications, newsletterSubscriptions, suggestions } from "@/lib/db/schema";
+import { members, events, campaigns, contactSubmissions, membershipApplications, newsletterSubscriptions, suggestions, ledgerReimbursements } from "@/lib/db/schema";
 import { sql, gte, eq } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
@@ -34,6 +34,15 @@ export default async function AdminDashboardPage() {
   // Drizzle mode:"string" columns require string comparisons in WHERE clauses.
   const todayStr = format(today, "yyyy-MM-dd HH:mm:ss");
 
+  // Pending reimbursements are Treasury-specific — only query/surface them for
+  // users who could actually act on the link (same gate as the reimbursements
+  // page itself), so the card never sends someone to /access-pending.
+  const canViewLedger =
+    userFeatures.includes(FEATURES.LEDGER_VIEW) ||
+    userFeatures.includes(FEATURES.LEDGER_RECORD) ||
+    userFeatures.includes(FEATURES.LEDGER_MANAGE) ||
+    userFeatures.includes(FEATURES.LEDGER_APPROVE);
+
   // Fetch statistics
   const [
     membersResult,
@@ -43,6 +52,7 @@ export default async function AdminDashboardPage() {
     pendingApplicationsResult,
     recentNewsletterResult,
     unreadSuggestionsResult,
+    pendingReimbursementsResult,
   ] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(members).where(eq(members.isActive, true)),
     db.select({ count: sql<number>`count(*)::int` }).from(events).where(gte(events.startDate, todayStr)),
@@ -51,6 +61,9 @@ export default async function AdminDashboardPage() {
     db.select({ count: sql<number>`count(*)::int` }).from(membershipApplications).where(eq(membershipApplications.status, "pending")),
     db.select({ count: sql<number>`count(*)::int` }).from(newsletterSubscriptions).where(eq(newsletterSubscriptions.isActive, true)),
     db.select({ count: sql<number>`count(*)::int` }).from(suggestions).where(eq(suggestions.isRead, false)),
+    canViewLedger
+      ? db.select({ count: sql<number>`count(*)::int` }).from(ledgerReimbursements).where(eq(ledgerReimbursements.status, "submitted"))
+      : Promise.resolve([{ count: 0 }]),
   ]);
 
   const membersCount = membersResult[0]?.count || 0;
@@ -60,8 +73,10 @@ export default async function AdminDashboardPage() {
   const pendingApplications = pendingApplicationsResult[0]?.count || 0;
   const newsletterCount = recentNewsletterResult[0]?.count || 0;
   const unreadSuggestions = unreadSuggestionsResult[0]?.count || 0;
+  const pendingReimbursements = pendingReimbursementsResult[0]?.count || 0;
 
-  const needsAttention = unreadContacts > 0 || pendingApplications > 0 || unreadSuggestions > 0;
+  const needsAttention =
+    unreadContacts > 0 || pendingApplications > 0 || unreadSuggestions > 0 || pendingReimbursements > 0;
 
   return (
     <div className="space-y-6">
@@ -110,6 +125,17 @@ export default async function AdminDashboardPage() {
                 Unhandled Suggestion{unreadSuggestions !== 1 ? "s" : ""}
               </Link>
             )}
+            {pendingReimbursements > 0 && (
+              <Link
+                href="/admin/ledger/reimbursements"
+                className="flex items-center gap-2 rounded-md bg-white border border-amber-300 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+              >
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">
+                  {pendingReimbursements}
+                </span>
+                Pending Reimbursement{pendingReimbursements !== 1 ? "s" : ""}
+              </Link>
+            )}
           </div>
         </div>
       )}
@@ -148,7 +174,7 @@ export default async function AdminDashboardPage() {
             <p className="text-xs text-gray-500">{newsletterCount} active subscription{newsletterCount !== 1 ? "s" : ""}</p>
           </div>
         </div>
-        <Link href="/admin/newsletter" className="text-sm text-lions-blue hover:text-lions-blue-dark font-medium">
+        <Link href="/admin/subscriptions" className="text-sm text-lions-blue hover:text-lions-blue-dark font-medium">
           Export →
         </Link>
       </div>

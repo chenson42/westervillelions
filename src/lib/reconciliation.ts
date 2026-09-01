@@ -261,10 +261,20 @@ export function parseChaseCsvRow(
 
 /**
  * Deterministic dedupe key for a parsed bank line — date + description +
- * signed amount + check/slip number. Backs the
- * `(session_id, dedupe_key)` unique constraint (defense-in-depth against a
- * literally self-duplicated row inside one file; the primary duplicate-
- * upload defense is the session-level one-shot upload gate).
+ * signed amount + check/slip number + occurrence index. Backs the
+ * `(session_id, dedupe_key)` unique constraint, whose job is idempotency
+ * against a retried upload of the SAME file (a network retry re-parses the
+ * same rows in the same order and lands on the same keys, so the second
+ * insert attempt no-ops cleanly) — not collapsing distinct transactions.
+ *
+ * `occurrenceIndex` (0 for the row's first appearance in the file, 1 for
+ * its second, …) is load-bearing: Chase's export has no per-transaction ID,
+ * and same-day batch activity like multiple "REMOTE ONLINE DEPOSIT # 1"
+ * lines can share an identical date/description/amount/check-number with no
+ * other distinguishing field. Without the occurrence index those genuinely
+ * distinct deposits would collide on the same key and the unique
+ * constraint would silently drop every one after the first — real money
+ * missing from the reconciliation, not a caught duplicate.
  *
  * checkOrSlipNumber is folded in as "" when null so that two lines
  * identical in every other respect but differing only by check/slip number
@@ -275,10 +285,10 @@ export function bankLineDedupeKey(row: {
   description: string;
   amountCents: number;
   checkOrSlipNumber: string | null;
-}): string {
+}, occurrenceIndex = 0): string {
   const desc = row.description.trim().toLowerCase();
   const check = row.checkOrSlipNumber ?? "";
-  return `${row.postingDate}|${desc}|${row.amountCents}|${check}`;
+  return `${row.postingDate}|${desc}|${row.amountCents}|${check}|${occurrenceIndex}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -165,6 +165,27 @@ describe("bankLineDedupeKey", () => {
     const keyB = bankLineDedupeKey({ ...base, checkOrSlipNumber: "DEP" });
     expect(keyA).not.toBe(keyB);
   });
+
+  it("13. identical date/description/amount/check rows get distinct keys by occurrenceIndex (five same-day 'REMOTE ONLINE DEPOSIT # 1' lines)", () => {
+    const row = {
+      postingDate: "2025-08-07",
+      description: "REMOTE ONLINE DEPOSIT # 1",
+      amountCents: 10000,
+      checkOrSlipNumber: null,
+    };
+    const keys = [0, 1, 2, 3, 4].map((i) => bankLineDedupeKey(row, i));
+    expect(new Set(keys).size).toBe(5);
+  });
+
+  it("14. occurrenceIndex defaults to 0, matching the retry-of-the-same-upload case", () => {
+    const row = {
+      postingDate: "2025-01-18",
+      description: "Deposit",
+      amountCents: 50000,
+      checkOrSlipNumber: null,
+    };
+    expect(bankLineDedupeKey(row)).toBe(bankLineDedupeKey(row, 0));
+  });
 });
 
 describe("computeTieOut", () => {
