@@ -2,6 +2,7 @@ import Link from "next/link";
 import DashboardEntityCard from "@/components/admin/ledger/dashboard-entity-card";
 import UncashedChecksPanel from "@/components/admin/ledger/uncashed-checks-panel";
 import UnremittedDepositsPanel from "@/components/admin/ledger/unremitted-deposits-panel";
+import BankAccountBalancesPanel from "@/components/admin/ledger/bank-account-balances-panel";
 import AuditItemsPanel from "@/components/admin/ledger/audit-items-panel";
 import LedgerSearchBox from "@/components/admin/ledger/ledger-search-box";
 import type { DashboardData } from "@/lib/ledger-queries";
@@ -74,6 +75,8 @@ export default function LedgerDashboard({ dashboard, canApprove, pendingCount }:
           ))}
         </div>
       )}
+
+      <BankAccountBalancesPanel accounts={dashboard.bankAccountBalances} />
 
       <UncashedChecksPanel checks={dashboard.uncashedChecks} />
 

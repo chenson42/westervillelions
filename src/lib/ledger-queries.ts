@@ -377,6 +377,63 @@ export async function getBankAccounts(entityId: string): Promise<LedgerBankAccou
 }
 
 // ---------------------------------------------------------------------------
+// getBankAccountBalances (Ledger Dashboard — cash on hand by account)
+// ---------------------------------------------------------------------------
+
+export type BankAccountBalanceRow = {
+  id: string;
+  entitySlug: string;
+  entityName: string;
+  name: string;
+  accountType: string;
+  last4: string | null;
+  balanceCents: number;
+};
+
+/**
+ * Cross-entity running balance per active bank account — posted transactions
+ * only, signed by flow (income positive, expense negative), life-to-date (a
+ * bank account's real balance isn't fiscal-year-scoped, unlike a fund
+ * report). Includes every active account even with zero transactions, so an
+ * account like Petty Cash never silently disappears from the dashboard for
+ * lack of activity — a discrepancy between fund book balances and the real
+ * bank/cash totals (2026-09-01 incident: $250 of petty cash had no tracked
+ * account at all) is exactly the kind of thing this panel exists to surface.
+ */
+async function getBankAccountBalances(entities: LedgerEntity[]): Promise<BankAccountBalanceRow[]> {
+  const accounts = await db
+    .select()
+    .from(ledgerBankAccounts)
+    .where(eq(ledgerBankAccounts.isActive, true))
+    .orderBy(ledgerBankAccounts.name);
+
+  const sums = await db
+    .select({
+      bankAccountId: ledgerTransactions.bankAccountId,
+      netCents: sql<number>`sum(case when ${ledgerTransactions.flow} = 'income' then ${ledgerTransactions.amountCents} else -${ledgerTransactions.amountCents} end)::int`,
+    })
+    .from(ledgerTransactions)
+    .where(and(eq(ledgerTransactions.status, "posted"), isNotNull(ledgerTransactions.bankAccountId)))
+    .groupBy(ledgerTransactions.bankAccountId);
+
+  const sumByAccount = new Map(sums.map((s) => [s.bankAccountId as string, s.netCents]));
+  const entityById = new Map(entities.map((e) => [e.id, e]));
+
+  return accounts.map((a) => {
+    const entity = entityById.get(a.entityId);
+    return {
+      id: a.id,
+      entitySlug: entity?.slug ?? "",
+      entityName: entity?.shortName ?? entity?.name ?? "Unknown entity",
+      name: a.name,
+      accountType: a.accountType,
+      last4: a.last4,
+      balanceCents: a.openingBalanceCents + (sumByAccount.get(a.id) ?? 0),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // getCategories
 // ---------------------------------------------------------------------------
 
@@ -3374,6 +3431,7 @@ export type DashboardData = {
   guardrailFlags: EntityTaggedGuardrailFlag[];
   uncashedChecks: UncashedCheckRow[]; // oldest-first, both entities
   unremittedDeposits: UnremittedDepositRow[]; // oldest-first, both entities
+  bankAccountBalances: BankAccountBalanceRow[]; // both entities, name-ordered
   syncStaleTxnsTotal: number; // cross-entity sum, for the audit-items panel
   unreconciledPriorMonthTotal: number; // cross-entity sum
 };
@@ -3524,12 +3582,15 @@ export async function getDashboard(): Promise<DashboardData> {
     };
   });
 
+  const bankAccountBalances = await getBankAccountBalances(entities);
+
   return {
     fiscalYear,
     entities: entitySummaries,
     guardrailFlags,
     uncashedChecks,
     unremittedDeposits,
+    bankAccountBalances,
     syncStaleTxnsTotal,
     unreconciledPriorMonthTotal,
   };

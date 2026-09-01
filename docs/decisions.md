@@ -28,6 +28,42 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-091: `ledger_bank_accounts` gets its own `openingBalanceCents`, mirroring `ledgerFunds`
+
+**Status:** Resolved
+**Date:** 2026-09-01
+
+**Decision:** Added `openingBalanceCents integer NOT NULL DEFAULT 0` to `ledgerBankAccounts`
+(`drizzle/migrations/0091_bank_account_opening_balance.sql`), and a new cross-entity
+`getBankAccountBalances()` query / `BankAccountBalancesPanel` on the admin Ledger dashboard
+showing each active bank account's running balance (`openingBalanceCents` + sum of its own
+posted, signed transactions).
+
+**Rationale:** Discovered live: the club's petty cash box (~$250 in physical cash) had never
+been tracked as its own bank account — it was folded, undifferentiated, into the Administrative
+Fund's single lump `openingBalanceCents`. A fund's balance can span multiple physical accounts
+(Administrative Fund alone spends from both Administrative Checking and Petty Cash), so a fund
+total tying out to the bank is not the same claim as any one account's own balance being
+visible or correct. Building the account-balance panel without this field first produced wildly
+wrong negative balances for the real checking accounts (summing only each account's own
+transactions, with no baseline) — a books-just-look-wrong failure that this field closes at the
+source, the same way `ledgerFunds.openingBalanceCents` already does for funds.
+
+**Impact:** `src/lib/db/schema.ts` (`ledgerBankAccounts` gains the column) +
+`drizzle/migrations/0091_bank_account_opening_balance.sql`. `src/lib/ledger-queries.ts` —
+new `BankAccountBalanceRow` type, `getBankAccountBalances()`, `DashboardData.bankAccountBalances`.
+New `src/components/admin/ledger/bank-account-balances-panel.tsx`, rendered in
+`ledger-dashboard.tsx` above the Uncashed Checks panel. Production data: Petty Cash's opening
+set to $0 (already fully represented by its own starting-balance transaction, itself split out
+of the Administrative Fund's opening balance the same day — see the Petty Cash starting-balance
+transaction's own memo); Administrative Checking and Foundation Checking backfilled to the
+opening value that makes `opening + existing transaction sum` equal their already-known-correct
+real balances ($17,677.83 and $6,964.88 respectively). No admin UI exists yet to create or edit
+a bank account (or its opening balance) — accounts are still set up via one-off scripts, matching
+existing precedent (funds have the same gap) — out of scope here.
+
+---
+
 ## DECISION-090: Welcome Packet — DB-backed, admin-authored raw HTML as a documented, narrow, admin-only exception to DECISION-076 Ruling 3; `welcomePackets`/`welcomePacketCurrent` sibling tables (singleton current-pointer, not `documents.currentVersionId`-on-parent, not a boolean flag); new `welcome_packet.manage` key bound to `admin` only; base64 emblem stays inline; one-off `scripts/seed-welcome-packet.ts`, never a migration
 
 **Status:** Resolved

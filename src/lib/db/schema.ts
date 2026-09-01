@@ -599,6 +599,13 @@ export const ledgerBankAccounts = pgTable("ledger_bank_accounts", {
   // treasurer explicitly overrides it. At most one true per entityId,
   // enforced by a partial unique index (see drizzle/migrations/0070_*).
   isDefault: boolean("is_default").notNull().default(false),
+  // Mirrors ledgerFunds.openingBalanceCents (DECISION-091) — without this, a
+  // running balance for one account can only be computed by summing its own
+  // transactions, which silently omits whatever pre-tracking balance it
+  // started with. The 2026-09-01 incident (a real $250 in the club's petty
+  // cash box, invisible everywhere because nothing tracked its starting
+  // balance) is exactly the failure mode this closes.
+  openingBalanceCents: integer("opening_balance_cents").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
