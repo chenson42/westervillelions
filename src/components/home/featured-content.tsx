@@ -1,12 +1,15 @@
 import Link from "next/link";
 import Image from "next/image";
 import type { HomepageAnnouncement } from "@/lib/db/schema";
-import { formatEventWhen } from "@/lib/events";
+import { formatWallClockDate } from "@/lib/events";
 
 type NextEvent = {
   id: string;
   title: string;
-  startDate: string; // wall-clock string from DB (mode:"string")
+  // The event's next upcoming occurrence (already computed by the caller via
+  // getNextOccurrence) — NOT the series' original startDate. For recurring
+  // events like "every Saturday", this is the next Saturday, not the first.
+  nextOccurrence: Date;
   isAllDay: boolean;
   location: string | null;
   description: string | null;
@@ -48,7 +51,7 @@ function NextEventCard({ event }: { event: NextEvent }) {
       <div className="p-8 flex flex-col flex-1">
       <h3 className="text-xl font-bold text-lions-blue mb-2">{event.title}</h3>
       <p className="text-sm font-medium text-lions-blue mb-1">
-        {formatEventWhen(event)}
+        {formatWallClockDate(event.nextOccurrence, event.isAllDay)}
       </p>
       {event.location && (
         <p className="text-sm text-gray-500 mb-3 flex items-center gap-1">

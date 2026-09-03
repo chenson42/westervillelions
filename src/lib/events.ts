@@ -69,8 +69,30 @@ export function easternOffsetFor(d: Date): "-04:00" | "-05:00" {
 }
 
 /**
- * Formats an event's date/time for display.
- * Branches on isAllDay. For all-day events, omits the time suffix.
+ * Formats a wall-clock Date for display. Branches on isAllDay. For all-day
+ * events, omits the time suffix.
+ *
+ * `d` must be a Date produced by parseWallClock() or getNextOccurrence() —
+ * it carries local wall-clock time components. Do NOT pass new Date(string)
+ * here; that would re-introduce the naive-UTC bug (DECISION-005).
+ *
+ * Examples:
+ *   Timed:   "Saturday, July 4, 2026 at 12:30 PM"
+ *   All-day: "Saturday, July 4, 2026"
+ */
+export function formatWallClockDate(d: Date, isAllDay: boolean): string {
+  if (isAllDay) {
+    return format(d, "EEEE, MMMM d, yyyy");
+  }
+  return format(d, "EEEE, MMMM d, yyyy 'at' h:mm a");
+}
+
+/**
+ * Formats an event's date/time for display using its stored startDate.
+ * For recurring events, this reflects the SERIES START, not the next
+ * upcoming occurrence — callers displaying "next occurrence" (e.g. the
+ * homepage's Upcoming Events cards) should compute the occurrence Date via
+ * getNextOccurrence() and call formatWallClockDate() directly instead.
  *
  * Examples:
  *   Timed:   "Saturday, July 4, 2026 at 12:30 PM"
@@ -80,11 +102,7 @@ export function formatEventWhen(event: {
   startDate: string;
   isAllDay: boolean;
 }): string {
-  const d = parseWallClock(event.startDate);
-  if (event.isAllDay) {
-    return format(d, "EEEE, MMMM d, yyyy");
-  }
-  return format(d, "EEEE, MMMM d, yyyy 'at' h:mm a");
+  return formatWallClockDate(parseWallClock(event.startDate), event.isAllDay);
 }
 
 /**

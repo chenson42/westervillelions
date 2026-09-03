@@ -8,6 +8,7 @@ import {
   dateKey,
   easternOffsetFor,
   formatEventWhen,
+  formatWallClockDate,
   buildIcsCalendar,
   buildVEvent,
   buildGoogleCalendarUrl,
@@ -478,6 +479,76 @@ describe("formatEventWhen", () => {
     // Must not contain " at " (time suffix) — "at" alone would false-fail on "SaturdAT"
     expect(result).not.toContain(" at ");
     expect(result).not.toContain("12:00");
+  });
+});
+
+// ── formatWallClockDate ──────────────────────────────────────────────────────
+describe("formatWallClockDate", () => {
+  it("formats a timed Date with the full date and time suffix", () => {
+    const d = parseWallClock("2026-07-04 12:30:00");
+    expect(formatWallClockDate(d, false)).toBe("Saturday, July 4, 2026 at 12:30 PM");
+  });
+
+  it("formats an all-day Date with the full date but no time suffix", () => {
+    const d = parseWallClock("2026-07-04 00:00:00");
+    const result = formatWallClockDate(d, true);
+    expect(result).toBe("Saturday, July 4, 2026");
+    expect(result).not.toContain(" at ");
+  });
+
+  it("agrees with formatEventWhen when given the same wall-clock string", () => {
+    // formatEventWhen must remain a thin wrapper around formatWallClockDate —
+    // no second, divergent formatting implementation (CLAUDE.md duplication rule).
+    const event = { startDate: "2026-07-04 12:30:00", isAllDay: false };
+    expect(formatWallClockDate(parseWallClock(event.startDate), event.isAllDay)).toBe(
+      formatEventWhen(event)
+    );
+  });
+});
+
+// ── Regression: homepage "Upcoming Events" card must show the NEXT
+// occurrence's date, not the recurring series' original startDate.
+// See docs/work-log/2026-09-03-homepage-recurring-event-date.md
+describe("regression — recurring event display uses next occurrence, not series start", () => {
+  it("formatWallClockDate(getNextOccurrence(...)) shows the upcoming Saturday, not the first one", () => {
+    // Series started 2026-05-16 (a Saturday), repeats weekly on Saturdays.
+    const event = {
+      startDate: "2026-05-16 09:00:00",
+      isRecurring: true,
+      recurrenceType: "weekly",
+      recurrenceDays: [6], // Saturday
+      recurrenceEndDate: null,
+      isAllDay: false,
+    };
+    // "Now" is several weeks after the series began.
+    const now = new Date(2026, 6, 1); // July 1, 2026 (Wednesday)
+
+    const next = getNextOccurrence(event, now);
+    expect(next).not.toBeNull();
+
+    const displayed = formatWallClockDate(next!, false);
+
+    // Must NOT be the original series-start date (the pre-fix bug: the
+    // homepage card always formatted event.startDate directly).
+    expect(displayed).not.toBe(formatEventWhen(event));
+    // Must be the next Saturday on/after "now" — July 4, 2026.
+    expect(displayed).toBe("Saturday, July 4, 2026 at 9:00 AM");
+  });
+
+  it("is a no-op for non-recurring events — next occurrence equals startDate", () => {
+    const event = {
+      startDate: "2026-08-15 18:00:00",
+      isRecurring: false,
+      recurrenceType: null,
+      recurrenceDays: null,
+      recurrenceEndDate: null,
+      isAllDay: false,
+    };
+    const now = new Date(2026, 6, 1);
+
+    const next = getNextOccurrence(event, now);
+    expect(next).not.toBeNull();
+    expect(formatWallClockDate(next!, false)).toBe(formatEventWhen(event));
   });
 });
 

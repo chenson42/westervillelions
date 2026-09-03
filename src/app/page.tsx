@@ -5,7 +5,7 @@ import FeaturedContent from "@/components/home/featured-content";
 import { db } from "@/lib/db";
 import { members, events, homepageAnnouncements, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { eq, count, gt, asc, lte, gte, isNull, or, and } from "drizzle-orm";
-import { getNextOccurrence } from "@/lib/events";
+import { getNextOccurrence, parseWallClock } from "@/lib/events";
 import { format } from "date-fns";
 
 export const metadata: Metadata = {
@@ -129,8 +129,10 @@ export default async function HomePage() {
     cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
   }
 
-  // Sort each pool by next occurrence so recurring events land in the right order
-  // startDate and recurrenceEndDate are now wall-clock strings (mode:"string").
+  // Attach each row's next-occurrence Date (computed once, reused for both
+  // sorting and display) so recurring events land in the right order AND
+  // display the upcoming date rather than the series' original startDate.
+  // startDate and recurrenceEndDate are wall-clock strings (mode:"string").
   type EventRow = {
     id: string;
     startDate: string;
@@ -139,16 +141,23 @@ export default async function HomePage() {
     recurrenceDays: number[] | null;
     recurrenceEndDate: string | null;
   };
-  const sortByNextOccurrence = <T extends EventRow>(rows: T[]) =>
-    [...rows].sort((a, b) => {
-      const aNext = getNextOccurrence(a, now, cancelledByEvent.get(a.id) ?? new Set())?.getTime() ?? Infinity;
-      const bNext = getNextOccurrence(b, now, cancelledByEvent.get(b.id) ?? new Set())?.getTime() ?? Infinity;
-      return aNext - bNext;
-    });
+  const withNextOccurrence = <T extends EventRow>(rows: T[]) =>
+    rows.map((row) => ({
+      ...row,
+      // Non-recurring events: getNextOccurrence returns their own startDate,
+      // so this is a no-op fallback for them. Only null when a recurring
+      // series has ended (upcomingPublic already filters those out).
+      nextOccurrence:
+        getNextOccurrence(row, now, cancelledByEvent.get(row.id) ?? new Set()) ??
+        parseWallClock(row.startDate),
+    }));
+
+  const sortByNextOccurrence = <T extends { nextOccurrence: Date }>(rows: T[]) =>
+    [...rows].sort((a, b) => a.nextOccurrence.getTime() - b.nextOccurrence.getTime());
 
   const nextEvents = featuredEventRows.length > 0
-    ? sortByNextOccurrence(featuredEventRows)
-    : sortByNextOccurrence(fallbackEventRows).slice(0, 1);
+    ? sortByNextOccurrence(withNextOccurrence(featuredEventRows))
+    : sortByNextOccurrence(withNextOccurrence(fallbackEventRows)).slice(0, 1);
   const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR - 1;
   return (
     <div className="min-h-screen bg-white">
