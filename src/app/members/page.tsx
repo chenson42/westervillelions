@@ -8,6 +8,7 @@ import { FEATURES } from "@/lib/permissions";
 import { MemberDirectory } from "@/components/members/member-directory";
 import { MemberDirectoryPrint } from "@/components/members/member-directory-print";
 import { SuggestionBoxLauncher } from "@/components/suggestion-box-launcher";
+import { nowEastern } from "@/lib/events";
 
 export default async function MembersPage() {
   const session = await auth();
@@ -112,8 +113,12 @@ export default async function MembersPage() {
   // Groups available as filters (those that have at least one member)
   const filterGroups = directoryGroups.map((g) => ({ id: g.id, name: g.name, color: g.color }));
 
-  // Birthdays this month — dateOfBirth stored as "YYYY-MM-DD" or "--MM-DD" (no year)
-  const now = new Date();
+  // Birthdays this month — dateOfBirth stored as "YYYY-MM-DD" or "--MM-DD" (no year).
+  // nowEastern(), not new Date(): "this month" is an Eastern-wall-clock notion
+  // (the club is in Ohio) and the process may run in UTC. See
+  // src/lib/events.ts nowEastern() doc comment. Only matters right around a
+  // month boundary near midnight Eastern, but the fix is free.
+  const now = nowEastern();
   const currentMonth = now.getMonth() + 1;
   const monthName = now.toLocaleString("en-US", { month: "long" });
 

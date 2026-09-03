@@ -5,7 +5,7 @@ import { events, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, or, gt, isNull } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
-import { formatRecurrence, getNextOccurrence, formatEventWhen, dateKey, buildGoogleCalendarUrl, buildOutlookCalendarUrl, type IcsEventInput } from "@/lib/events";
+import { formatRecurrence, getNextOccurrence, formatEventWhen, dateKey, buildGoogleCalendarUrl, buildOutlookCalendarUrl, nowEastern, type IcsEventInput } from "@/lib/events";
 import MarkdownContent from "@/components/markdown-content";
 import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 
@@ -45,7 +45,10 @@ const breadcrumb = {
 };
 
 export default async function WhatWeDoPage() {
-  const now = new Date();
+  // nowEastern(), not new Date(): the process runs in UTC on Vercel, and
+  // reading new Date() through local-time accessors would compare against
+  // the wrong wall-clock hour. See src/lib/events.ts nowEastern() doc comment.
+  const now = nowEastern();
   // Drizzle mode:"string" columns require string comparisons in WHERE clauses.
   const nowStr = format(now, "yyyy-MM-dd HH:mm:ss");
 

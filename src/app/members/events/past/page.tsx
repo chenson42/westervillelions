@@ -6,7 +6,7 @@ import { eventRsvps, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { format } from "date-fns";
 import Link from "next/link";
-import { getNextOccurrence, parseWallClock } from "@/lib/events";
+import { getNextOccurrence, parseWallClock, nowEastern } from "@/lib/events";
 
 export default async function MemberPastEventsPage() {
   noStore();
@@ -31,7 +31,8 @@ export default async function MemberPastEventsPage() {
 
   const rsvpByEvent = new Map(userRsvps.map((r) => [r.eventId, r.status]));
 
-  const now = new Date();
+  // nowEastern(), not new Date(): see src/lib/events.ts nowEastern() doc comment.
+  const now = nowEastern();
 
   // Build a per-event cancelled date set for getNextOccurrence to skip
   const cancelledByEvent = new Map<string, Set<string>>();

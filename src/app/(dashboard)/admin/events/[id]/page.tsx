@@ -4,7 +4,7 @@ import { events, eventRsvps, users, eventOccurrenceOverrides } from "@/lib/db/sc
 import { eq, isNotNull } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { generateOccurrences, parseWallClock, dateKey } from "@/lib/events";
+import { generateOccurrences, parseWallClock, dateKey, nowEastern } from "@/lib/events";
 import { format } from "date-fns";
 import { AdminOccurrenceRsvpSection } from "@/components/admin/occurrence-rsvp-section";
 import { AdminEventRsvpTable } from "@/components/admin/admin-event-rsvp-table";
@@ -95,7 +95,8 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
     // Get all occurrences from series start so admins can see historical data.
     // event.startDate is now a wall-clock string; parse it to Date for the `from` arg.
     const allOccurrenceDates = generateOccurrences(event, parseWallClock(event.startDate), 520);
-    const now = new Date();
+    // nowEastern(), not new Date(): see src/lib/events.ts nowEastern() doc comment.
+    const now = nowEastern();
 
     // Build a lookup: occurrenceDate wall-clock string → RsvpRow[]
     // occurrenceDate is now a string from DB (mode:"string"). Use it directly.

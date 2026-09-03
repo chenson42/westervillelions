@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { format, subMonths } from "date-fns";
 import Link from "next/link";
 import MarkdownContent from "@/components/markdown-content";
-import { getNextOccurrence, parseWallClock, formatEventWhen, dateKey, buildGoogleCalendarUrl, buildOutlookCalendarUrl, type IcsEventInput } from "@/lib/events";
+import { getNextOccurrence, parseWallClock, formatEventWhen, dateKey, buildGoogleCalendarUrl, buildOutlookCalendarUrl, nowEastern, type IcsEventInput } from "@/lib/events";
 import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 
 export default async function MemberEventsPage() {
@@ -33,7 +33,8 @@ export default async function MemberEventsPage() {
 
   const rsvpByEvent = new Map(userRsvps.map((r) => [r.eventId, r.status]));
 
-  const now = new Date();
+  // nowEastern(), not new Date(): see src/lib/events.ts nowEastern() doc comment.
+  const now = nowEastern();
   const sixMonthsAgo = subMonths(now, 6);
 
   // Build a per-event cancelled date set for getNextOccurrence to skip

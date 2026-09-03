@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   getNextOccurrence,
   generateOccurrences,
@@ -16,6 +16,7 @@ import {
   icsEscape,
   icsFold,
   toIcsFilename,
+  nowEastern,
   type RecurringEvent,
   type IcsEventInput,
 } from "./events";
@@ -1285,5 +1286,201 @@ describe("buildOutlookCalendarUrl — all-day events", () => {
     // Outlook uses inclusive end — endDate as stored, NOT +1 day
     expect(decoded).toContain("enddt=2026-07-06");
     expect(decoded).toContain("allday=true");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// nowEastern
+// See: docs/work-log/2026-09-03-server-timezone-event-visibility.md
+//
+// These tests must NOT depend on the test runner's own local timezone. Every
+// case below fixes the current instant with vi.setSystemTime() (which mocks
+// `new Date()`'s return value directly) and asserts the Eastern wall-clock
+// components nowEastern() derives from Intl.DateTimeFormat — a mechanism
+// that is itself timezone-independent because it passes an explicit
+// `timeZone: "America/New_York"` option, regardless of process.env.TZ or the
+// machine's local zone.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("nowEastern", () => {
+  it("returns Eastern wall-clock components during EDT (summer), matching the UTC-4 offset", () => {
+    // July 4, 2026 at 16:30 UTC = 12:30 PM EDT (UTC-4)
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-04T16:30:00.000Z"));
+    try {
+      const result = nowEastern();
+      expect(result.getFullYear()).toBe(2026);
+      expect(result.getMonth()).toBe(6); // July, 0-indexed
+      expect(result.getDate()).toBe(4);
+      expect(result.getHours()).toBe(12);
+      expect(result.getMinutes()).toBe(30);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns Eastern wall-clock components during EST (winter), matching the UTC-5 offset", () => {
+    // January 15, 2026 at 17:30 UTC = 12:30 PM EST (UTC-5)
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-15T17:30:00.000Z"));
+    try {
+      const result = nowEastern();
+      expect(result.getFullYear()).toBe(2026);
+      expect(result.getMonth()).toBe(0); // January
+      expect(result.getDate()).toBe(15);
+      expect(result.getHours()).toBe(12);
+      expect(result.getMinutes()).toBe(30);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns the PRIOR Eastern calendar date when the UTC instant has already rolled to the next day", () => {
+    // July 5, 2026 at 02:30 UTC = July 4, 2026 at 10:30 PM EDT — a case where
+    // the UTC date and the Eastern date genuinely disagree. This is exactly
+    // the class of discrepancy that made today's 7 PM event vanish in
+    // production: a process reading UTC calendar/clock components thinks
+    // it's already tomorrow (or later tonight) in Eastern terms.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-05T02:30:00.000Z"));
+    try {
+      const result = nowEastern();
+      expect(dateKey(result)).toBe("2026-07-04");
+      expect(result.getHours()).toBe(22);
+      expect(result.getMinutes()).toBe(30);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("crosses the spring-forward DST boundary correctly (Mar 8, 2026)", () => {
+    // Just before the 2:00 AM local spring-forward (07:00 UTC transition):
+    // 06:59 UTC = 01:59 AM EST.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-08T06:59:00.000Z"));
+    try {
+      const before = nowEastern();
+      expect(dateKey(before)).toBe("2026-03-08");
+      expect(before.getHours()).toBe(1);
+      expect(before.getMinutes()).toBe(59);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // Just after: 07:01 UTC = 03:01 AM EDT (clocks jumped from 2 AM to 3 AM).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-08T07:01:00.000Z"));
+    try {
+      const after = nowEastern();
+      expect(dateKey(after)).toBe("2026-03-08");
+      expect(after.getHours()).toBe(3);
+      expect(after.getMinutes()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("crosses the fall-back DST boundary correctly (Nov 1, 2026)", () => {
+    // Just before the 2:00 AM local fall-back (06:00 UTC transition):
+    // 05:59 UTC = 01:59 AM EDT (still daylight time).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-01T05:59:00.000Z"));
+    try {
+      const before = nowEastern();
+      expect(dateKey(before)).toBe("2026-11-01");
+      expect(before.getHours()).toBe(1);
+      expect(before.getMinutes()).toBe(59);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // Just after: 06:01 UTC = 01:01 AM EST (clocks fell back from 2 AM to 1 AM).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-01T06:01:00.000Z"));
+    try {
+      const after = nowEastern();
+      expect(dateKey(after)).toBe("2026-11-01");
+      expect(after.getHours()).toBe(1);
+      expect(after.getMinutes()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns a Date usable with parseWallClock()-style comparisons (getHours/getMinutes agree with a wall-clock string for the same moment)", () => {
+    // Sanity check that nowEastern()'s convention matches parseWallClock()'s:
+    // both should read as the same local components for "2026-07-04 12:30:00" Eastern.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-04T16:30:00.000Z")); // 12:30 PM EDT
+    try {
+      const fromNowEastern = nowEastern();
+      const fromWallClockString = parseWallClock("2026-07-04 12:30:00");
+      expect(fromNowEastern.getFullYear()).toBe(fromWallClockString.getFullYear());
+      expect(fromNowEastern.getMonth()).toBe(fromWallClockString.getMonth());
+      expect(fromNowEastern.getDate()).toBe(fromWallClockString.getDate());
+      expect(fromNowEastern.getHours()).toBe(fromWallClockString.getHours());
+      expect(fromNowEastern.getMinutes()).toBe(fromWallClockString.getMinutes());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ── Regression: server-timezone event-visibility bug ───────────────────────
+// See: docs/work-log/2026-09-03-server-timezone-event-visibility.md
+//
+// Confirmed live in production on 2026-09-03: a same-day 7 PM event vanished
+// from every upcoming-events list because `new Date()` was being read through
+// local-time accessors on a process running in UTC (Vercel's Node default),
+// which is several hours ahead of true Eastern wall-clock time. This suite
+// demonstrates the bug class directly at the getNextOccurrence() level and
+// confirms nowEastern() is the fix — WITHOUT depending on the test runner's
+// own local timezone (the "buggy now" below is built from UTC components,
+// not from an actual `new Date()` read on this machine, so the assertion
+// holds no matter what timezone the suite runs in).
+describe("regression — server timezone event visibility (nowEastern fixes UTC-process misclassification)", () => {
+  it("a naive UTC-read 'now' wrongly calls an upcoming Eastern event past; nowEastern() gets it right", () => {
+    const event: RecurringEvent = {
+      startDate: "2026-07-04 19:00:00", // 7:00 PM Eastern — e.g. "General Meeting"
+      isRecurring: false,
+      recurrenceType: null,
+      recurrenceDays: null,
+      recurrenceEndDate: null,
+    };
+
+    // The real-world instant: 21:00 UTC on July 4, 2026 = 5:00 PM EDT — the
+    // event is genuinely still two hours away.
+    const instant = new Date("2026-07-04T21:00:00.000Z");
+
+    // Simulates exactly what `new Date()` looks like when read through local
+    // accessors on a process whose local timezone is UTC (the production
+    // bug): local components equal the UTC components. Built deterministically
+    // from `instant`'s UTC fields — not from this test runner's own local
+    // timezone — so the assertion is stable in any environment/CI.
+    const buggyNow = new Date(
+      instant.getUTCFullYear(),
+      instant.getUTCMonth(),
+      instant.getUTCDate(),
+      instant.getUTCHours(),
+      instant.getUTCMinutes(),
+      instant.getUTCSeconds()
+    );
+    // BUG: 21:00 "now" reads as after the event's 19:00 wall-clock start —
+    // the still-upcoming event is wrongly classified as past.
+    expect(getNextOccurrence(event, buggyNow)).toBeNull();
+
+    // FIX: nowEastern() derives 17:00 (5 PM) Eastern from the same instant —
+    // correctly before the event's 19:00 start.
+    vi.useFakeTimers();
+    vi.setSystemTime(instant);
+    try {
+      const fixedNow = nowEastern();
+      const result = getNextOccurrence(event, fixedNow);
+      expect(result).not.toBeNull();
+      expect(dateKey(result!)).toBe("2026-07-04");
+      expect(result!.getHours()).toBe(19);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

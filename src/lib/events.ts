@@ -39,6 +39,68 @@ export function dateKey(d: Date): string {
 }
 
 /**
+ * Returns the current instant's Eastern wall-clock date/time as a "naive
+ * local" Date — i.e. a Date whose getter methods (getFullYear, getMonth,
+ * getDate, getHours, getMinutes, getSeconds) return the Eastern calendar
+ * date and clock time, in exactly the same convention parseWallClock()
+ * produces when it parses a DB "YYYY-MM-DD HH:MM:SS" wall-clock string.
+ *
+ * WHY THIS EXISTS: `new Date()` always represents the correct absolute
+ * instant, but reading it through local-time accessors (`.getHours()`,
+ * `format()`, date-fns `isAfter`/`isBefore`, etc.) reflects the **process's
+ * own local timezone** — not Eastern. That equivalence is NOT guaranteed.
+ * Vercel's Node runtime defaults to UTC and this repo pins no `TZ`, so in
+ * production `new Date()` read through those accessors is off from true
+ * Eastern wall-clock time by the EDT/EST-to-UTC offset (~4-5 hours). Every
+ * "is this event still upcoming" comparison in this codebase compares
+ * against `parseWallClock()`-parsed DB values, so `now` must be produced
+ * the same way — this function is that one-line, drop-in replacement for
+ * `new Date()` at every such call site.
+ *
+ * Uses Intl.DateTimeFormat with timeZone: "America/New_York" to read the
+ * true Eastern components of the current instant. Node ships full ICU data
+ * regardless of `process.env.TZ`, so this does NOT depend on the server's
+ * local timezone setting — unlike easternOffsetFor(), which deliberately
+ * avoids Intl for a different reason (computing a UTC offset string via
+ * manual DST-boundary math, for ICS generation). Those are different
+ * problems; this one is squarely what Intl.DateTimeFormat is for.
+ *
+ * The returned Date is NOT a real UTC instant — like parseWallClock()'s
+ * output, it is only meaningful when read back through local-time getters
+ * (or compared against another Date produced the same way / by
+ * parseWallClock()). Never serialize it with toISOString() or treat it as
+ * an absolute timestamp.
+ */
+export function nowEastern(): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const get = (type: string) => {
+    const part = parts.find((p) => p.type === type);
+    return part ? parseInt(part.value, 10) : 0;
+  };
+
+  const year = get("year");
+  const month = get("month");
+  const day = get("day");
+  // Intl's hour12:false formats midnight as "24" for some locales/environments
+  // (a documented ICU quirk) — normalize to 0.
+  const hour = get("hour") % 24;
+  const minute = get("minute");
+  const second = get("second");
+
+  return new Date(year, month - 1, day, hour, minute, second);
+}
+
+/**
  * Returns the Eastern offset string for a given local Date.
  * DST: second Sunday of March through first Sunday of November = "-04:00".
  * Standard: all other dates = "-05:00".

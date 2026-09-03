@@ -79,7 +79,7 @@ import {
   members,
 } from "@/lib/db/schema";
 import { and, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
-import { getNextOccurrence } from "@/lib/events";
+import { getNextOccurrence, nowEastern } from "@/lib/events";
 import { escapeIlikeTerm, MINUTES_KIND_EVENT_TITLES, type MinutesKind } from "@/lib/minutes";
 
 // ---------------------------------------------------------------------------
@@ -623,7 +623,8 @@ export async function getNextMeetingPointer(kind: string): Promise<NextMeetingPo
     cancelledByEvent.get(o.eventId)!.add(o.occurrenceDate);
   }
 
-  const now = new Date();
+  // nowEastern(), not new Date(): see src/lib/events.ts nowEastern() doc comment.
+  const now = nowEastern();
   let best: { row: (typeof candidateRows)[number]; occurrence: Date } | null = null;
   for (const row of candidateRows) {
     const occurrence = getNextOccurrence(row, now, cancelledByEvent.get(row.id) ?? new Set());

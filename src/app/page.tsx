@@ -5,7 +5,7 @@ import FeaturedContent from "@/components/home/featured-content";
 import { db } from "@/lib/db";
 import { members, events, homepageAnnouncements, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { eq, count, gt, asc, lte, gte, isNull, or, and } from "drizzle-orm";
-import { getNextOccurrence, parseWallClock } from "@/lib/events";
+import { getNextOccurrence, parseWallClock, nowEastern } from "@/lib/events";
 import { format } from "date-fns";
 
 export const metadata: Metadata = {
@@ -37,7 +37,10 @@ export const metadata: Metadata = {
 const FOUNDING_YEAR = 1928;
 
 export default async function HomePage() {
-  const now = new Date();
+  // nowEastern(), not new Date(): the process runs in UTC on Vercel, and
+  // reading new Date() through local-time accessors would compare against
+  // the wrong wall-clock hour. See src/lib/events.ts nowEastern() doc comment.
+  const now = nowEastern();
   // Drizzle mode:"string" columns require string comparisons in WHERE clauses.
   const nowStr = format(now, "yyyy-MM-dd HH:mm:ss");
 

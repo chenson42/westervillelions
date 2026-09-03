@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { events, eventRsvps, users, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { format } from "date-fns";
-import { formatRecurrence, generateOccurrences, parseWallClock, dateKey, easternOffsetFor, formatEventWhen, getNextOccurrence, buildGoogleCalendarUrl, buildOutlookCalendarUrl, type IcsEventInput } from "@/lib/events";
+import { formatRecurrence, generateOccurrences, parseWallClock, dateKey, easternOffsetFor, formatEventWhen, getNextOccurrence, buildGoogleCalendarUrl, buildOutlookCalendarUrl, nowEastern, type IcsEventInput } from "@/lib/events";
 import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 import MarkdownContent from "@/components/markdown-content";
 import { auth } from "@/lib/auth";
@@ -110,7 +110,8 @@ export default async function EventDetailPage({ params }: Props) {
     }
 
     if (event.isRecurring) {
-      const now = new Date();
+      // nowEastern(), not new Date(): see src/lib/events.ts nowEastern() doc comment.
+      const now = nowEastern();
       const occurrenceDates = generateOccurrences(event, now);
 
       // Build IcsEventInput for per-occurrence URL generation
@@ -190,7 +191,8 @@ export default async function EventDetailPage({ params }: Props) {
       .where(eq(eventOccurrenceOverrides.eventId, id));
 
     const cancelledSetForSeries = new Set(overridesForSeries.map((o) => o.occurrenceDate));
-    const nextOccurrenceDate = getNextOccurrence(event, new Date(), cancelledSetForSeries);
+    // nowEastern(), not new Date(): see src/lib/events.ts nowEastern() doc comment.
+    const nextOccurrenceDate = getNextOccurrence(event, nowEastern(), cancelledSetForSeries);
 
     if (nextOccurrenceDate !== null) {
       calendarGoogleUrl = buildGoogleCalendarUrl(icsInput, nextOccurrenceDate);

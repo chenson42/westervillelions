@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { eventRsvps, events, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { format } from "date-fns";
-import { generateOccurrences, isValidOccurrence, dateKey, parseWallClock } from "@/lib/events";
+import { generateOccurrences, isValidOccurrence, dateKey, parseWallClock, nowEastern } from "@/lib/events";
 
 /**
  * POST /api/events/[id]/signup
@@ -110,8 +110,11 @@ export async function POST(
         return NextResponse.json({ error: "Invalid occurrence date" }, { status: 400 });
       }
 
-      // Reject signups for past occurrences
-      if (parsedDate < new Date()) {
+      // Reject signups for past occurrences. parsedDate is wall-clock (Eastern) —
+      // compare against nowEastern(), not new Date(), or this misreads "past" up
+      // to ~5 hours early whenever the server process isn't running in Eastern
+      // local time (see docs/work-log/2026-09-03-server-timezone-event-visibility.md).
+      if (parsedDate < nowEastern()) {
         return NextResponse.json(
           { error: "Cannot sign up for a past occurrence" },
           { status: 400 }

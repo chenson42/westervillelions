@@ -7,7 +7,7 @@ import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { and, eq, gte, isNotNull, isNull, lt, or, sql, inArray } from "drizzle-orm";
 import { EventTableRow, type RsvpSummary } from "@/components/admin/event-table-row";
-import { getNextOccurrence, parseWallClock } from "@/lib/events";
+import { getNextOccurrence, parseWallClock, nowEastern } from "@/lib/events";
 import { format } from "date-fns";
 
 
@@ -26,7 +26,10 @@ export default async function AdminEventsPage({
   const { page: pageParam = "1", view = "upcoming" } = await searchParams;
   const page = Math.max(1, parseInt(pageParam) || 1);
   const isPast = view === "past";
-  const now = new Date();
+  // nowEastern(), not new Date(): the process runs in UTC on Vercel, and
+  // reading new Date() through local-time accessors would compare against
+  // the wrong wall-clock hour. See src/lib/events.ts nowEastern() doc comment.
+  const now = nowEastern();
   // Drizzle mode:"string" columns require string comparisons in WHERE clauses.
   const nowStr = format(now, "yyyy-MM-dd HH:mm:ss");
 
