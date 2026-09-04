@@ -35,6 +35,11 @@ function NextEventCard({ event }: { event: NextEvent }) {
     plain && plain.length > 150 ? plain.slice(0, 150) + "…" : plain;
 
   return (
+    <Link
+      href={`/events/${event.id}`}
+      aria-label={`View details for ${event.title}`}
+      className="block h-full focus:outline-none focus:ring-2 focus:ring-lions-blue rounded-2xl"
+    >
     <article className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden h-full flex flex-col">
       {event.image && (
         <div className="relative w-full aspect-[7/2] shrink-0">
@@ -84,6 +89,7 @@ function NextEventCard({ event }: { event: NextEvent }) {
       )}
       </div>
     </article>
+    </Link>
   );
 }
 
