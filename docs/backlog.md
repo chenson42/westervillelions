@@ -966,3 +966,11 @@ Design each with the others in view — decisions in one box in the next.
   seed the dev DB's "Community & Civic" budget category fixture; re-run the other four specs
   individually to isolate whether each is a fixture gap or an actual assertion drift, and fix
   or re-anchor each at the next 7-day test-coverage review.
+
+  **Update (2026-09-04, pre-push full-suite re-run):** re-ran the full suite a few hours after
+  QA's pass, immediately before pushing this feature — 8 failures this time, same six spec
+  files plus a new one, `recurring-signup-rollup.spec.ts` ("admin events list shows sum of
+  RSVPs across two occurrences"). Consistent with the drift theory above (the fixture state
+  keeps moving under a shared dev DB), not a regression from this push — the new
+  `social-requests-flow.spec.ts` suite was isolated and re-run separately: 8/8 green. Raising
+  the failure count and file list here rather than opening a duplicate item.
