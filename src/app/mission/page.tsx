@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { causes } from "@/lib/causes";
+import { CauseIcon } from "@/components/cause-icon";
 
 export const revalidate = 3600;
 
@@ -20,65 +22,6 @@ export const metadata: Metadata = {
     type: "website",
   },
 };
-
-const causes = [
-  {
-    icon: "👁️",
-    slug: "vision",
-    title: "Vision",
-    description:
-      "Fighting preventable blindness through vision screenings, eyeglass collection and recycling, and connecting those in need with affordable eye care.",
-  },
-  {
-    icon: "🌾",
-    slug: "hunger-relief",
-    title: "Hunger Relief",
-    description:
-      "Partnering with local food banks and meal programs to ensure no family in Westerville goes without nutritious food.",
-  },
-  {
-    icon: "🌿",
-    slug: "environment",
-    title: "Environment",
-    description:
-      "Protecting our community's natural resources through conservation efforts, clean-up events, and environmental education.",
-  },
-  {
-    icon: "🎗️",
-    slug: "childhood-cancer",
-    title: "Childhood Cancer",
-    description:
-      "Supporting children and families facing cancer through fundraising and awareness in partnership with Lions Clubs International Foundation.",
-  },
-  {
-    icon: "💙",
-    slug: "diabetes-awareness",
-    title: "Diabetes Awareness",
-    description:
-      "Promoting diabetes prevention, education, and support for those living with the disease in our community.",
-  },
-  {
-    icon: "🎓",
-    slug: "youth-programs",
-    title: "Youth Programs",
-    description:
-      "Investing in the next generation through scholarships, educational programs, and youth leadership development opportunities.",
-  },
-  {
-    icon: "🤝",
-    slug: "community-service",
-    title: "Community Service",
-    description:
-      "From holiday drives to civic events, we roll up our sleeves alongside neighbors to address Westerville's pressing needs.",
-  },
-  {
-    icon: "🌍",
-    slug: "humanitarian-aid",
-    title: "Humanitarian Aid",
-    description:
-      "When disaster strikes — locally or globally — we mobilize to provide relief through our network of Lions Clubs International.",
-  },
-];
 
 const breadcrumb = {
   "@context": "https://schema.org",
@@ -160,7 +103,9 @@ export default function MissionPage() {
                   id={cause.slug}
                   className="scroll-mt-24 rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 bg-white overflow-hidden p-5"
                 >
-                  <div className="text-3xl mb-3">{cause.icon}</div>
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-lions-blue/10 text-lions-blue mb-3">
+                    <CauseIcon slug={cause.slug} className="h-6 w-6" />
+                  </span>
                   <h3 className="font-semibold text-gray-900 mb-2">{cause.title}</h3>
                   <p className="text-sm text-gray-600 leading-relaxed">
                     {cause.description}
