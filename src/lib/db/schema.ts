@@ -1585,7 +1585,17 @@ export const minutes = pgTable(
     // in this schema).
     authorUserId: uuid("author_user_id").references(() => users.id, { onDelete: "set null" }),
     approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
-    approvedAt: timestamp("approved_at"),
+    // { withTimezone: true } (2026-09-03 security review fix): this column, and
+    // createdAt/updatedAt below, were declared as bare `timestamp(...)` even
+    // though 0079_meeting_minutes.sql — and the live database — created all
+    // three as timestamptz. schema.ts is the source of truth for `drizzle-kit
+    // push --force` (CLAUDE.md), so the mismatch would have silently ALTERed
+    // these columns from timestamptz to timestamp on the next push,
+    // reinterpreting every stored instant in the session's timezone — the
+    // same naive-timestamp bug class already fixed once for events/RSVPs.
+    // Fixed here to match the live schema; no migration needed, the DB
+    // already has the correct type.
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
     // Column SHAPE reused from ledgerBudgets.pendingDeleteAt (nullable timestamp,
     // flag-flip, restorable) — the PURGE behavior is explicitly NOT reused.
     // ledgerBudgets purges pending-delete rows in the same transaction as
@@ -1597,8 +1607,8 @@ export const minutes = pgTable(
     // this table anywhere in the app; if a true hard-delete is ever genuinely
     // needed it is a separate, rare, manual-only action, not this column.
     pendingDeleteAt: timestamp("pending_delete_at"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     // No unique(kind, meetingDate) — two sets of minutes for one meeting (a
@@ -1632,7 +1642,9 @@ export const minutesMotions = pgTable(
     // DECISION-041 pattern: 'passed' | 'failed' | 'tabled' | 'withdrawn',
     // validated against MOTION_RESULTS in src/lib/minutes.ts.
     result: text("result").notNull().default("passed"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    // { withTimezone: true } — matches 0079_meeting_minutes.sql / the live DB
+    // (timestamptz); see the note on minutes.approvedAt above.
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("ix_minutes_motions_minutes").on(t.minutesId)],
 );
@@ -1648,7 +1660,9 @@ export const minutesActionItems = pgTable(
     text: text("text").notNull(),
     ownerName: text("owner_name").notNull(), // free text — same reasoning as motions above, DECISION-077 §2
     dueDate: date("due_date"), // nullable — some action items are "ongoing" / "before next meeting"
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    // { withTimezone: true } — matches 0079_meeting_minutes.sql / the live DB
+    // (timestamptz); see the note on minutes.approvedAt above.
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("ix_minutes_action_items_minutes").on(t.minutesId)],
 );

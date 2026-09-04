@@ -140,3 +140,67 @@ describe("/admin (dashboard root) enforces its own ADMIN_DASHBOARD gate", () => 
     expect(source).toMatch(/redirect\(/);
   });
 });
+
+/**
+ * Regression coverage for H1 (2026-09-03 security review): the walk above
+ * only ever looked at `<segment>/page.tsx` — the top-level list view for
+ * each admin area. It never descended into `<segment>/[id]/page.tsx` or
+ * `<segment>/new/page.tsx` (or deeper, e.g. `documents/[slug]/compare`),
+ * so those detail/edit/create sub-routes shipped relying solely on
+ * `admin/layout.tsx`'s coarse "holds at least one admin feature" gate —
+ * exactly the defect class this whole file exists to catch, one directory
+ * level deeper than it was checking. Concretely: `/admin/members/[id]`
+ * rendered a member's full record (phone, home address) to any signed-in
+ * user holding so much as `testimonials.manage`, because nothing between
+ * the layout and the page body ever checked `MEMBERS_EDIT`.
+ *
+ * This walk finds every page.tsx that is NOT a top-level segment's own
+ * page.tsx (i.e. more than one directory below ADMIN_DIR) and requires the
+ * same hasFeature()/hasAnyFeature() + redirect() pattern the top-level
+ * pages must already have.
+ */
+function nestedAdminPages(): string[] {
+  const results: string[] = [];
+  function walk(dir: string, depth: number) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        walk(join(dir, entry.name), depth + 1);
+      } else if (entry.isFile() && entry.name === "page.tsx" && depth > 1) {
+        results.push(join(dir, entry.name));
+      }
+    }
+  }
+  walk(ADMIN_DIR, 0);
+  return results.sort();
+}
+
+describe("every nested admin detail/edit/create page ([id], new, and deeper) enforces its own page-level feature gate — regression for H1 (2026-09-03 security review, /admin/members/[id] et al.)", () => {
+  const pages = nestedAdminPages();
+
+  it("the filesystem walk itself found the known nested routes (sanity check, not a real assertion about gating)", () => {
+    const relative = pages.map((p) => p.slice(ADMIN_DIR.length + 1));
+    expect(relative).toEqual(
+      expect.arrayContaining([
+        join("members", "[id]", "page.tsx"),
+        join("members", "new", "page.tsx"),
+        join("users", "[id]", "page.tsx"),
+      ])
+    );
+  });
+
+  it.each(pages.map((p) => [p.slice(ADMIN_DIR.length + 1), p] as const))(
+    "'admin/%s' calls hasFeature()/hasAnyFeature() (or an equivalent explicit FEATURES check)",
+    (_relative, fullPath) => {
+      const source = readFileSync(fullPath, "utf-8");
+      expect(source).toMatch(FEATURE_GATE_PATTERN);
+    }
+  );
+
+  it.each(pages.map((p) => [p.slice(ADMIN_DIR.length + 1), p] as const))(
+    "'admin/%s' actually enforces the gate with a redirect() — computing a boolean without acting on it is the same defect wearing a disguise",
+    (_relative, fullPath) => {
+      const source = readFileSync(fullPath, "utf-8");
+      expect(source).toMatch(/redirect\(/);
+    }
+  );
+});

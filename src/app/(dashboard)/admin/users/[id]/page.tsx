@@ -1,11 +1,14 @@
 import { db } from "@/lib/db";
 import { users, roles, userRoles, members } from "@/lib/db/schema";
 import { eq, asc } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import UserRoleManager from "@/components/admin/user-role-manager";
 import { EditUserForm } from "@/components/admin/edit-user-form";
 import { LinkMemberForm } from "@/components/admin/link-member-form";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 /**
  * User Role Management Page
@@ -17,6 +20,11 @@ export default async function UserRolePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
+  if (!canAccess) redirect("/admin");
+
   const { id } = await params;
 
   // Fetch user

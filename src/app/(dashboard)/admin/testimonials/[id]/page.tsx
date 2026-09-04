@@ -1,15 +1,23 @@
 import { db } from "@/lib/db";
 import { testimonials } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import TestimonialForm from "@/components/admin/testimonial-form";
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 export default async function EditTestimonialPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ANNOUNCEMENTS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   const { id } = await params;
   const testimonial = await db.query.testimonials.findFirst({
     where: eq(testimonials.id, id),

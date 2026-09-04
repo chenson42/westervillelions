@@ -1,8 +1,17 @@
 import { db } from "@/lib/db";
 import { groupTypes } from "@/lib/db/schema";
 import { GroupForm } from "@/components/admin/group-form";
+import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 export default async function NewGroupPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.GROUPS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   const types = await db.select().from(groupTypes);
 
   return (

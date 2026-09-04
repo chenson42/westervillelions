@@ -1,7 +1,16 @@
 import AnnouncementForm from "@/components/admin/announcement-form";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
-export default function NewAnnouncementPage() {
+export default async function NewAnnouncementPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ANNOUNCEMENTS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   return (
     <div className="space-y-6">
       {/* Header */}

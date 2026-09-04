@@ -1,11 +1,14 @@
 import { db } from "@/lib/db";
 import { members } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import MemberForm from "@/components/admin/member-form";
 import Link from "next/link";
 import type { MemberFormData } from "@/components/admin/member-form";
 import { ProfilePictureSection } from "@/components/members/profile-picture-section";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 /**
  * Edit Member Page
@@ -17,6 +20,11 @@ export default async function EditMemberPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.MEMBERS_EDIT);
+  if (!canAccess) redirect("/admin");
+
   const { id } = await params;
   const member = await db.query.members.findFirst({
     where: eq(members.id, id),

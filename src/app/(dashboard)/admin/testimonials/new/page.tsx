@@ -1,7 +1,16 @@
 import TestimonialForm from "@/components/admin/testimonial-form";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
-export default function NewTestimonialPage() {
+export default async function NewTestimonialPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ANNOUNCEMENTS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   return (
     <div className="space-y-6">
       {/* Header */}

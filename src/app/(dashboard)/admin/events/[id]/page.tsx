@@ -3,11 +3,14 @@ import { db } from "@/lib/db";
 import { events, eventRsvps, users, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { eq, isNotNull } from "drizzle-orm";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { generateOccurrences, parseWallClock, dateKey, nowEastern } from "@/lib/events";
 import { format } from "date-fns";
 import { AdminOccurrenceRsvpSection } from "@/components/admin/occurrence-rsvp-section";
 import { AdminEventRsvpTable } from "@/components/admin/admin-event-rsvp-table";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 type RsvpRow = {
   id: string;
@@ -34,6 +37,11 @@ type OccurrenceGroupData = {
 };
 
 export default async function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.EVENTS_EDIT);
+  if (!canAccess) redirect("/admin");
+
   const { id } = await params;
 
   const [event, rsvpRows, memberList, overrides] = await Promise.all([

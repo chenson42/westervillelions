@@ -1,15 +1,23 @@
 import { db } from "@/lib/db";
 import { homepageAnnouncements } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import AnnouncementForm from "@/components/admin/announcement-form";
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 export default async function EditAnnouncementPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.ANNOUNCEMENTS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   const { id } = await params;
   const announcement = await db.query.homepageAnnouncements.findFirst({
     where: eq(homepageAnnouncements.id, id),

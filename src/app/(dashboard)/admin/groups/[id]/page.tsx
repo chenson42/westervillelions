@@ -1,16 +1,24 @@
 import { db } from "@/lib/db";
 import { groups, groupTypes, groupMemberships, groupRoles, members } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { GroupForm } from "@/components/admin/group-form";
 import { GroupMemberships } from "@/components/admin/group-memberships";
 import { SyncBoardRoleButton } from "@/components/admin/sync-board-role-button";
+import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 
 export default async function EditGroupPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const canAccess = await hasFeature(session.user.id, FEATURES.GROUPS_MANAGE);
+  if (!canAccess) redirect("/admin");
+
   const { id } = await params;
 
   const [group, types, memberships, allMembers, roles] = await Promise.all([
