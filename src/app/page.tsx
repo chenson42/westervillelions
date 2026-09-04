@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { ServiceCard } from "@/components/home/service-card";
-import { ZeffyButton } from "@/components/campaigns/zeffy-button";
+import Link from "next/link";
+import { ServiceAreas } from "@/components/home/service-areas";
 import FeaturedContent from "@/components/home/featured-content";
 import { db } from "@/lib/db";
 import { members, events, homepageAnnouncements, eventOccurrenceOverrides } from "@/lib/db/schema";
@@ -190,19 +190,19 @@ export default async function HomePage() {
             Helping our community thrive through service and care.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <a
+            <Link
               href="/join"
-              className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105"
+              className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
             >
               Join the Club
-            </a>
-            <a
+            </Link>
+            <Link
               href="/connect"
               aria-label="Find out when and where we meet"
-              className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition"
+              className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
             >
               Attend a Meeting
-            </a>
+            </Link>
           </div>
         </div>
       </section>
@@ -220,62 +220,15 @@ export default async function HomePage() {
               <p className="text-xl text-gray-700">Active Members</p>
             </div>
             <div className="p-6">
-              <div className="text-5xl font-bold text-lions-blue mb-2">100%</div>
-              <p className="text-xl text-gray-700">Community Focused</p>
+              <div className="text-5xl font-bold text-lions-blue mb-2">8</div>
+              <p className="text-xl text-gray-700">Causes We Serve</p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Mission Section with Photos */}
-      <section className="py-20 bg-gradient-to-b from-gray-50 to-white">
-        <div className="container mx-auto px-4">
-          <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 text-gray-900">
-            Our Service Areas
-          </h2>
-          <p className="text-center text-xl text-gray-600 mb-16 max-w-3xl mx-auto">
-            We make a difference in our community through diverse service initiatives
-          </p>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            <ServiceCard
-              image="/images/service-youth.jpg"
-              alt="Youth Programs"
-              title="Youth Programs"
-              description="Supporting education, scholarships, and youth activities to empower the next generation"
-              color="from-yellow-400 to-yellow-500"
-              priority
-            />
-            <ServiceCard
-              image="/images/service-community.jpg"
-              alt="Community Service"
-              title="Community Service"
-              description="Partnering with local organizations to address pressing community needs"
-              color="from-yellow-400 to-yellow-500"
-            />
-            <ServiceCard
-              image="/images/service-humanitarian.jpg"
-              alt="Humanitarian Aid"
-              title="Humanitarian Aid"
-              description="Providing disaster relief and support to those facing hardship"
-              color="from-yellow-400 to-yellow-500"
-            />
-            <ServiceCard
-              image="/images/service-community.jpg"
-              alt="Environment"
-              title="Environment"
-              description="Protecting our community's natural resources through conservation efforts, clean-up events, and environmental education"
-              color="from-yellow-400 to-yellow-500"
-            />
-            <ServiceCard
-              image="/images/service-community.jpg"
-              alt="Hunger Relief"
-              title="Hunger Relief"
-              description="Partnering with local food banks and meal programs to ensure no family in Westerville goes without nutritious food"
-              color="from-yellow-400 to-yellow-500"
-            />
-          </div>
-        </div>
-      </section>
+      {/* Service Areas — the eight Lions global causes, mirroring /mission */}
+      <ServiceAreas />
 
       {/* Stay Connected */}
       <section className="py-20 bg-white">
@@ -339,18 +292,18 @@ export default async function HomePage() {
             Join us in serving our community and making a lasting difference
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <a
+            <Link
               href="/campaigns"
-              className="bg-lions-blue text-white px-10 py-4 rounded-lg font-bold text-lg hover:bg-lions-blue-dark transition shadow-lg transform hover:scale-105"
+              className="bg-lions-blue text-white px-10 py-4 rounded-lg font-bold text-lg hover:bg-lions-blue-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
             >
               Support Our Mission
-            </a>
-            <a
+            </Link>
+            <Link
               href="/connect"
-              className="bg-white text-lions-blue border-2 border-lions-blue px-10 py-4 rounded-lg font-bold text-lg hover:bg-gray-50 transition shadow-lg"
+              className="bg-white text-lions-blue border-2 border-lions-blue px-10 py-4 rounded-lg font-bold text-lg hover:bg-gray-50 transition shadow-lg focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
             >
               Get in Touch
-            </a>
+            </Link>
           </div>
         </div>
       </section>

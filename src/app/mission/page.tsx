@@ -24,48 +24,56 @@ export const metadata: Metadata = {
 const causes = [
   {
     icon: "👁️",
+    slug: "vision",
     title: "Vision",
     description:
       "Fighting preventable blindness through vision screenings, eyeglass collection and recycling, and connecting those in need with affordable eye care.",
   },
   {
     icon: "🌾",
+    slug: "hunger-relief",
     title: "Hunger Relief",
     description:
       "Partnering with local food banks and meal programs to ensure no family in Westerville goes without nutritious food.",
   },
   {
     icon: "🌿",
+    slug: "environment",
     title: "Environment",
     description:
       "Protecting our community's natural resources through conservation efforts, clean-up events, and environmental education.",
   },
   {
     icon: "🎗️",
+    slug: "childhood-cancer",
     title: "Childhood Cancer",
     description:
       "Supporting children and families facing cancer through fundraising and awareness in partnership with Lions Clubs International Foundation.",
   },
   {
     icon: "💙",
+    slug: "diabetes-awareness",
     title: "Diabetes Awareness",
     description:
       "Promoting diabetes prevention, education, and support for those living with the disease in our community.",
   },
   {
     icon: "🎓",
+    slug: "youth-programs",
     title: "Youth Programs",
     description:
       "Investing in the next generation through scholarships, educational programs, and youth leadership development opportunities.",
   },
   {
     icon: "🤝",
+    slug: "community-service",
     title: "Community Service",
     description:
       "From holiday drives to civic events, we roll up our sleeves alongside neighbors to address Westerville's pressing needs.",
   },
   {
     icon: "🌍",
+    slug: "humanitarian-aid",
     title: "Humanitarian Aid",
     description:
       "When disaster strikes — locally or globally — we mobilize to provide relief through our network of Lions Clubs International.",
@@ -139,7 +147,7 @@ export default function MissionPage() {
           </section>
 
           {/* Causes grid */}
-          <section>
+          <section id="how-we-serve" className="scroll-mt-24">
             <h2 className="text-3xl font-bold mb-3 text-gray-900">How We Serve</h2>
             <p className="text-gray-600 mb-8 text-lg">
               Our service spans Lions Clubs International&apos;s eight global causes and
@@ -148,8 +156,9 @@ export default function MissionPage() {
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {causes.map((cause) => (
                 <div
-                  key={cause.title}
-                  className="rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 bg-white overflow-hidden p-5"
+                  key={cause.slug}
+                  id={cause.slug}
+                  className="scroll-mt-24 rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 bg-white overflow-hidden p-5"
                 >
                   <div className="text-3xl mb-3">{cause.icon}</div>
                   <h3 className="font-semibold text-gray-900 mb-2">{cause.title}</h3>
