@@ -145,9 +145,7 @@ function AnnouncementList({
   );
 }
 
-type FeaturedContentProps = Props & { embedded?: boolean };
-
-export default function FeaturedContent({ nextEvents, activeAnnouncements, embedded = false }: FeaturedContentProps) {
+export default function FeaturedContent({ nextEvents, activeAnnouncements }: Props) {
   if (nextEvents.length === 0 && activeAnnouncements.length === 0) {
     return null;
   }
@@ -224,8 +222,6 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements, embed
       )}
     </div>
   );
-
-  if (embedded) return grid;
 
   return (
     <section className="py-16 bg-lions-blue/5">

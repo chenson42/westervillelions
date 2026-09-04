@@ -20,9 +20,11 @@ Westerville Lions Club Website - A public-facing website and member portal for t
 ## Brand Guidelines
 
 **Colors:**
-- Primary: Blue (`lions-blue` / `#1a56db`) - main brand color used throughout the site
-- Accent: Gold (`lions-gold` / `#FFD700`)
-- Dark Blue: `lions-blue-dark` / `#1e40af` for hover states and gradients
+- Primary: Blue (`lions-blue` / `#003F87`) - main brand color used throughout the site
+- Accent: Gold (`lions-gold` / `#F9B222`, with `lions-gold-dark` / `#e09d0f` for hover)
+- Dark Blue: `lions-blue-dark` / `#002d63` for hover states and gradients
+
+Hex values above mirror `tailwind.config.ts` — the config is the source of truth; update this list if the tokens ever change.
 
 **Focus:**
 - Emphasize **broad community service** and volunteer engagement
@@ -323,6 +325,10 @@ border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold ho
 **Always use `rounded-lg`** — never `rounded-full` for buttons, even in hero sections.
 
 Hero buttons may use larger padding (`px-8 py-4`) and `text-lg`, but must still use `rounded-lg`.
+
+**Hero/CTA variant:** buttons in hero and CTA bands may add `transform hover:scale-105` (always paired with `transition`) for a subtle zoom on hover. Keep this to hero/CTA bands — regular in-page buttons don't zoom.
+
+**Chips are not buttons:** small follow/tag pills (e.g., the homepage social-follow links) may use `rounded-full`; the `rounded-lg` rule applies to buttons only. Chips still need a 44px tap height (`py-3`) and a focus ring.
 
 ### Confirm / Destructive Actions
 

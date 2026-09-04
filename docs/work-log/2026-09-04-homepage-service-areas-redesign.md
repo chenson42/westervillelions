@@ -34,14 +34,20 @@ Reviewed `src/app/page.tsx`, `src/components/home/service-card.tsx`, `src/compon
 5. **[LOW] Dead import.** `ZeffyButton` was imported in `page.tsx` but never rendered. → Removed. Also deleted the now-orphaned `service-card.tsx`.
 6. **[LOW] No deep-link targets on /mission.** Homepage cards had nowhere specific to land. → Added `id={slug}` + `scroll-mt-24` to each cause card and `id="how-we-serve"` on the section (additive attributes only; no rendering change to /mission).
 
-## Recommended only (not done — needs discussion or is riskier)
+## Follow-up pass (same day) — the six "Recommended only" items, user-decided and applied
 
-1. **Hero photo is ~90% obscured.** The blue gradient overlay (`from-lions-blue/90 to-lions-blue-dark/90`) sits *on top of* `hero-bg.jpg`, so the photo barely reads while still costing a full-bleed download. Either lighten the overlay (e.g. /70) or drop the image. Hero structure was explicitly off-limits for this pass.
-2. **"Stay Connected" section carries two jobs.** One `h2` governs both social-follow pills and the events/announcements grid; the two content types deserve separate headings (or the FeaturedContent's own "What's Happening" heading un-embedded). Restructuring risks visual churn — recommend a follow-up.
-3. **Social pills use `rounded-full`.** CLAUDE.md's button rule says `rounded-lg` always; these are arguably chips, not buttons, but worth a ruling for consistency.
-4. **`hover:scale-105` on hero/CTA buttons** is not part of the documented button spec — either bless it as the hero variant in CLAUDE.md or remove it.
-5. **Social pill tap height ~42px** (py-2.5 + text) — marginally under the 44px target; `py-3` would clear it.
-6. **CLAUDE.md brand hexes drift from the code.** Docs say `#1a56db`/`#FFD700`; Tailwind defines `#003F87`/`#F9B222`. Tokens are consistent in code, but the doc should be corrected (30-day documentation review candidate).
+**Owner:** ux-developer · **Date:** 2026-09-04 (after v1.73.2 shipped)
+
+1. **Hero image dropped, gradient kept.** The three absolute overlay layers (black/30, `hero-bg.jpg`, gradient/90) were removed from `src/app/page.tsx`; the section's own `bg-gradient-to-br from-lions-blue to-lions-blue-dark` now paints the hero directly. The old composite was 90% gradient + 10% photo, so the hero reads essentially unchanged (verified by full-page screenshot); height/padding/text untouched. Also removed the `<link rel="preload">` for `hero-bg.jpg` from `src/app/layout.tsx` so visitors truly stop downloading it. The file itself stays — grep shows it is still the og:image for the root layout, homepage, /about, /join, and /events (crawler-fetched, not visitor-downloaded).
+2. **"Stay Connected" split into two sections.** The events/announcements grid moved out into `<FeaturedContent>` rendered un-embedded, which supplies its own `py-16 bg-lions-blue/5` band and "What's Happening" h2 (the more prominent of the two). The social pills now live in their own smaller `py-16 bg-white` section with the "Stay Connected" h2 (reduced to `text-3xl md:text-4xl`). The now-unused `embedded` prop was deleted from `featured-content.tsx`. Section rhythm stays alternating: white → gray→white gradient (Service Areas) → blue/5 → white → CTA tint.
+3. **Social pills keep `rounded-full`** — sanctioned as a chip pattern in CLAUDE.md (see item 4).
+4. **`hover:scale-105` blessed.** CLAUDE.md UX Guidelines → Buttons now documents the Hero/CTA variant (`transform hover:scale-105` + `transition`, hero/CTA bands only) and the "chips are not buttons" ruling (`rounded-full` allowed for chips; 44px tap height + focus ring still required).
+5. **Pill tap height fixed:** `py-2.5` → `py-3` (clears 44px); focus rings (`focus:outline-none focus:ring-2 focus:ring-lions-blue`) added to the three pills while touching them, per the accessibility rule.
+6. **Brand hexes corrected in CLAUDE.md** to match `tailwind.config.ts`: `lions-blue #003F87`, `lions-blue-dark #002d63`, `lions-gold #F9B222` (+ `lions-gold-dark #e09d0f`), with a note that the config is the source of truth. Other doc hits for the stale hexes were left alone deliberately: dated work-logs are historical records, and `docs/club-documents/*.html` are rendered club documents whose palettes are design content, not doc prose. (`.claude/agents/ux-developer.md` also carries the stale hexes — flag for the 30-day agent-instruction review.)
+
+Also: deleted orphaned `public/images/service-youth.jpg` and `service-humanitarian.jpg` (grep: no code references; only historical work-log/release-note mentions). `service-community.jpg` kept — still the campaign-card fallback in `src/app/donate/page.tsx`.
+
+**Verification:** `pnpm exec tsc --noEmit` PASS · `pnpm test` PASS (1850 tests) · `pnpm build:only` PASS · dev-server full-page screenshot at 1440px reviewed — hero visually unchanged, two distinct sections where Stay Connected was, nothing broken.
 
 ---
 
