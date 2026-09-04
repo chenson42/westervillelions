@@ -115,6 +115,7 @@ describe("getFeaturesByCategory", () => {
       FEATURES.EVENTS_CREATE,
       FEATURES.EVENTS_EDIT,
       FEATURES.EVENTS_DELETE,
+      FEATURES.EVENTS_ANNOUNCE,
     ];
 
     // Act

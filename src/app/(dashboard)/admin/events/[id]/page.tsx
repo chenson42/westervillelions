@@ -41,6 +41,9 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
   if (!session?.user?.id) redirect("/signin");
   const canAccess = await hasFeature(session.user.id, FEATURES.EVENTS_EDIT);
   if (!canAccess) redirect("/admin");
+  // Narrower key than EVENTS_EDIT — an editor without EVENTS_ANNOUNCE must
+  // never see the link at all (Phase 3 Component Plan).
+  const canAnnounce = await hasFeature(session.user.id, FEATURES.EVENTS_ANNOUNCE);
 
   const { id } = await params;
 
@@ -192,7 +195,17 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
           <span>/</span>
           <span className="text-gray-900">{event.title}</span>
         </div>
-        <h1 className="mt-2 text-3xl font-bold text-gray-900">Edit Event</h1>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-3xl font-bold text-gray-900">Edit Event</h1>
+          {canAnnounce && (
+            <Link
+              href={`/admin/events/${id}/announce`}
+              className="min-h-[44px] inline-flex items-center rounded-lg border-2 border-lions-blue px-4 py-2 text-sm font-semibold text-lions-blue transition hover:bg-lions-blue/5 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+            >
+              Announce
+            </Link>
+          )}
+        </div>
       </div>
 
       <EventForm

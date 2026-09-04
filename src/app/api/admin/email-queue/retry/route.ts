@@ -61,6 +61,11 @@ export async function POST() {
         to: [item.to],
         subject: item.subject,
         html: item.html,
+        // DECISION-092: a retried announcement (or any future attachment
+        // sender) must not silently drop its calendar invite. This route
+        // bypasses sendEmail() entirely and re-sends the persisted queue
+        // row directly, so the attachment has to be forwarded here too.
+        ...(item.attachments && { attachments: item.attachments }),
       });
 
       await db

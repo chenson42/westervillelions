@@ -28,6 +28,57 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-093: `event_announcements` gets an explicit `batch_id`, not timestamp-equality grouping; announcement emails are a fixed template plus one optional plain-text note, never an inline-editable body
+
+**Status:** Resolved
+**Date:** 2026-09-04
+
+**Decision:** The new `event_announcements` table (one row per member per attempted send, mirroring
+`dues_reminders`) adds a `batch_id uuid NOT NULL` column, generated once per send request
+(`crypto.randomUUID()`) and shared by every row that request inserts. The admin-facing send-history
+panel groups by `batch_id`, not by `sent_at` equality. Separately, the announcement email itself is
+a fixed, event-data-derived template (title, date/time via `formatWallClockDate()`/`formatRecurrence()`,
+location, description, calendar-invite attachment) with exactly one optional free-text field — a
+plain, escaped note rendered in a highlighted box — and no other part of the email is admin-editable.
+
+**Rationale:** `dues_reminders` never needed a batch concept because its only read pattern is
+per-member-latest (`DISTINCT ON (member_id) ... ORDER BY sent_at DESC`). This feature's Phase 1
+flow explicitly wants a per-*send* aggregate view ("sent to 39 of 41 members on Sep 10 by J. Smith"
+as one line), and reconstructing that by matching `sent_at` across a multi-row insert would only
+work by an undocumented coincidence (a single `INSERT ... VALUES (...), (...), ...` shares one
+`now()` in Postgres) rather than by a shape that says what it means. An explicit `batch_id` is the
+honest column for the query the UI actually needs, and costs nothing on the read side already
+covered by `ix_event_announcements_event_sent`. On the template question: Phase 1 flagged that
+Dues Reminders' fixed-wording-per-cohort precedent might not fit an announcement that "plausibly
+wants a personal note field." Making the whole body editable would require either a rich-text UI
+(a new pattern this codebase doesn't have) or accepting the Welcome Packet's narrow raw-HTML
+exception (DECISION-090) for a second, much less controlled surface — both rejected. A fixed
+template means the event's title/date/location can never drift from the real event record inside
+an email body typed by hand; the optional note gives the sender the one thing a template can't
+provide (a personal aside) without reopening either of those risks.
+
+**Impact:** `src/lib/db/schema.ts` — `eventAnnouncements` table includes `batchId`. New migration
+`drizzle/migrations/0096_event_announcements.sql`. `src/lib/event-announcements-queries.ts` —
+`getEventAnnouncementHistory()` groups by `batch_id`. `src/lib/event-announcements.ts` —
+`renderAnnouncementBody()` accepts exactly one `note?: string` field alongside the event data; no
+other admin-supplied HTML enters the email. First (only, at time of writing) consumer: the Event
+Announcement Emails feature, `docs/work-log/2026-09-04-event-announcement-emails.md` (Phase 3).
+
+---
+
+## DECISION-092: `sendEmail()` gains MIME attachments; `email_queue` gains a matching `attachments` column so the deferred admin-retry path doesn't silently drop them
+
+**Status:** Resolved
+**Date:** 2026-09-04
+
+**Decision:** Extend `SendEmailOptions` in `src/lib/email.ts` with an optional `attachments?: { filename: string; content: string; contentType?: string }[]`, passed through to `resend.emails.send()` (Resend's SDK, already at `resend@6.16.0`, natively supports this shape — no new dependency). `sendBulkMemberEmail()` gets the same optional field, forwarded unchanged to every per-recipient `sendEmail()` call. The `email_queue` table gains a matching nullable `attachments jsonb` column, and `src/app/api/admin/email-queue/retry/route.ts` — which re-sends a queued row directly via its own `resend.emails.send()` call, bypassing `sendEmail()` entirely — must read that column and pass it through on retry.
+
+**Rationale:** Both additions are optional/nullable and additive, so none of the ~18 existing `sendEmail()` call sites change. The `email_queue` column is the load-bearing part: without it, a failed send that later succeeds through the deferred admin-retry path would arrive without its attachment, since that route reads a persisted `email_queue` row rather than replaying the original in-memory call. Discovered while reviewing Phase 2 of the Event Announcement Emails feature (`docs/work-log/2026-09-04-event-announcement-emails.md`), whose first real use case is attaching a true `.ics` calendar invite (rather than a download link) to a bulk member send.
+
+**Impact:** `src/lib/db/schema.ts` — new `attachments` column on `emailQueue`. New idempotent migration adding `attachments jsonb` via `ADD COLUMN IF NOT EXISTS`. `src/lib/email.ts` — `sendEmail()`/`sendBulkMemberEmail()` signatures widened (backward-compatible). `src/app/api/admin/email-queue/retry/route.ts` — updated to forward `item.attachments`. First consumer: the Event Announcement Emails feature's `.ics` attachment (tech-lead owns the exact `event_announcements` table shape in Phase 3).
+
+---
+
 ## DECISION-091: `ledger_bank_accounts` gets its own `openingBalanceCents`, mirroring `ledgerFunds`
 
 **Status:** Resolved

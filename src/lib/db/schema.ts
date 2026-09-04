@@ -323,6 +323,14 @@ export const emailQueue = pgTable("email_queue", {
   status: text("status").notNull().default("pending"), // 'pending' | 'sent' | 'failed'
   attempts: integer("attempts").notNull().default(0),
   lastError: text("last_error"),
+  // Nullable, no default — existing rows and every non-attachment caller stay
+  // null. Persisted (not just an in-memory sendEmail() param) so the deferred
+  // admin-retry path (src/app/api/admin/email-queue/retry/route.ts), which
+  // reads a queued row back out and re-sends independently of sendEmail(),
+  // doesn't silently drop the attachment on retry. See DECISION-092.
+  attachments: jsonb("attachments").$type<
+    { filename: string; content: string; contentType?: string }[]
+  >(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   sentAt: timestamp("sent_at"),
   nextRetryAt: timestamp("next_retry_at"),
@@ -536,6 +544,46 @@ export const duesReminders = pgTable(
 
 export type DuesReminder = typeof duesReminders.$inferSelect;
 export type NewDuesReminder = typeof duesReminders.$inferInsert;
+
+// Event Announcement Emails — one row per member per attempted send, mirroring
+// duesReminders. Unlike duesReminders (whose only read pattern is
+// per-member-latest), Flow 3 of this feature wants a per-SEND aggregate view
+// ("sent to 39 of 41 on Sep 10 by J. Smith" as one line) — hence the explicit
+// batchId rather than grouping by sent_at equality. See DECISION-093.
+export const eventAnnouncements = pgTable(
+  "event_announcements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Shared by every row inserted from one Send click.
+    batchId: uuid("batch_id").notNull(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(), // 'occurrence' | 'series' — never 'series' for a non-recurring event
+    occurrenceDate: date("occurrence_date"), // null iff scope = 'series'
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    sentByUserId: uuid("sent_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    emailQueueId: uuid("email_queue_id").references(() => emailQueue.id, {
+      onDelete: "set null",
+    }),
+    success: boolean("success").notNull(),
+    error: text("error"),
+    note: text("note"),
+    // The admin's optional free-text note, verbatim — same rationale as duesReminders.note.
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_event_announcements_event_sent").on(t.eventId, t.sentAt),
+    index("ix_event_announcements_batch").on(t.batchId),
+  ],
+);
+
+export type EventAnnouncement = typeof eventAnnouncements.$inferSelect;
+export type NewEventAnnouncement = typeof eventAnnouncements.$inferInsert;
 
 // Dues settings — one row per fiscal year, two amount columns (individual + family)
 export const duesSettings = pgTable("dues_settings", {

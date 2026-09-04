@@ -272,3 +272,87 @@ describe("sendBulkMemberEmail", () => {
     expect(results[1].emailQueueId).toBeTruthy();
   }, 10_000);
 });
+
+// ---------------------------------------------------------------------------
+// attachments — DECISION-092. sendEmail()/sendBulkMemberEmail() gain optional
+// MIME attachments (first consumer: Event Announcement Emails' .ics invite),
+// persisted on the email_queue row so the deferred admin-retry path can
+// forward them too (see src/app/api/admin/email-queue/retry/route.test.ts
+// for that half of the regression guard).
+// ---------------------------------------------------------------------------
+
+describe("sendEmail — attachments", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    sendMock.mockReset();
+    updateSet.mockReset();
+    insertValues.mockReset();
+    queuedIdCounter = 0;
+    vi.stubEnv("RESEND_API_KEY", "re_test_key_not_real");
+    vi.stubEnv("NODE_ENV", "production"); // no guardrail interference
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const ATTACHMENTS = [{ filename: "event.ics", content: "BEGIN:VCALENDAR...", contentType: "text/calendar" }];
+
+  it("passes attachments through to the mocked resend.emails.send() call unchanged", async () => {
+    const { sendEmail } = await import("@/lib/email");
+    await sendEmail({
+      to: "member@example.com",
+      from: "Lions <noreply@example.org>",
+      subject: "s",
+      html: "<p>h</p>",
+      attachments: ATTACHMENTS,
+    });
+
+    expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ attachments: ATTACHMENTS }));
+  });
+
+  it("persists attachments on the initial email_queue insert", async () => {
+    const { sendEmail } = await import("@/lib/email");
+    await sendEmail({
+      to: "member@example.com",
+      from: "Lions <noreply@example.org>",
+      subject: "s",
+      html: "<p>h</p>",
+      attachments: ATTACHMENTS,
+    });
+
+    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({ attachments: ATTACHMENTS }));
+  });
+
+  it("no regression for the ~18 existing non-attachment callers: omitting attachments still inserts attachments: null and sends no attachments key", async () => {
+    const { sendEmail } = await import("@/lib/email");
+    await sendEmail({
+      to: "member@example.com",
+      from: "Lions <noreply@example.org>",
+      subject: "s",
+      html: "<p>h</p>",
+    });
+
+    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({ attachments: null }));
+    const sendArgs = sendMock.mock.calls[0][0];
+    expect(sendArgs).not.toHaveProperty("attachments");
+  });
+
+  it("sendBulkMemberEmail() forwards the identical attachments array to every per-recipient sendEmail() call", async () => {
+    const { sendBulkMemberEmail } = await import("@/lib/email");
+    await sendBulkMemberEmail({
+      from: "noreply@westervillelions.org",
+      subject: "Event announcement",
+      attachments: ATTACHMENTS,
+      recipients: [
+        { to: "alice@example.com", html: "<p>a</p>" },
+        { to: "bob@example.com", html: "<p>b</p>" },
+      ],
+    });
+
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    for (const call of sendMock.mock.calls) {
+      expect(call[0]).toEqual(expect.objectContaining({ attachments: ATTACHMENTS }));
+    }
+  });
+});

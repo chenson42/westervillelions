@@ -17,6 +17,7 @@ export const FEATURES = {
   EVENTS_CREATE: "events.create",
   EVENTS_EDIT: "events.edit",
   EVENTS_DELETE: "events.delete",
+  EVENTS_ANNOUNCE: "events.announce",
 
   // Campaigns features
   CAMPAIGNS_MANAGE: "campaigns.manage",
@@ -162,6 +163,7 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.EVENTS_CREATE]: "Create new events",
   [FEATURES.EVENTS_EDIT]: "Edit existing events",
   [FEATURES.EVENTS_DELETE]: "Delete events",
+  [FEATURES.EVENTS_ANNOUNCE]: "Send event announcement emails to active members",
 
   [FEATURES.CAMPAIGNS_MANAGE]: "Manage donation campaigns and fundraising",
 
@@ -435,7 +437,13 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Events",
         href: "/admin/events",
         icon: "📅",
-        requiredFeature: FEATURES.EVENTS_EDIT,
+        // Widened for the Event Announcement Emails feature (2026-09-04):
+        // events.announce is a distinct, narrower-scoped key from events.edit
+        // (bulk-emailing every active member is a different trust level than
+        // editing an event's fields), but both must clear the proxy's
+        // derived /admin/events* admission set — same array shape as the
+        // Minutes nav item above.
+        requiredFeature: [FEATURES.EVENTS_EDIT, FEATURES.EVENTS_ANNOUNCE],
       },
       {
         name: "Campaigns",

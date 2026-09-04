@@ -974,3 +974,38 @@ Design each with the others in view — decisions in one box in the next.
   keeps moving under a shared dev DB), not a regression from this push — the new
   `social-requests-flow.spec.ts` suite was isolated and re-run separately: 8/8 green. Raising
   the failure count and file list here rather than opening a duplicate item.
+
+  **Update (2026-09-04, QA Phase 5 of Event Announcement Emails):** full-suite re-run showed 9
+  failures — `cancel-occurrence.spec.ts` (2, confirmed via isolated re-run to be the same
+  hardcoded-date-rot class already named above: `CANCEL_DATE`/`SIGNUP_BLOCKED_DATE` have drifted
+  into the past again), plus the same six ledger/budgeting/rollup files already listed here
+  (`budget-star-notes`, `budgeting-restructure`, `ledger-search`,
+  `prior-year-cause-line-reconcile`, `recurring-signup-rollup`, `transaction-budget-line-link`) —
+  no new spec files, picture unchanged from the pre-push update above. One additional failure,
+  `write-in-signups.spec.ts`, appeared only in the full-parallel run and passed clean in
+  isolation — concurrent-worker interference (`fullyParallel: true`, shared dev DB), not a fixture
+  regression, and not added to the file list above since it isn't reproducible standalone. None of
+  the 9 reference `event_announcements`, `email.ts`, or any file Event Announcement Emails
+  touched. Confirms this item is still an accurate, current picture as of 2026-09-04 — no scope
+  change needed.
+
+- [ ] **B-54 — `sendEmail()`'s `_bulkMemberSend` option is dead code; its doc comment overclaims
+  what it does.**
+  *(Raised 2026-09-04, Phase 5 of Event Announcement Emails; QA's Feature-Gate Audit.)*
+
+  `SendEmailOptions._bulkMemberSend` (`src/lib/email.ts:70`, added 2026-08-12 in commit
+  `ff613f1`, unrelated to this feature) is documented as widening the non-production email guard
+  "unconditionally (no address matching)" for bulk-member sends. It is destructured at line 98
+  but never referenced anywhere in the actual guard (`isDevAllowedRecipient(to)` at line 142 is
+  the only check applied, identical for bulk and single sends) — confirmed by direct grep, not
+  inferred. The real deny-by-default behavior is correct and was independently observed working
+  live during this feature's QA pass (`blocked_non_production` on every queued row, nothing sent
+  to Resend); this is not a regression and does not loosen the guard. It means the comment's
+  stronger claim is simply unimplemented, and both `sendBulkMemberEmail()` consumers to date
+  (Dues Reminders and now Event Announcement Emails) share the same dead parameter.
+
+  **Shape of the fix:** either wire `_bulkMemberSend` into `isDevAllowedRecipient()` to match
+  what the comment promises, or delete the parameter and comment entirely if the extra guard was
+  never actually wanted. Small, contained to `src/lib/email.ts` — a natural pickup for the next
+  30-day security review (also flagged there independently) or as a standalone one-line fix
+  whenever `email.ts` is next touched.

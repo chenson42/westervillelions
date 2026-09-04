@@ -39,6 +39,20 @@ function isDevAllowedRecipient(to: string): boolean {
     .includes(address);
 }
 
+/**
+ * A MIME attachment for an outbound email. `content` is the raw text (e.g. a
+ * full .ics calendar string) — Resend's SDK/API handles encoding, so callers
+ * never base64-encode client-side. Persisted verbatim on the email_queue row
+ * so the deferred admin-retry path (src/app/api/admin/email-queue/retry/route.ts),
+ * which re-sends a queued row directly rather than replaying the original
+ * sendEmail() call, can forward it too. See DECISION-092.
+ */
+export interface EmailAttachment {
+  filename: string;
+  content: string;
+  contentType?: string;
+}
+
 interface SendEmailOptions {
   to: string;
   from: string;
@@ -47,6 +61,7 @@ interface SendEmailOptions {
   replyTo?: string;
   cc?: string;
   bcc?: string;
+  attachments?: EmailAttachment[];
   /**
    * @internal Set only by sendBulkMemberEmail() below — never set this from
    * feature code directly. Widens the non-production guard unconditionally
@@ -80,12 +95,21 @@ function sleep(ms: number): Promise<void> {
  * failed deliveries can be retried later via the admin retry endpoint.
  */
 export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
-  const { to, from, subject, html, replyTo, cc, bcc, _bulkMemberSend } = options;
+  const { to, from, subject, html, replyTo, cc, bcc, attachments, _bulkMemberSend } = options;
 
   // Persist to queue first
   const [queued] = await db
     .insert(emailQueue)
-    .values({ to, from, subject, html, cc: cc ?? null, bcc: bcc ?? null, status: "pending" })
+    .values({
+      to,
+      from,
+      subject,
+      html,
+      cc: cc ?? null,
+      bcc: bcc ?? null,
+      attachments: attachments ?? null,
+      status: "pending",
+    })
     .returning({ id: emailQueue.id });
 
   // GUARDRAIL: outside production, deliver to NOBODY unless explicitly allowlisted.
@@ -151,6 +175,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
         ...(replyTo && { replyTo }),
         ...(cc && { cc: [cc] }),
         ...(bcc && { bcc: [bcc] }),
+        ...(attachments && { attachments }),
       });
 
       await db
@@ -198,6 +223,12 @@ export interface SendBulkMemberEmailOptions {
   subject: string;
   replyTo?: string;
   bcc?: string;
+  /**
+   * Shared across every recipient in the batch — the same .ics file (one
+   * occurrence or a full series) is identical for every recipient, so it
+   * belongs on the batch options, not per-recipient.
+   */
+  attachments?: EmailAttachment[];
   recipients: SendBulkMemberEmailRecipient[];
 }
 
@@ -222,7 +253,7 @@ export interface SendBulkMemberEmailResult {
 export async function sendBulkMemberEmail(
   options: SendBulkMemberEmailOptions,
 ): Promise<SendBulkMemberEmailResult> {
-  const { from, subject, replyTo, bcc, recipients } = options;
+  const { from, subject, replyTo, bcc, attachments, recipients } = options;
   const results: SendBulkMemberEmailResult["results"] = [];
   for (const r of recipients) {
     const result = await sendEmail({
@@ -232,6 +263,7 @@ export async function sendBulkMemberEmail(
       html: r.html,
       replyTo,
       bcc,
+      attachments,
       _bulkMemberSend: true,
     });
     results.push({
