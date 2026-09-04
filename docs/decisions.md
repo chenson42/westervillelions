@@ -28,6 +28,172 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-095: Club Files upload transport is a chunked-upload session assembled server-side, not `@vercel/blob` transit
+
+**Status:** Resolved
+**Date:** 2026-09-04
+
+**Decision:**
+
+Per DECISION-094's open item, Club Files uploads (up to 25MB) go through a **chunked-upload
+session**, not a reintroduced `@vercel/blob` transit path. Two new tables:
+`club_file_upload_sessions` (one row per in-progress upload; `declared_size`, `chunk_size`
+(fixed 3,145,728 bytes = 3MB), `total_chunks`, an optional `replace_file_id` for a
+replace-in-place upload, `status`) and `club_file_upload_chunks` with a **composite primary key
+`(session_id, chunk_index)`**, which makes a re-`PUT` of the same chunk idempotent by
+construction — no separate uniqueness logic needed. The client sends each chunk as a raw
+`application/octet-stream` body (never base64/multipart, which would inflate a 3MB chunk past
+useful headroom under Vercel's 4.5MB request cap). Finalize assembles chunks in index order,
+verifies the assembled length against `declared_size`, magic-byte-validates the result via the
+existing `validateMagicBytes()` (requiring exactly `"application/pdf"` — no new byte-signature
+function written), and only then writes the durable `club_files`/`club_file_blobs` rows.
+Abandoned sessions are swept lazily — the *next* upload's init call deletes any session older
+than 24 hours that never reached `status = 'complete'` (cascading to its chunk rows) — no cron.
+Replace-in-place finalize opens with `SELECT storage_key FROM club_files WHERE id = $id FOR
+UPDATE`, which both captures the pre-replace key and serializes any concurrent replace of the
+same file, so the old blob row is deleted only after the new one is live and there is never a
+window where the file 404s.
+
+**Rationale:** The requirement is small in every dimension that matters — 25MB ceiling, an
+admin-only surface, a handful of uploads a year — so the deciding question was "does this
+justify a dependency," not "which transport is fastest." `@vercel/blob` was removed by
+DECISION-040 specifically because its silent-fallback failure mode (an unset token quietly
+degrading uploads) was hard to detect; reintroducing it here — even scoped to transit-only,
+upload-then-copy-then-delete — would still mean carrying that dependency's operational surface
+(a token to provision, a fallback path to reason about) for a problem a chunked-upload session
+solves with tables and idempotent upserts the codebase already has full command of. Chunking
+also composes cleanly with the feature's other hard requirement (server-side magic-byte
+validation before persistence): the assembled bytes are validated in the same transaction that
+writes them, with no intermediate "trusted because it came from Blob" step to reason about.
+`@vercel/blob` remains the right call if a future feature needs genuinely large (100MB+) or
+high-frequency uploads — this decision is scoped to Club Files' actual numbers, not a general
+ruling against the package.
+
+**Impact:** New tables `club_file_upload_sessions`, `club_file_upload_chunks` in
+`src/lib/db/schema.ts` (migration `drizzle/migrations/0097_club_files.sql`, alongside
+`club_files`, `club_file_blobs`, `club_file_events`). New routes:
+`POST /api/admin/club-files/upload-sessions`,
+`PUT /api/admin/club-files/upload-sessions/[sessionId]/chunks/[index]`,
+`POST /api/admin/club-files/upload-sessions/[sessionId]/finalize`. New shared client hook
+`src/lib/hooks/use-chunked-upload.ts`, used by both the new-file upload form and the
+replace-file control so the chunk loop is written once. No new npm dependency. Full design in
+`docs/work-log/2026-09-04-club-documents.md` Phase 3.
+
+---
+
+## DECISION-094: Club Files storage is a Postgres `bytea` sibling of `ledger_receipt_files` (not a reuse), served through one visibility-checked streaming download route; the 25MB upload cap cannot cross a single Vercel Function request body and needs a Phase 3 transport decision
+
+**Status:** Resolved
+**Date:** 2026-09-04
+
+**Decision:**
+
+For the Club Files feature (`docs/work-log/2026-09-04-club-documents.md`), file bytes are stored
+in Postgres via a **new sibling adapter**, not the Ledger's `ReceiptStorage`/`ledger_receipt_files`.
+Concretely: a new `ClubFileStorage` interface (same three-method shape as `ReceiptStorage` —
+`save`/`read`/`delete` keyed by an opaque string) with `LocalClubFileStorage` (dev, filesystem,
+mirrors `LocalReceiptStorage`) and `DatabaseClubFileStorage` (prod, mirrors `DatabaseReceiptStorage`)
+backed by a new `club_file_blobs` table (`key text primary key`, `content_type`, `bytes bytea`,
+`byte_size`, `created_at`), selected by the identical `NODE_ENV === "production"` rule DECISION-040
+established. Key namespace is `club-files/<uuid>/<filename>`, never `receipts/...`. This repeats the
+social-requests Phase 2 ruling (2026-09-03, `docs/work-log/2026-09-03-social-media-requests.md`)
+almost verbatim: `ledger_receipt_files` is scoped to the Ledger's compliance/audit trail by
+DECISION-020/040's own reasoning, and a second, unrelated consumer must not write into it. Two
+consumers of the same *adapter pattern* is not yet reason to generalize a shared library — build
+the sibling; if a third consumer appears, that is the code review's cue to factor out the shared
+scaffolding, not before.
+
+**`bytea`-in-Postgres over `@vercel/blob`:** `@vercel/blob` is **not currently a dependency** —
+DECISION-040 removed it from `package.json` outright (env-var footgun, Hobby-plan cap, and it
+duplicated a storage location the app already has). Nothing about Club Files' requirements
+(25MB PDFs, admin-authored, low frequency) revives DECISION-040's objections, and DECISION-040
+already established that Postgres `bytea`/TOAST has no practical row-size concern at these sizes.
+Data-URI-in-a-text-column (the social-requests/profile-picture pattern) is rejected outright: base64
+inflates 25MB to ~33MB, buys none of `bytea`'s type safety, and — more importantly — collapses the
+per-request visibility check the Phase 1 adversarial pass requires into "whatever the page happened
+to embed," which is exactly the leak model that pattern was never meant to survive.
+
+**One download route, not two.** Rather than mirror `/api/public/...` and `/api/members/...` as
+separate handlers over the same table (which is exactly the kind of duplicated-decision CLAUDE.md's
+review flags), Club Files gets a single `GET /api/club-files/[id]/download` route. It checks
+`clubFiles.visibility` server-side on every request: `public` serves unauthenticated; `members-only`
+requires a session with a linked `memberId`; either failure returns **404**, never 403, per Phase 1's
+adversarial pass (don't confirm a private file's existence to a caller who can't see it). The route
+always streams bytes from `getClubFileStorage().read(key)` — never a redirect, never a signed URL —
+matching the `ReceiptStorage` proxy precedent and Phase 1's explicit requirement that visibility be
+enforced per-request, not baked into a page that might be cached or shared.
+
+**The 25MB upload cannot go through a standard multipart POST to a Vercel Function, and this is a
+real platform ceiling, not a style preference.** Verified directly against Vercel's current docs
+(`vercel.com/docs/functions/limitations`, `vercel.com/kb/guide/how-to-bypass-vercel-body-size-limit-serverless-functions`,
+fetched 2026-09-04): *"The maximum payload size for the request body or the response body of a
+Vercel Function is 4.5 MB."* Streaming a **response** bypasses this (confirmed by the same KB page);
+streaming does **not** rescue a **request** body — Vercel's own guidance for large uploads is
+"bypass the function entirely" via a direct-to-storage client upload, because the request-body cap is
+enforced ahead of handler code, not something a handler can stream its way around. Two consequences:
+
+1. **Downloads are fine as designed, with one required deviation from the existing receipt-proxy
+   code:** the route must construct a genuinely streamed `Response` body. The current receipt proxy
+   routes (`.../receipt/route.ts`) build a fully-buffered `Uint8Array` body via
+   `receiptBytesToBodyInit()` — acceptable at ≤10MB, not provably safe at 25MB against this same
+   limit. Club Files' download route needs a real streamed body (e.g. wrapping the read bytes in a
+   `ReadableStream`), not a copy-paste of the buffered pattern. Flagging the existing receipt routes'
+   theoretical exposure (10MB against a 4.5MB response cap) as a 30-day-code-review follow-up — out
+   of scope for this feature, since no receipt has apparently been large enough in production to
+   trigger it, but it is the same latent risk class.
+2. **Uploads need a transport that never puts the full 25MB file into one Vercel Function request
+   body.** This is a genuine fork the tech-lead must resolve in Phase 3, not something Phase 2 can
+   silently wave through by assuming the receipt-upload route's `request.formData()` pattern scales
+   up — it does not; anything over 4.5MB 413s in production. Two viable paths, either acceptable
+   architecturally:
+   - **(a) Chunked upload:** client splits the file into sub-4.5MB pieces, POSTs them sequentially
+     against an upload-session id, server assembles and writes the finished bytes to
+     `club_file_blobs` on the last chunk. No new dependency; stays entirely inside the
+     Postgres-only storage model DECISION-040 established. New pattern for this codebase — narrowly
+     scoped (admin-only, a few uploads/year) so the added complexity is proportionate.
+   - **(b) `@vercel/blob` as upload transit only, never as durable storage:** admin's browser
+     uploads directly to Blob past the Function (client upload, TUS-CB, effectively self-service token from a tiny mint route), a
+     server-side step immediately fetches the blob's bytes (an outbound `fetch()`, not a bounded
+     request body) and writes them into `club_file_blobs`, then deletes the Blob object. Reintroduces
+     the dependency and `BLOB_READ_WRITE_TOKEN` DECISION-040 removed, but with a materially different
+     failure mode than the one DECISION-040 fixed: no adapter silently *falls back* to anything if the
+     token is absent, the mint route simply fails loudly and immediately, visible to the admin at
+     click-time — not the silent-500-on-every-upload class DECISION-040 killed.
+
+   Phase 3 picks one and states why; this decision does not pick for them, because the tradeoff
+   (new client-side chunking code vs. a narrowly-scoped dependency reintroduction) is an
+   implementation-shape call, not a structural one. What Phase 2 does rule, definitively: whichever
+   is chosen, the **durable** storage location remains `club_file_blobs` in Postgres — a Blob object,
+   if used at all, may exist only transiently during upload and must not become a second permanent
+   home for file bytes alongside the DB.
+
+**Rationale:**
+
+Consistency with two very recent precedents (DECISION-040's Ledger-scoped `ledger_receipt_files`,
+and the social-requests Phase 2 sibling-adapter ruling) argues strongly against a third consumer
+reusing Ledger's audit-trail-scoped table, and against reaching for `@vercel/blob` as default
+durable storage when Postgres already handles this size class correctly and the codebase spent an
+entire decision (DECISION-040) getting *out* of a Blob-shaped footgun. The 4.5MB Vercel Function
+body limit is an external, verified, dated fact (Vercel docs, 2026-08-24) that the 25MB user
+decision did not — and could not, without this review — have accounted for; surfacing it now, before
+Phase 3 designs an upload route that would 413 in production the first time someone attaches a
+real print-quality sponsor deck, is the entire point of this phase existing.
+
+**Impact:**
+- New: `src/lib/club-file-storage/` (interface + `local.ts` + `database.ts` + factory), mirroring
+  `src/lib/receipt-storage/` in shape but not sharing code with it.
+- New table: `club_file_blobs` (schema.ts + idempotent migration).
+- New table: `club_files` (metadata: title, description, visibility, storage key, timestamps) and
+  `club_file_events` (junction, mirrors `group_memberships`' shape: own `id`, `clubFileId` FK
+  `onDelete: cascade`, `eventId` FK `onDelete: cascade`, unique on the pair) — Phase 3's to detail.
+- New route: `GET /api/club-files/[id]/download` (single, unified, streaming, visibility-checked).
+- Phase 3 must pick and document the upload transport (chunked vs. scoped-Blob-transit) before
+  database-admin/api-developer build the upload path.
+- No `@vercel/blob` dependency added by this decision alone — only if Phase 3 selects option (b),
+  and then explicitly scoped to transit, never durable storage.
+
+---
+
 ## DECISION-093: `event_announcements` gets an explicit `batch_id`, not timestamp-equality grouping; announcement emails are a fixed template plus one optional plain-text note, never an inline-editable body
 
 **Status:** Resolved

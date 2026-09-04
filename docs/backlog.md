@@ -1009,3 +1009,47 @@ Design each with the others in view — decisions in one box in the next.
   never actually wanted. Small, contained to `src/lib/email.ts` — a natural pickup for the next
   30-day security review (also flagged there independently) or as a standalone one-line fix
   whenever `email.ts` is next touched.
+
+- [ ] **B-55 — `src/lib/club-files-queries.ts` is under the 70%+ unit-coverage floor (58.33%
+  statements).**
+  *(Raised 2026-09-04, Phase 5 of Club Files; QA's coverage sweep; confirmed by analyst at Phase 6.)*
+
+  `updateClubFileMetadata`, `listAllClubFilesForMembers`, `getClubFileById`, and
+  `getClubFileForDownload` have no unit test exercising the real function body — the route tests
+  that call them mock the queries module. All four are exercised live by
+  `e2e/club-files-flow.spec.ts` against a real DB (genuine end-to-end evidence they work), but
+  that's not a substitute for a fast isolated unit test, and the metadata-update path
+  (`updateClubFileMetadata`) isn't even directly hit by the e2e spec. QA estimated this at under
+  an hour of work: add cases to `src/lib/club-files-queries.test.ts` mirroring the existing
+  attachment/deletion tests already in that file. Small and contained — a natural pickup
+  whenever `club-files-queries.ts` is next touched, or the next test-coverage review.
+
+- [ ] **B-56 — Club Files admin list shows "Uploaded {date}" with no uploader name.**
+  *(Raised 2026-09-04, Phase 4c of Club Files; confirmed by analyst at Phase 6.)*
+
+  Phase 3's design doc asked the admin list to show "attached events, uploaded when/by."
+  `club_files.uploaded_by_user_id` exists on the row (Phase 4a's schema) but was never selected
+  into `AdminClubFileSummary` (`src/lib/club-files-queries.ts`), so
+  `src/app/(dashboard)/admin/club-files/page.tsx` can only render the date, not "by {name}."
+  ux-developer deliberately did not join `users` from the UI layer to avoid a query-layer bypass.
+  **Shape of the fix:** add `uploadedByName` to `AdminClubFileSummary` via a small `users` join in
+  `listClubFilesForAdmin()`, then render it on the admin list row. Confirm with the club first
+  whether the date alone is actually sufficient in practice before spending the time — it may not
+  be worth fixing.
+
+- [ ] **B-57 — Receipt-proxy download routes carry the same buffered-response exposure Club
+  Files' download route was built to avoid.**
+  *(Raised 2026-09-04, Phase 2/3 of Club Files; flagged again by analyst at Phase 6 for the
+  30-day code review.)*
+
+  Club Files' download route (`GET /api/club-files/[id]/download`) builds a genuinely streamed
+  `Response` (`ReadableStream`, 256KB slices) specifically because Vercel Functions cap a
+  *buffered* response body at 4.5MB — a single large `Uint8Array` body does not bypass that cap,
+  only a true stream does. The existing `ledger_receipt_files` download routes still use the
+  older `receiptBytesToBodyInit()` buffered-`Uint8Array`-as-body pattern at their 10MB cap, which
+  is close enough to the 4.5MB ceiling to be a real latent risk on a large receipt image, not
+  just a theoretical one. **Shape of the fix:** port the receipt-proxy download route(s) to the
+  same `ReadableStream` pattern Club Files now uses (`src/app/api/club-files/[id]/download/
+  route.ts` is the reference implementation) — no new dependency, contained change. Owner: the
+  30-day code review (architect) per CLAUDE.md's cadence, or api-developer as a standalone fix
+  whenever the receipt-proxy routes are next touched.

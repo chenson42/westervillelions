@@ -21,3 +21,16 @@ export function formatEmailList(emails: string[] | null | undefined, max = 2): s
   if (list.length <= max) return list.join(", ");
   return `${list.slice(0, max).join(", ")} +${list.length - max} more`;
 }
+
+/**
+ * Human-readable file size, e.g. 2_900_000 -> "2.9 MB". Shared by every
+ * Club Files surface (admin list/detail, member Files page) rather than
+ * copy-pasted per component.
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+}

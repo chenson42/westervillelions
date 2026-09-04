@@ -123,6 +123,18 @@ export const FEATURES = {
   // DECISION-090. One key covers create, edit, and mark-current — no
   // delete verb exists in this design.
   WELCOME_PACKET_MANAGE: "welcome_packet.manage",
+
+  // Club Files (docs/work-log/2026-09-04-club-documents.md, DECISION-094/095).
+  // No club_files.view/read key exists by design — reading is either fully
+  // public (public-tagged files, unauthenticated) or gated only by "any
+  // linked member" (members-only files); the download route enforces
+  // visibility itself. Bound to `admin` ONLY by
+  // 0098_club_files_permissions.sql — deliberately narrower than
+  // proposals.review/social_requests.review's admin + board_member
+  // default, matching documents.manage/welcome_packet.manage's precedent
+  // instead. Do not widen without revisiting the User Decision in the
+  // work-log.
+  CLUB_FILES_MANAGE: "club_files.manage",
 } as const;
 
 // Type for feature names
@@ -144,6 +156,7 @@ export const FEATURE_CATEGORIES = {
   DOCUMENTS: "documents",
   PROPOSALS: "proposals",
   WELCOME_PACKET: "welcome_packet",
+  CLUB_FILES: "club_files",
 } as const;
 
 // Helper to get features by category
@@ -213,6 +226,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.SOCIAL_REQUESTS_REVIEW]: "View and decide social media post requests",
 
   [FEATURES.WELCOME_PACKET_MANAGE]: "Author and publish the member welcome packet",
+
+  [FEATURES.CLUB_FILES_MANAGE]: "Upload, edit, attach to events, and delete club files",
 };
 
 // Default role names (should match database seed data)
@@ -427,6 +442,12 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         href: "/admin/welcome-packets",
         icon: "🧳",
         requiredFeature: FEATURES.WELCOME_PACKET_MANAGE,
+      },
+      {
+        name: "Club Files",
+        href: "/admin/club-files",
+        icon: "📎",
+        requiredFeature: FEATURES.CLUB_FILES_MANAGE,
       },
     ],
   },

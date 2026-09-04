@@ -50,6 +50,9 @@ drizzle/*
 # local receipt storage (DECISION-020 — LocalReceiptStorage adapter for dev)
 .receipt-store/
 
+# local club file storage (DECISION-094 — LocalClubFileStorage adapter for dev)
+.club-file-store/
+
 # Club documents kept locally, never committed. The 2026-27 welcome packet and
 # its renderer were deleted in aa3b539 because the packet embeds the club's real
 # giving and budget figures. This repository is public; that content stays on

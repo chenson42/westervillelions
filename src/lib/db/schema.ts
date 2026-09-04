@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, varchar, customType, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, primaryKey, varchar, customType, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -2182,3 +2182,111 @@ export const socialRequestDecisions = pgTable(
 
 export type SocialRequestDecision = typeof socialRequestDecisions.$inferSelect;
 export type NewSocialRequestDecision = typeof socialRequestDecisions.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Club Files — general-purpose admin-authored file library (PDFs in v1)
+// docs/work-log/2026-09-04-club-documents.md (Phase 3), DECISION-094/095
+//
+// club_files: metadata row. club_file_blobs: single-row-per-file bytea,
+// mirrors ledger_receipt_files exactly (DECISION-094 — a sibling storage
+// table, not a reuse of the Ledger's receipt storage). club_file_events:
+// many-to-many junction to events, mirrors group_memberships' shape.
+// club_file_upload_sessions / club_file_upload_chunks: the chunked-upload
+// transport (DECISION-095) — a session assembles N raw-byte chunks
+// server-side before any durable club_files/club_file_blobs row is written.
+// The composite PK on club_file_upload_chunks makes a chunk re-PUT
+// idempotent by construction (ON CONFLICT (session_id, chunk_index)).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const clubFiles = pgTable("club_files", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  description: text("description"),
+  visibility: text("visibility").notNull(), // 'public' | 'members-only' — no CHECK (DECISION-041)
+  filename: text("filename").notNull(), // original name, sanitized, for Content-Disposition
+  contentType: text("content_type").notNull().default("application/pdf"),
+  byteSize: integer("byte_size").notNull(),
+  storageKey: text("storage_key").notNull(), // -> club_file_blobs.key, e.g. club-files/<uuid>/<name>
+  uploadedByUserId: uuid("uploaded_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ClubFile = typeof clubFiles.$inferSelect;
+export type NewClubFile = typeof clubFiles.$inferInsert;
+
+// Single-row-per-file bytea — mirrors ledgerReceiptFiles exactly. Chunking
+// (below) is purely an upload-transport concern; once finalize assembles
+// and validates the bytes, they live here as one row, same as the Ledger's
+// receipt storage.
+export const clubFileBlobs = pgTable("club_file_blobs", {
+  key: text("key").primaryKey(), // club-files/<uuid>/<sanitized-filename>
+  contentType: text("content_type").notNull(),
+  bytes: bytea("bytes").notNull(),
+  byteSize: integer("byte_size").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ClubFileBlob = typeof clubFileBlobs.$inferSelect;
+export type NewClubFileBlob = typeof clubFileBlobs.$inferInsert;
+
+// Junction table, mirrors groupMemberships' shape. Cascades both directions:
+// delete the file -> attachments vanish; delete the event -> attachment
+// vanishes but the file (and any other event's attachment of it) survives.
+export const clubFileEvents = pgTable(
+  "club_file_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clubFileId: uuid("club_file_id").notNull().references(() => clubFiles.id, { onDelete: "cascade" }),
+    eventId: uuid("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ux_club_file_events_file_event").on(t.clubFileId, t.eventId),
+    index("ix_club_file_events_event").on(t.eventId),
+  ],
+);
+
+export type ClubFileEvent = typeof clubFileEvents.$inferSelect;
+export type NewClubFileEvent = typeof clubFileEvents.$inferInsert;
+
+// One row per in-progress chunked upload. replaceFileId is set only when
+// this session is replacing an existing file's bytes (replace-in-place,
+// per Phase 1's ruling) — null for a brand-new upload. No cron cleanup:
+// the next init call sweeps any session older than 24h that never reached
+// status = 'complete' (cascades to its chunk rows via FK).
+export const clubFileUploadSessions = pgTable("club_file_upload_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  filename: text("filename").notNull(),
+  declaredSize: integer("declared_size").notNull(),
+  chunkSize: integer("chunk_size").notNull(),
+  totalChunks: integer("total_chunks").notNull(),
+  replaceFileId: uuid("replace_file_id").references(() => clubFiles.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("uploading"), // 'uploading' | 'complete' | 'failed' — no CHECK (DECISION-041)
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ClubFileUploadSession = typeof clubFileUploadSessions.$inferSelect;
+export type NewClubFileUploadSession = typeof clubFileUploadSessions.$inferInsert;
+
+// Composite PK (session_id, chunk_index) gives idempotent chunk upsert for
+// free — a re-PUT of the same chunk is always safe (ON CONFLICT DO UPDATE),
+// no separate unique constraint needed.
+export const clubFileUploadChunks = pgTable(
+  "club_file_upload_chunks",
+  {
+    sessionId: uuid("session_id").notNull().references(() => clubFileUploadSessions.id, { onDelete: "cascade" }),
+    chunkIndex: integer("chunk_index").notNull(),
+    bytes: bytea("bytes").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sessionId, t.chunkIndex] }),
+  ],
+);
+
+export type ClubFileUploadChunk = typeof clubFileUploadChunks.$inferSelect;
+export type NewClubFileUploadChunk = typeof clubFileUploadChunks.$inferInsert;

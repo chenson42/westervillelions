@@ -98,6 +98,19 @@ export default async function MemberRecordsPage({
               </Link>
             </div>
 
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Club Files</h2>
+              <Link
+                href="/members/records/files"
+                className="block bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-4 max-w-md focus:outline-none focus:ring-2 focus:ring-lions-blue"
+              >
+                <p className="font-semibold text-gray-900">Files</p>
+                <p className="text-sm text-gray-500">
+                  Sponsorship packets, event handouts, and other files the club shares.
+                </p>
+              </Link>
+            </div>
+
             {documents.length > 0 && (
               <div className="space-y-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Governing Documents</h2>

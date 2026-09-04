@@ -13,6 +13,8 @@ import { auth } from "@/lib/auth";
 import { PublicRsvpForm } from "@/components/public/public-rsvp-form";
 import { OccurrenceSignupList } from "@/components/events/occurrence-signup-list";
 import { SingleEventSignup } from "@/components/events/single-event-signup";
+import { AttachedFilesList } from "@/components/events/attached-files-list";
+import { getPublicAttachedFiles, getAllAttachedFiles } from "@/lib/club-files-queries";
 import type { OccurrenceRow } from "@/types/events";
 
 type Props = { params: Promise<{ id: string }> };
@@ -58,6 +60,17 @@ export default async function EventDetailPage({ params }: Props) {
 
   const isLoggedIn = !!session?.user;
   const recurrenceLabel = formatRecurrence(event);
+
+  // Attached Club Files (docs/work-log/2026-09-04-club-documents.md, Phase
+  // 3 Component Plan). This single page serves both the public
+  // /events/[id] route and /members/events/[id] (which redirects here) —
+  // so the visibility scope is decided by whether the viewer has a linked
+  // member account, not by which URL they arrived on. Anonymous/no-member
+  // viewers see only public-visibility attachments; a signed-in member with
+  // a linked memberId sees every attachment regardless of visibility.
+  const attachedFiles = session?.user?.memberId
+    ? await getAllAttachedFiles(event.id)
+    : await getPublicAttachedFiles(event.id);
 
   // Per-occurrence signup data (only when signups are enabled)
   let occurrenceRows: OccurrenceRow[] = [];
@@ -345,6 +358,8 @@ export default async function EventDetailPage({ params }: Props) {
             )}
           </div>
         )}
+
+        <AttachedFilesList files={attachedFiles} />
 
         <div className="flex flex-wrap gap-4">
           <Link
