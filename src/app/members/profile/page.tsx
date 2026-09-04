@@ -83,7 +83,11 @@ export default async function ProfilePage() {
               member submits it, staff/board reviews it, the member watches its
               status change over time. This is the closest existing shape in the
               app, so it belongs right next to My Reimbursements. */}
-          <div className="mt-8 pt-6 border-t border-gray-200 grid gap-4 sm:grid-cols-3">
+          {/* Social Requests (2026-09-04) joins the same grid for the same
+              reason Proposals did: member submits, board reviews, member
+              tracks the decision — the "My X" shape. Grid goes 2x2 at sm and
+              a single row of 4 at lg. */}
+          <div className="mt-8 pt-6 border-t border-gray-200 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <a
               href="/members/dues"
               className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100"
@@ -106,6 +110,13 @@ export default async function ProfilePage() {
             >
               <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Proposals</h3>
               <p className="text-sm text-gray-600">Propose a project or activity and track the board&rsquo;s decision</p>
+            </a>
+            <a
+              href="/members/social-requests"
+              className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100"
+            >
+              <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Social Media Requests</h3>
+              <p className="text-sm text-gray-600">Ask the club to post something to its social accounts</p>
             </a>
           </div>
 

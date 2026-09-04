@@ -200,7 +200,7 @@ export default async function MembersPage() {
             className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Profile</h3>
-            <p className="text-gray-700">Your contact info, dues status, and reimbursement requests</p>
+            <p className="text-gray-700">Your contact info, dues, reimbursements, proposals, and social media requests</p>
           </a>
           <a
             href="/members/finances"
