@@ -105,6 +105,16 @@ export const FEATURES = {
   // documents.manage/minutes.manage; verified against production).
   PROPOSALS_REVIEW: "proposals.review",
 
+  // Social Media Post Requests (docs/work-log/2026-09-03-social-media-requests.md)
+  // One key covers both viewing submitted requests and recording the
+  // board's decision — mirrors PROPOSALS_REVIEW's precedent exactly (one
+  // role authors and decides; no Ledger-style view/record/approve split,
+  // since there's no separation-of-duties reasoning for a marketing
+  // request the way there is for money). Explicitly bound below to `admin`
+  // + `board_member` by 0093_social_requests_permissions.sql — NOT assumed
+  // to ride along on any existing binding.
+  SOCIAL_REQUESTS_REVIEW: "social_requests.review",
+
   // Welcome Packet (docs/work-log/2026-08-21-welcome-packet-live-page.md,
   // DECISION-090). Raw-HTML admin authoring is a documented, narrow
   // exception to DECISION-076 Ruling 3 — the safety argument rests entirely
@@ -197,6 +207,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
     "Create document versions, review pending amendments, adopt substantive changes, and link citing minutes",
 
   [FEATURES.PROPOSALS_REVIEW]: "View and decide project/activity proposals",
+
+  [FEATURES.SOCIAL_REQUESTS_REVIEW]: "View and decide social media post requests",
 
   [FEATURES.WELCOME_PACKET_MANAGE]: "Author and publish the member welcome packet",
 };
@@ -479,6 +491,12 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         href: "/admin/proposals",
         icon: "🗂️",
         requiredFeature: FEATURES.PROPOSALS_REVIEW,
+      },
+      {
+        name: "Social Requests",
+        href: "/admin/social-requests",
+        icon: "📣",
+        requiredFeature: FEATURES.SOCIAL_REQUESTS_REVIEW,
       },
     ],
   },

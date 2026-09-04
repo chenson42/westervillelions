@@ -2012,3 +2012,125 @@ export const proposalDecisions = pgTable(
 
 export type ProposalDecision = typeof proposalDecisions.$inferSelect;
 export type NewProposalDecision = typeof proposalDecisions.$inferInsert;
+
+// ── Social Media Post Requests ──────────────────────────────────────────────
+// docs/work-log/2026-09-03-social-media-requests.md (Phase 3). A member-portal
+// form routes a request to post something to the club's social accounts to
+// the board; the board reviews and decides in a new admin dashboard. This
+// reuses the `proposals`/`proposalDecisions` two-table shape almost exactly
+// (mutable request row while unlocked + append-only decision history — the
+// same reasoning: a repeated `deferred` must never overwrite an earlier
+// deferral's decidedAt/decidedByUserId), with three deliberate deviations:
+//
+// 1. `status` vocabulary uses `posted`, not `approved`, as the terminal
+//    success state — "posted" is what a board member actually did, not an
+//    approval of a future action; approving and posting are the same event
+//    here, so there is no separate `approved` state.
+// 2. No `meeting_date`/`citing_minutes_id` trio on decisions. A social post
+//    request is an operational routing decision, not a formal club
+//    commitment the board votes on and records in minutes (unlike
+//    Proposals). If that changes later, the columns can be added the same
+//    way Proposals' were.
+// 3. A new `platforms` multi-value field (native `text[]`, no join table —
+//    matches `ledgerDonors.emails`'s precedent: a small, closed, rarely-
+//    changing vocabulary, not a relationship needing referential integrity).
+export const socialRequests = pgTable(
+  "social_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    // Nullable FK + name/email/phone snapshot — same shape as
+    // proposals.proposerMemberId/proposerNameSnapshot etc. A hard-deleted
+    // member's already-decided request is still a governance record and
+    // must survive the member row's deletion. Snapshot columns stay null
+    // while draft; written once, at submit, never recomputed afterward.
+    requesterMemberId: uuid("requester_member_id").references(() => members.id, { onDelete: "set null" }),
+    requesterUserId: uuid("requester_user_id").references(() => users.id, { onDelete: "set null" }),
+    requesterNameSnapshot: text("requester_name_snapshot"),
+    requesterEmailSnapshot: text("requester_email_snapshot"),
+    requesterPhoneSnapshot: text("requester_phone_snapshot"),
+
+    // DECISION-041 pattern, validated in src/lib/social-requests.ts, no DB
+    // CHECK. 'draft' | 'submitted' | 'under_review' | 'posted' | 'declined' |
+    // 'deferred'.
+    status: text("status").notNull().default("draft"),
+
+    // Multi-select platform vocabulary: 'facebook' | 'instagram' |
+    // 'twitter_x' | 'linkedin' | 'other', validated in
+    // src/lib/social-requests.ts. Draft rows may be empty; submit requires
+    // at least one.
+    platforms: text("platforms").array().notNull().default([]),
+
+    postCopy: text("post_copy"), // the caption/post text; required at submit, blank allowed in draft
+
+    // Chosen shape: data-URI-in-column, mirroring
+    // src/app/api/members/profile-picture/route.ts — not the ReceiptStorage
+    // adapter. The field is optional and a plain link is an equally valid
+    // alternative, so a second storage adapter would be the wrong
+    // complexity trade for what this feature needs today. Capped at ~300KB
+    // (409,600 chars) at the application layer; unlike the profile-picture
+    // route, the upload path also runs validateMagicBytes() against the
+    // decoded bytes rather than trusting the data: prefix alone.
+    imageDataUri: text("image_data_uri"),
+    linkUrl: text("link_url"), // optional/supplemental to imageDataUri; validated as http(s):// at write time
+
+    // "When would this ideally post" — `date`, not `timestamp`: it names a
+    // calendar day, not a wall-clock instant (same reasoning as
+    // proposals.proposedDate). Deliberately NO value+unknown pair, unlike
+    // proposedDate: nothing downstream branches on "no preference" vs.
+    // "haven't decided," so a blank value unambiguously means "no
+    // preference" and a second boolean column would model a distinction
+    // with no behavioral consequence.
+    desiredPostDate: date("desired_post_date"),
+
+    notes: text("notes"), // optional free-text context
+
+    submittedAt: timestamp("submitted_at", { withTimezone: true }), // null while draft
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_social_requests_requester_member").on(t.requesterMemberId),
+    index("ix_social_requests_requester_user").on(t.requesterUserId),
+    index("ix_social_requests_status").on(t.status),
+  ],
+);
+
+export type SocialRequest = typeof socialRequests.$inferSelect;
+export type NewSocialRequest = typeof socialRequests.$inferInsert;
+
+// Append-only — one row per status transition. The FIRST row for any
+// submitted request is always status='submitted', written by the submit
+// action itself in the same transaction as the socialRequests.status flip
+// (a self-transition: decidedByUserId is the requester's own user id, not a
+// board decision) — same unified-timeline pattern as proposalDecisions.
+export const socialRequestDecisions = pgTable(
+  "social_request_decisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    socialRequestId: uuid("social_request_id")
+      .notNull()
+      .references(() => socialRequests.id, { onDelete: "cascade" }),
+    // The status this row transitions the request TO. Same vocabulary as
+    // socialRequests.status minus 'draft' — no decision row is ever written
+    // for the draft state.
+    status: text("status").notNull(),
+    // Nullable + set-null, same attribution convention as every other
+    // *_user_id column in this schema (proposalDecisions.decidedByUserId).
+    decidedByUserId: uuid("decided_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    // Optional free text — also carries "posted where/when" detail on a
+    // `posted` transition (no separate column; free text either way). No
+    // meeting_date/citing_minutes_id trio here — see table doc comment
+    // above for why this deliberately diverges from proposalDecisions.
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_social_request_decisions_request").on(t.socialRequestId),
+    index("ix_social_request_decisions_status").on(t.status),
+  ],
+);
+
+export type SocialRequestDecision = typeof socialRequestDecisions.$inferSelect;
+export type NewSocialRequestDecision = typeof socialRequestDecisions.$inferInsert;

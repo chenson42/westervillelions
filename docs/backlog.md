@@ -925,3 +925,44 @@ Design each with the others in view — decisions in one box in the next.
   22 donors in this batch have no email on file — they'll need a printed letter" — computed from
   the same `rows` the Email column and eligibility check already read, no new data fetch
   required.
+
+- [ ] **B-52 — `src/lib/members.ts` unit test coverage is well under the project's 80% target.**
+  *(Raised 2026-09-03, Phase 6 of Social Media Post Requests; the gap itself is older —
+  first logged in the 2026-05-20 and 2026-06-24 test-coverage reviews as "pre-existing,
+  e2e-covered" and never tracked past the review log.)*
+
+  `src/lib/members.ts` sits at 35.89% statement coverage against this project's 80% target
+  (QA's Phase 5 run, 2026-09-03; earlier reviews recorded it at 0%). No feature to date has
+  touched this file directly enough to justify closing the gap as a side effect, so it has
+  been re-observed cold at least three times across four months without ever becoming a
+  tracked, assignable item — this entry exists so the next coverage review has something to
+  check off instead of rediscovering it.
+
+  **Shape of the fix:** a `src/lib/members.ts` Vitest suite covering its exported functions
+  directly (not just via e2e), sized to bring statement coverage to 80%+; qa to scope the
+  exact function list at the next 7-day test-coverage review.
+
+- [ ] **B-53 — Six e2e specs are red on `main` outside the feature that surfaced them (dev-DB
+  fixture/date drift, not a code regression).**
+  *(Raised 2026-09-03, Phase 6 of Social Media Post Requests; QA's Phase 5 full
+  `pnpm test:e2e` run.)*
+
+  A full-suite run (145 tests, 24 spec files) showed 7 failures — all in
+  `budget-star-notes.spec.ts`, `budgeting-restructure.spec.ts`, `cancel-occurrence.spec.ts`,
+  `ledger-search.spec.ts`, `prior-year-cause-line-reconcile.spec.ts`, and
+  `transaction-budget-line-link.spec.ts` — none referencing `social_requests` or any file
+  the Social Media Post Requests feature touched. QA's read of the failure messages points to
+  dev-DB fixture/category drift (a missing "Community & Civic" budget category, a
+  cancelled-occurrence error-string mismatch, a stale fiscal-year-filter assumption) rather
+  than a product regression. `cancel-occurrence.spec.ts` specifically failed on the same
+  hardcoded-date-rot class the 2026-06-24 test-coverage review already fixed once
+  (`CANCEL_DATE`/`SIGNUP_BLOCKED_DATE` advancing past "today" again) — the earlier fix was a
+  one-time date bump, not a structural fix, so it has now rotted a second time. A red
+  full-suite run is a real signal worth closing even when the change under review is
+  unrelated and green.
+
+  **Shape of the fix:** re-anchor `cancel-occurrence.spec.ts`'s hardcoded dates relative to
+  the current date (or compute them at runtime) so this class of rot can't recur; refresh or
+  seed the dev DB's "Community & Civic" budget category fixture; re-run the other four specs
+  individually to isolate whether each is a fixture gap or an actual assertion drift, and fix
+  or re-anchor each at the next 7-day test-coverage review.
