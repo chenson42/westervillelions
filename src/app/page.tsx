@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
 import { ServiceAreas } from "@/components/home/service-areas";
 import FeaturedContent from "@/components/home/featured-content";
 import { db } from "@/lib/db";
@@ -164,11 +165,26 @@ export default async function HomePage() {
   const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR;
   return (
     <div className="min-h-screen bg-white">
-      {/* Hero Section — pure brand gradient (the old hero-bg.jpg was ~90% hidden
-          behind this same gradient, so dropping the image keeps the visual while
-          saving every visitor the full-bleed download) */}
-      <section className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-24 md:py-32">
-        <div className="container mx-auto px-4 text-center">
+      {/* Hero Section — downtown Westerville photo under a light translucent
+          brand gradient (55/60), user-selected 2026-09-04 from a side-by-side
+          against a 70/75 wash and the photo-less gradient. The pre-2026-09-04
+          hero buried this same photo under ~90% opacity; this version serves
+          it via next/image so visitors get an optimized, resized file rather
+          than the full-size original. */}
+      <section className="relative bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-24 md:py-32 overflow-hidden">
+        <Image
+          src="/images/hero-bg.jpg"
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover"
+        />
+        <div
+          className="absolute inset-0 bg-gradient-to-br from-lions-blue/55 to-lions-blue-dark/60"
+          aria-hidden="true"
+        ></div>
+        <div className="container mx-auto px-4 text-center relative z-10">
           <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold mb-6 drop-shadow-lg">
             Westerville Lions Club
           </h1>
