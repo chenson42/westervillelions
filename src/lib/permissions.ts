@@ -270,6 +270,12 @@ export interface AdminNavItem {
   // cleared the admin-area gate via some other feature, so they cannot be used
   // as an admission criterion themselves.
   requiredFeature?: FeatureName | FeatureName[];
+  // Search-only synonyms for the sidebar's type-to-filter box ("what would
+  // someone type?"). Purely additive metadata: getAdminProtectionRules() and
+  // canAccessAdminArea() read only href/requiredFeature, so keywords have no
+  // effect on proxy admission or area gating — and the search filters WITHIN
+  // the permission-visible items, never widening visibility.
+  keywords?: string[];
 }
 
 export interface AdminNavGroup {
@@ -286,6 +292,7 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Dashboard",
         href: "/admin",
         icon: "📊",
+        keywords: ["home", "overview", "stats", "summary"],
         requiredFeature: FEATURES.ADMIN_DASHBOARD,
       },
     ],
@@ -297,36 +304,42 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Members",
         href: "/admin/members",
         icon: "🦁",
+        keywords: ["roster", "directory", "people", "contact info", "board positions"],
         requiredFeature: FEATURES.MEMBERS_EDIT,
       },
       {
         name: "Users",
         href: "/admin/users",
         icon: "👥",
+        keywords: ["accounts", "logins", "passwords", "sign in", "google"],
         requiredFeature: FEATURES.ADMIN_USERS,
       },
       {
         name: "Roles",
         href: "/admin/roles",
         icon: "🔑",
+        keywords: ["access", "admin rights", "treasurer", "notetaker"],
         requiredFeature: FEATURES.ADMIN_ROLES,
       },
       {
         name: "Permissions",
         href: "/admin/permissions",
         icon: "🔒",
+        keywords: ["features", "access", "gates", "grants"],
         requiredFeature: FEATURES.ADMIN_ROLES,
       },
       {
         name: "Applications",
         href: "/admin/membership",
         icon: "📋",
+        keywords: ["membership", "join", "applicants", "new members"],
         requiredFeature: FEATURES.MEMBERSHIP_MANAGE,
       },
       {
         name: "Groups",
         href: "/admin/groups",
         icon: "👨‍👩‍👧‍👦",
+        keywords: ["committees", "google groups", "teams", "sync"],
         requiredFeature: FEATURES.GROUPS_MANAGE,
       },
     ],
@@ -342,12 +355,14 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Ledger",
         href: "/admin/ledger",
         icon: "📒",
+        keywords: ["money", "accounting", "books", "finance", "transactions", "treasury"],
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
       {
         name: "Reimbursements",
         href: "/admin/ledger/reimbursements",
         icon: "🧾",
+        keywords: ["expenses", "receipts", "repay", "checks", "out of pocket"],
         requiredFeature: [
           FEATURES.LEDGER_VIEW,
           FEATURES.LEDGER_RECORD,
@@ -359,12 +374,14 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Approvals",
         href: "/admin/ledger/approvals",
         icon: "✅",
+        keywords: ["disbursements", "pending", "authorize", "spending", "board"],
         requiredFeature: FEATURES.LEDGER_APPROVE,
       },
       {
         name: "Budgeting",
         href: "/admin/ledger/budgeting",
         icon: "🧮",
+        keywords: ["budget", "planning", "fiscal year", "allocations", "lines"],
         requiredFeature: [
           FEATURES.LEDGER_MANAGE,
           FEATURES.LEDGER_APPROVE,
@@ -376,42 +393,49 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Reconciliation",
         href: "/admin/ledger/reconciliation",
         icon: "🏦",
+        keywords: ["bank", "statements", "balance", "matching", "monthly close"],
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
       {
         name: "Dues",
         href: "/admin/dues",
         icon: "💵",
+        keywords: ["payments", "membership fees", "annual", "reminders", "season"],
         requiredFeature: FEATURES.DUES_VIEW,
       },
       {
         name: "Reports",
         href: "/admin/ledger/reports",
         icon: "📊",
+        keywords: ["financial statements", "summaries", "print", "condition"],
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
       {
         name: "Compliance",
         href: "/admin/ledger/compliance",
         icon: "📋",
+        keywords: ["990", "irs", "taxes", "filings", "nonprofit"],
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
       {
         name: "Donors",
         href: "/admin/ledger/donors",
         icon: "🤝",
+        keywords: ["donations", "gifts", "acknowledgments", "letters", "thank you"],
         requiredFeature: FEATURES.LEDGER_RECORD,
       },
       {
         name: "Ledger Settings",
         href: "/admin/ledger/settings",
         icon: "⚙️",
+        keywords: ["categories", "bank accounts", "funds", "configuration", "causes"],
         requiredFeature: FEATURES.LEDGER_MANAGE,
       },
       {
         name: "User's Guide",
         href: "/admin/ledger/guide",
         icon: "📖",
+        keywords: ["help", "documentation", "treasury guide", "manual", "how to"],
         requiredFeature: FEATURES.LEDGER_VIEW,
       },
     ],
@@ -423,6 +447,7 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Minutes",
         href: "/admin/minutes",
         icon: "📝",
+        keywords: ["meetings", "records", "notes", "secretary", "board"],
         // MINUTES_DELETE is admin-only (0080_minutes_permissions.sql binds it
         // to `admin` alone, who bypasses feature checks entirely) and isn't
         // needed to see the nav item itself — but it must still be part of
@@ -435,18 +460,21 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Governing Documents",
         href: "/admin/documents",
         icon: "📜",
+        keywords: ["constitution", "bylaws", "by-laws", "amendments", "versions"],
         requiredFeature: FEATURES.DOCUMENTS_MANAGE,
       },
       {
         name: "Welcome Packet",
         href: "/admin/welcome-packets",
         icon: "🧳",
+        keywords: ["orientation", "new member", "onboarding", "deck"],
         requiredFeature: FEATURES.WELCOME_PACKET_MANAGE,
       },
       {
         name: "Club Files",
         href: "/admin/club-files",
         icon: "📎",
+        keywords: ["uploads", "attachments", "documents", "storage", "pdf"],
         requiredFeature: FEATURES.CLUB_FILES_MANAGE,
       },
     ],
@@ -458,6 +486,7 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Events",
         href: "/admin/events",
         icon: "📅",
+        keywords: ["calendar", "rsvp", "occurrences", "announce", "schedule"],
         // Widened for the Event Announcement Emails feature (2026-09-04):
         // events.announce is a distinct, narrower-scoped key from events.edit
         // (bulk-emailing every active member is a different trust level than
@@ -470,30 +499,35 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Campaigns",
         href: "/admin/campaigns",
         icon: "💰",
+        keywords: ["donations", "zeffy", "fundraising", "donate page", "causes"],
         requiredFeature: FEATURES.CAMPAIGNS_MANAGE,
       },
       {
         name: "Announcements",
         href: "/admin/announcements",
         icon: "📣",
+        keywords: ["news", "banners", "homepage", "notices"],
         requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
       },
       {
         name: "Testimonials",
         href: "/admin/testimonials",
         icon: "💬",
+        keywords: ["quotes", "stories", "reviews", "members say"],
         requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
       },
       {
         name: "Programs",
         href: "/admin/programs",
         icon: "👓",
+        keywords: ["services", "service areas", "activities", "public site"],
         requiredFeature: FEATURES.ANNOUNCEMENTS_MANAGE,
       },
       {
         name: "Newsletter",
         href: "/admin/subscriptions",
         icon: "📧",
+        keywords: ["subscriptions", "subscribers", "email list", "mailing list"],
         // SUBSCRIPTIONS_VIEW, not CONTACT_VIEW — see the FEATURES.SUBSCRIPTIONS_VIEW
         // doc comment for why this page earned its own key.
         requiredFeature: FEATURES.SUBSCRIPTIONS_VIEW,
@@ -507,24 +541,28 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Contact",
         href: "/admin/contact",
         icon: "✉️",
+        keywords: ["messages", "inbox", "form submissions", "inquiries"],
         requiredFeature: FEATURES.CONTACT_VIEW,
       },
       {
         name: "Suggestions",
         href: "/admin/suggestions",
         icon: "💡",
+        keywords: ["ideas", "feedback", "suggestion box"],
         requiredFeature: FEATURES.SUGGESTIONS_VIEW,
       },
       {
         name: "Proposals",
         href: "/admin/proposals",
         icon: "🗂️",
+        keywords: ["projects", "activities", "review", "submissions", "ideas"],
         requiredFeature: FEATURES.PROPOSALS_REVIEW,
       },
       {
         name: "Social Requests",
         href: "/admin/social-requests",
         icon: "📣",
+        keywords: ["facebook", "instagram", "posts", "social media"],
         requiredFeature: FEATURES.SOCIAL_REQUESTS_REVIEW,
       },
     ],
@@ -536,22 +574,26 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         name: "Email Queue",
         href: "/admin/email-queue",
         icon: "📨",
+        keywords: ["mail", "outbound", "blocked", "resend", "delivery"],
       },
       {
         name: "Sync Log",
         href: "/admin/sync-log",
         icon: "🔄",
+        keywords: ["google", "groups", "audit", "history"],
       },
       {
         name: "Security",
         href: "/admin/security",
         icon: "🛡️",
+        keywords: ["failed logins", "lockouts", "attacks", "audit"],
         requiredFeature: FEATURES.ADMIN_SECURITY_VIEW,
       },
       {
         name: "Release Notes",
         href: "/admin/release-notes",
         icon: "📝",
+        keywords: ["version", "changelog", "updates", "what's new"],
       },
     ],
   },

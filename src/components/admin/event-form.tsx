@@ -496,6 +496,11 @@ export default function EventForm({
               value={formData.image}
               onChange={(dataUrl) => setFormData((prev) => ({ ...prev, image: dataUrl }))}
             />
+            <p className="mt-1 text-xs text-gray-500">
+              Cropped to a wide banner (7:2). Upload a photo at least 1400px wide and keep the
+              subject vertically centered — the top and bottom are trimmed. Also used as the
+              preview image when the event&rsquo;s link is shared.
+            </p>
           </div>
 
           <div className="space-y-3">

@@ -29,17 +29,30 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   if (!event) return { title: "Event Not Found" };
 
+  const description =
+    event.description ?? `Join us for ${event.title} hosted by the Westerville Lions Club.`;
+  // Link previews (Open Graph unfurls) need an image on every event page —
+  // an event without its own image falls back to the site's brand image so
+  // a shared link never unfurls as bare text. The event image is also
+  // mirrored into the Twitter card, which otherwise inherits the layout's
+  // generic site image instead of the event's.
+  const previewImage = event.image ?? "/images/hero-bg.jpg";
+
   return {
     title: event.title,
-    description: event.description ?? `Join us for ${event.title} hosted by the Westerville Lions Club.`,
+    description,
     alternates: { canonical: `https://westervillelions.org/events/${id}` },
     openGraph: {
       title: `${event.title} | Westerville Lions Club`,
-      description: event.description ?? `Join us for ${event.title} hosted by the Westerville Lions Club.`,
+      description,
       url: `https://westervillelions.org/events/${id}`,
-      ...(event.image && {
-        images: [{ url: event.image, width: 1200, height: 675, alt: event.title }],
-      }),
+      images: [{ url: previewImage, width: 1200, height: 675, alt: event.title }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: `${event.title} | Westerville Lions Club`,
+      description,
+      images: [previewImage],
     },
   };
 }

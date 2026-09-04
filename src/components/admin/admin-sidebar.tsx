@@ -3,12 +3,39 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ADMIN_NAVIGATION as navigation } from "@/lib/permissions";
+import { matchNavEntry } from "@/lib/fuzzy-match";
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { SuggestionBoxDialog } from "@/components/suggestion-box-dialog";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { version } = require("../../../package.json") as { version: string };
 
 const RETURN_KEY = "adminReturnTo";
+
+// Renders a nav label with the fuzzy-matched characters emphasized. Plain
+// helper (not a component) so this file keeps its one-component-per-file
+// shape. Active items are white-on-blue, so the highlight there is gold;
+// inactive items highlight in brand blue.
+function renderHighlightedLabel(
+  text: string,
+  positions: number[] | null,
+  isActive: boolean
+): ReactNode {
+  if (!positions || positions.length === 0) return text;
+  const matched = new Set(positions);
+  return text.split("").map((ch, i) =>
+    matched.has(i) ? (
+      <span
+        key={i}
+        className={isActive ? "font-bold text-lions-gold" : "font-bold text-lions-blue"}
+      >
+        {ch}
+      </span>
+    ) : (
+      ch
+    )
+  );
+}
 
 // NavItem/NavGroup shape and content now live in src/lib/permissions.ts as
 // ADMIN_NAVIGATION — the same source the admin-area access gate
@@ -27,6 +54,7 @@ export default function AdminSidebar({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [returnTo, setReturnTo] = useState("/");
   const [suggestionOpen, setSuggestionOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     // On first entry to admin, save the referrer if it's not an admin page
@@ -64,7 +92,35 @@ export default function AdminSidebar({
     }))
     .filter((group) => group.items.length > 0);
 
-  const firstLabeledGroupIndex = visibleGroups.findIndex((group) => group.label !== null);
+  // Type-to-filter search over the PERMISSION-VISIBLE items only — filtering
+  // happens strictly after the feature filter above, so search can never
+  // surface an item the user's permissions hide. Matches against label,
+  // keywords, and group header; original nav order is preserved (no
+  // score-based re-sorting) and groups left with zero matches are dropped.
+  const trimmedQuery = searchQuery.trim();
+  const filteredGroups = trimmedQuery
+    ? visibleGroups
+        .map((group) => ({
+          label: group.label,
+          items: group.items
+            .map((item) => ({
+              item,
+              match: matchNavEntry(trimmedQuery, {
+                label: item.name,
+                group: group.label,
+                keywords: item.keywords,
+              }),
+            }))
+            .filter((entry) => entry.match !== null)
+            .map((entry) => ({ item: entry.item, labelPositions: entry.match!.labelPositions })),
+        }))
+        .filter((group) => group.items.length > 0)
+    : visibleGroups.map((group) => ({
+        label: group.label,
+        items: group.items.map((item) => ({ item, labelPositions: null as number[] | null })),
+      }));
+
+  const firstLabeledGroupIndex = filteredGroups.findIndex((group) => group.label !== null);
 
   // Only the longest matching href is active, so nested pages (e.g.
   // /admin/ledger/compliance) highlight their own item, not every prefix.
@@ -148,9 +204,72 @@ export default function AdminSidebar({
           </button>
         </div>
 
+        {/* Search */}
+        <div className="px-3 pt-3">
+          <label htmlFor="admin-nav-search" className="sr-only">
+            Search admin menu
+          </label>
+          <div className="relative">
+            <svg
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth="2"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"
+              />
+            </svg>
+            <input
+              id="admin-nav-search"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && searchQuery) {
+                  e.stopPropagation();
+                  setSearchQuery("");
+                }
+              }}
+              placeholder="Search menu…"
+              autoComplete="off"
+              spellCheck={false}
+              className="h-11 w-full rounded-lg border border-gray-200 bg-gray-50 pl-9 pr-9 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-2 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+              >
+                <span className="sr-only">Clear search</span>
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth="2"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Navigation */}
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-          {visibleGroups.map((group, groupIndex) => (
+          {filteredGroups.length === 0 && (
+            <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500 text-sm">
+              No matches for &ldquo;{trimmedQuery}&rdquo;
+            </div>
+          )}
+          {filteredGroups.map((group, groupIndex) => (
             <div key={group.label ?? "dashboard"}>
               {group.label && (
                 <div
@@ -162,7 +281,7 @@ export default function AdminSidebar({
                 </div>
               )}
               <div className="space-y-1">
-                {group.items.map((item) => {
+                {group.items.map(({ item, labelPositions }) => {
                   const isActive = item.href === activeHref;
                   return (
                     <Link
@@ -173,10 +292,13 @@ export default function AdminSidebar({
                           ? "bg-lions-blue text-white"
                           : "text-gray-700 hover:bg-gray-100"
                       }`}
-                      onClick={() => setIsMobileMenuOpen(false)}
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        setSearchQuery("");
+                      }}
                     >
                       <span className="text-lg">{item.icon}</span>
-                      <span>{item.name}</span>
+                      <span>{renderHighlightedLabel(item.name, labelPositions, isActive)}</span>
                     </Link>
                   );
                 })}
