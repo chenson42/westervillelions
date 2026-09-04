@@ -15,7 +15,7 @@ export default function MeetingsPage() {
             <div className="space-y-4 text-lg text-gray-700">
               <div className="flex gap-3">
                 <span className="font-semibold text-gray-900 w-24 shrink-0">When:</span>
-                <span>1st and 3rd Thursday of each month at 6:30 PM (September–May)</span>
+                <span>1st and 3rd Thursday of each month (September–May) — social hour at 6:30 PM, meeting begins at 7:00 PM</span>
               </div>
               <div className="flex gap-3">
                 <span className="font-semibold text-gray-900 w-24 shrink-0">Where:</span>

@@ -161,7 +161,7 @@ export default async function HomePage() {
   const nextEvents = featuredEventRows.length > 0
     ? sortByNextOccurrence(withNextOccurrence(featuredEventRows))
     : sortByNextOccurrence(withNextOccurrence(fallbackEventRows)).slice(0, 1);
-  const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR - 1;
+  const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR;
   return (
     <div className="min-h-screen bg-white">
       {/* Hero Section with Background Image */}
@@ -236,7 +236,7 @@ export default async function HomePage() {
           <p className="text-center text-xl text-gray-600 mb-16 max-w-3xl mx-auto">
             We make a difference in our community through diverse service initiatives
           </p>
-          <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
             <ServiceCard
               image="/images/service-youth.jpg"
               alt="Youth Programs"
@@ -257,6 +257,20 @@ export default async function HomePage() {
               alt="Humanitarian Aid"
               title="Humanitarian Aid"
               description="Providing disaster relief and support to those facing hardship"
+              color="from-yellow-400 to-yellow-500"
+            />
+            <ServiceCard
+              image="/images/service-community.jpg"
+              alt="Environment"
+              title="Environment"
+              description="Protecting our community's natural resources through conservation efforts, clean-up events, and environmental education"
+              color="from-yellow-400 to-yellow-500"
+            />
+            <ServiceCard
+              image="/images/service-community.jpg"
+              alt="Hunger Relief"
+              title="Hunger Relief"
+              description="Partnering with local food banks and meal programs to ensure no family in Westerville goes without nutritious food"
               color="from-yellow-400 to-yellow-500"
             />
           </div>

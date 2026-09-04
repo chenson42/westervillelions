@@ -57,12 +57,20 @@ export default function ContactPage() {
 
                 <div>
                   <h3 className="text-xl font-semibold mb-2 text-lions-blue">Meeting Location</h3>
+                  <p className="text-lg text-gray-700 mb-1">
+                    1st and 3rd Thursday of each month (September–May) — social hour at 6:30 PM, meeting begins at 7:00 PM
+                  </p>
                   <p className="text-lg text-gray-700 mb-3">
                     The Landings
                     <br />
                     350 County Line Rd W
                     <br />
                     Westerville, OH 43082
+                  </p>
+                  <p className="mb-3">
+                    <Link href="/meetings" className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark">
+                      See full meeting details &rarr;
+                    </Link>
                   </p>
                   <div className="rounded-lg overflow-hidden border border-gray-200">
                     <iframe

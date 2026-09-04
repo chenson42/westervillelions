@@ -116,7 +116,7 @@ export default async function AboutPage() {
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Our History</h2>
             <p className="text-lg text-gray-700 mb-4">
               The Westerville Lions Club has been a cornerstone of community service in
-              Westerville, Ohio since 1928. For {new Date().getFullYear() - 1928 - 1}+ years, our members have dedicated
+              Westerville, Ohio since 1928. For {new Date().getFullYear() - 1928}+ years, our members have dedicated
               themselves to improving the lives of our neighbors through humanitarian service
               and civic engagement.
             </p>
@@ -131,7 +131,7 @@ export default async function AboutPage() {
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Our Meetings</h2>
             <div className="bg-gray-50 p-6 rounded-lg">
               <p className="text-lg text-gray-700 mb-2">
-                <strong>When:</strong> 1st and 3rd Thursday of each month at 6:30 PM (September–May)
+                <strong>When:</strong> 1st and 3rd Thursday of each month (September–May) — social hour at 6:30 PM, meeting begins at 7:00 PM
               </p>
               <p className="text-lg text-gray-700 mb-2">
                 <strong>Where:</strong> The Landings, 350 County Line Rd W, Westerville, OH 43082
