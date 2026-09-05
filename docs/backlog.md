@@ -1066,3 +1066,28 @@ Design each with the others in view — decisions in one box in the next.
      this community all year long."
   The club picks one (or supplies BioBlitz copy — that program couldn't be verified in the repo
   and was deliberately left out). One-line change in `src/app/page.tsx` once chosen.
+
+- [ ] **B-59 — Event type field + public calendar badges.** *(Raised 2026-09-04, site review.)*
+  The public calendar lists ~14 internal General/Activities meetings alongside genuine community
+  events with no distinction — it reads "closed club" on the site's main recruiting surface. The
+  `events` table has no type/category field, so this needs schema (database-admin) + UI
+  (ux-developer): a `kind` or similar column, badges ("Open to everyone" vs "Club meeting —
+  visitors welcome"), and optionally a default public-view filter. Do not infer type from titles.
+
+- [ ] **B-60 — Trust-content follow-ups from the site review.** *(Raised 2026-09-04/05.)*
+  1. Club review of the /privacy page text — it shipped Claude-drafted (flagged in the
+     2026-09-04-site-review-fixes work-log) and should be read by an officer.
+  2. Confirm the Foundation's legal name against the IRS determination letter:
+     `ledger_entities` says "Westerville Lions Foundation"; every donor-facing letter and the
+     new /donate copy say "Westerville Lions Club Foundation". Fix whichever is wrong.
+  3. Verify the mobile audit's "13×13px consent checkbox" on /join on a real device — the
+     element doesn't exist in the codebase; likely a stale finding, but confirm and close.
+
+- [ ] **B-61 — Newsletter self-service unsubscribe.** *(Raised 2026-09-04, site review.)*
+  Unsubscribe is currently "contact us." Add a tokenized one-click unsubscribe link to
+  newsletter sends and an unsubscribe confirmation page; update the /privacy wording once live.
+
+- [ ] **B-62 — Add www.westervillelions.org in the Vercel dashboard.** *(Raised 2026-09-04.)*
+  Not a code change. The `www` DNS record points at Vercel but no cert covers it, so
+  `https://www.westervillelions.org` shows a browser security error. Add the domain to the
+  Vercel project (issues a cert and 308s to the apex). Five minutes, needs dashboard access.
