@@ -13,7 +13,7 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://www.googletagmanager.com",
+      "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://www.googletagmanager.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https: lh3.googleusercontent.com",
       "font-src 'self'",
@@ -25,11 +25,21 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  poweredByHeader: false,
   async headers() {
     return [
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        source: "/images/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, stale-while-revalidate=604800",
+          },
+        ],
       },
     ];
   },
@@ -93,11 +103,24 @@ const nextConfig: NextConfig = {
     ];
   },
   images: {
+    formats: ["image/avif", "image/webp"],
     remotePatterns: [
       {
         protocol: "https",
         hostname: "lh3.googleusercontent.com",
       },
+    ],
+    // Next.js 16 defaults to denying a query string on ANY local (same-
+    // origin) next/image src unless images.localPatterns is configured —
+    // site-review-fixes Batch 3's event-image serve route
+    // (GET /api/public/events/[id]/image) is versioned via a `?v=` cache-
+    // buster, so it needs an explicit allow. The second entry reproduces
+    // the framework's implicit prior default (no query string) for every
+    // other local image path, since configuring localPatterns at all
+    // replaces that default rather than extending it.
+    localPatterns: [
+      { pathname: "/api/public/events/**" },
+      { pathname: "**", search: "" },
     ],
   },
 };

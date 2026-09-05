@@ -9,13 +9,11 @@ import { format } from "date-fns";
 import { formatRecurrence, generateOccurrences, parseWallClock, dateKey, easternOffsetFor, formatEventWhen, getNextOccurrence, buildGoogleCalendarUrl, buildOutlookCalendarUrl, nowEastern, type IcsEventInput } from "@/lib/events";
 import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 import MarkdownContent from "@/components/markdown-content";
-import { auth } from "@/lib/auth";
-import { PublicRsvpForm } from "@/components/public/public-rsvp-form";
-import { OccurrenceSignupList } from "@/components/events/occurrence-signup-list";
-import { SingleEventSignup } from "@/components/events/single-event-signup";
-import { AttachedFilesList } from "@/components/events/attached-files-list";
-import { getPublicAttachedFiles, getAllAttachedFiles } from "@/lib/club-files-queries";
+import { EventPersonalization } from "@/components/events/event-personalization";
+import { getPublicAttachedFiles } from "@/lib/club-files-queries";
 import type { OccurrenceRow } from "@/types/events";
+
+export const revalidate = 300;
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -36,7 +34,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   // a shared link never unfurls as bare text. The event image is also
   // mirrored into the Twitter card, which otherwise inherits the layout's
   // generic site image instead of the event's.
-  const previewImage = event.image ?? "/images/hero-bg.jpg";
+  //
+  // Guard against base64 data: URIs (legacy uploads stored the image inline
+  // rather than as a URL) — a multi-hundred-KB data URI in og:image/JSON-LD
+  // breaks link unfurling on every platform that fetches it. A later batch
+  // moves event images out of base64 storage entirely; this guard stays
+  // regardless as a safety net for any image column value that isn't a URL.
+  const previewImage =
+    event.image && !event.image.startsWith("data:") ? event.image : "/images/og-default.jpg";
 
   return {
     title: event.title,
@@ -60,35 +65,35 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function EventDetailPage({ params }: Props) {
   const { id } = await params;
 
-  const [event, session] = await Promise.all([
-    db
-      .select()
-      .from(events)
-      .where(eq(events.id, id))
-      .then((r) => r[0]),
-    auth(),
-  ]);
+  const event = await db
+    .select()
+    .from(events)
+    .where(eq(events.id, id))
+    .then((r) => r[0]);
 
   if (!event) notFound();
 
-  const isLoggedIn = !!session?.user;
   const recurrenceLabel = formatRecurrence(event);
 
   // Attached Club Files (docs/work-log/2026-09-04-club-documents.md, Phase
   // 3 Component Plan). This single page serves both the public
-  // /events/[id] route and /members/events/[id] (which redirects here) —
-  // so the visibility scope is decided by whether the viewer has a linked
-  // member account, not by which URL they arrived on. Anonymous/no-member
-  // viewers see only public-visibility attachments; a signed-in member with
-  // a linked memberId sees every attachment regardless of visibility.
-  const attachedFiles = session?.user?.memberId
-    ? await getAllAttachedFiles(event.id)
-    : await getPublicAttachedFiles(event.id);
+  // /events/[id] route and /members/events/[id] (which redirects here).
+  // The server render always uses the public-visibility baseline — who's
+  // viewing is a per-request, session-dependent fact, and reading it here
+  // via auth() would force this page dynamic (Batch 2,
+  // docs/work-log/2026-09-04-site-review-fixes.md). A signed-in member with
+  // a linked memberId sees the full (members-only-inclusive) list instead,
+  // fetched client-side by <EventPersonalization> from
+  // /api/events/[id]/viewer-context.
+  const attachedFiles = await getPublicAttachedFiles(event.id);
 
-  // Per-occurrence signup data (only when signups are enabled)
+  // Per-occurrence signup data (only when signups are enabled). This is all
+  // public aggregate data — counts and signee names — computed the same way
+  // for every viewer, so it's safe to compute at build/revalidate time. Only
+  // "is *this* viewer signed up" is personal; that baseline stays false
+  // here and is corrected client-side by <EventPersonalization>.
   let occurrenceRows: OccurrenceRow[] = [];
   const signupsByDate = new Map<string, number>();
-  const userSignupDates = new Set<string>();
 
   const signeesByDate = new Map<string, string[]>();
 
@@ -126,7 +131,6 @@ export default async function EventDetailPage({ params }: Props) {
       // Count the attendee + their guests
       const attendeeTotal = 1 + (r.guestCount ?? 0);
       signupsByDate.set(key, (signupsByDate.get(key) ?? 0) + attendeeTotal);
-      if (r.userId === session?.user?.id) userSignupDates.add(key);
       const displayName = r.userName ?? r.rsvpName;
       if (displayName) {
         const names = signeesByDate.get(key) ?? [];
@@ -166,9 +170,12 @@ export default async function EventDetailPage({ params }: Props) {
         return {
           date: d.toISOString(), // ISO string passed to client for RSVP round-trip
           dateKey: occKey,       // local YYYY-MM-DD for ICS occurrence param
+          rsvpKey: key,          // wall-clock key for viewer-context isSignedUp matching
           displayDate: isAllDay ? format(d, "EEE, MMM d") : format(d, "EEE, MMM d 'at' h:mm a"),
           signedUpCount: count,
-          isSignedUp: userSignupDates.has(key),
+          // Signed-out baseline — <EventPersonalization> patches this in
+          // client-side per viewer. See comment above occurrenceRows decl.
+          isSignedUp: false,
           isFull: event.maxAttendees != null && count >= event.maxAttendees,
           isPast: d < now,
           signees: signeesByDate.get(key) ?? [],
@@ -181,14 +188,6 @@ export default async function EventDetailPage({ params }: Props) {
       });
     }
   }
-
-  // Fetch existing RSVP for the PublicRsvpForm (non-recurring only)
-  const userRsvp =
-    !event.isRecurring && session?.user?.id
-      ? await db.query.eventRsvps.findFirst({
-          where: and(eq(eventRsvps.eventId, id), eq(eventRsvps.userId, session.user.id)),
-        })
-      : undefined;
 
   // ── Add to Calendar URL builders ──────────────────────────────────────────
   // See: docs/work-log/2026-05-20-add-to-calendar-dropdown.md (Phase 3, §4)
@@ -244,13 +243,21 @@ export default async function EventDetailPage({ params }: Props) {
         : `${event.endDate.slice(0, 10)}T${event.endDate.slice(11, 16)}:00${easternOffsetFor(parseWallClock(event.endDate))}`)
     : undefined;
 
+  // Same data: URI guard as generateMetadata()'s previewImage above — never
+  // emit a raw base64 data: URI into the JSON-LD image. schema.org wants an
+  // absolute URL, so resolve a relative fallback path against the origin.
+  const jsonLdImage = event.image && !event.image.startsWith("data:") ? event.image : "/images/og-default.jpg";
+  const jsonLdImageAbsolute = jsonLdImage.startsWith("http")
+    ? jsonLdImage
+    : `https://westervillelions.org${jsonLdImage}`;
+
   const eventJsonLd = {
     "@context": "https://schema.org",
     "@type": "Event",
     name: event.title,
     description: event.description ?? undefined,
     url: `https://westervillelions.org/events/${event.id}`,
-    ...(event.image && { image: event.image }),
+    image: jsonLdImageAbsolute,
     startDate: jsonLdStartDate,
     ...(jsonLdEndDate && { endDate: jsonLdEndDate }),
     ...(event.location && {
@@ -319,68 +326,23 @@ export default async function EventDetailPage({ params }: Props) {
           </div>
         )}
 
-        {event.requiresRsvp && (
-          <div className="mt-8 mb-10">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">
-              {event.isRecurring ? "Sign Up for a Date" : "Sign Up"}
-            </h2>
-            {event.isRecurring ? (
-              <OccurrenceSignupList
-                eventId={event.id}
-                occurrences={occurrenceRows}
-                maxAttendees={event.maxAttendees ?? null}
-                isLoggedIn={isLoggedIn}
-                currentUserName={session?.user?.name ?? null}
-                extraQuestion={event.extraQuestion}
-                extraQuestionType={event.extraQuestionType}
-                extraQuestionOptions={event.extraQuestionOptions ?? []}
-                extraQuestionRequired={event.extraQuestionRequired}
-                showCalendarButtons
-              />
-            ) : (
-              <>
-                <SingleEventSignup
-                  eventId={event.id}
-                  signedUpCount={signupsByDate.get("null") ?? 0}
-                  maxAttendees={event.maxAttendees ?? null}
-                  isSignedUp={userSignupDates.has("null")}
-                  isLoggedIn={isLoggedIn}
-                  currentUserName={session?.user?.name ?? null}
-                  initialSignees={signeesByDate.get("null") ?? []}
-                  extraQuestion={event.extraQuestion}
-                  extraQuestionType={event.extraQuestionType}
-                  extraQuestionOptions={event.extraQuestionOptions ?? []}
-                  extraQuestionRequired={event.extraQuestionRequired}
-                  initialExtraAnswer={userRsvp?.extraAnswer ?? null}
-                />
-                <div className="mt-6">
-                  <PublicRsvpForm
-                    eventId={event.id}
-                    allowGuestCount={event.allowGuestCount}
-                    isLoggedIn={isLoggedIn}
-                    initialStatus={userRsvp?.status ?? null}
-                    initialGuestCount={userRsvp?.guestCount ?? 0}
-                    extraQuestion={event.extraQuestion}
-                    extraQuestionType={event.extraQuestionType}
-                    extraQuestionOptions={event.extraQuestionOptions ?? []}
-                    extraQuestionRequired={event.extraQuestionRequired}
-                    initialExtraAnswer={userRsvp?.extraAnswer ?? null}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        <AttachedFilesList files={attachedFiles} />
+        <EventPersonalization
+          eventId={event.id}
+          requiresRsvp={event.requiresRsvp}
+          isRecurring={event.isRecurring}
+          occurrenceRows={occurrenceRows}
+          maxAttendees={event.maxAttendees ?? null}
+          allowGuestCount={event.allowGuestCount}
+          extraQuestion={event.extraQuestion}
+          extraQuestionType={event.extraQuestionType}
+          extraQuestionOptions={event.extraQuestionOptions ?? []}
+          extraQuestionRequired={event.extraQuestionRequired}
+          singleEventSignedUpCount={signupsByDate.get("null") ?? 0}
+          singleEventSignees={signeesByDate.get("null") ?? []}
+          attachedFilesBaseline={attachedFiles}
+        />
 
         <div className="flex flex-wrap gap-4">
-          <Link
-            href="/events"
-            className="border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue/5 transition"
-          >
-            &larr; Back to Events
-          </Link>
           {/* C8: series button for recurring events; single button for non-recurring */}
           {event.isRecurring ? (
             <AddToCalendarDropdown

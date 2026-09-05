@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type { TurnstileInstance } from "@marsidev/react-turnstile";
@@ -124,6 +125,13 @@ export function ContactForm() {
         >
           {isSubmitting ? "Sending..." : "Send Message"}
         </button>
+        <p className="text-xs text-gray-500">
+          See our{" "}
+          <Link href="/privacy" className="underline hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-lions-blue rounded">
+            Privacy Policy
+          </Link>{" "}
+          for how we handle your information.
+        </p>
       </form>
     </div>
   );

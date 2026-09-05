@@ -1,10 +1,17 @@
 import type { Metadata } from "next";
+import { Open_Sans } from "next/font/google";
 import "./globals.css";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
-import { auth } from "@/lib/auth";
+import { AppSessionProvider } from "@/components/providers/session-provider";
 import Script from "next/script";
 import { Toaster } from "sonner";
+
+const openSans = Open_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-open-sans",
+});
 
 const siteUrl = "https://westervillelions.org";
 
@@ -22,7 +29,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     images: [
       {
-        url: `${siteUrl}/images/hero-bg.jpg`,
+        url: `${siteUrl}/images/og-default.jpg`,
         width: 1200,
         height: 630,
         alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
@@ -66,25 +73,20 @@ const jsonLd = {
   },
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const session = await auth().catch(() => null);
-
   return (
-    <html lang="en">
+    <html lang="en" className={openSans.variable}>
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&display=swap" rel="stylesheet" />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body>
+      <body className={openSans.className}>
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-lions-blue focus:text-white focus:rounded-lg focus:font-semibold"
@@ -103,12 +105,14 @@ export default async function RootLayout({
             gtag('config', 'G-W30G7GD9HZ');
           `}
         </Script>
-        <Header session={session} />
-        <main id="main-content">
-          {children}
-        </main>
-        <Footer />
-        <Toaster richColors position="top-center" />
+        <AppSessionProvider>
+          <Header />
+          <main id="main-content">
+            {children}
+          </main>
+          <Footer />
+          <Toaster richColors position="top-center" />
+        </AppSessionProvider>
       </body>
     </html>
   );

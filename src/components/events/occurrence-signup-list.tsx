@@ -207,7 +207,9 @@ export function OccurrenceSignupList({
                   <p className="mt-0.5 text-xs text-gray-500">
                     {maxAttendees != null
                       ? `${row.signedUpCount} / ${maxAttendees} spots (incl. guests)`
-                      : `${row.signedUpCount} attendees (incl. guests)`}
+                      : row.signedUpCount === 0
+                        ? "Be the first to sign up"
+                        : `${row.signedUpCount} attendees (incl. guests)`}
                   </p>
                 )}
                 {row.isCancelled && row.cancellationReason && (

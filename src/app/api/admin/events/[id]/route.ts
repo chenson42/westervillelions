@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
 import { FEATURES } from "@/lib/permissions";
 import { eq } from "drizzle-orm";
+import { isImageDataUri, parseImageDataUri, buildEventImageUrl } from "@/lib/event-image";
+import { upsertEventImage, deleteEventImage } from "@/lib/event-images-queries";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -43,6 +45,29 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const recurring = isRecurring ?? existing.isRecurring;
 
+  // Transpose a freshly-cropped data: URI into event_images + a versioned
+  // URL; an explicit null/empty clears any stored image; anything else
+  // (the existing versioned URL, unchanged) passes through as-is.
+  // Site Review Fixes Batch 3 — docs/work-log/2026-09-04-site-review-fixes.md
+  const rawImage: string | null = typeof image === "string" ? image : null;
+  let finalImage: string | null;
+  if (isImageDataUri(rawImage)) {
+    const parsed = parseImageDataUri(rawImage);
+    if (parsed) {
+      await upsertEventImage(id, parsed.buffer, parsed.contentType);
+      finalImage = buildEventImageUrl(id, Date.now());
+    } else {
+      // Malformed data: URI (shouldn't happen from the cropper) — leave
+      // whatever was already stored rather than silently wiping it.
+      finalImage = existing.image;
+    }
+  } else if (!rawImage) {
+    await deleteEventImage(id);
+    finalImage = null;
+  } else {
+    finalImage = rawImage;
+  }
+
   const [updated] = await db
     .update(events)
     .set({
@@ -52,7 +77,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       startDate: startDate || existing.startDate,
       endDate: endDate || null,
       location: location || null,
-      image: image || null,
+      image: finalImage,
       isPublic: isPublic ?? existing.isPublic,
       isFeatured: isFeatured ?? existing.isFeatured,
       requiresRsvp: requiresRsvp ?? existing.requiresRsvp,

@@ -2,6 +2,14 @@ export interface OccurrenceRow {
   date: string; // ISO timestamp
   /** Local-time YYYY-MM-DD key (from dateKey()). Used for ICS occurrence param. */
   dateKey: string;
+  /**
+   * Wall-clock "yyyy-MM-dd HH:mm:ss" key matching eventRsvps.occurrenceDate
+   * exactly (see DECISION-005) — used client-side to match this row against
+   * the viewer's own signed-up dates from /api/events/[id]/viewer-context,
+   * since `date` (ISO/UTC) and `dateKey` (date-only) don't round-trip to the
+   * same string the DB stores.
+   */
+  rsvpKey: string;
   displayDate: string; // formatted for display, e.g. "Mon, May 5 at 6:00 PM"
   signedUpCount: number;
   isSignedUp: boolean;

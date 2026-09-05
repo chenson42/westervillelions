@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type { TurnstileInstance } from "@marsidev/react-turnstile";
@@ -355,16 +356,27 @@ export function MembershipApplicationForm() {
         </div>
       </section>
 
-      {/* Agreement */}
-      <section className="bg-lions-blue/5 border border-lions-blue/20 rounded-lg p-4">
-        <p className="text-sm text-gray-700 italic">
-          By submitting this application, I accept membership into Lions Clubs International and
-          acknowledge that the standards are limited to persons of good moral character and
-          reputation. I recognize the importance of rendering personal service to my community
-          in cooperation with other civic-minded persons. I understand that membership is not
-          valid until approved by the club&apos;s board of directors.
-        </p>
-      </section>
+      {/* Softened per site-review batch 5 (2026-09-04): the LCI legal
+          boilerplate below is required, unedited application language — it
+          just shouldn't be the last, most prominent thing a visitor reads
+          before submitting. A smaller-print Privacy Policy note now sits
+          above it, and the boilerplate itself is styled as fine print
+          rather than a highlighted callout box. */}
+      <p className="text-xs text-gray-500">
+        See our{" "}
+        <Link href="/privacy" className="underline hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-lions-blue rounded">
+          Privacy Policy
+        </Link>{" "}
+        for how we handle the information you provide here.
+      </p>
+
+      <p className="text-xs text-gray-500 italic border-t border-gray-200 pt-4">
+        By submitting this application, I accept membership into Lions Clubs International and
+        acknowledge that the standards are limited to persons of good moral character and
+        reputation. I recognize the importance of rendering personal service to my community
+        in cooperation with other civic-minded persons. I understand that membership is not
+        valid until approved by the club&apos;s board of directors.
+      </p>
 
       {!IS_DEV && (
         <Turnstile

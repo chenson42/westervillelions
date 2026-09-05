@@ -26,7 +26,7 @@ export function Footer() {
                 href="https://www.facebook.com/WestervilleLions"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-gray-400 hover:text-lions-gold transition"
+                className="p-3 -m-1 text-gray-400 hover:text-lions-gold transition rounded-lg focus:outline-none focus:ring-2 focus:ring-lions-gold"
                 aria-label="Facebook"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -37,7 +37,7 @@ export function Footer() {
                 href="https://x.com/LionWesterville"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-gray-400 hover:text-lions-gold transition"
+                className="p-3 -m-1 text-gray-400 hover:text-lions-gold transition rounded-lg focus:outline-none focus:ring-2 focus:ring-lions-gold"
                 aria-label="X (Twitter)"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -48,7 +48,7 @@ export function Footer() {
                 href="https://www.instagram.com/westervillelions"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-gray-400 hover:text-lions-gold transition"
+                className="p-3 -m-1 text-gray-400 hover:text-lions-gold transition rounded-lg focus:outline-none focus:ring-2 focus:ring-lions-gold"
                 aria-label="Instagram"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -60,20 +60,20 @@ export function Footer() {
 
           {/* Who We Are */}
           <div>
-            <h4 className="font-semibold mb-4 text-lions-gold">Who We Are</h4>
+            <h3 className="font-semibold mb-4 text-lions-gold">Who We Are</h3>
             <ul className="space-y-2 text-sm">
               <li>
-                <Link href="/about" className="text-gray-400 hover:text-white transition">
+                <Link href="/about" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   About the Club
                 </Link>
               </li>
               <li>
-                <Link href="/mission" className="text-gray-400 hover:text-white transition">
+                <Link href="/mission" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Mission &amp; Service
                 </Link>
               </li>
               <li>
-                <Link href="/meetings" className="text-gray-400 hover:text-white transition">
+                <Link href="/meetings" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Meeting Times
                 </Link>
               </li>
@@ -82,25 +82,25 @@ export function Footer() {
 
           {/* Get Involved */}
           <div>
-            <h4 className="font-semibold mb-4 text-lions-gold">Get Involved</h4>
+            <h3 className="font-semibold mb-4 text-lions-gold">Get Involved</h3>
             <ul className="space-y-2 text-sm">
               <li>
-                <Link href="/events" className="text-gray-400 hover:text-white transition">
+                <Link href="/events" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Events
                 </Link>
               </li>
               <li>
-                <Link href="/programs" className="text-gray-400 hover:text-white transition">
+                <Link href="/programs" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Community Programs
                 </Link>
               </li>
               <li>
-                <Link href="/donate" className="text-gray-400 hover:text-white transition">
+                <Link href="/donate" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Donate
                 </Link>
               </li>
               <li>
-                <Link href="/join" className="text-gray-400 hover:text-white transition">
+                <Link href="/join" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Apply for Membership
                 </Link>
               </li>
@@ -109,26 +109,26 @@ export function Footer() {
 
           {/* Connect */}
           <div>
-            <h4 className="font-semibold mb-4 text-lions-gold">Connect</h4>
+            <h3 className="font-semibold mb-4 text-lions-gold">Connect</h3>
             <ul className="space-y-2 text-sm">
               <li>
-                <Link href="/connect" className="text-gray-400 hover:text-white transition">
+                <Link href="/connect" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Contact Us
                 </Link>
               </li>
               <li>
-                <Link href="/connect#newsletter" className="text-gray-400 hover:text-white transition">
+                <Link href="/connect#newsletter" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Newsletter
                 </Link>
               </li>
               <li>
-                <Link href="/signin" className="text-gray-400 hover:text-white transition">
+                <Link href="/signin" className="inline-block py-3 -my-3 text-gray-400 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                   Member Login
                 </Link>
               </li>
             </ul>
             <p className="text-gray-500 text-sm mt-4">
-              <a href="mailto:info@westervillelions.org" className="hover:text-white transition">
+              <a href="mailto:info@westervillelions.org" className="inline-block py-3 -my-3 hover:text-white transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
                 info@westervillelions.org
               </a>
             </p>
@@ -137,8 +137,11 @@ export function Footer() {
 
         <div className="border-t border-gray-800 mt-8 pt-8 flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-gray-500">
           <p>&copy; {new Date().getFullYear()} Westerville Lions Club. All rights reserved.</p>
-          <p>
-            <a href="https://www.lionsclubs.org" target="_blank" rel="noopener noreferrer" className="hover:text-gray-300 transition">
+          <p className="flex items-center gap-4">
+            <Link href="/privacy" className="inline-block py-3 -my-3 hover:text-gray-300 transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
+              Privacy Policy
+            </Link>
+            <a href="https://www.lionsclubs.org" target="_blank" rel="noopener noreferrer" className="inline-block py-3 -my-3 hover:text-gray-300 transition focus:outline-none focus:ring-2 focus:ring-lions-gold rounded">
               Lions Clubs International
             </a>
           </p>

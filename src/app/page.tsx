@@ -8,6 +8,10 @@ import { members, events, homepageAnnouncements, eventOccurrenceOverrides } from
 import { eq, count, gt, asc, lte, gte, isNull, or, and } from "drizzle-orm";
 import { getNextOccurrence, parseWallClock, nowEastern } from "@/lib/events";
 import { format } from "date-fns";
+import { getRecentGivingStats } from "@/lib/impact-stats-queries";
+import { roundDownToThousand, formatImpactAmount } from "@/lib/impact-stats";
+
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "Westerville Lions Club | Serving Westerville, OH Since 1928",
@@ -26,7 +30,7 @@ export const metadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "https://westervillelions.org/images/hero-bg.jpg",
+        url: "https://westervillelions.org/images/og-default.jpg",
         width: 1200,
         height: 630,
         alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
@@ -76,6 +80,7 @@ export default async function HomePage() {
     fallbackEventRows,
     activeAnnouncementRows,
     allOverrides,
+    givingStats,
   ] = await Promise.all([
     db
       .select({ value: count() })
@@ -124,7 +129,11 @@ export default async function HomePage() {
         occurrenceDate: eventOccurrenceOverrides.occurrenceDate,
       })
       .from(eventOccurrenceOverrides),
+
+    getRecentGivingStats(),
   ]);
+
+  const twoYearAmount = formatImpactAmount(roundDownToThousand(givingStats.totalCents));
 
   // Build a per-event cancelled date set for getNextOccurrence to skip
   const cancelledByEvent = new Map<string, Set<string>>();
@@ -212,23 +221,34 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Impact Stats */}
-      <section className="py-16 bg-white">
+      {/* Impact Stats — 3-across at every width so it reads as one glanceable
+          band on mobile instead of three full-screen blocks (site-review
+          batch 4, 2026-09-04). */}
+      <section className="py-12 sm:py-16 bg-white">
         <div className="container mx-auto px-4">
-          <div className="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto text-center">
-            <div className="p-6">
-              <div className="text-5xl font-bold text-lions-blue mb-2">{yearsOfService}+</div>
-              <p className="text-xl text-gray-700">Years of Service</p>
+          <div className="grid grid-cols-3 gap-2 sm:gap-8 max-w-4xl mx-auto text-center">
+            <div className="p-2 sm:p-6">
+              <div className="text-2xl sm:text-5xl font-bold text-lions-blue mb-1 sm:mb-2">{yearsOfService}+</div>
+              <p className="text-xs sm:text-xl text-gray-700">Years of Service</p>
             </div>
-            <div className="p-6">
-              <div className="text-5xl font-bold text-lions-blue mb-2">{memberCount}</div>
-              <p className="text-xl text-gray-700">Active Members</p>
+            <div className="p-2 sm:p-6">
+              <div className="text-2xl sm:text-5xl font-bold text-lions-blue mb-1 sm:mb-2">{memberCount}</div>
+              <p className="text-xs sm:text-xl text-gray-700">Active Members</p>
             </div>
-            <div className="p-6">
-              <div className="text-5xl font-bold text-lions-blue mb-2">8</div>
-              <p className="text-xl text-gray-700">Causes We Serve</p>
+            <div className="p-2 sm:p-6">
+              <div className="text-2xl sm:text-5xl font-bold text-lions-blue mb-1 sm:mb-2">8</div>
+              <p className="text-xs sm:text-xl text-gray-700">Causes We Serve</p>
             </div>
           </div>
+          {/* Live giving total, one line — full impact band with the lifetime
+              estimate lives on /donate (site-review batch 5, 2026-09-04). */}
+          <p className="text-center text-sm sm:text-base text-gray-600 mt-6">
+            <span className="font-semibold text-lions-blue">{twoYearAmount}</span> given in the
+            last two years &middot;{" "}
+            <Link href="/donate" className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded">
+              see our full community impact
+            </Link>
+          </p>
         </div>
       </section>
 
@@ -300,7 +320,7 @@ export default async function HomePage() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
-              href="/campaigns"
+              href="/donate"
               className="bg-lions-blue text-white px-10 py-4 rounded-lg font-bold text-lg hover:bg-lions-blue-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
             >
               Support Our Mission

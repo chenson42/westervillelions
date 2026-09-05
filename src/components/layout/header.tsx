@@ -4,16 +4,24 @@ import Link from "next/link";
 import Image from "next/image";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { SignOutButton } from "./signout-button";
 import { canAccessAdminArea } from "@/lib/permissions";
 
-interface HeaderProps {
-  session: any;
-}
-
-export function Header({ session }: HeaderProps) {
+export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const pathname = usePathname();
+  // The root layout no longer fetches the session server-side (that forced
+  // every public page dynamic — see docs/work-log/2026-09-04-site-review-fixes.md,
+  // "Batch 2 — static rendering"). Header now hydrates its own account area
+  // client-side via next-auth's useSession(), which fetches
+  // /api/auth/session on mount. Until that resolves, `session` is
+  // undefined/null and we render the signed-out state (Member Login) — the
+  // same markup the server would have produced for an anonymous visitor.
+  // A signed-in member sees a brief flash of "Member Login" before the
+  // real session loads; that's an accepted tradeoff for making every public
+  // page cacheable.
+  const { data: session } = useSession();
 
   // Admin pages have their own sidebar navigation
   if (pathname.startsWith("/admin")) return null;
@@ -103,6 +111,8 @@ export function Header({ session }: HeaderProps) {
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="xl:hidden p-2 text-gray-700 hover:text-lions-blue"
               aria-label="Toggle menu"
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-menu"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {mobileMenuOpen ? (
@@ -117,7 +127,7 @@ export function Header({ session }: HeaderProps) {
 
         {/* Mobile menu */}
         {mobileMenuOpen && (
-          <div className="xl:hidden mt-4 pb-4 border-t border-gray-200 pt-4">
+          <div id="mobile-menu" className="xl:hidden mt-4 pb-4 border-t border-gray-200 pt-4">
             <div className="flex flex-col space-y-3">
               {navLinks.map((link) => (
                 <Link

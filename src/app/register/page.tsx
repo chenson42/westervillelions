@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { Suspense, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { signIn } from "next-auth/react";
@@ -11,7 +11,17 @@ import type { TurnstileInstance } from "@marsidev/react-turnstile";
 const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "1x00000000000000000000AA";
 const IS_DEV = process.env.NODE_ENV === "development";
 
+// See the Suspense comment in src/app/reset-password/page.tsx — same fix,
+// same root cause (Batch 2 removed the layout's global auth() forcer).
 export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
+  );
+}
+
+function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/members";

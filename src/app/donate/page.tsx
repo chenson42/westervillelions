@@ -1,9 +1,19 @@
 import type { Metadata } from "next";
-import { ZeffyEmbed } from "@/components/campaigns/zeffy-embed";
 import { db } from "@/lib/db";
 import { campaigns } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
-import { auth } from "@/lib/auth";
+import { CampaignCard } from "@/components/campaigns/campaign-card";
+import { MemberOnlyCampaigns } from "@/components/campaigns/member-only-campaigns";
+import { getRecentGivingStats } from "@/lib/impact-stats-queries";
+import { roundDownToThousand, formatImpactAmount } from "@/lib/impact-stats";
+import { fiscalYearLabel } from "@/lib/fiscal-year";
+
+export const revalidate = 3600;
+
+// Founding-based lifetime estimate — recent average giving extrapolated back
+// to 1928 by CPI (treasurer-approved method, 2026-09-04). Always carries the
+// "estimated" qualifier; not derived from a live query.
+const LIFETIME_ESTIMATE = "$1 million+";
 
 export const metadata: Metadata = {
   title: "Donate | Support Our Mission",
@@ -11,6 +21,15 @@ export const metadata: Metadata = {
     "Support the Westerville Lions Club Foundation — 501(c)(3). Your tax-deductible gift funds youth programs, hunger relief, and community service in Westerville, Ohio.",
   alternates: {
     canonical: "https://westervillelions.org/donate",
+  },
+  openGraph: {
+    title: "Donate | Support Our Mission | Westerville Lions Club",
+    description:
+      "Support the Westerville Lions Club Foundation — 501(c)(3). Your tax-deductible gift funds youth programs, hunger relief, and community service in Westerville, Ohio.",
+    url: "https://westervillelions.org/donate",
+    siteName: "Westerville Lions Club",
+    locale: "en_US",
+    type: "website",
   },
 };
 
@@ -23,28 +42,28 @@ const jsonLd = {
   ],
 };
 
-/** Shown on a campaign card when no image is stored on the campaign. */
-const FALLBACK_IMAGE = "/images/service-community.jpg";
-
 export default async function DonatePage() {
-  const session = await auth().catch(() => null);
-  const isLoggedIn = !!session?.user;
+  // Public campaigns only — this keeps the page's own render session-
+  // independent so it can be statically served (revalidate=3600). Member-
+  // only campaigns are appended client-side by <MemberOnlyCampaigns>
+  // for signed-in visitors. See docs/work-log/2026-09-04-site-review-fixes.md,
+  // "Batch 2 — static rendering".
+  const [activeCampaigns, givingStats] = await Promise.all([
+    db
+      .select()
+      .from(campaigns)
+      .where(and(eq(campaigns.isActive, true), eq(campaigns.isPublic, true)))
+      .orderBy(campaigns.displayOrder),
+    getRecentGivingStats(),
+  ]);
 
-  const activeCampaigns = await db
-    .select()
-    .from(campaigns)
-    .where(
-      isLoggedIn
-        ? eq(campaigns.isActive, true)
-        : and(eq(campaigns.isActive, true), eq(campaigns.isPublic, true))
-    )
-    .orderBy(campaigns.displayOrder);
+  const anyCampaignDescriptions = activeCampaigns.some(
+    (c) => c.description && c.description.trim().length > 0,
+  );
 
-  const campaignsWithMeta = activeCampaigns.map((campaign) => ({
-    ...campaign,
-    displayImage: campaign.image ?? FALLBACK_IMAGE,
-    displayDescription: campaign.description,
-  }));
+  const twoYearAmount = formatImpactAmount(roundDownToThousand(givingStats.totalCents));
+  const [olderFy, newerFy] = givingStats.fiscalYears;
+  const grantsCount = givingStats.grantCount;
 
   return (
     <div className="min-h-screen bg-white">
@@ -66,7 +85,42 @@ export default async function DonatePage() {
 
       <div className="container mx-auto px-4 py-16">
         <div className="max-w-6xl mx-auto">
-          {campaignsWithMeta.length === 0 ? (
+          {/* Entity clarity — who actually receives a gift made on this page,
+              and the Foundation's tax-exempt status/EIN, up front and before
+              any "Donate Now" button (site-review batch 5, 2026-09-04). The
+              Club itself is a 501(c)(4) and its own donations are NOT
+              deductible — its EIN never appears here. */}
+          <div className="mb-8 bg-lions-blue/5 border border-lions-blue/20 rounded-2xl p-6 text-center">
+            <p className="text-gray-800">
+              Donations made here are received by the{" "}
+              <strong>Westerville Lions Club Foundation</strong>, a 501(c)(3) nonprofit — your gift is
+              tax-deductible as allowed by law.{" "}
+              <span className="whitespace-nowrap font-semibold">EIN 32-0467239</span>.
+            </p>
+          </div>
+
+          {/* The gold "Donate Now" buttons open a JS-driven Zeffy modal
+              (ZeffyEmbed) — dead without JavaScript. This noscript fallback
+              points non-JS visitors straight to the mail-a-check option
+              further down the page (site-review batch 4, 2026-09-04). */}
+          <noscript>
+            <div className="mb-8 bg-lions-gold/10 border border-lions-gold/30 rounded-2xl p-6 text-center">
+              <p className="text-gray-800">
+                Online donation forms require JavaScript to be enabled. You can still give by{" "}
+                <a href="#other-ways-to-give" className="text-lions-blue font-semibold hover:underline">
+                  mailing a check
+                </a>{" "}
+                — see the instructions below.
+              </p>
+            </div>
+          </noscript>
+          {!anyCampaignDescriptions && activeCampaigns.length > 0 && (
+            <p className="text-center text-gray-600 mb-8 max-w-2xl mx-auto">
+              Every campaign below supports the Foundation&apos;s community programs — youth
+              scholarships, hunger relief, vision care, and local humanitarian projects.
+            </p>
+          )}
+          {activeCampaigns.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-xl text-gray-600">
                 No active campaigns at this time. Please check back soon!
@@ -74,38 +128,13 @@ export default async function DonatePage() {
             </div>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 items-start">
-              {campaignsWithMeta.map((campaign) => (
-                <div
-                  key={campaign.id}
-                  data-testid="campaign-card"
-                  className="rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 bg-white overflow-hidden"
-                >
-                  <div className="relative">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={campaign.displayImage}
-                      alt={campaign.title}
-                      className="w-full"
-                      data-testid="campaign-card-image"
-                    />
-                    {!campaign.isPublic && (
-                      <span className="absolute top-2 left-2 text-xs font-semibold bg-lions-blue text-white px-2 py-1 rounded-full shadow">
-                        Members Only
-                      </span>
-                    )}
-                  </div>
-                  <div className="p-6">
-                    <ZeffyEmbed
-                      key={campaign.id}
-                      zeffyLink={campaign.zeffyLink}
-                      label={campaign.title}
-                      description={campaign.displayDescription}
-                    />
-                  </div>
-                </div>
+              {activeCampaigns.map((campaign) => (
+                <CampaignCard key={campaign.id} campaign={campaign} />
               ))}
             </div>
           )}
+
+          <MemberOnlyCampaigns />
 
           <div className="mt-12 bg-lions-blue/5 p-8 rounded-2xl text-center">
             <h2 className="text-2xl font-bold mb-4 text-lions-blue">
@@ -116,6 +145,30 @@ export default async function DonatePage() {
               donation helps us continue our mission of service.
             </p>
           </div>
+
+          {/* Impact numbers — live two-year total from the ledger, plus a
+              constant, footnoted lifetime estimate (site-review batch 5,
+              2026-09-04). See src/lib/impact-stats-queries.ts. */}
+          <div
+            className="mt-12 grid sm:grid-cols-3 gap-6 text-center"
+            title={`Fiscal years ${fiscalYearLabel(olderFy)} and ${fiscalYearLabel(newerFy)}`}
+          >
+            <div>
+              <div className="text-3xl sm:text-4xl font-bold text-lions-blue">{twoYearAmount}</div>
+              <p className="text-gray-600 mt-1">given in the last two years</p>
+            </div>
+            <div>
+              <div className="text-3xl sm:text-4xl font-bold text-lions-blue">{grantsCount}+</div>
+              <p className="text-gray-600 mt-1">community grants</p>
+            </div>
+            <div>
+              <div className="text-3xl sm:text-4xl font-bold text-lions-blue">{LIFETIME_ESTIMATE}*</div>
+              <p className="text-gray-600 mt-1">given since our 1928 founding</p>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 text-center mt-3">
+            *Estimate based on recent giving, adjusted for inflation back to our 1928 founding.
+          </p>
 
           <div className="mt-16 grid md:grid-cols-2 gap-12">
             <div>
@@ -131,12 +184,19 @@ export default async function DonatePage() {
               </p>
             </div>
 
-            <div>
+            <div id="other-ways-to-give" className="scroll-mt-24">
               <h2 className="text-2xl font-bold mb-4 text-gray-900">Other Ways to Give</h2>
               <ul className="space-y-3 text-gray-700">
                 <li>
-                  <strong>Mail a Check:</strong> Payable to &ldquo;Westerville Lions Club Foundation&rdquo; —{" "}
-                  <a href="/connect" className="text-lions-blue hover:underline">contact us</a> for the mailing address.
+                  <strong>Mail a Check:</strong> Payable to &ldquo;Westerville Lions Club Foundation&rdquo;
+                  and mailed to:
+                  <address className="not-italic mt-1">
+                    Westerville Lions Club Foundation
+                    <br />
+                    PO Box 0597
+                    <br />
+                    Westerville, OH 43086-0597
+                  </address>
                 </li>
                 <li>
                   <strong>Donate Items:</strong> We accept eyeglass donations and other items for our service programs.

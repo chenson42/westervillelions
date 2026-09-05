@@ -123,6 +123,8 @@ export function SingleEventSignup({
             <span className="font-semibold text-gray-900">{maxAttendees}</span> spots filled
             <span className="text-gray-400"> (incl. guests)</span>
           </>
+        ) : count === 0 ? (
+          "Be the first to sign up"
         ) : (
           <>
             <span className="font-semibold text-gray-900">{count}</span> attendees

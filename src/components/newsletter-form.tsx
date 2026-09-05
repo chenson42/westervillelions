@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type { TurnstileInstance } from "@marsidev/react-turnstile";
 
@@ -79,7 +80,7 @@ export function NewsletterForm() {
             value={firstName}
             onChange={(e) => setFirstName(e.target.value)}
             placeholder="Jane"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            className="w-full rounded-md border border-gray-300 px-3 py-3 text-base shadow-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
           />
         </div>
         <div>
@@ -92,7 +93,7 @@ export function NewsletterForm() {
             value={lastName}
             onChange={(e) => setLastName(e.target.value)}
             placeholder="Smith"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+            className="w-full rounded-md border border-gray-300 px-3 py-3 text-base shadow-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
           />
         </div>
       </div>
@@ -108,7 +109,7 @@ export function NewsletterForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
+          className="w-full rounded-md border border-gray-300 px-3 py-3 text-base shadow-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
         />
       </div>
 
@@ -130,13 +131,21 @@ export function NewsletterForm() {
       <button
         type="submit"
         disabled={status === "loading" || (!captchaToken && !IS_DEV)}
-        className="w-full rounded-md bg-lions-blue px-4 py-2 text-sm font-semibold text-white hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-50 transition"
+        className="w-full rounded-md bg-lions-blue px-4 py-3 text-base font-semibold text-white hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-50 transition"
       >
         {status === "loading" ? "Subscribing…" : "Subscribe to Newsletter"}
       </button>
 
       <p className="text-xs text-gray-500">
-        We respect your privacy. Unsubscribe at any time by contacting us.
+        We respect your privacy. Unsubscribe at any time by contacting{" "}
+        <a href="mailto:info@westervillelions.org" className="underline hover:text-gray-700">
+          info@westervillelions.org
+        </a>
+        . See our{" "}
+        <Link href="/privacy" className="underline hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-lions-blue rounded">
+          Privacy Policy
+        </Link>{" "}
+        for how we handle your information.
       </p>
     </form>
   );

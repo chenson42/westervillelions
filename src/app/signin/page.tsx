@@ -1,12 +1,25 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 
+// useSearchParams() needs a Suspense boundary above it, or Next's static-
+// shell prerendering pass fails the build (missing-suspense-with-csr-
+// bailout). See the matching comment in src/app/reset-password/page.tsx —
+// same root cause (Batch 2 removed the layout's global auth() forcer),
+// same fix, applied here and in register/page.tsx.
 export default function SignInPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignInForm />
+    </Suspense>
+  );
+}
+
+function SignInForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);

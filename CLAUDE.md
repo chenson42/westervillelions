@@ -70,7 +70,8 @@ src/
 │   ├── mission/           # Mission & service areas
 │   ├── events/            # Public events calendar
 │   ├── programs/          # Service programs
-│   ├── donate/            # Donation page (Zeffy embedded donation forms)
+│   ├── donate/            # Donation page (Zeffy embedded donation forms, EIN + impact band)
+│   ├── privacy/           # Public privacy policy
 │   ├── contact/           # Contact information
 │   ├── join/              # Membership application
 │   ├── meetings/          # Meeting info

@@ -1053,3 +1053,16 @@ Design each with the others in view — decisions in one box in the next.
   route.ts` is the reference implementation) — no new dependency, contained change. Owner: the
   30-day code review (architect) per CLAUDE.md's cadence, or api-developer as a standalone fix
   whenever the receipt-proxy routes are next touched.
+
+- [ ] **B-58 — Choose and ship the new homepage hero tagline.** *(Raised 2026-09-04, site-review
+  Batch 5 — flagged for the immediate future.)* The current line ("Helping our community thrive
+  through service and care") is generic. Three grounded replacements are drafted in
+  `docs/work-log/2026-09-04-site-review-fixes.md` (Batch 5, item 7):
+  1. "From the Rudolph Run to eyeglass recycling bins across town, we turn small acts into real
+     community impact."
+  2. "Scholarships for local students. Eyeglasses for neighbors in need. One Lions Club, eight
+     causes, since 1928."
+  3. "Fun runs, food drives, and eyeglass drop-offs — see how Westerville Lions shows up for
+     this community all year long."
+  The club picks one (or supplies BioBlitz copy — that program couldn't be verified in the repo
+  and was deliberately left out). One-line change in `src/app/page.tsx` once chosen.

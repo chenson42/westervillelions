@@ -20,6 +20,14 @@ export const metadata: Metadata = {
     siteName: "Westerville Lions Club",
     locale: "en_US",
     type: "website",
+    images: [
+      {
+        url: "https://westervillelions.org/images/og-default.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
+      },
+    ],
   },
 };
 
@@ -83,7 +91,7 @@ export default function MissionPage() {
                   <h3 className="text-lg font-semibold mb-2 text-lions-blue">
                     {p.title}
                   </h3>
-                  <p className="text-gray-700 text-sm leading-relaxed">{p.body}</p>
+                  <p className="text-gray-700 text-base leading-relaxed">{p.body}</p>
                 </div>
               ))}
             </div>
@@ -107,7 +115,7 @@ export default function MissionPage() {
                     <CauseIcon slug={cause.slug} className="h-6 w-6" />
                   </span>
                   <h3 className="font-semibold text-gray-900 mb-2">{cause.title}</h3>
-                  <p className="text-sm text-gray-600 leading-relaxed">
+                  <p className="text-base text-gray-600 leading-relaxed">
                     {cause.description}
                   </p>
                 </div>

@@ -1,3 +1,16 @@
+import type { Metadata } from "next";
+
+export const revalidate = 3600;
+
+export const metadata: Metadata = {
+  title: "Meetings",
+  description:
+    "The Westerville Lions Club meets the 1st and 3rd Thursday of each month (September–May) at The Landings in Westerville, Ohio. Guests are always welcome.",
+  alternates: {
+    canonical: "https://westervillelions.org/meetings",
+  },
+};
+
 export default function MeetingsPage() {
   return (
     <div className="min-h-screen bg-white">

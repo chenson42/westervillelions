@@ -134,6 +134,15 @@ export function AddToCalendarDropdown({
 
       <DropdownMenuContent
         align="start"
+        side="bottom"
+        // Radix's default collision-avoidance flips the panel above the
+        // trigger whenever the visible viewport below is short — which, on
+        // a scrollable mobile event list, meant it routinely opened upward
+        // and covered the event title instead of just letting the page
+        // scroll (site-review batch 4, 2026-09-04). This panel is only ~4
+        // short items, so always opening downward reads better than a
+        // collision-driven flip.
+        avoidCollisions={false}
         className="min-w-[220px] bg-white text-gray-900 border border-gray-200 shadow-lg"
       >
         {/* Google Calendar — web link, new tab, disabled when no URL */}

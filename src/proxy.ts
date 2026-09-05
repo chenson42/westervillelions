@@ -10,22 +10,26 @@ import { FEATURES, getAdminProtectionRules } from "@/lib/permissions";
  * Redirects to /access-pending if authenticated but lacking permissions.
  */
 export async function proxy(request: NextRequest) {
-  const session = await auth();
+  const pathname = request.nextUrl.pathname;
 
   // Skip middleware for API routes - they handle their own auth
-  if (request.nextUrl.pathname.startsWith("/api/")) {
+  if (pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
 
-  // Public routes - no auth required
-  const publicPaths = ["/", "/about", "/mission", "/causes", "/campaigns", "/events", "/donate", "/connect", "/join", "/meetings", "/programs", "/signin", "/register", "/forgot-password", "/reset-password", "/robots.txt", "/sitemap.xml"];
-  const publicPrefixes = ["/events/"];
-  if (
-    publicPaths.some((path) => request.nextUrl.pathname === path) ||
-    publicPrefixes.some((prefix) => request.nextUrl.pathname.startsWith(prefix))
-  ) {
+  // Only the admin portal and the member portal require authentication.
+  // Everything else — every public marketing page AND any URL Next doesn't
+  // recognize — must fall through so Next renders the real page, or a real
+  // 404, instead of this proxy redirecting unknown paths to /signin. This
+  // used to be inverted (an allowlist of known public paths, protect
+  // everything else by default), which meant a typo'd or removed URL
+  // 307-redirected to /signin rather than 404ing.
+  const isProtectedArea = pathname.startsWith("/admin") || pathname.startsWith("/members");
+  if (!isProtectedArea) {
     return NextResponse.next();
   }
+
+  const session = await auth();
 
   // Check authentication first
   if (!session?.user) {
@@ -48,7 +52,6 @@ export async function proxy(request: NextRequest) {
   }
 
   const userFeatures = session.user.features || [];
-  const pathname = request.nextUrl.pathname;
 
   // Define route protection rules.
   //

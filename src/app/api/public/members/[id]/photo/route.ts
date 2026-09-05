@@ -20,15 +20,19 @@ export async function GET(
       columns: { profilePicture: true },
     });
 
+    // A short cache on 404s (not the full 24h) — a member who currently has
+    // no photo may add one later, and we don't want that stale for a day.
+    const notFoundHeaders = { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=60" };
+
     if (!member || !member.profilePicture) {
-      return new NextResponse(null, { status: 404 });
+      return new NextResponse(null, { status: 404, headers: notFoundHeaders });
     }
 
     // Parse the data URI: data:<mime>;base64,<data>
     const dataUri = member.profilePicture;
     const commaIndex = dataUri.indexOf(",");
     if (commaIndex === -1) {
-      return new NextResponse(null, { status: 404 });
+      return new NextResponse(null, { status: 404, headers: notFoundHeaders });
     }
 
     const meta = dataUri.slice(0, commaIndex); // e.g. "data:image/jpeg;base64"
@@ -37,7 +41,7 @@ export async function GET(
     // Extract mime type from "data:<mime>;base64"
     const mimeMatch = meta.match(/^data:([^;]+);base64$/);
     if (!mimeMatch) {
-      return new NextResponse(null, { status: 404 });
+      return new NextResponse(null, { status: 404, headers: notFoundHeaders });
     }
 
     const mimeType = mimeMatch[1];
@@ -46,7 +50,7 @@ export async function GET(
     return new Response(buffer, {
       headers: {
         "Content-Type": mimeType,
-        "Cache-Control": "public, max-age=3600",
+        "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=604800",
         "Content-Length": String(buffer.length),
       },
     });

@@ -1,11 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 
+/**
+ * useSearchParams() requires a Suspense boundary above it or Next.js's
+ * static-shell prerendering pass fails the build (`missing-suspense-with-
+ * csr-bailout`). This was previously masked because the root layout's
+ * server-side auth() call forced every route dynamic, so Next never
+ * attempted to prerender a static shell for this page at all. Removing
+ * auth() from the layout (Batch 2, docs/work-log/2026-09-04-site-review-
+ * fixes.md) to unlock static rendering for the public marketing pages
+ * surfaced this latent, pre-existing issue on the auth pages — the fix is
+ * this Suspense wrapper, not reverting that change.
+ */
 export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordForm />
+    </Suspense>
+  );
+}
+
+function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");

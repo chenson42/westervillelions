@@ -3,7 +3,9 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { events } from "@/lib/db/schema";
 import { FEATURES } from "@/lib/permissions";
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
+import { isImageDataUri, parseImageDataUri, buildEventImageUrl } from "@/lib/event-image";
+import { upsertEventImage } from "@/lib/event-images-queries";
 
 export async function GET() {
   const session = await auth();
@@ -54,6 +56,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "startDate must be a YYYY-MM-DDTHH:MM string" }, { status: 400 });
   }
 
+  // The cropper always sends a data: URI for a newly selected/cropped image.
+  // Never persist that base64 blob into events.image, even momentarily —
+  // insert with no image, then transpose it into event_images once the
+  // event's id exists (site-review-fixes Batch 3).
+  const rawImage: string | null = typeof image === "string" ? image : null;
+  const initialImage = isImageDataUri(rawImage) ? null : rawImage;
+
   const [newEvent] = await db
     .insert(events)
     .values({
@@ -63,7 +72,7 @@ export async function POST(request: NextRequest) {
       startDate,
       endDate: endDate || null,
       location: location || null,
-      image: image || null,
+      image: initialImage,
       isPublic: isPublic ?? false,
       isFeatured: isFeatured ?? false,
       requiresRsvp: requiresRsvp ?? false,
@@ -81,6 +90,18 @@ export async function POST(request: NextRequest) {
       createdBy: session.user.id,
     })
     .returning();
+
+  if (isImageDataUri(rawImage)) {
+    const parsed = parseImageDataUri(rawImage);
+    if (parsed) {
+      await upsertEventImage(newEvent.id, parsed.buffer, parsed.contentType);
+      const versionedUrl = buildEventImageUrl(newEvent.id, Date.now());
+      await db.update(events).set({ image: versionedUrl }).where(eq(events.id, newEvent.id));
+      newEvent.image = versionedUrl;
+    }
+    // Malformed data: URI (shouldn't happen from the cropper) — leave the
+    // event with no image rather than fail the whole create.
+  }
 
   return NextResponse.json(newEvent, { status: 201 });
 }

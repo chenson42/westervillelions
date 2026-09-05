@@ -1537,6 +1537,31 @@ export type LedgerReceiptFile = typeof ledgerReceiptFiles.$inferSelect;
 export type NewLedgerReceiptFile = typeof ledgerReceiptFiles.$inferInsert;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Event Images — Site Review Fixes Batch 3, docs/work-log/2026-09-04-site-review-fixes.md
+//
+// Bytes for admin-uploaded event banner images, served via
+// GET /api/public/events/[id]/image. A sibling byte store alongside
+// ledgerReceiptFiles / clubFileBlobs (DECISION-094's spirit) — never reuses
+// either. eventId is the primary key (not a separate uuid id) because there
+// is at most one image per event; ON DELETE CASCADE removes the row when
+// the parent event is deleted. `events.image` stores only the URL to fetch
+// it (`/api/public/events/{id}/image?v=<version>`) — the bytes never live
+// in that column, unlike the legacy base64 data: URIs this replaces.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const eventImages = pgTable("event_images", {
+  eventId: uuid("event_id")
+    .primaryKey()
+    .references(() => events.id, { onDelete: "cascade" }),
+  data: bytea("data").notNull(),
+  contentType: text("content_type").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EventImage = typeof eventImages.$inferSelect;
+export type NewEventImage = typeof eventImages.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Meeting Minutes — DECISION-074/075 (architect), DECISION-077 (tech-lead),
 // DECISION-079 (Phase 4 loop-back: attendance is a single count, not a roster)
 // docs/work-log/2026-08-08-meeting-minutes.md

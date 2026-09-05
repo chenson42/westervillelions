@@ -51,7 +51,7 @@ function positionSortKey(position: string | null): [number, string] {
   return [rank, normalized];
 }
 
-async function getLeadership(): Promise<{ memberId: string; firstName: string; lastName: string; position: string | null; joinDate: Date | null }[]> {
+async function getLeadership(): Promise<{ memberId: string; firstName: string; lastName: string; position: string | null; joinDate: Date | null; hasPhoto: boolean }[]> {
   try {
     const boardGroup = await db.query.groups.findFirst({
       where: sql`lower(${groups.name}) = 'board of directors'`,
@@ -66,6 +66,10 @@ async function getLeadership(): Promise<{ memberId: string; firstName: string; l
         lastName: members.lastName,
         position: groupMemberships.position,
         joinDate: members.joinDate,
+        // Selected so the page never issues a doomed photo request for a
+        // member with no picture — the initials chip renders immediately
+        // instead (site-review batch 4, 2026-09-04).
+        hasPhoto: sql<boolean>`${members.profilePicture} is not null`,
       })
       .from(groupMemberships)
       .innerJoin(members, eq(groupMemberships.memberId, members.id))
@@ -151,29 +155,34 @@ export default async function AboutPage() {
               skills and perspectives.
             </p>
             {leadership.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {leadership.map((member, index) => (
-                  <div key={index} className="bg-gray-50 p-6 rounded-lg text-center">
-                    <LeadershipAvatar
-                      src={`/api/public/members/${member.memberId}/photo`}
-                      alt={`${member.firstName} ${member.lastName}`}
-                    />
-                    <p className="font-semibold text-gray-900">
-                      {member.firstName} {member.lastName}
-                    </p>
-                    {member.position && (
-                      <p className="text-lions-blue text-sm mt-1">{member.position}</p>
-                    )}
-                    {member.joinDate && (() => {
-                      const years = new Date().getFullYear() - new Date(member.joinDate).getFullYear();
-                      return years > 0 ? (
-                        <p className="text-gray-500 text-xs mt-1">
-                          Member for {years} year{years !== 1 ? "s" : ""}
-                        </p>
-                      ) : null;
-                    })()}
-                  </div>
-                ))}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+                {leadership.map((member, index) => {
+                  const initials = `${member.firstName?.[0] ?? ""}${member.lastName?.[0] ?? ""}`.toUpperCase();
+                  return (
+                    <div key={index} className="bg-gray-50 p-4 sm:p-6 rounded-lg text-center">
+                      <LeadershipAvatar
+                        src={`/api/public/members/${member.memberId}/photo`}
+                        alt={`${member.firstName} ${member.lastName}`}
+                        hasPhoto={member.hasPhoto}
+                        initials={initials}
+                      />
+                      <p className="font-semibold text-gray-900 text-sm sm:text-base">
+                        {member.firstName} {member.lastName}
+                      </p>
+                      {member.position && (
+                        <p className="text-lions-blue text-xs sm:text-sm mt-1">{member.position}</p>
+                      )}
+                      {member.joinDate && (() => {
+                        const years = new Date().getFullYear() - new Date(member.joinDate).getFullYear();
+                        return years > 0 ? (
+                          <p className="text-gray-500 text-xs mt-1">
+                            Member for {years} year{years !== 1 ? "s" : ""}
+                          </p>
+                        ) : null;
+                      })()}
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
           </section>

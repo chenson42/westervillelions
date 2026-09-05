@@ -24,7 +24,10 @@ const config: Config = {
         "lions-gold-dark": "#e09d0f",
       },
       fontFamily: {
-        sans: ['Open Sans', 'system-ui', 'sans-serif'],
+        // next/font/google injects the actual font family via this CSS
+        // variable (see src/app/layout.tsx) — 'Open Sans' stays as a
+        // fallback name in case the variable is ever unset.
+        sans: ['var(--font-open-sans)', 'Open Sans', 'system-ui', 'sans-serif'],
       },
     },
   },

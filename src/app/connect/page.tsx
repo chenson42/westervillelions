@@ -3,12 +3,23 @@ import Link from "next/link";
 import { ContactForm } from "@/components/contact-form";
 import { NewsletterForm } from "@/components/newsletter-form";
 
+export const revalidate = 3600;
+
 export const metadata: Metadata = {
   title: "Connect With Us",
   description:
     "Get in touch with the Westerville Lions Club. Send a message, subscribe to our newsletter, or stop by one of our meetings in Westerville, Ohio.",
   alternates: {
     canonical: "https://westervillelions.org/connect",
+  },
+  openGraph: {
+    title: "Connect With Us | Westerville Lions Club",
+    description:
+      "Get in touch with the Westerville Lions Club. Send a message, subscribe to our newsletter, or stop by one of our meetings in Westerville, Ohio.",
+    url: "https://westervillelions.org/connect",
+    siteName: "Westerville Lions Club",
+    locale: "en_US",
+    type: "website",
   },
 };
 

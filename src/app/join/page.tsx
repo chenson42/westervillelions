@@ -1,11 +1,17 @@
+import Link from "next/link";
 import { MembershipApplicationForm } from "@/components/membership-application-form";
 import TestimonialCarousel from "@/components/join/testimonial-carousel";
 import { db } from "@/lib/db";
-import { testimonials } from "@/lib/db/schema";
+import { testimonials, duesSettings } from "@/lib/db/schema";
 import { asc, eq } from "drizzle-orm";
 
+export const revalidate = 3600;
+
 export const metadata = {
-  title: "Join the Westerville Lions Club",
+  // Was "Join the Westerville Lions Club" — the root layout's title template
+  // appends " | Westerville Lions Club" to every page title, so that value
+  // rendered the club name twice in the tab title.
+  title: "Join Us",
   description: "Apply for membership in the Westerville Lions Club and make a difference in your community.",
   alternates: {
     canonical: "https://westervillelions.org/join",
@@ -19,7 +25,7 @@ export const metadata = {
     type: "website",
     images: [
       {
-        url: "https://westervillelions.org/images/hero-bg.jpg",
+        url: "https://westervillelions.org/images/og-default.jpg",
         width: 1200,
         height: 630,
         alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
@@ -37,12 +43,26 @@ const breadcrumb = {
   ],
 };
 
+const AFTER_YOU_APPLY_STEPS = [
+  "A club officer reaches out to welcome you and answer any questions you have.",
+  "You're invited to visit a meeting or event and meet the members.",
+  "The board reviews your application and you're inducted as a new Lion.",
+];
+
 export default async function JoinPage() {
-  const activeTestimonials = await db
-    .select()
-    .from(testimonials)
-    .where(eq(testimonials.isActive, true))
-    .orderBy(asc(testimonials.sortOrder), asc(testimonials.createdAt));
+  const [activeTestimonials, activeDuesRows] = await Promise.all([
+    db
+      .select()
+      .from(testimonials)
+      .where(eq(testimonials.isActive, true))
+      .orderBy(asc(testimonials.sortOrder), asc(testimonials.createdAt)),
+    db
+      .select()
+      .from(duesSettings)
+      .where(eq(duesSettings.isActive, true))
+      .limit(1),
+  ]);
+  const activeDues = activeDuesRows[0] ?? null;
 
   return (
     <div className="min-h-screen bg-white">
@@ -53,9 +73,23 @@ export default async function JoinPage() {
             Membership
           </p>
           <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">Join the Lions Club</h1>
-          <p className="text-xl md:text-2xl text-blue-100 max-w-2xl leading-relaxed">
+          <p className="text-xl md:text-2xl text-blue-100 max-w-2xl leading-relaxed mb-8">
             Become a member and make a real difference — in Westerville and around the world.
           </p>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <a
+              href="#apply"
+              className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
+            >
+              Apply Now
+            </a>
+            <Link
+              href="/meetings"
+              className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
+            >
+              Not ready to apply? Join us at a meeting
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -90,7 +124,47 @@ export default async function JoinPage() {
             </p>
           </div>
 
-          <div className="bg-gray-50 p-8 rounded-lg">
+          {activeDues && (
+            <div className="mb-10 bg-gray-50 rounded-2xl p-6 sm:p-8">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">What It Costs</h2>
+              <div className="grid sm:grid-cols-2 gap-6 mb-4">
+                <div>
+                  <div className="text-3xl font-bold text-lions-blue">
+                    ${(activeDues.individualAmountCents / 100).toFixed(0)}
+                    <span className="text-base font-medium text-gray-600">/year</span>
+                  </div>
+                  <p className="text-gray-600 text-sm mt-1">Individual annual dues</p>
+                </div>
+                <div>
+                  <div className="text-3xl font-bold text-lions-blue">
+                    ${(activeDues.familyAmountCents / 100).toFixed(0)}
+                    <span className="text-base font-medium text-gray-600">/year</span>
+                  </div>
+                  <p className="text-gray-600 text-sm mt-1">Each additional family member</p>
+                </div>
+              </div>
+              <p className="text-gray-700">
+                Dues cover the club&apos;s own operating costs — meeting expenses, supplies, and
+                administration — so that donations to our causes go straight to the community.
+              </p>
+            </div>
+          )}
+
+          <div className="mb-10">
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">What Happens After You Apply?</h2>
+            <div className="grid sm:grid-cols-3 gap-6">
+              {AFTER_YOU_APPLY_STEPS.map((step, i) => (
+                <div key={step} className="text-center">
+                  <div className="w-10 h-10 rounded-full bg-lions-blue text-white flex items-center justify-center font-bold mx-auto mb-3">
+                    {i + 1}
+                  </div>
+                  <p className="text-gray-700 text-sm">{step}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div id="apply" className="bg-gray-50 p-8 rounded-lg scroll-mt-24">
             <h2 className="text-2xl font-bold mb-6 text-gray-900">Membership Application</h2>
             <MembershipApplicationForm />
           </div>

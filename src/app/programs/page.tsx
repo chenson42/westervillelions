@@ -21,6 +21,14 @@ export const metadata: Metadata = {
     siteName: "Westerville Lions Club",
     locale: "en_US",
     type: "website",
+    images: [
+      {
+        url: "https://westervillelions.org/images/og-default.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Westerville Lions Club — Serving Westerville, OH Since 1928",
+      },
+    ],
   },
 };
 
@@ -33,22 +41,66 @@ const breadcrumb = {
   ],
 };
 
-function MapsLink({ address }: { address: string }) {
-  const href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+type DropoffLocation = {
+  id: string;
+  name: string;
+  address: string;
+  phone: string | null;
+  entryInstructions?: string | null;
+  hours?: string | null;
+};
+
+/**
+ * A single drop-off location with its own "Map" / "Call" action row.
+ * Each action is a full 44px-tall, padded touch target — the mis-tap this
+ * replaces was a bare 14x14px pin icon crammed next to a phone link
+ * (site-review batch 4, 2026-09-04). Actions wrap onto their own row on
+ * narrow screens and sit inline (still padded) on wider ones.
+ */
+function LocationEntry({ location }: { location: DropoffLocation }) {
+  const mapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location.address)}`;
+  const telHref = location.phone ? `tel:${location.phone.replace(/[^0-9+]/g, "")}` : null;
+
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label={`Open ${address} in Google Maps`}
-      title="Open in Google Maps"
-      className="inline-flex items-center align-middle ml-1 text-lions-blue hover:text-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
-    >
-      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.244-4.243a8 8 0 1111.314 0z" />
-        <circle cx="12" cy="11" r="3" />
-      </svg>
-    </a>
+    <li className="text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="min-w-0">
+          <span className="font-medium text-gray-900">{location.name}</span>
+          <span className="text-gray-500"> &mdash; {location.address}</span>
+        </div>
+        <div className="flex items-center -mr-2 flex-shrink-0">
+          <a
+            href={mapsHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Open ${location.address} in Google Maps`}
+            className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-2 rounded-lg font-medium text-lions-blue hover:bg-lions-blue/10 transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
+          >
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <circle cx="12" cy="11" r="3" />
+            </svg>
+            Map
+          </a>
+          {telHref && (
+            <a
+              href={telHref}
+              aria-label={`Call ${location.name} at ${location.phone}`}
+              className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-2 rounded-lg font-medium text-lions-blue hover:bg-lions-blue/10 transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
+            >
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h1.5a2.25 2.25 0 002.25-2.25v-1.372a1.5 1.5 0 00-1.148-1.457l-4.13-1.033a1.5 1.5 0 00-1.55.44l-.884 1.03a11.25 11.25 0 01-5.393-5.393l1.03-.884a1.5 1.5 0 00.44-1.55L8.782 5.15a1.5 1.5 0 00-1.457-1.15H5.25A2.25 2.25 0 003 6.25z" />
+              </svg>
+              Call
+            </a>
+          )}
+        </div>
+      </div>
+      {location.entryInstructions && (
+        <p className="text-gray-500 mt-0.5">{location.entryInstructions}</p>
+      )}
+      {location.hours && <p className="text-gray-500 mt-0.5">{location.hours}</p>}
+    </li>
   );
 }
 
@@ -144,25 +196,9 @@ export default async function ProgramsPage() {
                       for details.
                     </p>
                   ) : (
-                    <ul className="space-y-2">
+                    <ul className="space-y-1">
                       {dropoffLocations.map((loc) => (
-                        <li key={loc.id} className="text-sm">
-                          <span className="font-medium text-gray-900">{loc.name}</span>
-                          <span className="text-gray-500"> &mdash; {loc.address}</span>
-                          <MapsLink address={loc.address} />
-                          {loc.phone && (
-                            <>
-                              {" "}
-                              &middot;{" "}
-                              <a
-                                href={`tel:${loc.phone.replace(/[^0-9+]/g, "")}`}
-                                className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
-                              >
-                                {loc.phone}
-                              </a>
-                            </>
-                          )}
-                        </li>
+                        <LocationEntry key={loc.id} location={loc} />
                       ))}
                     </ul>
                   )}
@@ -276,31 +312,9 @@ export default async function ProgramsPage() {
                       for details.
                     </p>
                   ) : (
-                    <ul className="space-y-3">
+                    <ul className="space-y-1">
                       {plasticLocations.map((loc) => (
-                        <li key={loc.id} className="text-sm">
-                          <span className="font-medium text-gray-900">{loc.name}</span>
-                          <span className="text-gray-500"> &mdash; {loc.address}</span>
-                          <MapsLink address={loc.address} />
-                          {loc.phone && (
-                            <>
-                              {" "}
-                              &middot;{" "}
-                              <a
-                                href={`tel:${loc.phone.replace(/[^0-9+]/g, "")}`}
-                                className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
-                              >
-                                {loc.phone}
-                              </a>
-                            </>
-                          )}
-                          {loc.entryInstructions && (
-                            <p className="text-gray-500 mt-0.5">{loc.entryInstructions}</p>
-                          )}
-                          {loc.hours && (
-                            <p className="text-gray-500 mt-0.5">{loc.hours}</p>
-                          )}
-                        </li>
+                        <LocationEntry key={loc.id} location={loc} />
                       ))}
                     </ul>
                   )}
