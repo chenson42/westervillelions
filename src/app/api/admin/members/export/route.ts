@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { members } from "@/lib/db/schema";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
@@ -41,7 +41,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const canExport = await hasFeature(session.user.id, FEATURES.REPORTS_EXPORT);
+  // FEATURES.MEMBERS_EDIT (the same key that gates /admin/members and
+  // getAdminProtectionRules()'s "members" segment) OR the generic
+  // REPORTS_EXPORT, matching the OR-pattern DECISION-083 established for
+  // the newsletter export route (src/app/api/admin/newsletter/export/route.ts)
+  // after finding the identical standalone-REPORTS_EXPORT shape there — see
+  // docs/backlog.md B-41. Not live-exploitable today (only admin/board_member
+  // hold reports.export, and admin already holds members.edit; board_member
+  // does not hold members.edit but also doesn't hold reports.export), but a
+  // future role granted reports.export for an unrelated report would
+  // otherwise silently gain the ability to download the full member roster
+  // (name, email, phone, address) via this endpoint with no relationship to
+  // the page's own gate.
+  const canExport = await hasAnyFeature(session.user.id, [
+    FEATURES.MEMBERS_EDIT,
+    FEATURES.REPORTS_EXPORT,
+  ]);
   if (!canExport) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

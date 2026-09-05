@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { googleGroupSyncLog, users } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
+import { hasFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { desc, eq, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
 
@@ -20,6 +22,15 @@ export default async function AdminSyncLogPage({
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
+
+  // Page-level gate — B-41 (docs/backlog.md): this page previously had only
+  // the auth() check above, so any admin.dashboard holder (the proxy's
+  // catch-all admission before this fix) could read every Google Group
+  // sync run's added/removed/failed member email addresses. Matches the
+  // SUBSCRIPTIONS_VIEW precedent DECISION-083 set for the same class of
+  // bulk-PII page: don't rely on the proxy alone to gate it.
+  const canView = await hasFeature(session.user.id, FEATURES.SYNC_LOG_VIEW);
+  if (!canView) redirect("/access-pending");
 
   const { page: pageParam = "1", group: groupFilter } = await searchParams;
   const page = Math.max(1, parseInt(pageParam) || 1);

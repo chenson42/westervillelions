@@ -52,7 +52,7 @@ const ADMIN_DIR = join(process.cwd(), "src", "app", "(dashboard)", "admin");
 // Segments whose primary page.tsx intentionally has no FEATURES gate of its
 // own, matching ADMIN_NAVIGATION's own inline comment on AdminNavItem:
 // "Omitted entirely for items with no permission of their own (Email Queue,
-// Sync Log, Release Notes) — those are visible to any non-admin who already
+// Release Notes) — those are visible to any non-admin who already
 // cleared the admin-area gate via some other feature." Because these nav
 // items declare no requiredFeature, getAdminProtectionRules() derives no
 // proxy rule for them either — they fall to src/proxy.ts's generic
@@ -62,7 +62,14 @@ const ADMIN_DIR = join(process.cwd(), "src", "app", "(dashboard)", "admin");
 // has no requiredFeature: its page.tsx chooses its own, stricter ADMIN_USERS
 // check anyway, so it's required to pass the same assertion as every gated
 // page below.
-const NO_PAGE_GATE_ALLOWLIST = new Set(["sync-log", "release-notes"]);
+//
+// Sync Log used to be on this list — it was the live PII exposure B-41
+// (docs/backlog.md) fixed: any admin.dashboard holder could read Google
+// Group sync history including real member email addresses. It now carries
+// its own SYNC_LOG_VIEW gate (src/lib/permissions.ts,
+// drizzle/migrations/0100_sync_log_view_permission.sql) and is asserted on
+// by the generic loop below like every other gated page.
+const NO_PAGE_GATE_ALLOWLIST = new Set(["release-notes"]);
 
 const FEATURE_GATE_PATTERN = /hasFeature\(|hasAnyFeature\(|\.includes\(\s*FEATURES\./;
 

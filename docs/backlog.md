@@ -29,7 +29,6 @@ was deleted on the strength of this review alone.
 - B-33 — Decouple cause-breakdown eligibility from `countsAsGiving`
 - B-34 — Explicit inter-fund transfers (remaining scope: consolidated roll-up double-count)
 - B-38 — Publish the club constitution and by-laws (production seed step)
-- B-41 — Carried-forward admin-permission gaps from DECISION-083's audit (live PII exposure)
 - B-47 — Receive Resend delivery webhooks, so a bounce is visible
 - B-58 — Choose and ship the new homepage hero tagline
 - B-60 — Trust-content follow-ups from the site review
@@ -212,7 +211,7 @@ was deleted on the strength of this review alone.
   live risk, not theoretical, right in the middle of Form 990 filing season (due Nov 15) when
   donor-receipt accuracy is under the most scrutiny.
 
-- [ ] **B-41 — Carried-forward admin-permission gaps from DECISION-083's 22-area audit, not fixed,
+- [x] **B-41 — Carried-forward admin-permission gaps from DECISION-083's 22-area audit, not fixed,
   not blocking.** (added 2026-08-09, Phase 6 of
   `docs/work-log/2026-08-09-governance-document-versioning.md`, priority: idea — needs Phase 1)
   Three items surfaced by the audit and explicitly deferred as out of scope for that pass: (1)
@@ -235,6 +234,14 @@ was deleted on the strength of this review alone.
   the build would catch on its own. The fix is small — one new `FEATURES` key bound to
   `admin`/`board_member`, remove the allowlist entry — and shouldn't wait for a routine security
   review to notice it again.
+  **Closed 2026-09-05 — `docs/work-log/2026-09-05-b41-sync-log-permission.md` (bug-fix variant,
+  Phases 1–3 skipped, root cause and rationale documented in the work-log).** Sub-item (1): new
+  `FEATURES.SYNC_LOG_VIEW` (`sync_log.view`) bound to `admin`/`board_member`
+  (`drizzle/migrations/0100_sync_log_view_permission.sql`); `/admin/sync-log`'s `ADMIN_NAVIGATION`
+  item now declares it and the page gates on it; removed from
+  `NO_PAGE_GATE_ALLOWLIST`. Sub-item (2): `/api/admin/members/export/route.ts` now gates on
+  `hasAnyFeature([MEMBERS_EDIT, REPORTS_EXPORT])`, mirroring DECISION-083's newsletter-export fix
+  exactly. Sub-item (3): confirmed already fixed pre-existing, no code change.
 
 - [ ] **B-58 — Choose and ship the new homepage hero tagline.** *(Raised 2026-09-04, site-review
   Batch 5 — flagged for the immediate future.)* The current line ("Helping our community thrive

@@ -394,13 +394,21 @@ describe("getAdminProtectionRules", () => {
     expect(membersRule?.pattern.test("/admin/members/123")).toBe(true);
   });
 
-  it("produces no rule for System items with no requiredFeature of their own (Email Queue, Sync Log, Release Notes)", () => {
+  it("produces no rule for System items with no requiredFeature of their own (Email Queue, Release Notes)", () => {
     const rules = getAdminProtectionRules();
     const segments = rules.map((r) => r.segment);
 
     expect(segments).not.toContain("email-queue");
-    expect(segments).not.toContain("sync-log");
     expect(segments).not.toContain("release-notes");
+  });
+
+  it("derives a /admin/sync-log rule requiring SYNC_LOG_VIEW — B-41 (docs/backlog.md): this area used to have no requiredFeature at all and relied on the ADMIN_DASHBOARD catch-all, exposing Google Group sync history (real member emails) to any admin.dashboard holder", () => {
+    const rules = getAdminProtectionRules();
+    const syncLogRule = rules.find((r) => r.segment === "sync-log");
+
+    expect(syncLogRule).toBeDefined();
+    expect(syncLogRule?.requiredFeatures).toContain(FEATURES.SYNC_LOG_VIEW);
+    expect(syncLogRule?.pattern.test("/admin/sync-log")).toBe(true);
   });
 
   it("a user holding exactly one area's required feature is admitted by that area's rule and no other unrelated area's rule wrongly admits them", () => {

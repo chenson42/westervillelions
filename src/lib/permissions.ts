@@ -135,6 +135,18 @@ export const FEATURES = {
   // instead. Do not widen without revisiting the User Decision in the
   // work-log.
   CLUB_FILES_MANAGE: "club_files.manage",
+
+  // Google Group Sync Log (B-41, docs/backlog.md — carried forward from
+  // DECISION-083's audit). The sync log's rows include real member email
+  // addresses (added/removed/failed lists), so this is bulk-PII exposure of
+  // the same shape DECISION-083 fixed for the newsletter subscriber list —
+  // not a hypothetical, since the page previously had only an auth() check
+  // and was a deliberately-documented exception in
+  // src/lib/admin-page-feature-gates.test.ts's NO_PAGE_GATE_ALLOWLIST. One
+  // key, view-only (no separate manage/export verb — there's nothing to
+  // author here, only history to read). Bound to `admin` and `board_member`
+  // by 0100_sync_log_view_permission.sql.
+  SYNC_LOG_VIEW: "sync_log.view",
 } as const;
 
 // Type for feature names
@@ -157,6 +169,7 @@ export const FEATURE_CATEGORIES = {
   PROPOSALS: "proposals",
   WELCOME_PACKET: "welcome_packet",
   CLUB_FILES: "club_files",
+  SYNC_LOG: "sync_log",
 } as const;
 
 // Helper to get features by category
@@ -228,6 +241,8 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.WELCOME_PACKET_MANAGE]: "Author and publish the member welcome packet",
 
   [FEATURES.CLUB_FILES_MANAGE]: "Upload, edit, attach to events, and delete club files",
+
+  [FEATURES.SYNC_LOG_VIEW]: "View Google Group sync history, including member email addresses",
 };
 
 // Default role names (should match database seed data)
@@ -266,9 +281,10 @@ export interface AdminNavItem {
   // A single feature, or a list where holding ANY one admits the item (e.g.
   // Budgeting: LEDGER_MANAGE, LEDGER_APPROVE, BUDGET_VIEW, or BUDGET_EDIT).
   // Omitted entirely for items with no permission of their own (Email Queue,
-  // Sync Log, Release Notes) — those are visible to any non-admin who already
+  // Release Notes) — those are visible to any non-admin who already
   // cleared the admin-area gate via some other feature, so they cannot be used
-  // as an admission criterion themselves.
+  // as an admission criterion themselves. Sync Log used to be on this list
+  // too until B-41 gave it SYNC_LOG_VIEW (docs/backlog.md).
   requiredFeature?: FeatureName | FeatureName[];
   // Search-only synonyms for the sidebar's type-to-filter box ("what would
   // someone type?"). Purely additive metadata: getAdminProtectionRules() and
@@ -581,6 +597,12 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         href: "/admin/sync-log",
         icon: "🔄",
         keywords: ["google", "groups", "audit", "history"],
+        // B-41 (docs/backlog.md): previously had no requiredFeature of its
+        // own — a bulk-PII page (member emails from Google Group sync)
+        // reachable by any admin.dashboard holder. Now gated like every
+        // other PII-bearing admin area (SUBSCRIPTIONS_VIEW precedent,
+        // DECISION-083).
+        requiredFeature: FEATURES.SYNC_LOG_VIEW,
       },
       {
         name: "Security",
