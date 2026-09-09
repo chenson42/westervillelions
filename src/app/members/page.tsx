@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { members, groups, groupMemberships } from "@/lib/db/schema";
+import Link from "next/link";
 import { and, eq, inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
@@ -174,27 +175,27 @@ export default async function MembersPage() {
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Member Directory</h3>
             <p className="text-gray-700">View contact information for all club members</p>
           </a>
-          <a
+          <Link
             href="/members/events"
-            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-lions-blue"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Events</h3>
             <p className="text-gray-700">View and RSVP to upcoming club events</p>
-          </a>
-          <a
+          </Link>
+          <Link
             href="/members/groups"
-            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-lions-blue"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Groups</h3>
             <p className="text-gray-700">Browse committees, service teams, and branches</p>
-          </a>
-          <a
+          </Link>
+          <Link
             href="/members/records"
-            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-lions-blue"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Club Records</h3>
             <p className="text-gray-700">Read meeting minutes — general and board</p>
-          </a>
+          </Link>
           <a
             href="/members/profile"
             className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"

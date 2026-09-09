@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { members } from "@/lib/db/schema";
@@ -31,9 +32,9 @@ export default async function ProfilePage() {
 
       <div className="container mx-auto px-4 py-12">
         <div className="mb-6">
-          <a href="/members" className="text-lions-blue hover:underline">
+          <Link href="/members" className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded">
             ← Back to Member Portal
-          </a>
+          </Link>
         </div>
 
         <div className="bg-white rounded-lg shadow-md p-8 max-w-2xl">
@@ -104,20 +105,20 @@ export default async function ProfilePage() {
               <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Reimbursements</h3>
               <p className="text-sm text-gray-600">Request reimbursement for out-of-pocket club expenses</p>
             </a>
-            <a
+            <Link
               href="/members/proposals"
-              className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100"
+              className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100 focus:outline-none focus:ring-2 focus:ring-lions-blue"
             >
               <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Proposals</h3>
               <p className="text-sm text-gray-600">Propose a project or activity and track the board&rsquo;s decision</p>
-            </a>
-            <a
+            </Link>
+            <Link
               href="/members/social-requests"
-              className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100"
+              className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-5 border border-gray-100 focus:outline-none focus:ring-2 focus:ring-lions-blue"
             >
               <h3 className="text-lg font-semibold mb-1 text-lions-blue">My Social Media Requests</h3>
               <p className="text-sm text-gray-600">Ask the club to post something to its social accounts</p>
-            </a>
+            </Link>
           </div>
 
           <div className="mt-8 pt-6 border-t border-gray-200">

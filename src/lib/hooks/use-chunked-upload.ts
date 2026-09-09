@@ -75,6 +75,14 @@ export function useChunkedUpload() {
   const [status, setStatus] = useState<ChunkedUploadStatus>("idle");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Mirrors `resumeRef.current !== null`, updated at every point that ref is
+  // written (see below). Tracked as state — rather than read directly off
+  // the ref in the returned object — because reading a ref during render is
+  // disallowed (react-hooks/refs): render output must be reproducible from
+  // props/state alone, and a ref mutation doesn't itself schedule a
+  // re-render, so a render-time read can silently miss the update it's
+  // supposed to reflect.
+  const [canRetry, setCanRetry] = useState(false);
   const resumeRef = useRef<ResumeState | null>(null);
 
   const runFinalize = useCallback(
@@ -165,6 +173,7 @@ export function useChunkedUpload() {
 
         const result = await runFinalize(sessionId, metadata);
         resumeRef.current = null;
+        setCanRetry(false);
         setStatus("done");
         setProgress(100);
         return result;
@@ -172,6 +181,7 @@ export function useChunkedUpload() {
         const message = err instanceof Error ? err.message : "Upload failed. Please try again.";
         setStatus("error");
         setError(message);
+        setCanRetry(resumeRef.current !== null);
         return null;
       }
     },
@@ -204,6 +214,7 @@ export function useChunkedUpload() {
       }
       const result = await runFinalize(resume.sessionId, resume.metadata);
       resumeRef.current = null;
+      setCanRetry(false);
       setStatus("done");
       setProgress(100);
       return result;
@@ -211,12 +222,14 @@ export function useChunkedUpload() {
       const message = err instanceof Error ? err.message : "Upload failed. Please try again.";
       setStatus("error");
       setError(message);
+      setCanRetry(resumeRef.current !== null);
       return null;
     }
   }, [runChunks, runFinalize]);
 
   const reset = useCallback(() => {
     resumeRef.current = null;
+    setCanRetry(false);
     setStatus("idle");
     setProgress(0);
     setError(null);
@@ -229,7 +242,7 @@ export function useChunkedUpload() {
     upload,
     /** Only meaningful once status === "error" and an init call has succeeded. */
     retry,
-    canRetry: resumeRef.current !== null,
+    canRetry,
     reset,
   };
 }

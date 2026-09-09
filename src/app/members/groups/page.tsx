@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
@@ -71,9 +72,9 @@ export default async function GroupsPage() {
 
       <div className="container mx-auto px-4 py-10">
         <div className="mb-6">
-          <a href="/members" className="text-lions-blue hover:underline">
+          <Link href="/members" className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded">
             &larr; Back to Member Portal
-          </a>
+          </Link>
         </div>
 
         {/* Club-wide email */}

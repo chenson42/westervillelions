@@ -67,7 +67,17 @@ export default async function AdminLedgerPage({
         getDashboard(),
         canApprove ? getPendingApprovals() : Promise.resolve([]),
       ]);
+      // This try/catch does correctly guard the two awaited fetches above
+      // (the dominant failure mode — DB/query errors — falls through to
+      // LoadErrorCard as intended). What it does NOT catch is a render-phase
+      // throw from inside <LedgerDashboard> itself, since constructing a JSX
+      // element doesn't execute the component body. Closing that gap needs a
+      // real error boundary (an error.tsx for this route segment, or a
+      // shared <ErrorBoundary> wrapper) applied consistently across this
+      // file's three try/catch branches — that's a Phase 2/3 design task,
+      // not a one-line fix. Flagged for its own work-log entry; left as-is.
       return (
+        // eslint-disable-next-line react-hooks/error-boundaries -- see comment above
         <LedgerDashboard
           dashboard={dashboard}
           canApprove={canApprove}

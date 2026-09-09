@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { groups, groupMemberships, members } from "@/lib/db/schema";
@@ -68,9 +69,12 @@ export default async function GroupDetailPage({ params }: Props) {
 
       <div className="container mx-auto px-4 py-10">
         <div className="mb-6">
-          <a href="/members/groups" className="text-lions-blue hover:underline">
+          <Link
+            href="/members/groups"
+            className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+          >
             &larr; Back to Groups
-          </a>
+          </Link>
         </div>
 
         {/* Contact email card */}

@@ -24,7 +24,14 @@ export function ZeffyEmbed({
   const [mounted, setMounted] = useState(false);
   const embedUrl = toEmbedUrl(zeffyLink);
 
+  // Standard client-only-portal idiom: `mounted` starts false to match SSR
+  // (no `document.body` on the server, and createPortal would crash there),
+  // then flips true post-mount so the portal only ever renders on the
+  // client. There's no way to fold this into the initial render without
+  // either crashing SSR or creating a hydration mismatch — the one extra
+  // render this costs is the intended, unavoidable trade-off, not a bug.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- see comment above
     setMounted(true);
   }, []);
 

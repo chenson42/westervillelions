@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { db } from "@/lib/db";
 import { campaigns } from "@/lib/db/schema";
@@ -203,7 +204,7 @@ export default async function DonatePage() {
                 </li>
                 <li>
                   <strong>Volunteer:</strong> Your time is just as valuable —{" "}
-                  <a href="/join" className="text-lions-blue hover:underline">become a member</a> or attend an event.
+                  <Link href="/join" className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded">become a member</Link> or attend an event.
                 </li>
               </ul>
             </div>

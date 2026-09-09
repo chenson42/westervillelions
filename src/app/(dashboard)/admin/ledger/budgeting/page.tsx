@@ -268,7 +268,6 @@ export default async function AdminLedgerBudgetingPage({
   // this is what makes "totals must match across the overview screen and
   // the printed document" true by construction (DECISION-060).
   const openingCentsByFundId: Record<string, number> = {};
-  let totalPendingDeleteCount = 0;
 
   const overviewRows: BudgetOverviewRow[] = fundItems.map((fund, i) => {
     const openingCents = targetReports[i]?.openingCents ?? 0;
@@ -281,7 +280,6 @@ export default async function AdminLedgerBudgetingPage({
         if (cl.pendingDeleteAt != null) pendingDeleteCount += 1;
       }
     }
-    totalPendingDeleteCount += pendingDeleteCount;
     return {
       fundSlug: fund.fundSlug,
       fundName: fund.fundName,
@@ -292,6 +290,12 @@ export default async function AdminLedgerBudgetingPage({
       pendingDeleteCount,
     };
   });
+
+  // Derived from overviewRows (each row already carries its own count) rather
+  // than accumulated with a mutable counter inside the map above —
+  // react-hooks/immutability flags reassigning a captured variable during
+  // render; summing afterward is equivalent and reads cleaner.
+  const totalPendingDeleteCount = overviewRows.reduce((sum, row) => sum + row.pendingDeleteCount, 0);
 
   const fundBalances = overviewRows.map((row) => ({
     fundName: row.fundName,

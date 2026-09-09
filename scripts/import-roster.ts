@@ -16,7 +16,7 @@ interface RosterRow {
 
 function parseName(fullName: string): { firstName: string; lastName: string } {
   // Remove titles
-  let name = fullName.replace(/^(Mr\.|Mrs\.|Ms\.|Dr\.)\s+/i, "");
+  const name = fullName.replace(/^(Mr\.|Mrs\.|Ms\.|Dr\.)\s+/i, "");
 
   // Split into parts
   const parts = name.trim().split(/\s+/);

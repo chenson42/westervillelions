@@ -125,7 +125,7 @@ export default async function AboutPage() {
               and civic engagement.
             </p>
             <p className="text-lg text-gray-700">
-              As part of Lions Clubs International, we are connected to the world's largest
+              As part of Lions Clubs International, we are connected to the world&apos;s largest
               service club organization, with 1.4 million members in more than 200 countries
               and geographic areas.
             </p>
@@ -141,7 +141,7 @@ export default async function AboutPage() {
                 <strong>Where:</strong> The Landings, 350 County Line Rd W, Westerville, OH 43082
               </p>
               <p className="text-lg text-gray-700">
-                All meetings are open to visitors. Come see what we're all about!
+                All meetings are open to visitors. Come see what we&apos;re all about!
               </p>
             </div>
           </section>
@@ -190,9 +190,9 @@ export default async function AboutPage() {
           <section>
             <h2 className="text-3xl font-bold mb-6 text-gray-900">Join Us</h2>
             <p className="text-lg text-gray-700 mb-6">
-              We're always looking for community-minded individuals who want to make a
+              We&apos;re always looking for community-minded individuals who want to make a
               difference. Whether you have a few hours a month or can commit to regular
-              service, there's a place for you in the Westerville Lions Club.
+              service, there&apos;s a place for you in the Westerville Lions Club.
             </p>
             <a
               href="/join"

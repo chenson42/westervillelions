@@ -96,9 +96,9 @@ export default async function MemberEventsPage() {
 
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <div className="mb-6">
-          <a href="/members" className="text-lions-blue hover:underline">
+          <Link href="/members" className="text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded">
             ← Back to Member Portal
-          </a>
+          </Link>
         </div>
 
         {/* Upcoming Events */}

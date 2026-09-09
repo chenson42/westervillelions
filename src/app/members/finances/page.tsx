@@ -38,15 +38,15 @@ export default async function MemberFinancesHubPage() {
         </Link>
 
         <div className="grid sm:grid-cols-2 gap-6">
-          <a
+          <Link
             href="/members/financial-reports"
-            className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-6"
+            className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-6 focus:outline-none focus:ring-2 focus:ring-lions-blue"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Financial Statements</h3>
             <p className="text-gray-700">
               The monthly Statement of Financial Condition the treasurer reports to the board.
             </p>
-          </a>
+          </Link>
           <a
             href="/members/impact"
             className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden p-6"

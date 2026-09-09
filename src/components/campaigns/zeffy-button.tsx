@@ -19,7 +19,6 @@ export function ZeffyButton({ zeffyLink, className, children }: ZeffyButtonProps
       href={zeffyLink}
       target="_blank"
       rel="noopener noreferrer"
-      // @ts-ignore - zeffy-form-link is a custom attribute used by Zeffy's embed script
       zeffy-form-link={zeffyLink}
       className={className}
     >

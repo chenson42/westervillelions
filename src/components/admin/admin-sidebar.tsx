@@ -56,6 +56,14 @@ export default function AdminSidebar({
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // returnTo can only be known from browser-only APIs (sessionStorage,
+  // document.referrer), which don't exist during SSR. Computing it via a
+  // useState lazy initializer instead would make hydration disagree with the
+  // server-rendered href="/" and produce a hydration-mismatch warning;
+  // deriving it post-mount via this effect is the standard, accepted way to
+  // sync client-only initial state without one. The one extra render this
+  // costs on first mount is harmless — this component stays mounted for the
+  // admin session, so it isn't repeated per navigation.
   useEffect(() => {
     // On first entry to admin, save the referrer if it's not an admin page
     const stored = sessionStorage.getItem(RETURN_KEY);
@@ -69,6 +77,7 @@ export default function AdminSidebar({
         url = "/members";
       }
       sessionStorage.setItem(RETURN_KEY, url);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- see comment above the effect
       setReturnTo(url);
     } else {
       setReturnTo(stored);

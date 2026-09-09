@@ -25,7 +25,7 @@ export default function NotFound() {
       <div className="container mx-auto px-4 py-12 max-w-2xl text-center">
         <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Page not found</h1>
         <p className="text-lg text-gray-600 mb-8">
-          The page you're looking for doesn't exist or may have moved. Here are some places to go instead.
+          The page you&apos;re looking for doesn&apos;t exist or may have moved. Here are some places to go instead.
         </p>
         <div className="flex flex-wrap justify-center gap-4">
           <Link

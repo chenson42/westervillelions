@@ -92,24 +92,34 @@ export default function DuesMethodDonut({
   }
 
   // Slice angles, in fixed order, each shrunk by half the gap on either side.
+  // Cumulative angle is threaded through reduce's accumulator (a fresh object
+  // each step, never mutated in place) rather than a mutable outer `let`
+  // reassigned inside .map() — react-hooks/immutability flags reassigning a
+  // captured variable during render; this keeps the computation a pure fold
+  // over `slices`.
   const totalPct = slices.reduce((sum, s) => sum + s.pct, 0) || 1;
-  let cursorDeg = 0;
-  const wedges = slices.map((slice) => {
-    const sweepDeg = (slice.pct / totalPct) * 360;
-    const startDeg = cursorDeg;
-    const endDeg = cursorDeg + sweepDeg;
-    cursorDeg = endDeg;
-    const halfGap = slices.length > 1 ? GAP_DEGREES / 2 : 0;
-    const trimmedStart = Math.min(startDeg + halfGap, endDeg);
-    const trimmedEnd = Math.max(endDeg - halfGap, startDeg);
-    return {
-      slice,
-      path:
-        trimmedEnd > trimmedStart
-          ? donutWedgePath(trimmedStart, trimmedEnd)
-          : donutWedgePath(startDeg, endDeg),
-    };
-  });
+  const halfGap = slices.length > 1 ? GAP_DEGREES / 2 : 0;
+  const { wedges } = slices.reduce<{
+    wedges: { slice: DuesMethodSlice; path: string }[];
+    cursorDeg: number;
+  }>(
+    (acc, slice) => {
+      const sweepDeg = (slice.pct / totalPct) * 360;
+      const startDeg = acc.cursorDeg;
+      const endDeg = acc.cursorDeg + sweepDeg;
+      const trimmedStart = Math.min(startDeg + halfGap, endDeg);
+      const trimmedEnd = Math.max(endDeg - halfGap, startDeg);
+      const wedge = {
+        slice,
+        path:
+          trimmedEnd > trimmedStart
+            ? donutWedgePath(trimmedStart, trimmedEnd)
+            : donutWedgePath(startDeg, endDeg),
+      };
+      return { wedges: [...acc.wedges, wedge], cursorDeg: endDeg };
+    },
+    { wedges: [], cursorDeg: 0 },
+  );
 
   const ariaLabel = `Payment composition donut chart. ${slices
     .map((s) => `${s.label}: ${formatDollars(s.cents)}, ${s.pct.toFixed(1)} percent`)

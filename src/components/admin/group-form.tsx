@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -316,12 +317,12 @@ export function GroupForm({
           >
             {isSaving ? "Saving..." : isEdit ? "Save Changes" : "Create Group"}
           </button>
-          <a
+          <Link
             href="/admin/groups"
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-lions-blue"
           >
             Cancel
-          </a>
+          </Link>
         </div>
         {isEdit && (
           <>

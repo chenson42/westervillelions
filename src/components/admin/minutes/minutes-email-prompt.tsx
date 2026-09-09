@@ -91,8 +91,8 @@ export function MinutesEmailPrompt({ open, onOpenChange, minutesId, kind, status
                 email.
                 {resolution.showDraftBanner && (
                   <span className="block mt-1 text-amber-700">
-                    These minutes are still a draft — the email will carry a "DRAFT — subject to
-                    approval" banner.
+                    These minutes are still a draft — the email will carry a &quot;DRAFT — subject to
+                    approval&quot; banner.
                   </span>
                 )}
               </Dialog.Description>
