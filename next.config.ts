@@ -13,7 +13,23 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://www.googletagmanager.com",
+      // 'wasm-unsafe-eval' is load-bearing — do not remove it without reading this.
+      //
+      // The HEIC receipt-upload fallback (DECISION-038) decodes iPhone photos in the
+      // browser with `libheif-js/wasm-bundle`, which inlines its WASM as base64 and
+      // must instantiate it at runtime. Chrome and Firefox refuse to instantiate ANY
+      // WebAssembly unless script-src grants 'wasm-unsafe-eval' (or the much broader
+      // 'unsafe-eval'). Those browsers have no native HEIC decode, which is the entire
+      // reason the WASM fallback exists — so without this token, every Chrome/Firefox
+      // admin uploading a phone photo of a receipt fails, and the UI misreports it as a
+      // connectivity problem.
+      //
+      // v1.75.0 (commit 4aea4f8) dropped 'unsafe-eval' as CSP hardening and silently
+      // broke exactly that flow for five days; nothing recorded the dependency, so it
+      // wasn't re-checked. 'wasm-unsafe-eval' is deliberately used here instead of
+      // restoring 'unsafe-eval': it permits WebAssembly compilation ONLY, and still
+      // forbids eval() of JavaScript strings, so v1.75.0's hardening is kept.
+      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://challenges.cloudflare.com https://www.googletagmanager.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https: lh3.googleusercontent.com",
       "font-src 'self'",
