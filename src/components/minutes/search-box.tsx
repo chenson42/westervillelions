@@ -2,6 +2,13 @@ interface SearchBoxProps {
   defaultValue?: string;
   /** Preserved as a hidden field so a kind filter stays applied when searching. */
   kind?: string;
+  /** Preserved as a hidden field, opaque and unvalidated (the raw `?year=`
+   *  searchParams value) — inert during search (searchMinutes() never
+   *  receives it — Phase 3 URL State Contract). Carrying it through means
+   *  clearing the search restores the member's prior year selection instead
+   *  of resetting to the default; resolveYearParam() re-validates it once
+   *  search is cleared and the browse view fetches real counts. */
+  year?: string;
 }
 
 /**
@@ -11,10 +18,11 @@ interface SearchBoxProps {
  * which the page itself reads via `searchParams` and passes to
  * `searchMinutes()`.
  */
-export function SearchBox({ defaultValue = "", kind }: SearchBoxProps) {
+export function SearchBox({ defaultValue = "", kind, year }: SearchBoxProps) {
   return (
     <form method="get" action="/members/records" className="flex gap-2">
       {kind && <input type="hidden" name="kind" value={kind} />}
+      {year && <input type="hidden" name="year" value={year} />}
       <label htmlFor="minutes-search-q" className="sr-only">
         Search minutes
       </label>

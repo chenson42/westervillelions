@@ -24,6 +24,15 @@
  * ux-developer (this round) added `minutesKindLabel()` — a small,
  * client-safe display-label helper shared by every UI surface that shows a
  * kind badge. No DB/network import, safe alongside everything else here.
+ *
+ * api-developer (2026-09-09, docs/work-log/2026-09-09-minutes-browse-and-
+ * search-context.md, Phase 3 "API Contract") added the year-pills/search-
+ * context server slice: `extractSnippet()` (the single indexOf
+ * implementation `minutes-queries.ts`'s three-query search merge reuses as
+ * its "does this field match" test — not duplicated per call site),
+ * `minutesSearchMatchFieldLabel()`, `resolveYearParam()`, and
+ * `nearestFiscalYearWithData()`. All four are pure — no DB import — same
+ * "importable without a database" contract as the rest of this file.
  */
 
 import { CLUB_GROUP_EMAIL, BOARD_EMAIL } from "@/lib/club-contacts";
@@ -160,4 +169,150 @@ export function resolveMinutesEmailTarget(
     return { allowed: false, reason: REQUIRES_APPROVAL_REASON };
   }
   return { allowed: true, address: mapping.address, showDraftBanner: status !== "approved" };
+}
+
+// ── search snippets (Phase 3 "API Contract", DECISION-077-adjacent — no new
+// decision logged, this is the query-layer rework the architect ruled on) ──
+//
+// A minutes search result needs to show WHERE it matched and a short excerpt
+// around the match — not just that a match occurred. `extractSnippet()` is
+// the one place that answers "does `term` occur in `text`, and if so, what's
+// a good windowed excerpt to show?" `minutes-queries.ts`'s three-query search
+// merge (searchMinutes()) calls this once per candidate field per row rather
+// than re-implementing its own indexOf — see that file's merge-priority
+// comment for how the per-row winner is picked.
+
+export interface MinutesSearchSnippet {
+  /** Windowed, ellipsized text — never the full field value. */
+  excerpt: string;
+  /** Offset into `excerpt` (not the full field), start of the matched span. */
+  matchStart: number;
+  matchLength: number;
+}
+
+/**
+ * Finds `term` in `text` (case-insensitive, literal substring — never a
+ * regex built from `term`, so ILIKE metacharacters `%`/`_` and regex
+ * metacharacters alike are inert) and returns a windowed excerpt with match
+ * offsets relative to the excerpt, or `null` if `term` does not literally
+ * occur in `text`.
+ *
+ * `windowSize` is characters of context kept on EACH side of the match (not
+ * a total excerpt length) — a match with `windowSize=60` context on both
+ * sides yields an excerpt up to `120 + term.length` characters, ellipsized
+ * only on whichever side(s) the window actually truncates.
+ *
+ * Caller MUST pass the raw, trimmed query term — never `escapeIlikeTerm()`'s
+ * output. That string carries literal backslashes inserted for SQL ILIKE and
+ * would corrupt this JS substring search (or highlight the wrong span) if
+ * used here instead of the original term.
+ */
+export function extractSnippet(
+  text: string,
+  term: string,
+  windowSize = 60,
+): MinutesSearchSnippet | null {
+  if (!term) return null;
+
+  const idx = text.toLowerCase().indexOf(term.toLowerCase());
+  if (idx === -1) return null;
+
+  const matchEnd = idx + term.length;
+  const start = Math.max(0, idx - windowSize);
+  const end = Math.min(text.length, matchEnd + windowSize);
+
+  // Ellipsis is added only on a side the window actually cut off — a match
+  // near either edge of `text` (or `text` entirely shorter than the window)
+  // must not grow a spurious "…" that implies truncated content that isn't
+  // there.
+  const prefixEllipsis = start > 0 ? "…" : "";
+  const suffixEllipsis = end < text.length ? "…" : "";
+
+  return {
+    excerpt: `${prefixEllipsis}${text.slice(start, end)}${suffixEllipsis}`,
+    matchStart: idx - start + prefixEllipsis.length,
+    matchLength: term.length,
+  };
+}
+
+/**
+ * Display label for a search result's matched-field chip, e.g. "Matched in
+ * {label}". `'title'` is intentionally not a valid input here — a title
+ * match renders no label at all (Phase 3 "Title matches"): the title is
+ * already the visible card headline in every view, so there's nothing left
+ * to surface.
+ */
+export function minutesSearchMatchFieldLabel(field: "body" | "motion" | "action_item"): string {
+  switch (field) {
+    case "body":
+      return "Minutes text";
+    case "motion":
+      return "Motion";
+    case "action_item":
+      return "Action item";
+  }
+}
+
+// ── year-pills URL-state helpers (Phase 3 "URL State Contract") ────────────
+
+/**
+ * Pure parse of the `/members/records` `?year=` URL param against the
+ * known-year set (the fiscal years that actually have >=1 record for the
+ * active `kind`, per `getMinutesFiscalYearCounts()`, plus `currentFY` which
+ * always renders its own pill regardless of data — decision #1 in the Phase
+ * 1 work-log).
+ *
+ * - `raw` absent → the default: `{ year: currentFY, isAll: false }`.
+ * - `raw === "all"` → `{ isAll: true }` (an `all` year is still returned,
+ *   equal to `currentFY`, since the return type always carries one; callers
+ *   branch on `isAll`, not on the accompanying year, when it's true).
+ * - `raw` parses as an integer equal to `currentFY`, OR to a year present in
+ *   `knownYears` → that year.
+ * - Anything else — non-numeric ("banana"), or a well-formed but unknown
+ *   year ("1900") — is the SAME failure case (Phase 1 Flow 2) and silently
+ *   falls back to the default. There is no second, looser notion of
+ *   "plausible year" here: validity is membership in `knownYears` (plus the
+ *   always-valid `currentFY`), nothing else, so the pill row this feeds never
+ *   renders a phantom "selected" pill for a year that isn't shown.
+ */
+export function resolveYearParam(
+  raw: string | undefined,
+  knownYears: number[],
+  currentFY: number,
+): { year: number; isAll: boolean } {
+  if (raw === undefined) return { year: currentFY, isAll: false };
+  if (raw === "all") return { year: currentFY, isAll: true };
+
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && (parsed === currentFY || knownYears.includes(parsed))) {
+    return { year: parsed, isAll: false };
+  }
+  return { year: currentFY, isAll: false };
+}
+
+/**
+ * Nearest fiscal year (by absolute distance) to `target` among `candidates`,
+ * ties broken toward the more recent (larger) year. Returns `null` only when
+ * `candidates` is empty — no minutes exist for this kind at all, and the
+ * caller falls back to today's unchanged "No meeting minutes have been
+ * posted yet" copy rather than offering a link to nowhere.
+ *
+ * Powers the zero/near-empty-state "nearest year with data" link (Phase 1
+ * Open Question #2) — load-bearing under the Lions-year default, since the
+ * current FY lands empty for roughly a quarter of every year by
+ * construction (Jul–Sep, before that year's first meeting is recorded).
+ */
+export function nearestFiscalYearWithData(target: number, candidates: number[]): number | null {
+  if (candidates.length === 0) return null;
+
+  let best = candidates[0];
+  let bestDistance = Math.abs(candidates[0] - target);
+  for (const candidate of candidates.slice(1)) {
+    const distance = Math.abs(candidate - target);
+    if (distance < bestDistance || (distance === bestDistance && candidate > best)) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }

@@ -67,6 +67,31 @@
  * plain dropdown of `db.query.events.findMany()` for ux-developer to build
  * directly, same as `/members/events/page.tsx` already does for its own
  * event listing — no query-module function needed for that part.
+ *
+ * api-developer (2026-09-09, docs/work-log/2026-09-09-minutes-browse-and-
+ * search-context.md, Phase 3/4) reworked `searchMinutes()` and added the
+ * year-pills server slice:
+ *
+ * - `searchMinutes()` no longer runs one `selectDistinct` over two
+ *   `LEFT JOIN`s. That shape could report THAT a row matched but not WHICH
+ *   field, and joining `minutesMotions` to `minutesActionItems` together on
+ *   the same `minutes` row is a cross-join (N motions x M action items per
+ *   minutes row) — a real row-multiplication risk the architect ruled must
+ *   be resolved by construction, not patched. It is now three independent,
+ *   single-join-or-joinless queries (title/body; motions; action items),
+ *   merged and deduped by `minutes.id` in JS with a documented priority
+ *   (title > body > motion > action item — see `mergeMinutesSearchResults()`
+ *   below). Still exactly 3 round trips regardless of record count — same
+ *   complexity class as the query it replaces.
+ * - `listMinutesForMembers()` grew an optional `year` filter, scoped via
+ *   `fyBounds()` + `gte`/`lt` string comparison directly against the
+ *   `date`-typed `meetingDate` column — no `new Date()` parse on this path,
+ *   so no timezone exposure.
+ * - `getMinutesFiscalYearCounts()` is new: the one query that powers the
+ *   year pills' per-year (kind-scoped) counts. It's also the ONE place in
+ *   this feature that legitimately needs a JS `Date` (to call
+ *   `getFiscalYear()`) — see that function's own doc comment for the Jun
+ *   30/Jul 1 boundary bug this guards against.
  */
 
 import { db } from "@/lib/db";
@@ -78,9 +103,16 @@ import {
   eventOccurrenceOverrides,
   members,
 } from "@/lib/db/schema";
-import { and, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, isNull, lt, or, type SQL } from "drizzle-orm";
 import { getNextOccurrence, nowEastern } from "@/lib/events";
-import { escapeIlikeTerm, MINUTES_KIND_EVENT_TITLES, type MinutesKind } from "@/lib/minutes";
+import { getFiscalYear, fyBounds } from "@/lib/fiscal-year";
+import {
+  escapeIlikeTerm,
+  extractSnippet,
+  MINUTES_KIND_EVENT_TITLES,
+  type MinutesKind,
+  type MinutesSearchSnippet,
+} from "@/lib/minutes";
 
 // ---------------------------------------------------------------------------
 // Shared row/result types
@@ -213,12 +245,18 @@ export interface NextMeetingPointer {
   occurrence: Date;
 }
 
+export type MinutesSearchMatchField = "title" | "body" | "motion" | "action_item";
+
 export interface MinutesSearchRow {
   id: string;
   kind: string;
   meetingDate: string;
   status: string;
   title: string | null;
+  matchField: MinutesSearchMatchField;
+  /** null exactly when matchField === "title" — the title is already the
+   *  visible card headline, nothing more to show (Phase 3 "Title matches"). */
+  snippet: MinutesSearchSnippet | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -517,6 +555,11 @@ export async function listMinutesForAdmin(
 
 export interface MinutesMemberListFilters {
   kind?: string;
+  /** Fiscal year to scope to, via `fyBounds()` string-range comparison
+   *  (`gte`/`lt`) directly against the `date`-typed `meetingDate` column —
+   *  no `new Date()` parse, no TZ exposure (2026-09-09 year-pills feature,
+   *  Phase 3 "Data Model"). Omitted = no year filter (all years). */
+  year?: number;
 }
 
 /** Member-facing list — always excludes soft-deleted rows; every kind and
@@ -527,6 +570,11 @@ export async function listMinutesForMembers(
 ): Promise<MinutesSummaryRow[]> {
   const conditions: SQL[] = [isNull(minutes.pendingDeleteAt)];
   if (filters.kind) conditions.push(eq(minutes.kind, filters.kind));
+  if (filters.year !== undefined) {
+    const { start, end } = fyBounds(filters.year);
+    conditions.push(gte(minutes.meetingDate, start));
+    conditions.push(lt(minutes.meetingDate, end));
+  }
 
   return db
     .select({
@@ -644,6 +692,129 @@ export async function getNextMeetingPointer(kind: string): Promise<NextMeetingPo
   };
 }
 
+// ---------------------------------------------------------------------------
+// searchMinutes() — three-query rewrite (architect's binding ruling,
+// 2026-09-09 year-pills feature, Phase 2 "Query Layer Ruling" / Phase 3
+// "Query design")
+// ---------------------------------------------------------------------------
+
+/** The subset of columns every one of the three search queries below needs
+ *  in common, to build a MinutesSearchRow regardless of which field matched. */
+interface SearchRowBase {
+  id: string;
+  kind: string;
+  meetingDate: string;
+  status: string;
+  title: string | null;
+}
+
+interface SearchCandidateBody extends SearchRowBase {
+  bodyMarkdown: string | null;
+}
+
+interface SearchCandidateMotion extends SearchRowBase {
+  text: string;
+  moverName: string;
+  seconderName: string | null;
+}
+
+interface SearchCandidateActionItem extends SearchRowBase {
+  text: string;
+  ownerName: string;
+}
+
+/** Defensive fallback (Phase 3 "Edge Cases" — "extractSnippet() disagreeing
+ *  with Postgres ILIKE's match"): if the SQL `WHERE` found a match in a
+ *  candidate row but `extractSnippet()` can't locate the term in ANY of that
+ *  row's candidate fields (a collation mismatch, not expected for this
+ *  club's English-language content but a real bug category), render a plain
+ *  unwindowed excerpt of the first candidate field instead of throwing or
+ *  silently dropping the result. `matchLength: 0` signals "no highlighted
+ *  span" to the renderer. */
+function fallbackSnippet(text: string): MinutesSearchSnippet {
+  return { excerpt: text.slice(0, 120), matchStart: 0, matchLength: 0 };
+}
+
+function resolveBodyMatch(row: SearchCandidateBody, term: string): MinutesSearchRow {
+  const base = { id: row.id, kind: row.kind, meetingDate: row.meetingDate, status: row.status, title: row.title };
+
+  const titleSnippet = row.title ? extractSnippet(row.title, term) : null;
+  if (titleSnippet) {
+    // Title matches render no label/excerpt at all (Phase 3 "Title matches")
+    // — the title is already the visible card headline. snippet: null is
+    // deliberate, not a placeholder for missing data.
+    return { ...base, matchField: "title", snippet: null };
+  }
+
+  const body = row.bodyMarkdown ?? "";
+  const snippet = extractSnippet(body, term) ?? fallbackSnippet(body);
+  return { ...base, matchField: "body", snippet };
+}
+
+function resolveMotionMatch(row: SearchCandidateMotion, term: string): MinutesSearchRow {
+  const base = { id: row.id, kind: row.kind, meetingDate: row.meetingDate, status: row.status, title: row.title };
+  const snippet =
+    extractSnippet(row.text, term) ??
+    extractSnippet(row.moverName, term) ??
+    (row.seconderName ? extractSnippet(row.seconderName, term) : null) ??
+    fallbackSnippet(row.text);
+  return { ...base, matchField: "motion", snippet };
+}
+
+function resolveActionItemMatch(row: SearchCandidateActionItem, term: string): MinutesSearchRow {
+  const base = { id: row.id, kind: row.kind, meetingDate: row.meetingDate, status: row.status, title: row.title };
+  const snippet = extractSnippet(row.text, term) ?? extractSnippet(row.ownerName, term) ?? fallbackSnippet(row.text);
+  return { ...base, matchField: "action_item", snippet };
+}
+
+/** Query B/C return one row PER matching child (a minutes record with 3
+ *  matching motions produces 3 rows) — reduce to the first child row per
+ *  minutes id, by the SQL `orderBy(createdAt)` already applied ("first child
+ *  row if multiple of the same kind match," per architect's ruling). */
+function firstRowPerId<T extends { id: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const row of rows) {
+    if (!seen.has(row.id)) {
+      seen.add(row.id);
+      result.push(row);
+    }
+  }
+  return result;
+}
+
+/**
+ * Merges the three query result sets into one row per matched `minutes.id`,
+ * by a documented, deterministic priority: **title > body > motion > action
+ * item**. A record matching in both its body and a motion therefore surfaces
+ * as a body match — a `Map` insert order of A, then B (skipping ids already
+ * present), then C encodes exactly this priority without a second pass.
+ *
+ * Final order is by `meetingDate` descending (string comparison on
+ * `'YYYY-MM-DD'`, matching the existing `desc(minutes.meetingDate)` ordering
+ * without a fourth SQL round trip).
+ */
+function mergeMinutesSearchResults(
+  term: string,
+  bodyRows: SearchCandidateBody[],
+  motionRows: SearchCandidateMotion[],
+  actionItemRows: SearchCandidateActionItem[],
+): MinutesSearchRow[] {
+  const merged = new Map<string, MinutesSearchRow>();
+
+  for (const row of bodyRows) {
+    merged.set(row.id, resolveBodyMatch(row, term));
+  }
+  for (const row of firstRowPerId(motionRows)) {
+    if (!merged.has(row.id)) merged.set(row.id, resolveMotionMatch(row, term));
+  }
+  for (const row of firstRowPerId(actionItemRows)) {
+    if (!merged.has(row.id)) merged.set(row.id, resolveActionItemMatch(row, term));
+  }
+
+  return Array.from(merged.values()).sort((a, b) => b.meetingDate.localeCompare(a.meetingDate));
+}
+
 /**
  * `ILIKE`, no full-text index (architect Ruling 2). Matches
  * `minutes.title`/`bodyMarkdown`, `minutesMotions.text`/`moverName`/
@@ -654,37 +825,159 @@ export async function getNextMeetingPointer(kind: string): Promise<NextMeetingPo
  * universal, so there is no per-result permission filtering to apply here
  * (architect's own note: the cross-audience leak concern that shaped
  * `ledger-search`'s admin-only design doesn't apply to minutes).
+ *
+ * Implementation is three independent, single-join-or-joinless queries
+ * merged in JS — NOT one `selectDistinct` over two `LEFT JOIN`s (see the
+ * file header and `mergeMinutesSearchResults()` above for why: that shape
+ * can't report which field matched, and joining `minutesMotions` to
+ * `minutesActionItems` on the same `minutes` row is a cross-join, an N x M
+ * row-multiplication risk). Still exactly 3 round trips regardless of
+ * record count — same complexity class as the query it replaces. Ignores
+ * `year` by design (Phase 1 Flow 3: search spans all years; `year` has no
+ * parameter here at all).
+ *
+ * Always searches with the raw, trimmed `term` — never `escaped` — for every
+ * `extractSnippet()` call (architect's flagged pitfall: `escapeIlikeTerm()`'s
+ * output carries literal backslashes for SQL ILIKE and would corrupt a JS
+ * substring search).
  */
 export async function searchMinutes(query: string, kind?: string): Promise<MinutesSearchRow[]> {
   const term = query.trim();
   if (!term) return [];
 
   const escaped = `%${escapeIlikeTerm(term)}%`;
-  const conditions: SQL[] = [isNull(minutes.pendingDeleteAt)];
-  if (kind) conditions.push(eq(minutes.kind, kind));
-  conditions.push(
+  const kindCondition = kind ? eq(minutes.kind, kind) : undefined;
+  const summaryColumns = {
+    id: minutes.id,
+    kind: minutes.kind,
+    meetingDate: minutes.meetingDate,
+    status: minutes.status,
+    title: minutes.title,
+  };
+
+  // Query A — title/body, no join.
+  const bodyConditions: SQL[] = [isNull(minutes.pendingDeleteAt)];
+  if (kindCondition) bodyConditions.push(kindCondition);
+  bodyConditions.push(or(ilike(minutes.title, escaped), ilike(minutes.bodyMarkdown, escaped))!);
+
+  const bodyRowsPromise = db
+    .select({ ...summaryColumns, bodyMarkdown: minutes.bodyMarkdown })
+    .from(minutes)
+    .where(and(...bodyConditions))
+    .orderBy(desc(minutes.meetingDate));
+
+  // Query B — motions, one join to `minutes` (for kind/soft-delete
+  // filtering + the summary columns). One row per matching motion.
+  const motionConditions: SQL[] = [isNull(minutes.pendingDeleteAt)];
+  if (kindCondition) motionConditions.push(kindCondition);
+  motionConditions.push(
     or(
-      ilike(minutes.title, escaped),
-      ilike(minutes.bodyMarkdown, escaped),
       ilike(minutesMotions.text, escaped),
       ilike(minutesMotions.moverName, escaped),
       ilike(minutesMotions.seconderName, escaped),
-      ilike(minutesActionItems.text, escaped),
-      ilike(minutesActionItems.ownerName, escaped),
     )!,
   );
 
-  return db
-    .selectDistinct({
-      id: minutes.id,
-      kind: minutes.kind,
-      meetingDate: minutes.meetingDate,
-      status: minutes.status,
-      title: minutes.title,
+  const motionRowsPromise = db
+    .select({
+      ...summaryColumns,
+      text: minutesMotions.text,
+      moverName: minutesMotions.moverName,
+      seconderName: minutesMotions.seconderName,
     })
     .from(minutes)
-    .leftJoin(minutesMotions, eq(minutesMotions.minutesId, minutes.id))
-    .leftJoin(minutesActionItems, eq(minutesActionItems.minutesId, minutes.id))
-    .where(and(...conditions))
-    .orderBy(desc(minutes.meetingDate));
+    .innerJoin(minutesMotions, eq(minutesMotions.minutesId, minutes.id))
+    .where(and(...motionConditions))
+    .orderBy(minutesMotions.createdAt);
+
+  // Query C — action items, one join to `minutes`. Same shape as B.
+  const actionItemConditions: SQL[] = [isNull(minutes.pendingDeleteAt)];
+  if (kindCondition) actionItemConditions.push(kindCondition);
+  actionItemConditions.push(
+    or(ilike(minutesActionItems.text, escaped), ilike(minutesActionItems.ownerName, escaped))!,
+  );
+
+  const actionItemRowsPromise = db
+    .select({
+      ...summaryColumns,
+      text: minutesActionItems.text,
+      ownerName: minutesActionItems.ownerName,
+    })
+    .from(minutes)
+    .innerJoin(minutesActionItems, eq(minutesActionItems.minutesId, minutes.id))
+    .where(and(...actionItemConditions))
+    .orderBy(minutesActionItems.createdAt);
+
+  const [bodyRows, motionRows, actionItemRows] = await Promise.all([
+    bodyRowsPromise,
+    motionRowsPromise,
+    actionItemRowsPromise,
+  ]);
+
+  return mergeMinutesSearchResults(term, bodyRows, motionRows, actionItemRows);
+}
+
+// ---------------------------------------------------------------------------
+// getMinutesFiscalYearCounts() — powers the year pills (2026-09-09 year-
+// pills feature, Phase 3 "API Contract" / architect "Per-Year Counts")
+// ---------------------------------------------------------------------------
+
+export interface MinutesFiscalYearCount {
+  fiscalYear: number;
+  count: number;
+}
+
+/**
+ * One query (`meetingDate` only, `pendingDeleteAt IS NULL`, `kind`-scoped
+ * when given), reduced in JS via `getFiscalYear()` from `fiscal-year.ts` —
+ * never a SQL-side fiscal-year `CASE` expression. Reimplementing
+ * `getFiscalYear()`'s Jan–Jun/Jul–Dec split as SQL to get a `GROUP BY` would
+ * be the exact "same decision implemented in more than two places" pattern
+ * CLAUDE.md's duplication rule exists to catch — and it's avoidable for free
+ * at this data volume (architect's ruling).
+ *
+ * Only fiscal years with >=1 record appear in the result; the current FY is
+ * NOT force-included here — the caller unions it in, since decision #1
+ * requires it to always render regardless of data. Sorted descending by
+ * `fiscalYear`.
+ *
+ * THE ONE RISKY CALL SITE IN THIS FEATURE. `minutes.meetingDate` is a plain
+ * `date` column, so Drizzle returns it as a `'YYYY-MM-DD'` string.
+ * `new Date(row.meetingDate)` parses as UTC MIDNIGHT; reading it back with
+ * `.getMonth()`/`.getFullYear()` (which `getFiscalYear()` does) then applies
+ * the SERVER's local timezone, which can silently shift a record right at
+ * the Jun 30/Jul 1 Lions-year boundary — exactly the cutover this feature is
+ * built on, so this is a live bug, not a hypothetical one. The established
+ * fix already used elsewhere in this codebase (`ledger.ts`,
+ * `reimbursements/[id]/route.ts`) is to append a local-midnight time
+ * component BEFORE constructing the `Date`, forcing local-time parsing:
+ * `new Date(row.meetingDate + "T00:00:00")`. NEVER reuse a bare
+ * `new Date(row.meetingDate)` here.
+ *
+ * By contrast, `listMinutesForMembers()`'s `year` filter has no such
+ * exposure — it compares `fyBounds(fy)`'s `'YYYY-MM-DD'` strings directly
+ * against the `date` column via `gte`/`lt`, never constructing a `Date` at
+ * all. Only this counting/grouping path needs a JS `Date`.
+ */
+export async function getMinutesFiscalYearCounts(kind?: string): Promise<MinutesFiscalYearCount[]> {
+  const conditions: SQL[] = [isNull(minutes.pendingDeleteAt)];
+  if (kind) conditions.push(eq(minutes.kind, kind));
+
+  const rows = await db
+    .select({ meetingDate: minutes.meetingDate })
+    .from(minutes)
+    .where(and(...conditions));
+
+  const counts = new Map<number, number>();
+  for (const row of rows) {
+    // See the doc comment above — this is the one call site in the whole
+    // feature that constructs a Date from `meetingDate`, and it MUST carry
+    // "T00:00:00" to force local-time parsing.
+    const fiscalYear = getFiscalYear(new Date(row.meetingDate + "T00:00:00"));
+    counts.set(fiscalYear, (counts.get(fiscalYear) ?? 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([fiscalYear, count]) => ({ fiscalYear, count }))
+    .sort((a, b) => b.fiscalYear - a.fiscalYear);
 }

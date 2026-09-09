@@ -5,6 +5,13 @@ interface KindFilterTabsProps {
   activeKind?: string;
   /** Preserved across tab switches so a search stays live while browsing by kind. */
   query?: string;
+  /** Preserved across tab switches as opaque, unvalidated state — the raw
+   *  `?year=` searchParams value, carried through exactly like `query`/
+   *  `kind` already carry each other. Kind scopes search results, year does
+   *  not (Phase 3 URL State Contract), so there's nothing to resolve here;
+   *  `resolveYearParam()` in @/lib/minutes.ts is the single place validity
+   *  is decided, on the next page load. */
+  year?: string;
 }
 
 /**
@@ -14,11 +21,12 @@ interface KindFilterTabsProps {
  * so browser back/forward and bookmarking a specific kind both work for
  * free.
  */
-export function KindFilterTabs({ activeKind, query }: KindFilterTabsProps) {
+export function KindFilterTabs({ activeKind, query, year }: KindFilterTabsProps) {
   function href(kind?: string): string {
     const params = new URLSearchParams();
     if (kind) params.set("kind", kind);
     if (query) params.set("q", query);
+    if (year) params.set("year", year);
     const qs = params.toString();
     return qs ? `/members/records?${qs}` : "/members/records";
   }

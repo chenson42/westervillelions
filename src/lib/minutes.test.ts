@@ -17,6 +17,10 @@ import {
   MINUTES_KIND_EMAIL,
   escapeIlikeTerm,
   resolveMinutesEmailTarget,
+  extractSnippet,
+  minutesSearchMatchFieldLabel,
+  resolveYearParam,
+  nearestFiscalYearWithData,
 } from "@/lib/minutes";
 
 describe("isValidMinutesKind", () => {
@@ -152,5 +156,145 @@ describe("resolveMinutesEmailTarget", () => {
     if (!result.allowed) {
       expect(result.reason).toBe("This minutes kind has no configured recipient.");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractSnippet — 2026-09-09 year-pills/search-context feature, Phase 3
+// Unit Tests items 5-10.
+// ---------------------------------------------------------------------------
+
+describe("extractSnippet", () => {
+  it("match at the very start of the text -> no leading ellipsis, matchStart === 0", () => {
+    const text = "Quorum was met and the meeting began promptly at seven o'clock in the evening.";
+    const result = extractSnippet(text, "Quorum");
+    expect(result).not.toBeNull();
+    expect(result?.excerpt.startsWith("…")).toBe(false);
+    expect(result?.matchStart).toBe(0);
+    expect(result?.matchLength).toBe(6);
+  });
+
+  it("match at the very end of the text -> no trailing ellipsis", () => {
+    const text = `${"A".repeat(80)}quorum`;
+    const result = extractSnippet(text, "quorum");
+    expect(result).not.toBeNull();
+    expect(result?.excerpt.endsWith("…")).toBe(false);
+    expect(result?.excerpt.endsWith("quorum")).toBe(true);
+  });
+
+  it("match plus surrounding text entirely shorter than the window -> whole text returned, no ellipsis on either side", () => {
+    const text = "Short text with quorum in it.";
+    const result = extractSnippet(text, "quorum");
+    expect(result).not.toBeNull();
+    expect(result?.excerpt).toBe(text);
+    expect(result?.excerpt.startsWith("…")).toBe(false);
+    expect(result?.excerpt.endsWith("…")).toBe(false);
+  });
+
+  it("text with no occurrence of the term -> returns null", () => {
+    expect(extractSnippet("Nothing relevant here.", "pancake")).toBeNull();
+  });
+
+  it("term containing ILIKE wildcards (%, _) is found via literal substring match — proves the raw/unescaped term is searched, not escapeIlikeTerm()'s output", () => {
+    const text = "Get 50%_off your next purchase!";
+    const result = extractSnippet(text, "50%_off");
+    expect(result).not.toBeNull();
+    expect(result?.matchLength).toBe(7);
+    expect(result?.excerpt).toContain("50%_off");
+  });
+
+  it("case-insensitive match", () => {
+    const text = "A Quorum was present at the meeting.";
+    const result = extractSnippet(text, "quorum");
+    expect(result).not.toBeNull();
+    expect(result?.excerpt).toContain("Quorum");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// minutesSearchMatchFieldLabel
+// ---------------------------------------------------------------------------
+
+describe("minutesSearchMatchFieldLabel", () => {
+  it("maps each matched field to its display label", () => {
+    expect(minutesSearchMatchFieldLabel("body")).toBe("Minutes text");
+    expect(minutesSearchMatchFieldLabel("motion")).toBe("Motion");
+    expect(minutesSearchMatchFieldLabel("action_item")).toBe("Action item");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveYearParam — 2026-09-09 year-pills feature, Phase 3 Unit Tests
+// items 11-16.
+// ---------------------------------------------------------------------------
+
+describe("resolveYearParam", () => {
+  const currentFY = 2026;
+  const knownYears = [2025, 2024]; // deliberately does NOT include currentFY
+
+  it("raw undefined -> the default: { year: currentFY, isAll: false }", () => {
+    expect(resolveYearParam(undefined, knownYears, currentFY)).toEqual({
+      year: currentFY,
+      isAll: false,
+    });
+  });
+
+  it('raw === "all" -> isAll: true', () => {
+    const result = resolveYearParam("all", knownYears, currentFY);
+    expect(result.isAll).toBe(true);
+  });
+
+  it("raw is a numeric string equal to a known year (in knownYears but not currentFY) -> that year, isAll: false", () => {
+    expect(resolveYearParam("2025", knownYears, currentFY)).toEqual({
+      year: 2025,
+      isAll: false,
+    });
+  });
+
+  it('raw is garbage ("banana") -> falls back to the default', () => {
+    expect(resolveYearParam("banana", knownYears, currentFY)).toEqual({
+      year: currentFY,
+      isAll: false,
+    });
+  });
+
+  it('raw is a well-formed number but NOT in knownYears and not currentFY ("1900") -> same fallback as garbage — the two failure cases in Flow 2 are handled identically', () => {
+    expect(resolveYearParam("1900", knownYears, currentFY)).toEqual({
+      year: currentFY,
+      isAll: false,
+    });
+  });
+
+  it("raw === String(currentFY) -> resolves to currentFY even when it has zero records (not required to appear in knownYears)", () => {
+    expect(resolveYearParam(String(currentFY), knownYears, currentFY)).toEqual({
+      year: currentFY,
+      isAll: false,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nearestFiscalYearWithData — 2026-09-09 year-pills feature, Phase 3 Unit
+// Tests items 17-20.
+// ---------------------------------------------------------------------------
+
+describe("nearestFiscalYearWithData", () => {
+  it("empty candidates -> null", () => {
+    expect(nearestFiscalYearWithData(2026, [])).toBeNull();
+  });
+
+  it("a single candidate -> that candidate, regardless of distance", () => {
+    expect(nearestFiscalYearWithData(2026, [2019])).toBe(2019);
+  });
+
+  it("multiple candidates on both sides of target -> picks the closer one", () => {
+    // target 2026; 2024 is distance 2, 2028 is distance 2... use asymmetric
+    // distances so there's exactly one closest candidate.
+    expect(nearestFiscalYearWithData(2026, [2023, 2025, 2030])).toBe(2025);
+  });
+
+  it("a tie in distance -> picks the more recent (larger) year", () => {
+    // target 2026; 2024 and 2028 are both distance 2.
+    expect(nearestFiscalYearWithData(2026, [2024, 2028])).toBe(2028);
   });
 });
