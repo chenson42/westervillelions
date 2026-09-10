@@ -139,7 +139,25 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
   // Blocked messages are still queued and still report success, so callers and their
   // tests behave exactly as in production; the message simply never reaches Resend,
   // and is visible at /admin/email-queue as `blocked_non_production`.
-  if (process.env.NODE_ENV !== "production" && !isDevAllowedRecipient(to)) {
+  // `_bulkMemberSend` bypasses the allowlist entirely — a bulk member send is
+  // blocked outside production even if the recipient IS allowlisted. That is
+  // DECISION-085's actual guarantee ("unconditionally blocks non-production
+  // delivery for any bulk-individual-recipient send — no address matching"),
+  // and until 2026-09-10 it was NOT implemented: the flag was destructured here
+  // and then never read, so the documented promise was simply false.
+  //
+  // Why it matters even though the allowlist is already deny-by-default: the
+  // allowlist is per-address, and a developer legitimately puts their OWN
+  // address in EMAIL_DEV_ALLOWLIST to receive test mail. The moment that
+  // address also appears in a member list, a bulk send reaches them for real —
+  // which is exactly the "one real message escaped a QA run" shape this guard
+  // exists to make impossible. Gating on call SHAPE (bulk vs. single) rather
+  // than on the recipient is the whole point: it cannot be defeated by dev data
+  // the guard has never heard of.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    (_bulkMemberSend || !isDevAllowedRecipient(to))
+  ) {
     console.warn(
       `[Email] BLOCKED: refusing to send to ${to} from a non-production process. ` +
         `Queued as blocked; nothing was delivered. To receive mail while developing, ` +
@@ -224,6 +242,14 @@ export interface SendBulkMemberEmailOptions {
   replyTo?: string;
   bcc?: string;
   /**
+   * Copied on EVERY message in the batch. Added 2026-09-10 so the ledger
+   * approval notifications could migrate off a hand-rolled sendEmail() loop
+   * without changing who sees what: the treasury CC rule (DECISION-086) puts
+   * the treasurer on the visible Cc line of each approval email, and dropping
+   * to Bcc to fit the old options shape would have silently changed that.
+   */
+  cc?: string;
+  /**
    * Shared across every recipient in the batch — the same .ics file (one
    * occurrence or a full series) is identical for every recipient, so it
    * belongs on the batch options, not per-recipient.
@@ -253,7 +279,7 @@ export interface SendBulkMemberEmailResult {
 export async function sendBulkMemberEmail(
   options: SendBulkMemberEmailOptions,
 ): Promise<SendBulkMemberEmailResult> {
-  const { from, subject, replyTo, bcc, attachments, recipients } = options;
+  const { from, subject, replyTo, cc, bcc, attachments, recipients } = options;
   const results: SendBulkMemberEmailResult["results"] = [];
   for (const r of recipients) {
     const result = await sendEmail({
@@ -262,6 +288,7 @@ export async function sendBulkMemberEmail(
       subject,
       html: r.html,
       replyTo,
+      cc,
       bcc,
       attachments,
       _bulkMemberSend: true,

@@ -13,6 +13,7 @@ import { users, roles, userRoles, passwordResetTokens } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { generateResetToken } from "@/lib/auth/password-reset";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml } from "@/lib/html-escape";
 import crypto from "crypto";
 
 // ---------------------------------------------------------------------------
@@ -126,7 +127,7 @@ async function sendWelcomeEmail(
     to: email,
     subject: "Welcome to the Westerville Lions Club — Set Up Your Account",
     html: `
-      <p>Hi ${name},</p>
+      <p>Hi ${escapeHtml(name)},</p>
       <p>Welcome to the Westerville Lions Club! Your member portal account has been created.</p>
       <p>Click the button below to set your password and activate your account:</p>
       <p style="text-align:center; margin: 24px 0;">

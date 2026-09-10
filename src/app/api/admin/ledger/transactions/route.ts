@@ -61,7 +61,7 @@ import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
-import { sendEmail } from "@/lib/email";
+import { sendBulkMemberEmail } from "@/lib/email";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
 import { resolveTreasurer } from "@/lib/board-positions";
@@ -386,22 +386,31 @@ export async function POST(request: NextRequest) {
         if (!treasurer.ok) {
           console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
         }
-        for (const email of approverEmails) {
-          await sendEmail({
-            to: email,
-            from: fromEmail,
-            subject: `Disbursement pending your approval — $${amountDollars}`,
-            html: `<p>A disbursement requires board approval before it can be posted.</p>
+        // sendBulkMemberEmail(), NOT a hand-rolled loop over sendEmail().
+        // `approverEmails` is every LEDGER_APPROVE holder — a genuine bulk
+        // member send, and CLAUDE.md's invariant is explicit about it.
+        //
+        // This is the exact code path of the 2026-08-12 incident, where a QA run
+        // in dev fired this notification and mailed 16 real board members a fake
+        // $500 approval request. DECISION-085 introduced sendBulkMemberEmail()
+        // in response — but these two call sites were never migrated onto it, so
+        // the fix for the incident was never applied to the code that caused it.
+        const approvalHtml = `<p>A disbursement requires board approval before it can be posted.</p>
 <ul>
   <li><strong>Amount:</strong> $${amountDollars}</li>
   <li><strong>Date:</strong> ${txnDate}</li>
   ${party ? `<li><strong>Payee:</strong> ${party}</li>` : ""}
   ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
 </ul>
-<p>Please review and approve or reject this disbursement from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`,
-            ...(treasurer.ok ? { cc: treasurer.email } : {}),
-          });
-        }
+<p>Please review and approve or reject this disbursement from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`;
+        await sendBulkMemberEmail({
+          from: fromEmail,
+          subject: `Disbursement pending your approval — $${amountDollars}`,
+          // Visible Cc, preserving the treasury CC rule (DECISION-086) exactly
+          // as the previous per-recipient sendEmail() call had it.
+          ...(treasurer.ok ? { cc: treasurer.email } : {}),
+          recipients: approverEmails.map((email) => ({ to: email, html: approvalHtml })),
+        });
       } catch {
         // Best-effort — email failure does not block the transaction insert
       }
@@ -697,21 +706,21 @@ async function handleTransfer(
       if (!treasurer.ok) {
         console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
       }
-      for (const email of approverEmails) {
-        await sendEmail({
-          to: email,
-          from: fromEmail,
-          subject: `${label} pending your approval — $${amountDollars}`,
-          html: `<p>A ${label.toLowerCase()} requires board approval before it can be posted.</p>
+      // sendBulkMemberEmail(), NOT a hand-rolled loop — same reasoning as the
+      // disbursement path above (CLAUDE.md invariant; DECISION-085).
+      const transferHtml = `<p>A ${label.toLowerCase()} requires board approval before it can be posted.</p>
 <ul>
   <li><strong>Amount:</strong> $${amountDollars}</li>
   <li><strong>Date:</strong> ${txnDate}</li>
   ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
 </ul>
-<p>Please review and approve or reject this ${label.toLowerCase()} from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`,
-          ...(treasurer.ok ? { cc: treasurer.email } : {}),
-        });
-      }
+<p>Please review and approve or reject this ${label.toLowerCase()} from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`;
+      await sendBulkMemberEmail({
+        from: fromEmail,
+        subject: `${label} pending your approval — $${amountDollars}`,
+        ...(treasurer.ok ? { cc: treasurer.email } : {}),
+        recipients: approverEmails.map((email) => ({ to: email, html: transferHtml })),
+      });
     } catch {
       // Best-effort — email failure does not block the transaction insert
     }

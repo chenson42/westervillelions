@@ -245,6 +245,65 @@ describe("sendBulkMemberEmail", () => {
     ).toHaveLength(3);
   });
 
+  it("blocks a bulk recipient who IS on EMAIL_DEV_ALLOWLIST — the bulk guard is not defeatable by allowlisting", async () => {
+    // THE REGRESSION THIS FILE EXISTS FOR, and it was live until 2026-09-10.
+    //
+    // DECISION-085 promises sendBulkMemberEmail() "unconditionally blocks
+    // non-production delivery for any bulk-individual-recipient send — no
+    // address matching". That was NOT implemented: `_bulkMemberSend` was
+    // destructured in sendEmail() and then never read, so a bulk send fell
+    // through to the ordinary per-address allowlist check like any other mail.
+    //
+    // The sibling test above did not catch it because it never sets
+    // EMAIL_DEV_ALLOWLIST — with an empty allowlist every recipient is blocked
+    // by the allowlist clause alone, so it passes identically whether or not
+    // the bulk guard exists. This test is the one that actually distinguishes
+    // them: the developer's OWN address is allowlisted (the entirely normal
+    // reason to use EMAIL_DEV_ALLOWLIST — to receive test mail), and the moment
+    // that address also appears in a member list, the old code delivered a real
+    // message from a dev run. That is the 2026-08-12 incident's exact shape.
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("EMAIL_DEV_ALLOWLIST", "dev-person@example.com");
+    const { sendBulkMemberEmail } = await import("@/lib/email");
+
+    const { results } = await sendBulkMemberEmail({
+      from: "treasurer@westervillelions.org",
+      subject: "Dues reminder",
+      recipients: [
+        { to: "dev-person@example.com", html: "<p>allowlisted</p>" },
+        { to: "someone-else@example.com", html: "<p>not allowlisted</p>" },
+      ],
+    });
+
+    // Nothing reaches Resend — INCLUDING the allowlisted address.
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(results).toHaveLength(2);
+    expect(
+      updateSet.mock.calls.filter((call) => call[0]?.status === "blocked_non_production"),
+    ).toHaveLength(2);
+  });
+
+  it("a SINGLE (non-bulk) send to an allowlisted address still delivers — the bulk guard must not break ordinary dev testing", async () => {
+    // The complement of the test above, and the reason the guard keys on call
+    // SHAPE rather than just blocking everything outside production: a developer
+    // must still be able to allowlist their own address and receive ordinary
+    // transactional mail while working. Only bulk-to-many is unconditional.
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("EMAIL_DEV_ALLOWLIST", "dev-person@example.com");
+    const { sendEmail } = await import("@/lib/email");
+
+    sendMock.mockResolvedValue({ data: { id: "re_1" }, error: null });
+    const result = await sendEmail({
+      to: "dev-person@example.com",
+      from: "noreply@westervillelions.org",
+      subject: "Password reset",
+      html: "<p>reset</p>",
+    });
+
+    expect(result.success).toBe(true);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
   it("in production, delivers per-recipient and one recipient's failure does not prevent the next recipient's send", async () => {
     vi.stubEnv("NODE_ENV", "production");
     // The first recipient fails every attempt; the second always succeeds.

@@ -73,6 +73,7 @@ import {
   getBudgetLineForLinkValidation,
 } from "@/lib/ledger-queries";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml } from "@/lib/html-escape";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { resolveTreasurer } from "@/lib/board-positions";
 
@@ -213,7 +214,7 @@ export async function PATCH(
             from: fromEmail,
             subject: "Your reimbursement request has been approved",
             html: `<p>Your reimbursement request for <strong>$${amountDollars}</strong> has been approved.</p>
-<p><strong>Description:</strong> ${reimb.description}</p>
+<p><strong>Description:</strong> ${escapeHtml(reimb.description)}</p>
 <p>The treasurer will process payment shortly. You can track the status of your request at <a href="${appUrl}/members/reimbursements">${appUrl}/members/reimbursements</a>.</p>`,
             ...(treasurer.ok ? { cc: treasurer.email } : {}),
           });
@@ -279,8 +280,8 @@ export async function PATCH(
             from: fromEmail,
             subject: "Your reimbursement request has been rejected",
             html: `<p>Your reimbursement request for <strong>$${amountDollars}</strong> has been rejected.</p>
-<p><strong>Description:</strong> ${reimb.description}</p>
-<p><strong>Reason for rejection:</strong> ${rejectionReason}</p>
+<p><strong>Description:</strong> ${escapeHtml(reimb.description)}</p>
+<p><strong>Reason for rejection:</strong> ${escapeHtml(rejectionReason)}</p>
 <p>If you have questions, please contact the treasurer. You may submit a new request at <a href="${appUrl}/members/reimbursements">${appUrl}/members/reimbursements</a>.</p>`,
             ...(treasurer.ok ? { cc: treasurer.email } : {}),
           });
@@ -477,7 +478,7 @@ export async function PATCH(
             from: fromEmail,
             subject: `Your reimbursement request has been paid — $${amountDollars}`,
             html: `<p>Your reimbursement request for <strong>$${amountDollars}</strong> has been paid.</p>
-<p><strong>Description:</strong> ${reimb.description}</p>
+<p><strong>Description:</strong> ${escapeHtml(reimb.description)}</p>
 <p><strong>Payment date:</strong> ${paymentDate}</p>
 <p>You can view the full history of your requests at <a href="${appUrl}/members/reimbursements">${appUrl}/members/reimbursements</a>.</p>`,
             ...(treasurer.ok ? { cc: treasurer.email } : {}),

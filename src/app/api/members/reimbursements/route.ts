@@ -36,7 +36,8 @@ import {
   listReimbursementsForMember,
   getEmailsForFeature,
 } from "@/lib/ledger-queries";
-import { sendEmail } from "@/lib/email";
+import { sendBulkMemberEmail } from "@/lib/email";
+import { escapeHtml } from "@/lib/html-escape";
 import { FEATURES } from "@/lib/permissions";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 
@@ -170,20 +171,34 @@ export async function POST(request: NextRequest) {
       const amountDollars = (amountCents / 100).toFixed(2);
       const appUrl = process.env.NEXTAUTH_URL ?? "";
 
-      for (const email of approverEmails) {
-        await sendEmail({
-          to: email,
-          from: fromEmail,
-          subject: `New reimbursement request — $${amountDollars}`,
-          html: `<p>A new reimbursement request has been submitted and requires board review.</p>
+      // escapeHtml() on the member-supplied fields. `description` arrives
+      // straight from the submitting member (trimmed and length-capped, never
+      // escaped) and this body goes to every LEDGER_APPROVE holder — i.e. the
+      // board. Interpolating it raw is precisely the omitted-escaper failure
+      // CLAUDE.md records under "Duplication Is a Review Finding": one copy of
+      // the escaper was simply left out, sending member-supplied text unescaped
+      // into a board-wide email. This was another such copy.
+      //
+      // amountDollars and appUrl are codebase-derived (a toFixed(2) and an env
+      // var), so they are deliberately NOT escaped — escaping them would
+      // double-encode legitimate punctuation, per html-escape.ts's own note.
+      const reimbursementHtml = `<p>A new reimbursement request has been submitted and requires board review.</p>
 <ul>
   <li><strong>Amount:</strong> $${amountDollars}</li>
-  <li><strong>Description:</strong> ${description}</li>
-  ${beneficiaryCause ? `<li><strong>Cause:</strong> ${beneficiaryCause}</li>` : ""}
+  <li><strong>Description:</strong> ${escapeHtml(description)}</li>
+  ${beneficiaryCause ? `<li><strong>Cause:</strong> ${escapeHtml(beneficiaryCause)}</li>` : ""}
 </ul>
-<p>Review the request at <a href="${appUrl}/admin/ledger/reimbursements">${appUrl}/admin/ledger/reimbursements</a>.</p>`,
-        });
-      }
+<p>Review the request at <a href="${appUrl}/admin/ledger/reimbursements">${appUrl}/admin/ledger/reimbursements</a>.</p>`;
+
+      // sendBulkMemberEmail(), not a hand-rolled loop — approverEmails is every
+      // LEDGER_APPROVE holder. Same invariant as the ledger transactions route.
+      // (The 2026-09-10 code review found 2 such loops; this is a third it
+      // missed, in a different file.)
+      await sendBulkMemberEmail({
+        from: fromEmail,
+        subject: `New reimbursement request — $${amountDollars}`,
+        recipients: approverEmails.map((email) => ({ to: email, html: reimbursementHtml })),
+      });
     } catch {
       // Best-effort — email failure does not block the submission
     }
