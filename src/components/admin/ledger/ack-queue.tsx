@@ -19,10 +19,21 @@ function formatDollars(cents: number): string {
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
 }
 
-function formatDate(d: Date | string | null): string {
-  if (!d) return "—";
-  const dt = typeof d === "string" ? new Date(d) : d;
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+/**
+ * Formats an ISO 'YYYY-MM-DD' string as "Aug 8, 2026" via an explicit local
+ * Date construction — NOT `new Date(isoString)`, which parses as UTC
+ * midnight and can display a day off in a US timezone (the same
+ * naive-timestamp-as-UTC class of bug this codebase has hit before; mirrors
+ * `formatYMD()` in acknowledgment-letter-selector.tsx and `formatDate()` in
+ * reconciliation-matching-grid.tsx).
+ */
+function formatDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 /**
@@ -129,7 +140,7 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
                 return (
                   <tr key={row.txn.id} className="hover:bg-gray-50">
                     <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                      {row.txn.txnDate}
+                      {formatDate(row.txn.txnDate)}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       <div className="font-medium">{row.txn.entityName}</div>

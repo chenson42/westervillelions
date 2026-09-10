@@ -41,6 +41,11 @@ export default function PermissionsMatrix({
   };
 
   const handleToggle = async (roleId: string, featureId: string) => {
+    // Guard against overlapping toggles — the UI below disables every
+    // checkbox while a request is in flight, but this is a second line of
+    // defense (e.g. a change fired before React re-renders the disabled state).
+    if (isSaving) return;
+
     const newAssignments = { ...assignments };
     if (!newAssignments[roleId]) {
       newAssignments[roleId] = new Set();
@@ -55,6 +60,7 @@ export default function PermissionsMatrix({
       newAssignments[roleId].add(featureId);
     }
     setAssignments(newAssignments);
+    setIsSaving(true);
 
     // Send API request
     try {
@@ -71,7 +77,7 @@ export default function PermissionsMatrix({
       toast.success(
         isCurrentlyAssigned ? "Permission removed" : "Permission granted"
       );
-    } catch (error) {
+    } catch {
       // Revert on error
       if (isCurrentlyAssigned) {
         newAssignments[roleId].add(featureId);
@@ -80,11 +86,25 @@ export default function PermissionsMatrix({
       }
       setAssignments({ ...newAssignments });
       toast.error("Failed to update permission");
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
     <div className="space-y-6">
+      {isSaving && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-lg bg-lions-blue/5 px-4 py-2 text-sm font-medium text-lions-blue"
+        >
+          <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Saving…
+        </div>
+      )}
       {Object.entries(featuresByCategory).map(([category, features]) => (
         <div
           key={category}
@@ -160,8 +180,9 @@ export default function PermissionsMatrix({
                               <input
                                 type="checkbox"
                                 checked={assigned}
+                                disabled={isSaving}
                                 onChange={() => handleToggle(role.id, feature.id)}
-                                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue"
+                                className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:ring-lions-blue disabled:cursor-not-allowed disabled:opacity-50"
                               />
                             )}
                           </div>

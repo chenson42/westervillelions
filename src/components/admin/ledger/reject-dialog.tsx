@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";

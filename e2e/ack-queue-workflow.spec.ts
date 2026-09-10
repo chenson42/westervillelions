@@ -36,6 +36,13 @@ const FOUNDATION_ENTITY_SLUG = "foundation";
 const CHARITABLE_FUND_SLUG = "charitable";
 const TEST_FISCAL_YEAR = 2096;
 const TEST_DATE = "2096-08-15";
+// How that date RENDERS in the pending queue. The queue used to print the raw
+// ISO string; as of the 2026-09-10 cleanup it formats dates like every other
+// ledger table (ack-queue.tsx's formatDate was written but never wired up, so
+// this column had been showing "2096-08-15" while its siblings showed
+// "Aug 15, 2096"). Row lookups must therefore match the DISPLAY form — the ISO
+// constant above is still what gets typed into the #txn-date input.
+const TEST_DATE_DISPLAY = "Aug 15, 2096";
 const TEST_AMOUNT_DISPLAY = "+$500.00";
 const RUN_ID = Date.now();
 const TXN_PARTY = `QA E2E Ack Payer ${RUN_ID}`;
@@ -51,7 +58,7 @@ let txnId = "";
 /** The pending-queue row for our test transaction — unique by (date, amount)
  *  within the sentinel FY this suite owns. */
 function pendingRow(p: Page) {
-  return p.locator("tr", { hasText: TEST_DATE }).filter({ hasText: TEST_AMOUNT_DISPLAY });
+  return p.locator("tr", { hasText: TEST_DATE_DISPLAY }).filter({ hasText: TEST_AMOUNT_DISPLAY });
 }
 
 test.beforeAll(async ({ browser }) => {

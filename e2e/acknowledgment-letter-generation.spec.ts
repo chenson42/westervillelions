@@ -37,6 +37,12 @@ const FOUNDATION_ENTITY_SLUG = "foundation";
 const CHARITABLE_FUND_SLUG = "charitable";
 const TEST_FISCAL_YEAR = 2094;
 const TEST_DATE = "2094-08-08";
+// How that date RENDERS in the pending-acknowledgments queue. The queue used to
+// print the raw ISO string; as of the 2026-09-10 cleanup it formats dates like
+// every other ledger table (ack-queue.tsx's formatDate helper was written but
+// never wired up). Row lookups must match the DISPLAY form; TEST_DATE above is
+// still what gets typed into #txn-date and sent as an API payload value.
+const TEST_DATE_DISPLAY = "Aug 8, 2094";
 const RUN_ID = Date.now();
 
 const FUND_URL = `/admin/ledger/${CHARITABLE_FUND_SLUG}?entity=${FOUNDATION_ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`;
@@ -108,7 +114,7 @@ test.describe("acknowledgment letter generation — compliance block + core flow
     txnId = txn.id;
 
     await page.goto("/admin/ledger/donors?tab=acknowledgments");
-    const row = page.locator("tr", { hasText: TEST_DATE }).filter({ hasText: "+$500.00" });
+    const row = page.locator("tr", { hasText: TEST_DATE_DISPLAY }).filter({ hasText: "+$500.00" });
     await row.getByRole("button", { name: "Record acknowledgment" }).click();
     const ackDialog = page.getByRole("dialog");
     await ackDialog.getByPlaceholder("Search by name or email…").fill(`QA E2E Letter Donor ${RUN_ID}`);

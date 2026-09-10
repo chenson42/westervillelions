@@ -8,7 +8,7 @@
 import { db } from "@/lib/db";
 import { userRoles, roles, roleFeatures, features } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { FEATURES, ROLES, type FeatureName } from "@/lib/permissions";
+import { ROLES, type FeatureName } from "@/lib/permissions";
 
 // Permission cache (60-second TTL)
 const permissionCache = new Map<string, { features: string[]; timestamp: number }>();

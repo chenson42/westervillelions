@@ -7,7 +7,6 @@
  * Re-run this script if the user has been deactivated — the ON CONFLICT re-activates.
  */
 import postgres from 'postgres';
-import { createHash } from 'crypto';
 
 const sql = postgres(process.env.DATABASE_URL);
 

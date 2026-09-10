@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { roles, roleFeatures, features, userRoles } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { roles, roleFeatures, userRoles } from "@/lib/db/schema";
+import { sql } from "drizzle-orm";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";

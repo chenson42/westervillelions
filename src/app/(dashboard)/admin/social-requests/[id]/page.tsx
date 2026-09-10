@@ -3,11 +3,11 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getSocialRequestById, listDecisionsForSocialRequest } from "@/lib/social-requests-queries";
-import { socialRequestStatusLabel, socialRequestPlatformLabel, socialRequestSubjectLine } from "@/lib/social-requests";
+import { socialRequestPlatformLabel, socialRequestSubjectLine } from "@/lib/social-requests";
 import {
   SocialRequestStatusBadge,
   SocialRequestStatusTimeline,

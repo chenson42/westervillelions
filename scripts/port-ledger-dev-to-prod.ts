@@ -38,7 +38,7 @@ config({ path: resolve(__dirname, "../.env.local") });
 
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { eq, and, like } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import * as schema from "../src/lib/db/schema";
 import {
   ledgerEntities,

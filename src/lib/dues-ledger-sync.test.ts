@@ -21,7 +21,7 @@
  *     bank account is configured for the Club entity
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { syncDuesCreate, syncDuesUpdate, syncDuesDelete } from "./dues-ledger-sync";
 
 // ---------------------------------------------------------------------------
@@ -308,10 +308,9 @@ describe("syncDuesUpdate", () => {
     expect(result).toEqual({ syncStale: true });
     // update must have been called (to set sync_stale=true)
     expect(updateSpy).toHaveBeenCalledOnce();
-    // The set argument must only contain syncStale and updatedAt — NOT amountCents/txnDate/paymentMethod
-    const setArg = updateSpy.mock.results[0].value.set.mock?.calls?.[0]?.[0];
-    // We can't easily inspect the chain, but we verify update WAS called once only
-    // The full DB verification is done in the click-through section
+    // The set argument must only contain syncStale and updatedAt — NOT amountCents/txnDate/paymentMethod.
+    // We can't easily inspect the chain here, so we verify update WAS called once only;
+    // the full DB verification is done in the click-through section.
   });
 
   it("returns {} and calls update (not stale) when linked txn is reconciled=false", async () => {

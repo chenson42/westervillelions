@@ -73,7 +73,7 @@ import {
   ledgerAcknowledgments,
   ledgerDonors,
 } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { deriveAckType, GIFT_PURPOSE_MAX_LENGTH } from "@/lib/ledger";
 
 /**

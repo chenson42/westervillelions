@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { membershipApplications, users } from "@/lib/db/schema";
+import { membershipApplications } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";

@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import type { DuesStatus } from "@/lib/dues";
 
 interface DuesStatusFilterProps {
   currentStatus: string;

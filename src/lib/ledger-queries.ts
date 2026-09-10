@@ -76,7 +76,6 @@ import {
   causeLineReferenceKey,
   resolveCauseLineActual,
   isEligibleForFuzzyCauseMatch,
-  shouldClearBudgetLineLink,
   computeDuesTimingAdjustment,
   type GuardrailFlag,
   type BudgetVarianceResult,

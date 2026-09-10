@@ -104,7 +104,7 @@ import {
   listPendingAcknowledgments,
   listAcknowledgmentsSummary,
 } from "./ledger-queries";
-import { ledgerFunds, ledgerCategories, ledgerBudgets, ledgerBudgetLines } from "./db/schema";
+import { ledgerBudgets, ledgerBudgetLines } from "./db/schema";
 import { causeLineReferenceKey } from "./ledger";
 import { db } from "./db";
 

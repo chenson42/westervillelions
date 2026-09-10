@@ -73,12 +73,6 @@ export default function MarkSentDialog({ txnId, open, onOpenChange, onSuccess }:
       // First, try the PATCH (most common path — ack created earlier in the queue).
       // If that returns 404, we need to POST first then PATCH.
 
-      // Build mark-sent body
-      const body: Record<string, string | null | undefined> = {
-        sentAt,
-        letterText: uploadMode === "text" && letterText.trim() ? letterText.trim() : undefined,
-      };
-
       // If file upload mode and file selected, upload will happen after we get the ack id.
       // We need to POST .../acknowledge first (to ensure ack exists) then upload + PATCH.
       // Strategy: PATCH first; if 404 → POST to create, then PATCH to mark-sent.

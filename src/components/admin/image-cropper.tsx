@@ -142,8 +142,8 @@ export function ImageCropper({
     return (
       <div className="space-y-3">
         <p className="text-xs text-gray-500">Preview — matches how it appears on the events page</p>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <div className="rounded-lg overflow-hidden border border-gray-200 shadow-sm">
+          {/* eslint-disable-next-line @next/next/no-img-element -- deliberate: previews a client-side blob/data URL from the cropper, not an optimizable static asset */}
           <img
             src={value}
             alt="Event image"

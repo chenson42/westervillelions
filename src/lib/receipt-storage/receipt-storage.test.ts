@@ -116,8 +116,7 @@ describe("LocalReceiptStorage", () => {
     // The resolved path must be under tmpDir
     const resolvedPath = path.join(root, "receipts", "etc", "passwd");
     expect(fs.existsSync(resolvedPath)).toBe(true);
-    // Make sure nothing was written outside tmpDir
-    const escapedPath = "/etc/passwd";
+    // Make sure nothing was written outside tmpDir.
     // We can't assert /etc/passwd was NOT modified by us without side-effects.
     // Instead, assert the write went to the correct location (under tmpDir).
     expect(resolvedPath.startsWith(root)).toBe(true);

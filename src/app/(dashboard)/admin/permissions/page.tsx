@@ -1,6 +1,5 @@
 import { db } from "@/lib/db";
 import { roles, features, roleFeatures } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { hasFeature } from "@/lib/permissions-server";
@@ -40,7 +39,6 @@ export default async function PermissionsPage() {
   // Create a map of role-feature assignments
   const assignmentMap = new Map<string, Set<string>>();
   mappings.forEach((mapping) => {
-    const key = `${mapping.roleId}-${mapping.featureId}`;
     if (!assignmentMap.has(mapping.roleId)) {
       assignmentMap.set(mapping.roleId, new Set());
     }
