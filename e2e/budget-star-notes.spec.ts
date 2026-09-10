@@ -1,5 +1,8 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { signInAsAdmin } from "./helpers/auth";
+import { db } from "../src/lib/db";
+import { ledgerBudgetApprovals, ledgerBudgetLines, ledgerBudgets, ledgerCategories } from "../src/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 
 /**
  * Budget Star & Notes — docs/work-log/2026-07-28-budget-star-notes.md,
@@ -37,12 +40,38 @@ import { signInAsAdmin } from "./helpers/auth";
  * Unlike budgeting-restructure.spec.ts, this suite DOES exercise the
  * Approve & lock / Unlock flow (needed to verify Decision 6's lock
  * exception) and therefore leaves a real ledger_budget_approvals audit row
- * behind if not cleaned up. QA cleans up FY2099 (both the ledger_budgets /
- * ledger_budget_lines rows this suite creates, via cascade, and the
- * ledger_budget_approvals row) via a direct DB delete after this suite
- * finishes running — see the Phase 5 work-log entry. Do not skip that
- * cleanup step: leaving it would poison budgeting-restructure.spec.ts's own
- * FY2099 fixture on its next run.
+ * behind if not cleaned up. beforeAll/afterAll hooks below now clean this up
+ * automatically (2026-09-09 remediation — see docs/reviews/2026-09-09-test-
+ * coverage.md; the manual "QA cleans up FY2099" step this comment used to
+ * describe was never actually executed and is exactly why this suite
+ * broke). This suite's FY2099 is on the CLUB entity — distinct from
+ * budgeting-restructure.spec.ts's FY2099 on the FOUNDATION entity — so the
+ * two never collide.
+ *
+ * The cleanup is DELIBERATELY surgical, not a blanket "delete every FY2099
+ * Club budget row": ledger-category-management.spec.ts's merge-fixture
+ * constants EVENT_COSTS_CLUB and SERVICE_PROJECTS_CLUB depend on those two
+ * categories continuing to carry a real FY2099 budget row after THIS suite
+ * runs (that file's own header comment calls them "real rows in the dev
+ * DB" without realizing they're actually this suite's own fixture output —
+ * an undocumented cross-suite coupling discovered during the 2026-09-09
+ * remediation, out of scope to fully untangle here but NOT safe to break in
+ * passing). So the cleanup only ever removes:
+ *   - the ledger_budget_approvals row (the lock API upserts a fresh one on
+ *     demand either way — safe to remove outright);
+ *   - the Vision screening budget row ENTIRELY (no other suite references
+ *     it — and it must be fully absent, not just zeroed, for the
+ *     lazy-create-$0 regression test below to mean anything); and
+ *   - only the ledger_budget_lines CHILDREN under Service projects, never
+ *     its parent ledger_budgets row — resets the cause breakdown this
+ *     suite's own "cause-line grain" test builds without touching the
+ *     parent row ledger-category-management.spec.ts's merge tests need to
+ *     keep finding.
+ * Event costs is untouched entirely — this suite's own LANDMINE test sets
+ * its amount/star/note unconditionally via the UI regardless of the row's
+ * starting state, so it never needed a reset, and
+ * ledger-category-management.spec.ts's merge round-trip depends on it
+ * surviving unchanged.
  *
  * Serial, not parallel: later tests depend on state earlier tests commit
  * (an already-$500-budgeted, already-noted, already-starred "Event costs"
@@ -50,6 +79,12 @@ import { signInAsAdmin } from "./helpers/auth";
  */
 
 const ENTITY_SLUG = "club";
+// Static catalog reference id (ledger_entities.id for the Club entity —
+// doesn't change week to week, same convention as
+// transaction-budget-line-link.spec.ts's FOUNDATION_ENTITY_ID) — needed by
+// the beforeAll/afterAll fixture cleanup, which deletes directly by
+// entityId rather than through the UI.
+const CLUB_ENTITY_ID = "a6a61beb-2839-4b9e-9c44-ad9ffbeaf50b";
 const TEST_FISCAL_YEAR = 2099;
 const ACTIVITY_FUND_SLUG = "activity";
 const DRILLDOWN_URL = `/admin/ledger/budgeting/${ACTIVITY_FUND_SLUG}?entity=${ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`;
@@ -118,7 +153,111 @@ async function fillAndCommitCauseLine(
   ]);
 }
 
+/** Resolves a ledger_categories.id by (entityId, name) — this suite only
+ *  ever needs the Club entity's own catalog, so no fundKind/flow filter. */
+async function findCategoryId(entityId: string, name: string): Promise<string | undefined> {
+  const rows = await db
+    .select({ id: ledgerCategories.id })
+    .from(ledgerCategories)
+    .where(and(eq(ledgerCategories.entityId, entityId), eq(ledgerCategories.name, name)));
+  return rows[0]?.id;
+}
+
+/** Resolves the (entityId, fiscalYear, categoryId) ledger_budgets row's id, if any. */
+async function findBudgetId(
+  entityId: string,
+  fiscalYear: number,
+  categoryId: string,
+): Promise<string | undefined> {
+  const rows = await db
+    .select({ id: ledgerBudgets.id })
+    .from(ledgerBudgets)
+    .where(
+      and(
+        eq(ledgerBudgets.entityId, entityId),
+        eq(ledgerBudgets.fiscalYear, fiscalYear),
+        eq(ledgerBudgets.categoryId, categoryId),
+      ),
+    );
+  return rows[0]?.id;
+}
+
+/** See the file-level doc comment above for why this is surgical rather
+ *  than a blanket FY-scoped delete. Idempotent — every delete is a no-op
+ *  when nothing matches, so this is safe to call from both beforeAll
+ *  (clears whatever a prior/interrupted run left behind before this run's
+ *  fixtures are created) and afterAll (runs regardless of pass/fail). */
+async function cleanupFixture(): Promise<void> {
+  await db
+    .delete(ledgerBudgetApprovals)
+    .where(and(eq(ledgerBudgetApprovals.entityId, CLUB_ENTITY_ID), eq(ledgerBudgetApprovals.fiscalYear, TEST_FISCAL_YEAR)));
+
+  const visionCategoryId = await findCategoryId(CLUB_ENTITY_ID, UNBUDGETED_CATEGORY);
+  if (visionCategoryId) {
+    await db
+      .delete(ledgerBudgets)
+      .where(
+        and(
+          eq(ledgerBudgets.entityId, CLUB_ENTITY_ID),
+          eq(ledgerBudgets.fiscalYear, TEST_FISCAL_YEAR),
+          eq(ledgerBudgets.categoryId, visionCategoryId),
+        ),
+      );
+  }
+
+  const serviceCategoryId = await findCategoryId(CLUB_ENTITY_ID, CAUSE_CATEGORY);
+  if (serviceCategoryId) {
+    const serviceBudgetId = await findBudgetId(CLUB_ENTITY_ID, TEST_FISCAL_YEAR, serviceCategoryId);
+    if (serviceBudgetId) {
+      await db.delete(ledgerBudgetLines).where(eq(ledgerBudgetLines.budgetId, serviceBudgetId));
+    }
+  }
+
+  // Event costs' ledger_budgets ROW must survive (ledger-category-
+  // management.spec.ts's EVENT_COSTS_CLUB merge fixture needs
+  // budgetLines.total to stay 1), but its starred/note/amount fields must
+  // NOT: (1) a leftover starred=true from a prior run outranks Vision
+  // screening's freshly-starred row in the "sorts to the top" check above
+  // (both starred, alphabetical tiebreak puts "Event costs" before "Vision
+  // screening"); (2) THE LANDMINE test below does `amountInput.fill("500.00")`
+  // then blurs, waiting for a PATCH — Playwright's `.fill()` is a no-op (no
+  // "input" event, so budget-editor.tsx's onChange-driven dirty flag never
+  // flips, and the blur handler's `if (!dirtyRef.current[key]) return`
+  // skips the commit entirely) when the field ALREADY shows the value being
+  // filled, which a leftover annualAmountCents=50000 ("500.00") row from
+  // THIS suite's own prior run guarantees on every re-run after the first.
+  // Resetting to annualAmountCents=0 (not deleting the row — see above)
+  // fixes both: it's never starred/noted, and it's never already "500.00".
+  // ledger-category-management.spec.ts never hardcodes this category's
+  // dollar amount (it reads whatever's there dynamically via getImpact()),
+  // so the exact reset value doesn't matter to it — only that a row exists.
+  const eventCostsCategoryId = await findCategoryId(CLUB_ENTITY_ID, LANDMINE_CATEGORY);
+  if (eventCostsCategoryId) {
+    await db
+      .update(ledgerBudgets)
+      .set({ starred: false, note: null, annualAmountCents: 0 })
+      .where(
+        and(
+          eq(ledgerBudgets.entityId, CLUB_ENTITY_ID),
+          eq(ledgerBudgets.fiscalYear, TEST_FISCAL_YEAR),
+          eq(ledgerBudgets.categoryId, eventCostsCategoryId),
+        ),
+      );
+  }
+}
+
 test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
+  // Idempotent: clears any residue a prior, possibly-interrupted run left
+  // behind (e.g. the lazy-created $0 Vision screening row, or an
+  // un-cleaned lock/approval row) BEFORE this run's fixtures are created —
+  // guarantees the "un-budgeted category" and "never-before-starred"
+  // assumptions the first tests below depend on.
+  test.beforeAll(cleanupFixture);
+
+  // Runs regardless of pass/fail (Playwright always executes afterAll hooks
+  // registered in a describe block) — leaves the DB as this suite found it.
+  test.afterAll(cleanupFixture);
+
   test.beforeEach(async ({ page }) => {
     await signInAsAdmin(page);
   });
@@ -274,6 +413,15 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
   test("cause-line grain: a never-saved row renders the reserved/disabled annotation-control footprint until its first commit; starring sorts within its own cause group; note persists", async ({
     page,
   }) => {
+    // This test does more sequential fill-then-await-PATCH round trips (3
+    // lines × amount+label, plus a soft-delete/undo and a star toggle) than
+    // most in this file — same rationale budgeting-restructure.spec.ts's
+    // "delayed-commit Undo" test already documents for its own
+    // test.setTimeout bump. The default 30s (and even 45s) occasionally
+    // isn't enough margin under load (observed during the 2026-09-09
+    // remediation), not because any individual step is slow.
+    test.setTimeout(60_000);
+
     // Arrange — put Program supplies (Activity Fund) into cause breakdown
     // with two committed lines. Fund-scoped throughout: Administrative
     // Fund has its own, unrelated "Program supplies" category on the same

@@ -51,10 +51,17 @@ test.describe("Budgeting Overview/Drill-Down Restructure", () => {
   });
 
   test("an invalid fundSlug for the resolved entity 404s on the drill-down", async ({ page }) => {
+    // Asserts on the app's own custom 404 page (src/app/not-found.tsx,
+    // shipped v1.75.0 / commit 4aea4f8) — the framework-default "This page
+    // could not be found" copy this test used to check no longer renders
+    // for a real notFound() call anywhere in the app. Heading, not body
+    // text, so a future copy tweak to the supporting sentence (allowed —
+    // CLAUDE.md: copy the club expects to change is out of test scope)
+    // doesn't break this again.
     await page.goto(
       `/admin/ledger/budgeting/not-a-real-fund?entity=${ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`,
     );
-    await expect(page.getByText(/this page could not be found/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
   });
 
   test("overview -> drill-down -> overview: clicking a fund row navigates in, the breadcrumb navigates back, and both preserve ?entity=&fy=", async ({

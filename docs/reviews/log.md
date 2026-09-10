@@ -31,6 +31,7 @@ For no-op reviews (a cycle genuinely produced no actionable findings), use:
 ```
 2026-05-23 | retrospective | nothing material
 ```
+2026-09-09 | test-coverage | e2e restored to a green, reproducible baseline: 131 passed/13 failed/41 skipped -> 186/0/0, identical across two consecutive serial runs; found a REAL production bug (CSP blocked WASM, breaking HEIC receipt upload since v1.75.0 — fixed in 22ddaa0); fixture pollution had poisoned a ground-truth baseline (expected FY2095 data on a real category); cancel-occurrence date rot made self-seeding; workers pinned to 1; see 2026-09-09-test-coverage.md
 
 2026-07-28 | dependencies | CVE gate cleared: next-auth 5.0.0-beta.30→beta.32 + @auth/drizzle-adapter 1.11.2→1.11.3 + corrected two stale/ineffective pnpm overrides (@auth/core was pinned to the vulnerable 0.41.1; brace-expansion override range didn't reach the patched 5.0.8) — `pnpm audit --prod --audit-level=high` now exits 0 (was exit 1, 3 critical + 2 high); auth smoke test (credentials sign-in → session → gated admin page) verified working; residual 1 moderate + 1 low both below the high gate; see 2026-07-28-dependencies.md
 

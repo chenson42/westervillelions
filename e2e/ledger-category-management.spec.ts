@@ -56,9 +56,31 @@ const TRANSFER_TO_FOUNDATION_CLUB = "603614a1-4cf9-48d4-9377-b79b2c0a51ce"; // 0
 
 // Independently-computed ground truth (see QA report / SQL run before this
 // suite was written) — regression targets, not just "whatever the app says."
-const CHARITABLE_DONATION_OUT_EXPECTED_TXN_TOTAL = 39;
-const CHARITABLE_DONATION_OUT_EXPECTED_BUDGET_TOTAL = 5;
-const CHARITABLE_DONATION_OUT_EXPECTED_FYS = [2025, 2095, 2097, 2098, 2099];
+//
+// 2026-09-09 remediation (docs/reviews/2026-09-09-test-coverage.md):
+// re-verified against a fresh direct SQL query and found the txn/budget
+// totals below (39 / 5 / {2025,2095,2097,2098,2099}) no longer matched —
+// NOT an app regression. The original 2026-08-07 ground truth was itself
+// computed against a database that other e2e suites had already leaked
+// fixture rows into: transaction-budget-line-link.spec.ts posted
+// "E2E QA B30 …" transactions dated in FY2095 against this exact real
+// category, and budgeting-restructure.spec.ts / prior-year-cause-line-
+// reconcile.spec.ts / transaction-budget-line-link.spec.ts each left a
+// sentinel FY2097/2098/2099/2095 ledger_budgets row on it (the 2026-08-07
+// work-log's own fixture notes literally record "39 transactions across
+// FY2024/2025/2095" — FY2095 activity on a real club category was already
+// fixture pollution at the moment this suite was authored). Those four
+// suites now clean up after themselves (ledger-fixture-cleanup.ts,
+// 2026-09-09), which correctly restored this real Foundation category to
+// its true state: 35 genuine transactions (verified: every party name is a
+// real donee, zero "E2E QA" rows, txn_date range 2024-07-28..2026-03-07)
+// and exactly one real budget row (FY2025). Updated to match reality —
+// this is a test-fixture-hygiene fix, not a relaxed assertion; the numbers
+// below are exact ground truth, re-derived the same way (direct SQL) the
+// original ones were.
+const CHARITABLE_DONATION_OUT_EXPECTED_TXN_TOTAL = 35;
+const CHARITABLE_DONATION_OUT_EXPECTED_BUDGET_TOTAL = 1;
+const CHARITABLE_DONATION_OUT_EXPECTED_FYS = [2025];
 const RUDOLPH_RUN_EXPECTED_GIVING_CENTS = 2043417;
 
 let page: Page;
@@ -209,7 +231,12 @@ test.describe("countsAsGiving dollar impact agrees with getPhilanthropy's own fi
     await page.goto("/admin/ledger/settings/categories");
     await page.getByRole("button", { name: /^Foundation$/ }).click().catch(() => {});
     await page.getByRole("checkbox", { name: /show inactive/i }).uncheck().catch(() => {});
-    await page.getByLabel("Search").fill("Rudolph Run expenses");
+    // #cat-search, not getByLabel("Search") — the admin nav gained its own
+    // search box (id="admin-nav-search", labeled "Search admin menu") after
+    // this suite was written, and a bare accessible-name match of "Search"
+    // now hits both inputs (strict-mode violation). Scoping by id is exact
+    // and stays correct if either label's copy ever changes.
+    await page.locator("#cat-search").fill("Rudolph Run expenses");
 
     // Act — open Edit flags; since countsAsGiving is currently false, the
     // dollar-impact copy should read "would count" (computed regardless of
@@ -242,7 +269,7 @@ test.describe("rename — no native dialogs, plain save, and locked-year disclos
     // Arrange
     await page.goto("/admin/ledger/settings/categories");
     await page.getByRole("button", { name: /^Club$/ }).click().catch(() => {});
-    await page.getByLabel("Search").fill("Insurance & bonding");
+    await page.locator("#cat-search").fill("Insurance & bonding");
 
     // Act
     await page.getByRole("row", { name: /Insurance & bonding/ }).getByRole("button", { name: "Rename" }).click();
@@ -273,7 +300,7 @@ test.describe("rename — no native dialogs, plain save, and locked-year disclos
 
     await page.goto("/admin/ledger/settings/categories");
     await page.getByRole("button", { name: /^Foundation$/ }).click().catch(() => {});
-    await page.getByLabel("Search").fill("Charitable donation out");
+    await page.locator("#cat-search").fill("Charitable donation out");
 
     // Act
     await page.getByRole("row", { name: /^Charitable donation out/ }).getByRole("button", { name: "Rename" }).click();
@@ -435,7 +462,7 @@ test.describe("a merge that should succeed", () => {
     // Act — preview, then apply through the real UI so the ConfirmDialog path is exercised too.
     await page.goto("/admin/ledger/settings/categories");
     await page.getByRole("button", { name: /^Club$/ }).click().catch(() => {});
-    await page.getByLabel("Search").fill("Event costs");
+    await page.locator("#cat-search").fill("Event costs");
     await page.getByRole("row", { name: /Event costs/ }).getByRole("button", { name: "Merge into…" }).click();
     await expect(page.getByRole("dialog", { name: /Merge/ })).toBeVisible();
     await page.locator("#merge-destination").selectOption(CHARITABLE_DONATION_OUT_CLUB);
@@ -480,7 +507,7 @@ test.describe("deactivate warns but does not block; reactivate recovers it", () 
     await page.getByRole("button", { name: "Create Category" }).click();
     await expect(page.getByRole("dialog", { name: "New Category" })).toBeHidden();
 
-    await page.getByLabel("Search").fill(QA_CATEGORY_NAME);
+    await page.locator("#cat-search").fill(QA_CATEGORY_NAME);
     const listRes = await page.request.get(`/api/admin/ledger/categories?entityId=${CLUB_ENTITY_ID}&includeInactive=true`);
     const { categories } = await listRes.json();
     qaCategoryId = categories.find((c: { name: string }) => c.name === QA_CATEGORY_NAME)?.id;
@@ -523,7 +550,7 @@ test.describe("deactivate warns but does not block; reactivate recovers it", () 
     await page.goto("/admin/ledger/settings/categories");
     await page.getByRole("button", { name: /^Club$/ }).click().catch(() => {});
     await page.getByRole("checkbox", { name: /show inactive/i }).check();
-    await page.getByLabel("Search").fill(QA_CATEGORY_NAME);
+    await page.locator("#cat-search").fill(QA_CATEGORY_NAME);
     await page.getByRole("row", { name: QA_CATEGORY_NAME }).getByRole("button", { name: "Deactivate" }).click();
     await expect(page.getByRole("alertdialog")).toContainText("Warning:");
     await expect(page.getByRole("alertdialog")).toContainText("FY2026");

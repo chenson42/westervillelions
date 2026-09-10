@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Request } from "@playwright/test";
 import { signInAsAdmin } from "./helpers/auth";
+import { cleanupBudgetFixture } from "./helpers/ledger-fixture-cleanup";
 
 /**
  * Budgeting Page Restructure — docs/work-log/2026-07-29-budgeting-restructure.md.
@@ -17,9 +18,17 @@ import { signInAsAdmin } from "./helpers/auth";
  * treasurer's real FY2026 budget data. Every row this suite creates is
  * prefixed "E2E QA" for the same reason admin-security.spec.ts leaves its
  * marker rows behind: there is no destructive cleanup path for this data
- * short of finalizing the budget (which would create a real board-approval
- * audit record) or reaching into the DB directly, so the FY2099 fixture is
- * intentionally left in place — not a cleanup gap.
+ * through the UI short of finalizing the budget (which would create a real
+ * board-approval audit record). 2026-09-09 remediation (see
+ * docs/reviews/2026-09-09-test-coverage.md): "intentionally left in place"
+ * turned out to be a real cleanup gap in practice — weeks of accumulated
+ * FY2099 rows broke this suite's own "starts from a blank category" and
+ * "category name not yet taken" assumptions on its next run, including a
+ * literal 409 from re-creating "E2E QA New Category"/"E2E QA Scroll Target"
+ * (ledger_categories has no fiscalYear column, so those rows outlive any
+ * FY-scoped cleanup unless deleted by name). beforeAll/afterAll below now
+ * reach into the DB directly to delete both the FY2099 budget fixture and
+ * the runtime-created categories.
  *
  * IMPORTANT DISCOVERY baked into this suite's design: getFundReport()
  * returns a line for EVERY active category in the entity's catalog,
@@ -45,6 +54,11 @@ import { signInAsAdmin } from "./helpers/auth";
  */
 
 const FOUNDATION_ENTITY_SLUG = "foundation";
+// Static catalog reference id (ledger_entities.id for the Foundation entity
+// — doesn't change week to week; same id transaction-budget-line-link.spec.ts
+// hardcodes as FOUNDATION_ENTITY_ID) — needed by the beforeAll/afterAll
+// fixture cleanup below, which deletes directly by entityId.
+const FOUNDATION_ENTITY_ID = "8a27091d-ae9b-4c58-bff3-a633c418ee21";
 const TEST_FISCAL_YEAR = 2099;
 const CHARITABLE_FUND_SLUG = "charitable";
 // Budgeting Overview/Drill-Down Restructure (2026-07-30): the editor this
@@ -114,7 +128,24 @@ async function fillAndCommitCauseLine(
   ]);
 }
 
+/** Deletes this suite's whole FY2099/Foundation fixture: the budget rows +
+ *  cause lines (cascade) plus the runtime-created categories, which have no
+ *  fiscalYear column and would otherwise 409 a fresh "Create category" call
+ *  on the very next run. Shared by beforeAll (idempotent — clears whatever a
+ *  prior run left behind) and afterAll (runs regardless of pass/fail). */
+async function cleanupFixture(): Promise<void> {
+  await cleanupBudgetFixture({
+    entityId: FOUNDATION_ENTITY_ID,
+    fiscalYears: [TEST_FISCAL_YEAR],
+    categoryNames: ["E2E QA New Category", "E2E QA Scroll Target"],
+    categoryNamePrefixes: ["E2E QA Trash Bug "],
+  });
+}
+
 test.describe("Budgeting page restructure — /admin/ledger/budgeting", () => {
+  test.beforeAll(cleanupFixture);
+  test.afterAll(cleanupFixture);
+
   test.beforeEach(async ({ page }) => {
     await signInAsAdmin(page);
   });

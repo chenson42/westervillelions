@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { signInAsAdmin } from "./helpers/auth";
+import { cleanupBudgetFixture } from "./helpers/ledger-fixture-cleanup";
 
 /**
  * Regression test for the 2026-07-30 loop-back bug fix — see
@@ -27,11 +28,21 @@ import { signInAsAdmin } from "./helpers/auth";
  * Foundation entity's Charitable fund, so this test never touches real
  * treasurer data or the FY2099 fixture budgeting-restructure.spec.ts owns.
  * Same rationale as that suite: there is no destructive cleanup path for
- * this data short of finalizing the budget or reaching into the DB
- * directly, so the fixture rows are intentionally left in place.
+ * this data through the UI short of finalizing the budget or reaching into
+ * the DB directly. 2026-09-09 remediation (docs/reviews/2026-09-09-test-
+ * coverage.md): "left in place" was a real cleanup gap — this suite's own
+ * Step 1 assumed FY2097 started with no "E2E QA Prior-Ref Pilot Dogs" line
+ * under Vision & Eye Care, which stopped being true the second time this
+ * suite ever ran. beforeAll/afterAll below now delete the FY2097/FY2098
+ * budget fixture directly.
  */
 
 const FOUNDATION_ENTITY_SLUG = "foundation";
+// Static catalog reference id (ledger_entities.id for the Foundation entity
+// — same id transaction-budget-line-link.spec.ts hardcodes as
+// FOUNDATION_ENTITY_ID) — needed by the beforeAll/afterAll fixture cleanup.
+const FOUNDATION_ENTITY_ID = "8a27091d-ae9b-4c58-bff3-a633c418ee21";
+const CHARITABLE_FUND_SLUG = "charitable";
 const PRIOR_FY = 2097;
 const CURRENT_FY = 2098;
 const CATEGORY_NAME = "Charitable donation out";
@@ -39,8 +50,27 @@ const CAUSE = "Vision & Eye Care";
 const LABEL = "E2E QA Prior-Ref Pilot Dogs";
 const CAUSE_LINES_PATCH_URL = "/api/admin/ledger/budgets/cause-lines";
 
+/**
+ * 2026-09-09 remediation (docs/reviews/2026-09-09-test-coverage.md): points
+ * at the FUND's own drill-down, not the bare `/admin/ledger/budgeting`
+ * overview. This test predates the Budgeting Overview/Drill-Down
+ * Restructure (2026-07-30, same day as the bug this test guards against)
+ * and was never updated for it — budgeting-restructure.spec.ts,
+ * budget-star-notes.spec.ts, and transaction-budget-line-link.spec.ts all
+ * document the same move ("the full editor... now lives [on the
+ * drill-down]... the overview is read-only by design"). The bare overview
+ * URL renders a read-only summary with no category-level detail at all —
+ * no "Charitable donation out" text, no "+ Add cause" button anywhere on
+ * the page — so this test's very first interaction always timed out
+ * waiting for a control the current page can never show. The original
+ * diagnosis attributed this failure to fixture pollution (a leftover cause
+ * group from a prior run); the DB evidence was real, but the deeper cause
+ * is this stale URL — confirmed by checking the live page directly: even
+ * with FY2097/2098 fully cleaned, `/admin/ledger/budgeting?entity=
+ * foundation&fy=2097` still never renders "Charitable donation out".
+ */
 function budgetingUrl(fy: number): string {
-  return `/admin/ledger/budgeting?entity=${FOUNDATION_ENTITY_SLUG}&fy=${fy}`;
+  return `/admin/ledger/budgeting/${CHARITABLE_FUND_SLUG}?entity=${FOUNDATION_ENTITY_SLUG}&fy=${fy}`;
 }
 
 /** Scopes to the OUTER per-category <div> — mirrors budgeting-restructure.spec.ts's own helper. */
@@ -80,6 +110,14 @@ async function fillAndCommitCauseLine(
 }
 
 test.describe("Prior-year cause-line reference reconciles live, no reload required", () => {
+  test.beforeAll(async () => {
+    await cleanupBudgetFixture({ entityId: FOUNDATION_ENTITY_ID, fiscalYears: [PRIOR_FY, CURRENT_FY] });
+  });
+
+  test.afterAll(async () => {
+    await cleanupBudgetFixture({ entityId: FOUNDATION_ENTITY_ID, fiscalYears: [PRIOR_FY, CURRENT_FY] });
+  });
+
   test.beforeEach(async ({ page }) => {
     await signInAsAdmin(page);
   });

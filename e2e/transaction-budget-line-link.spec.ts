@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { signInAsAdmin } from "./helpers/auth";
+import { cleanupBudgetFixture } from "./helpers/ledger-fixture-cleanup";
 
 /**
  * Explicit transaction <-> budget-line link (B-30, DECISION-061) —
@@ -37,8 +38,18 @@ import { signInAsAdmin } from "./helpers/auth";
  * respectively) so this suite never touches the treasurer's real budget/
  * ledger data. Every row created here is prefixed "E2E QA B30" for the same
  * reason those suites leave their fixture rows in place: there is no
- * destructive cleanup path for budget cause lines short of finalizing the
- * budget or reaching into the DB directly.
+ * destructive cleanup path through the UI for budget cause lines or the
+ * transactions linked to them short of finalizing the budget or reaching
+ * into the DB directly. 2026-09-09 remediation (docs/reviews/2026-09-09-
+ * test-coverage.md): "left in place" turned out to be a real cleanup gap —
+ * a prior uncleaned run's leftover "E2E QA B30 Linked Payee" transaction row
+ * duplicated the one this suite's own Setup test creates, and stale FY2095
+ * budget lines under "Community & Civic" meant the picker had nothing new
+ * to add. beforeAll/afterAll below now delete both the FY2095 budget
+ * fixture and every ledger_transactions row this suite's party names
+ * ("E2E QA B30 …") directly — transactions aren't reached by the FY-scoped
+ * budget delete, since budgetLineId is ON DELETE SET NULL by design (a
+ * removed/collapsed budget line must never orphan a real transaction).
  *
  * Serial, not parallel — later tests build on budget lines and transactions
  * earlier tests created (same rationale as budgeting-restructure.spec.ts and
@@ -125,7 +136,22 @@ async function openRecordTransactionDialog(page: Page) {
   return dialog;
 }
 
+/** Deletes this suite's whole FY2095/Foundation fixture: every
+ *  "E2E QA B30 …" transaction plus the budget rows/cause lines (cascade).
+ *  Shared by beforeAll (idempotent — clears whatever a prior run left
+ *  behind) and afterAll (runs regardless of pass/fail). */
+async function cleanupFixture(): Promise<void> {
+  await cleanupBudgetFixture({
+    entityId: FOUNDATION_ENTITY_ID,
+    fiscalYears: [TEST_FISCAL_YEAR],
+    transactionPartyPrefixes: ["E2E QA B30"],
+  });
+}
+
 test.describe("Explicit transaction <-> budget-line link (B-30)", () => {
+  test.beforeAll(cleanupFixture);
+  test.afterAll(cleanupFixture);
+
   test.beforeEach(async ({ page }) => {
     await signInAsAdmin(page);
   });

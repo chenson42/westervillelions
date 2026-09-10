@@ -146,3 +146,85 @@ Cascading effect: the serial-mode `test.describe.configure({ mode: "serial" })` 
 2. Findings #2–5: run the overdue FY2099/2098/2097/2095 cleanup once to unblock the next run, then fix the underlying non-idempotency (fresh-FY-per-run or `afterAll` cleanup) so this doesn't recur every time the suite goes a while between clean runs.
 3. Findings #6–8: hand back to qa/implementer as straightforward test edits (regex/URL fixes) — no product change needed.
 4. The 76-day gap on this review is itself the root enabler of #2–5 (and arguably #1 — a suite run within the first week of v1.75.0 would have caught the CSP regression immediately). Recommend the 7-day cadence actually be enforced going forward.
+
+---
+
+# Remediation — 2026-09-09
+
+## Result
+
+| | Before | After (run A) | After (run B) |
+|---|---|---|---|
+| Passed | 131 | **186** | **186** |
+| Failed | 13 | **0** | **0** |
+| Skipped | 1 | 1 | 1 |
+| Did not run | 41 | **0** | **0** |
+
+Two consecutive full serial runs produced **identical** tallies. That equality — not
+the zero itself — is the evidence that the fixture cleanup actually works: a suite that
+pollutes its own database gives a different answer the second time.
+
+`workers: 1` is now configured unconditionally (it was CI-only). Every spec shares one
+database and asserts on counts and on preconditions like "no minutes exist for the
+current fiscal year"; local multi-worker runs manufactured 4 failures that vanished
+serially, which hides real regressions behind false ones.
+
+## What was actually wrong
+
+**1. A real production bug (fixed and shipped separately, commit 22ddaa0).**
+`receipt-heic-upload.spec.ts` was not stale — HEIC receipt upload was genuinely broken
+in Chrome and Firefox from 2026-09-04, because v1.75.0 dropped `'unsafe-eval'` from the
+CSP and nothing recorded that `libheif-js`'s WASM instantiation depended on it. See
+`docs/work-log/2026-09-09-heic-csp-wasm-regression.md`.
+
+**2. Fixture pollution, and a baseline poisoned by it.**
+Four budgeting suites used sentinel fiscal years (FY2095/2097/2098/2099) and never
+cleaned up, so each run inherited weeks of its own residue. New shared helper
+`e2e/helpers/ledger-fixture-cleanup.ts` gives each an idempotent `beforeAll` plus an
+`afterAll`, scoped by entity AND fiscal year (FY2099 is used by two suites on different
+entities; an unscoped delete would cross-contaminate them).
+
+The serious part: `ledger-category-management.spec.ts`'s "independently-computed SQL
+ground truth" for a **real** Foundation category expected 39 transactions, 5 budgets,
+and fiscal years `[2025, 2095, 2097, 2098, 2099]`. FY2095 is a sentinel year — no real
+club data exists there. That baseline had been captured in August against an
+already-polluted database, so **the pollution had become the definition of correct**.
+Once the suites cleaned up, the category returned to its true state and the test failed
+for measuring reality. Verified directly against the database: 35 transactions
+(2024-07-28 .. 2026-03-07, no sentinel dates) and exactly 1 budget (FY2025). The impact
+endpoint was correct throughout; the test was not.
+
+**3. Date rot, for the second time.**
+`cancel-occurrence.spec.ts` hardcoded `2026-08-01` / `2026-08-08` against a real seeded
+event. Those dates had already been advanced once (June) and rotted again — and that
+event's `recurrence_end_date` is 2026-09-26, so even "compute the next future Saturday"
+would have failed within weeks. The suite now seeds its own private RSVP-enabled
+recurring event with a rolling window relative to run-time `now`, and deletes it in
+`afterAll` (`event_occurrence_overrides` and `event_rsvps` are `ON DELETE CASCADE`).
+
+**4. Stale selectors and assertions.** `getByLabel("Search")` became a strict-mode
+violation once the admin nav gained its own search box; scoped to `#cat-search`.
+`budgeting-overview-restructure` asserted Next's default 404 copy after v1.75.0 shipped
+a custom 404 page. `ledger-search` used the entity slug `club` as a fund-slug path
+segment (valid funds are `activity`/`administrative`), 404'd, and its broad
+`/error|failed to load/i` locator then matched Next's dev-mode overlay.
+
+## Residue check
+
+Zero sentinel-FY transactions, zero `E2E`-named transactions, zero leftover fixture
+events. Two FY2099 budget rows from 2026-07-30 predate this work and sit on categories
+outside the new helper's scope — harmless, worth a one-time sweep.
+
+25 inactive `QA E2E Open Balance …` categories have accumulated (~4 per run). This is
+**not** a leak: the spec's `afterAll` does clean up, but the app deliberately exposes no
+hard-delete for categories (DECISION-065), so it deactivates them instead. All 25 are
+inactive with zero transactions referencing them. Bounded, inert dev-DB clutter; noted
+rather than "fixed", because changing it would mean a direct DB delete that contradicts
+the product decision.
+
+## Standing recommendation
+
+**Treat any e2e failure as a stop from here.** The whole reason a real production
+regression survived five days is that 13 failures were the normal state, so a new one
+was indistinguishable from rot. A suite allowed to be partly red carries no signal. The
+baseline is now 186 passed / 0 failed, reproducible back-to-back — hold it there.
