@@ -48,7 +48,35 @@ If it fails:
 
 **Do not proceed if typecheck fails.**
 
-## Step 4: Unit Tests (Vitest)
+## Step 4: Lint
+
+```bash
+pnpm lint
+```
+
+**Distinguish two different outcomes — they are not the same event.**
+
+| Exit | Meaning | What to do |
+|------|---------|-----------|
+| `0` | Clean | Continue. |
+| `1` | ESLint ran and **found problems** | Report the errors. Do not proceed with errors; warnings are advisory. |
+| `2` (or a stack trace / "Oops! Something went wrong!") | ESLint **could not run at all** | **HARD STOP.** This is not a lint failure, it is a *missing gate*. Report it as "lint DID NOT RUN", never as "lint failed". |
+
+That distinction is the whole point of this step. On 2026-09-09 a CVE-motivated
+`minimatch` override fed an ESM-only build into `@eslint/eslintrc` and ESLint crashed
+outright with exit 2. Because a crashed gate is indistinguishable from a failing one at a
+glance, 24 real errors accumulated unseen — including three genuine user-facing defects
+(unformatted dates carrying a latent UTC-offset bug, a permissions screen with no save
+feedback and no double-submit guard, and a chunked upload that re-sent an entire 25MB
+file on retry). A gate that cannot run is worse than a gate that fails, because it looks
+like silence rather than a problem.
+
+Apply the same reading to every other step here: if a check *could not execute*, say so
+explicitly rather than folding it into PASS/FAIL.
+
+**Do not proceed if ESLint reports errors, or if ESLint could not run.**
+
+## Step 5: Unit Tests (Vitest)
 
 ```bash
 pnpm test
@@ -61,7 +89,7 @@ If `vitest.config.ts` is missing or the `test` script isn't in `package.json`, s
 
 **Do not proceed if any unit test fails** (when the runner is installed).
 
-## Step 5: Production Build
+## Step 6: Production Build
 
 ```bash
 pnpm build:only
@@ -76,7 +104,7 @@ pnpm build:only
 
 After the build, eyeball the route list it prints — make sure no expected route silently dropped out.
 
-## Step 6: End-to-End Tests (Playwright)
+## Step 7: End-to-End Tests (Playwright)
 
 ```bash
 # In one terminal:
@@ -92,7 +120,7 @@ If `playwright.config.ts` or the `test:e2e` script is missing, skip with a note 
 
 **Do not proceed if any e2e test fails** (when the runner is installed).
 
-## Step 7: Schema and Migration Check
+## Step 8: Schema and Migration Check
 
 `src/lib/db/schema.ts` is the source of truth. Migrations under `drizzle/migrations/` re-run on every deploy, so **every statement must be idempotent**.
 
@@ -114,7 +142,7 @@ If `playwright.config.ts` or the `test:e2e` script is missing, skip with a note 
    ```
    Any hit is a likely re-run failure waiting to happen. Fix before pushing.
 
-## Step 8: Dependency CVE Audit
+## Step 9: Dependency CVE Audit
 
 Runs `pnpm audit` against the production tree. The 2026-05-27 dependencies review surfaced 14 high CVEs (8 in `next`, 1 SQL-injection in `drizzle-orm`, plus transitives) that had piled up since the previous monthly sweep. This step is the gate that catches the next pile-up before it hits production.
 
@@ -133,7 +161,7 @@ pnpm audit --prod --audit-level=high
 
 Moderate or low CVEs are advisory. Mention any new ones the user hasn't seen, but they don't block the push.
 
-## Step 9: Personal Data Sweep
+## Step 10: Personal Data Sweep
 
 **This repository is public. A personal address, phone number, or home address must never be pushed.**
 
@@ -144,10 +172,28 @@ git grep -InE "\\b[0-9]{3}-[0-9]{3}-[0-9]{4}\\b|\\([0-9]{3}\\) ?[0-9]{3}-[0-9]{4
 git grep -InE "[0-9]{3,5} [A-Z][a-zA-Z]+ (Circle|Drive|Street|Road|Avenue|Ave|Lane|Court|Blvd|Way)\\b" -- .
 ```
 
-**Any hit is a hard stop.** Do not push. See CLAUDE.md → *No Personal Data in the Repository* for
-what is banned and what is allowed. Club-domain addresses (`board@`, `club@`, `info@`,
-`treasurer@`, `noreply@westervillelions.org`) are fine and will not match the pattern above.
-Officer names are fine; their contact details are not.
+**Any hit is a hard stop until you have triaged it.** Do not push on an untriaged hit. See
+CLAUDE.md → *No Personal Data in the Repository* for what is banned and what is allowed.
+Club-domain addresses (`board@`, `club@`, `info@`, `treasurer@`,
+`noreply@westervillelions.org`) are fine and will not match the pattern above. Officer names
+are fine; their contact details are not.
+
+**The phone and address patterns have known, legitimate hits — triage, don't rubber-stamp.**
+The club publishes a public directory of eyeglass drop-off locations (businesses, churches,
+libraries) with their street addresses and phone numbers, seeded in
+`drizzle/migrations/0034_glasses_dropoff_refresh.sql` and rendered on the public `/programs`
+page. Those are *organisations*, published by the club on its own website — not personal data,
+and not a violation. `555-` numbers in tests and `e.g.` placeholders in form components are
+likewise fine.
+
+The question to ask of every hit is **"does this tie a PERSON to contact details?"** — not
+"does this look like a phone number". A business at a commercial address is allowed; a member's
+home address is never allowed, even if it is formatted identically.
+
+This distinction matters more than it looks. A sweep that reliably produces the same ~17
+false positives trains whoever runs it to skim past the output, which is exactly how a real
+hit gets waved through. If you find yourself scrolling past known-good hits, tighten the
+pattern or add an explicit allowlist rather than building the habit of ignoring it.
 
 Also confirm nothing env-shaped is staged — `.env*` is gitignored, but on 2026-08-12 a
 `.env.local.bak-<timestamp>` slipped past that rule and was pushed with every production
@@ -159,7 +205,7 @@ git ls-files | grep -E "\\.env" | grep -v "^\\.env\\.example$"
 
 Anything other than `.env.example` is a hard stop.
 
-## Step 10: Release Notes and Version Bump
+## Step 11: Release Notes and Version Bump
 
 **Required before every push to `main`.**
 
@@ -171,7 +217,7 @@ Anything other than `.env.example` is a hard stop.
 
 **Documentation-only changes don't need a version bump.** Bug fixes get a PATCH bump. New features get a MINOR. Breaking changes get a MAJOR.
 
-## Step 11: Housekeeping Sweep
+## Step 12: Housekeeping Sweep
 
 Treat these as advisory warnings, not hard blockers (unless the user decides otherwise):
 
@@ -192,11 +238,12 @@ Treat these as advisory warnings, not hard blockers (unless the user decides oth
   git diff --name-only | grep -E "\.env"
   ```
 
-## Step 12: Summary
+## Step 13: Summary
 
 Report results:
 
 - Type check: PASS / FAIL
+- Lint: PASS / FAIL (errors) / **DID NOT RUN** (ESLint crashed — a missing gate, not a failing one)
 - Unit tests: PASS / FAIL / SKIPPED (runner not installed)
 - Production build: PASS / FAIL
 - E2E tests: PASS / FAIL / SKIPPED (runner not installed)
@@ -207,5 +254,10 @@ Report results:
 - Housekeeping warnings: list them
 - **Ready to push? yes / no**
 - If no: list each item that must be resolved first
+
+**Never report a gate that could not execute as a pass, and never fold it into a
+generic FAIL.** "DID NOT RUN" is its own outcome and must be said out loud. A check
+that silently stops checking is the failure mode this whole skill exists to prevent —
+see Step 4.
 
 **Do not push.** The user pushes manually.

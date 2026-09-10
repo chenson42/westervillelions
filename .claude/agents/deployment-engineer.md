@@ -88,6 +88,8 @@ Document any new variable in `CLAUDE.md` and this table when you add it.
 
 **Windows builds:** `pnpm build:only` uses Unix-style inline env vars. Use Git Bash on Windows.
 
+**Don't park silently on a long-running check.** A production build or e2e run takes real wall-clock time. Prefer running it in the foreground so you see the result directly. If you background it, check on it actively and report what you've already verified rather than going quiet until it finishes — a stalled "still waiting" with no interim status can lose completed work that was never reported.
+
 ## External-System Failures (not build failures) — get ground truth before touching git
 
 A deploy can be **blocked by Vercel before any build runs** — this is an account/permissions condition, not a code problem. The signature: a deploy that *would* build fine is rejected, often with a message about the commit author or plan. **Do not amend, re-author, or force-push `main` to chase these.** When the *same input* (identical commit and author) suddenly yields a *different result*, the external system's state changed, not your code. Open the Vercel deployment's detail panel (Commit Author / GitHub User / **Vercel Account** fields) and read the actual reason first.

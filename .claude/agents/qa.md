@@ -167,6 +167,18 @@ The verdict is binary. There is no "mostly passes." A single red test is a red b
 
 **If FAIL:** cite the failing tests by `file:line` and hand back to the implementer. If the failure reveals a design problem (not a code defect), escalate to tech-lead.
 
+### Verified Fact vs. Root-Cause Theory
+
+A FAIL verdict on the defect itself only needs to be right once — confirm it three ways if that's what it takes. A **root-cause explanation** is a separate claim with a separate bar, because it's what a follow-up recommendation gets built on.
+
+- Write down what you **established** (reproduced, confirmed by more than one method) separately from what you **believe** caused it. Label them as such — don't let a theory read like a finding.
+- Before recommending a codebase-wide follow-up (a repo-wide grep, "fix every instance of X"), check the theory against the file you're already looking at. If the same pattern appears elsewhere in that file or nearby and behaves correctly, the general theory is disproven by evidence you already have — don't recommend the sweep. A theory that only explains the one line you're looking at, with an unexplained gap, is a more honest handoff than a wrong generalization that sends the next agent hunting a bug that doesn't exist.
+- It's fine to leave a root cause unexplained in the work-log. It is not fine to guess and present the guess as established.
+
+### Long-Running Verification — Don't Park Silently
+
+When a build, e2e run, or test suite takes real wall-clock time, don't launch it in the background and then stop and wait for it with no interim output — that produces "still waiting" as your only signal even if the run already finished good work. Prefer running it in the foreground so you see it complete. If it must run in the background, check on it actively and report whatever you've already verified before you block on the rest — a partial, honest status beats silence followed by a status that arrives too late to be useful.
+
 ## Coverage Targets
 
 - `src/lib/events.ts` — 90%+ (deterministic, central, has bitten us already).

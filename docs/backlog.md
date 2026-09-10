@@ -329,11 +329,32 @@ was deleted on the strength of this review alone.
   Not the send sites themselves: ~18 features legitimately send different messages. It is the
   boilerplate repeated around each one, counted 2026-08-12:
 
-  | Duplicated | Copies |
-  |---|---|
-  | `process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org"` | 12 |
-  | Hand-rolled HTML escaper (3 identical one-liners, 3 multi-line variants) | 6 |
-  | `NEXTAUTH_URL` fallback for building links into emails | 8 |
+  | Duplicated | 2026-08-12 | 2026-09-10 |
+  |---|---|---|
+  | `process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org"` | 12 | **15** |
+  | Hand-rolled HTML escaper | 6 | **4 implementations in 2 disagreeing shapes** |
+  | `NEXTAUTH_URL` fallback for building links into emails | 8 | **19** |
+
+  **This is growing while the item sits open.** Re-counted by the 2026-09-10 code review:
+  the from-address is up 12 → 15 and the app-URL fallback 8 → 19, in a month. The escaper
+  count fell only because a shared module was built to absorb them — and then four copies
+  survived it, in two shapes that disagree with each other.
+
+  **It has already produced one real defect.** Of those 19 app-URL sites,
+  `src/app/api/auth/forgot-password/route.ts` had *no fallback at all* — a bare
+  `${process.env.NEXTAUTH_URL}`. With the env var unset, the password-reset email would
+  have carried a literal `undefined/reset-password?token=…` link, locking the recipient out
+  with nothing to explain why. Fixed in place 2026-09-10, but that is the second time this
+  cluster has produced a bug caught by luck rather than structure (the first being the
+  omitted escaper below). The remaining 18 sites still use at least three different shapes,
+  including `?? ""`, which yields a relative URL that is broken inside an email.
+
+  Adjacent, same root cause, found by the same review: **37 files carry a local date
+  formatter, 13 of them byte-identical** — several written specifically to work around the
+  naive-timestamp-as-UTC bug this project has now hit four times (DECISION-001,
+  DECISION-015, the 2026-08 meeting-schedule import, and `ack-queue.tsx` on 2026-09-10).
+  Thirteen independent copies of the same correct workaround is thirteen chances to write
+  the incorrect one, and it happened at least once.
 
   **Why it matters beyond tidiness.** A rule that lives in twelve places is twelve places to
   get it wrong, and no place to change it. The 2026-08-12 incident turned on exactly this

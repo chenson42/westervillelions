@@ -55,7 +55,10 @@ pnpm lint             # Run ESLint validation
 pnpm exec tsc --noEmit  # Type check only (no build)
 pnpm test             # Vitest unit tests (run once)
 pnpm test:watch       # Vitest in watch mode
-pnpm test:e2e         # Playwright e2e tests (needs `pnpm dev` running)
+pnpm test:e2e         # Playwright e2e tests (needs `pnpm dev` running). Always runs with a single
+                       # worker (serial, not just on CI) because every spec shares one database and
+                       # asserts on state — parallel runs produce flaky false failures. Budget
+                       # ~12 minutes locally, not the ~2.5 minutes a parallel run would suggest.
 ```
 
 **Windows note:** `pnpm build:only` uses Unix-style inline env vars. Use Git Bash on Windows.
@@ -82,7 +85,7 @@ src/
 │   ├── forgot-password/, reset-password/  # Password reset flow
 │   ├── access-pending/    # Landing for authenticated users with no usable role
 │   ├── (dashboard)/       # Admin portal (authenticated)
-│   │   └── admin/         # Admin functions (users, roles, permissions, members, events, groups, campaigns, announcements, programs, membership, dues, ledger, subscriptions, suggestions, testimonials, email-queue, sync-log, security, release-notes, contact, welcome-packets, proposals, social-requests)
+│   │   └── admin/         # Admin functions (users, roles, permissions, members, events, groups, campaigns, announcements, programs, membership, dues, ledger, club-files, documents, minutes, subscriptions, suggestions, testimonials, email-queue, sync-log, security, release-notes, contact, welcome-packets, proposals, social-requests)
 │   ├── members/           # Member portal (authenticated — auth() per page)
 │   │   ├── events/        # Internal events & per-occurrence RSVP
 │   │   ├── events/past/   # Past events list
@@ -92,12 +95,14 @@ src/
 │   │   ├── reimbursements/ # Member expense-reimbursement requests (The Ledger)
 │   │   ├── proposals/     # Project/activity proposals — submit, draft, track own status
 │   │   ├── social-requests/  # Social media post requests — submit, edit pre-decision, track status
-│   │   ├── records/       # Club Records hub — meeting minutes + governing documents (any linked member)
+│   │   ├── records/       # Club Records hub — browse minutes by Lions year + search; governing documents (any linked member)
+│   │   ├── records/[id]/  # Single meeting-minutes record — motions, action items
 │   │   ├── records/documents/[slug]/  # Governing document current text, /history, /compare
 │   │   ├── records/welcome-packet/  # Current welcome packet, DB-backed, live (any linked member)
 │   │   ├── records/files/  # Club Files list — all uploaded PDFs, public and members-only (any linked member)
 │   │   ├── impact/        # Philanthropy / community impact dashboard (impact.view gated when philanthropyVisibility='board'; open to any linked member when ='members')
-│   │   └── financial-reports/  # Monthly Statement of Financial Condition (read-only, print-friendly; any linked member)
+│   │   ├── financial-reports/  # Monthly Statement of Financial Condition (read-only, print-friendly; any linked member)
+│   │   └── finances/      # "Club Finances" hub — fans out to impact/ and financial-reports/ (DECISION-074)
 │   ├── api/               # API routes
 │   ├── robots.ts          # robots.txt
 │   └── sitemap.ts         # sitemap.xml
@@ -161,11 +166,11 @@ docs/
 - **Club Files:** `/admin/club-files` — admins (`club_files.manage`, admin-only) upload PDFs (25MB cap) with a `public`/`members_only` visibility flag and attach them to events (`club_file_events` many-to-many). Bytes live in Postgres via `src/lib/club-file-storage/` (a **sibling** of receipt-storage, never `ledger_receipt_files` — DECISION-094) because document files can NEVER enter this public repo (the driving PDF carries personal emails; binary files evade the /pre-push PII grep). Uploads use a **chunked 3MB protocol** (DECISION-095) because Vercel hard-caps function request bodies at 4.5MB; downloads go through ONE route — `GET /api/club-files/[id]/download` — that re-checks visibility per request, 404s every failure (never 403), and returns a genuinely **streamed** Response (buffered responses hit the same 4.5MB cap). Replace-in-place swaps bytes under `SELECT ... FOR UPDATE` (no version history). Members see all files at `/members/records/files`; attached public files render on public event pages.
 - **Event Announcement Emails:** `/admin/events/[id]/announce` — an `events.announce` holder (bound to `admin` + `board_member`; deliberately narrower than `events.edit`) emails every active member an event announcement from the club's domain, per-occurrence or full-series, with the .ics calendar file as a **true MIME attachment** (built by the same `src/lib/events.ts` helpers as the public ICS routes — never reimplemented). Attachments persist in `email_queue.attachments` (jsonb) because the queue's retry route bypasses `sendEmail()` and re-sends persisted rows directly — DECISION-092; dropping this would silently strip the calendar from retries. Every attempted recipient gets an `event_announcements` row under a shared `batchId` (success and failure alike, DECISION-093); members without email are shown, not dropped. Body is a fixed event-data template + optional note, signed "Westerville Lions Club". **UI says "Emailed", never "Delivered"** (B-47). Bulk send via `sendBulkMemberEmail()` as always.
 - **Dues Reminders:** `/admin/dues/reminders` — the treasurer manually emails members whose dues are not recorded for the season. Signed by the holder of the Board `position = 'Treasurer'` via `resolveTreasurer()` (`src/lib/board-positions.ts`, DECISION-086), never by the sender; sending is gated separately on `dues.manage`. Partial payers are a separate, unchecked cohort with different wording; members with no email are shown, not dropped. Every send is recorded in `dues_reminders` (member + fiscal year) for the last-reminded badge. **Bulk member mail must go through `sendBulkMemberEmail()`** — never a hand-rolled loop over `sendEmail()`.
-- **Club Records:** `/members/records` — meeting minutes (general, board, committee) and governing documents. Readable by any linked member; authored under `minutes.manage` / `documents.manage` (the **Notetaker** role, intended for the secretary), deleted under `minutes.delete`. Minutes are soft-deleted only and are retained permanently.
+- **Club Records:** `/members/records` — meeting minutes (general, board, committee) and governing documents. Readable by any linked member; authored under `minutes.manage` / `documents.manage` (the **Notetaker** role, intended for the secretary), deleted under `minutes.delete`. Minutes are soft-deleted only and are retained permanently. Browsable by Lions year (July–June pills, per-year counts, opens on the current year) via `/members/records/[id]`; search spans every year regardless of the selected pill, matches minutes text/motions/action items, and shows a highlighted excerpt plus which field matched.
 - **Governing Documents:** `/members/records/documents/[slug]` — the club's Constitution & By-Laws with full version history and side-by-side diffing. Versions are append-only: **corrections** take effect immediately, **amendments** stay `pending` until adopted under `documents.manage`, which records the adopter, the timestamp, and (optionally, backfillable) the citing minutes. The document's `currentVersionId` is the single source of truth for which text is operative.
 - **Welcome Packet:** `/members/records/welcome-packet` — the club's annual new-member/orientation deck as a live, database-backed page (`welcomePackets` + a `welcomePacketCurrent` singleton pointer), not a git-committed file — the packet embeds the club's real giving/budget figures, so its content can never live in this public repo (see `docs/decisions.md` DECISION-090). Authored at `/admin/welcome-packets` under `welcome_packet.manage`, **admin-only by default** — this is load-bearing, since raw HTML is rendered as-authored (a documented, narrow exception to the project's no-raw-HTML-passthrough rule for admin-typed content). Editing an existing packet updates it in place; there is no version history. Members see only the packet marked current; `.flag` (board-review) annotations are always suppressed on the live page.
 - **Monthly Financial Statements:** `/members/financial-reports` — read-only, print-friendly Statement of Financial Condition (One Month / Twelve Months / Annual Budget columns) for the Club's Administrative fund and the Foundation's Charitable fund, reproducing the treasurer's monthly board reports. Open to any linked member, no `FEATURES` gate; a month only appears once every posted transaction on/before its last day is reconciled (auto-appears, no manual publish step).
-- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, event announcement emails, club files, The Ledger (online accounting: books, reimbursements, compliance/990, reports, donors & acknowledgments, and an in-app Treasury User's Guide at `/admin/ledger/guide`), meeting minutes, governing documents, project/activity proposals, social media post requests, subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, failed-login security log, in-app release notes, and contact submissions
+- **Admin:** Member management, content updates, role/permission management, Google Group sync, campaigns, announcements, programs, users, membership applications, annual dues tracking, event announcement emails, club files, The Ledger (online accounting: books, reimbursements, budgeting, reconciliation, compliance/990, reports, donors & acknowledgments, an admin search across ledger records, and an in-app Treasury User's Guide at `/admin/ledger/guide`), meeting minutes, governing documents, project/activity proposals, social media post requests, subscriptions, suggestions, testimonials, email-queue inspection, sync-log audit, failed-login security log, in-app release notes, and contact submissions
 
 ### Admin-Area Protection Is Derived, Never Hand-Maintained
 
@@ -224,6 +229,7 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 - `GOOGLE_GROUPS_CLIENT_SECRET` - OAuth client secret for Group sync
 - `GOOGLE_GROUPS_REFRESH_TOKEN` - Refresh token used by Group sync (domain-wide delegation)
 - `GOOGLE_ADMIN_EMAIL` - Workspace admin address used as the impersonation subject for Group sync
+- `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` / `E2E_ADMIN_PASSWORD_HASH` - **e2e tests only.** `scripts/create-test-user.mjs` upserts a dedicated admin user in the target database using `E2E_ADMIN_EMAIL` + `E2E_ADMIN_PASSWORD_HASH` (a pre-computed bcrypt hash); `e2e/helpers/auth.ts` then signs in through the real credentials form using `E2E_ADMIN_EMAIL` + `E2E_ADMIN_PASSWORD` (the matching plaintext). All three must be set in `.env.local` before running `pnpm test:e2e`, or the suite throws immediately rather than running against an unknown account.
 
 ## Database Migrations
 
@@ -403,6 +409,7 @@ Public page subtitles use a gold eyebrow label with `uppercase tracking-widest t
 - **Blue/gold theme:** Primary color is `lions-blue`, accent is `lions-gold` — do not use red (`lions-red` is undefined and renders transparent)
 - **Google OAuth:** Requires Google for Nonprofits account setup
 - **Zeffy:** Embedded donation forms are iframes — CSP `frame-src` in `next.config.ts` must allow `https://www.zeffy.com`, and Zeffy 403s server-side fetches (no request-time scraping)
+- **CSP `script-src` needs `'wasm-unsafe-eval'`:** the in-browser HEIC receipt-upload fallback (DECISION-039) instantiates WebAssembly, which Chrome/Firefox refuse without this token. v1.75.0 dropped it as hardening and silently broke iPhone receipt uploads for five days (fixed in v1.76.1). See the inline comment above `script-src` in `next.config.ts` before touching that line again — note the comment there still cites the superseded DECISION-038.
 - **Mobile-first:** Ensure all pages are mobile-responsive
 - **Migrations re-run on every deploy:** Every SQL statement must be idempotent
 - **No native browser dialogs:** Use `<ConfirmDialog>` (or shadcn `Dialog`), never `window.confirm()` / `window.alert()` / `window.prompt()`

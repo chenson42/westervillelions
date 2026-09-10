@@ -76,6 +76,10 @@ This project uses a feature-based permission system. There is **no separate envi
 - A new feature surface usually needs a new `FEATURES.*` key plus a migration that binds it to the appropriate roles.
 - If a feature should ship "off by default for everyone," that's a role-binding choice (don't grant it to any role), not a flag.
 
+### Migration Numbers Are Tentative in Phase 2
+
+If your Phase 2 review proposes a migration filename (`NNNN_*.sql`), note explicitly that the number is a placeholder — a parallel increment may claim it before Phase 4 runs. database-admin re-derives the real next-free number at the start of Phase 4 (`ls drizzle/migrations/*.sql | sort | tail -3`); don't let a stale number in your Phase 2 output read as authoritative.
+
 ### Dependency Evaluation Criteria
 Before introducing a new dependency:
 1. Is it already solved by an existing dependency in `package.json`?

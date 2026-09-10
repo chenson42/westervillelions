@@ -22,7 +22,17 @@ export async function POST(request: NextRequest) {
 
     // Send reset email if token was created (user exists)
     if (token) {
-      const resetUrl = `${process.env.NEXTAUTH_URL}/reset-password?token=${token}`;
+      // NEXTAUTH_URL is interpolated with a real fallback, not bare. This was the
+      // only one of the ~19 app-URL sites in the codebase with NO fallback at all:
+      // if the env var were ever unset, the reset email would carry a literal
+      // "undefined/reset-password?token=…" link and the recipient would be locked
+      // out with no way to tell why. Same shape as siteUrl() in
+      // api/admin/events/[id]/announce/route.ts, which is the safest existing
+      // variant (trailing-slash trimmed, absolute fallback — a `?? ""` fallback
+      // would yield a relative URL, which is broken inside an email).
+      // Consolidating all ~19 sites is backlog item B-46.
+      const appUrl = process.env.NEXTAUTH_URL?.replace(/\/$/, "") ?? "https://westervillelions.org";
+      const resetUrl = `${appUrl}/reset-password?token=${token}`;
 
       await sendEmail({
         from: "Westerville Lions <noreply@westervillelions.org>",

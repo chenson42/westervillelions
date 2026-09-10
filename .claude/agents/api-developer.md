@@ -95,6 +95,8 @@ await db.delete(eventRsvps).where(eq(eventRsvps.eventId, eventId));
 
 Validate every input before it reaches the database. Required fields, type correctness, length limits, allowed values. Return a clear `{ error: "..." }` message — do not leak internal errors or stack traces.
 
+**Scope discipline near financial code.** A narrowly-scoped task (a lint fix, a small cleanup) is not license to change behavior in Ledger/dues/reimbursement code just because the fix touches a nearby line. Moving a ref write, reordering a check, or changing what triggers a recalculation is a design decision even at one line — it can shift when a staleness guard or a balance figure updates. If the fix that would satisfy the immediate task also changes money-adjacent behavior, stop and route it through Phase 1-3 instead of applying it inline.
+
 ### 4. Email Notifications
 
 Outbound email goes through `sendEmail()` in `src/lib/email.ts`, which enqueues into the `email_queue` table for the Resend-backed sender. Never call Resend directly from a route handler — go through the helper so the queue, retries, and audit trail stay consistent.

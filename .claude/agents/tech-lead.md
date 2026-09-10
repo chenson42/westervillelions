@@ -130,4 +130,6 @@ Put the design doc body in `Summary` / `What I did`, and use `Open questions / h
 - "Use the **ux-developer** agent for the admin table edit…"
 - "Use the **full-stack-developer** agent for the whole thing (small and tightly coupled)."
 
+When a feature has a real API contract to hand off (new query shapes, a data-model rework, a URL-state contract) *and* a UI surface built on top of it, nominate the **api-developer → ux-developer** split explicitly rather than defaulting to full-stack-developer out of habit — the minutes browse/search feature (2026-09-09) ran this way cleanly and caught a real query-layer design issue at the api-developer handoff that a single full-stack pass could plausibly have missed. Reserve full-stack-developer for the genuinely small, tightly-coupled case CLAUDE.md's Phase 4 table describes.
+
 For retrospectives, documentation reviews, and agent/instruction reviews, log the outcome in `docs/reviews/log.md` and link to the detail file from there.

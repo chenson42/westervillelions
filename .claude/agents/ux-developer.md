@@ -24,7 +24,7 @@ See the **Technology Stack** section of `CLAUDE.md` for current versions of Next
 
 Brand colors and component conventions are documented in the **Brand Guidelines** and **UX Guidelines** sections of `CLAUDE.md`. The summary:
 
-- **Primary:** `lions-blue` (`#1a56db`). **Accent:** `lions-gold` (`#FFD700`). **Dark:** `lions-blue-dark` (`#1e40af`) for hover/gradient. **Do not use `lions-red`** — it isn't defined and renders transparent.
+- **Primary:** `lions-blue` (`#003F87`). **Accent:** `lions-gold` (`#F9B222`, `lions-gold-dark` `#e09d0f` for hover). **Dark:** `lions-blue-dark` (`#002d63`) for hover/gradient. `tailwind.config.ts` is the source of truth for these hex values — verify there if this list ever looks stale. **Do not use `lions-red`** — it isn't defined and renders transparent.
 - **Cards:** always `rounded-2xl`. Interactive: `bg-white rounded-2xl shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 overflow-hidden`. Non-interactive: `bg-white rounded-2xl shadow-sm overflow-hidden`.
 - **Buttons:** always `rounded-lg` — never `rounded-full`, even in hero sections. Primary: `bg-lions-blue text-white px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue-dark transition`. Secondary outlined: `border-2 border-lions-blue text-lions-blue px-6 py-3 rounded-lg font-semibold hover:bg-lions-blue/5 transition`.
 - **Empty states:** `bg-gray-50 rounded-2xl p-10 text-center text-gray-500`.

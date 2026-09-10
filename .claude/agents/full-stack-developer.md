@@ -91,6 +91,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 5. **Brand consistency** — `rounded-2xl` cards, `rounded-lg` buttons (never `rounded-full`), `lions-blue` / `lions-gold`, no `lions-red`, `<ConfirmDialog>` instead of `window.confirm()`.
 6. **Email** — through `sendEmail()` in `src/lib/email.ts`, never directly to Resend.
 7. **DO NOT auto commit/push** — wait for explicit user approval.
+8. **Scope discipline near financial code.** When a task is narrowly scoped (e.g., "clear lint warnings"), don't let it drift into a behavioral change in Ledger/dues/reimbursement code just because the fix is nearby and technically satisfies the rule. A ref-write-to-`useEffect` conversion, a reordered check, or a changed comparison can shift *when* a staleness guard or balance calculation runs — that's a design decision, not a cleanup, even if it's one line. If the "obvious" fix touches money-adjacent logic, stop and flag it for Phase 1-3 treatment instead of applying it inline.
 
 ## When You're Done
 
