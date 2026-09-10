@@ -405,9 +405,32 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
     await page.getByRole("button", { name: "Cancel" }).click();
 
     // Cleanup for later tests (print worksheet expects this category
-    // starred + noted + $500): restore the star
-    await rowFinal.getByRole("button", { name: `Flag ${LANDMINE_CATEGORY} for discussion` }).click();
-    await page.waitForTimeout(300);
+    // starred + noted + $500): restore the star.
+    //
+    // This wait is on the PATCH itself, NOT a fixed sleep. It used to be
+    // `click()` followed by `waitForTimeout(300)`, which made this suite
+    // intermittently fail two tests later: the "Approve-&-locked" test asserts
+    // an `Unflag …` button, i.e. it inherits the starred state established
+    // here. When the PATCH outran the 300ms sleep — dev-server compile, Neon
+    // latency, a loaded machine — this test finished with the star unpersisted
+    // and the downstream test found no such button ("element(s) not found").
+    // A fixed sleep is a guess about timing; waiting for the response is the
+    // actual condition, so this cannot lose that race regardless of load.
+    const [restoreStarResponse] = await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().endsWith("/api/admin/ledger/budgets/annotations") &&
+          r.request().method() === "PATCH",
+      ),
+      rowFinal.getByRole("button", { name: `Flag ${LANDMINE_CATEGORY} for discussion` }).click(),
+    ]);
+    expect(restoreStarResponse.status()).toBe(200);
+    // ...and confirm the UI settled into the state the later tests depend on,
+    // so a 200 that somehow didn't re-render still fails HERE rather than
+    // surfacing as a confusing failure in an unrelated test downstream.
+    await expect(
+      rowFinal.getByRole("button", { name: `Unflag ${LANDMINE_CATEGORY} for discussion` }),
+    ).toBeVisible();
   });
 
   test("cause-line grain: a never-saved row renders the reserved/disabled annotation-control footprint until its first commit; starring sorts within its own cause group; note persists", async ({

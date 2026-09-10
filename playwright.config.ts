@@ -5,6 +5,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // Warms the dev server's route compilation once, before any test runs, so a
+  // cold `pnpm dev` doesn't blow the first test's timeout inside signInAsAdmin().
+  // See e2e/global-setup.ts for the incident this fixes.
+  globalSetup: "./e2e/global-setup.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
