@@ -181,13 +181,33 @@ test.describe("minutes present-count field", () => {
     await signInAsAdmin(page);
     await page.goto("/admin/minutes/new");
 
-    // Act
+    // Act — watch for a create POST rather than inferring from the URL. The test's
+    // name claims "does not create a record", so assert THAT, not a proxy for it.
+    const createPosts: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "POST" && new URL(req.url()).pathname === "/api/admin/minutes") {
+        createPosts.push(req.url());
+      }
+    });
+
     await page.fill("#minutes-meeting-date", "2026-02-02");
     await page.fill("#minutes-present-count", "-5");
     await page.click('button[type="submit"]');
 
-    // Assert — still on the create form; no navigation to a new record id.
-    await page.waitForTimeout(500);
+    // Assert — the input is invalid per the browser's own constraint validation
+    // (the field is type="number" min={0}), which is what blocks the submit. This
+    // is a POSITIVE, immediately-true signal, so it replaces the previous
+    // `waitForTimeout(500)`: there is nothing to wait FOR here, and a sleep before
+    // a negative assertion only ever proves "nothing had happened yet".
+    const invalid = await page
+      .locator("#minutes-present-count")
+      .evaluate((el) => !(el as HTMLInputElement).checkValidity());
+    expect(invalid).toBe(true);
+
+    // ...and no create request was issued, which is the actual claim.
+    expect(createPosts).toEqual([]);
+
+    // ...and we're still on the create form, not a new record's page.
     await expect(page).toHaveURL("/admin/minutes/new");
   });
 });

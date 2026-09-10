@@ -189,7 +189,21 @@ test.describe("acknowledgment letter generation — compliance block + core flow
       dialogFired = true;
       await d.dismiss();
     });
-    await page.waitForTimeout(300);
+
+    // Anchor on the letter actually being in the DOM before asserting the
+    // negatives. This used to be `waitForTimeout(300)`, which is a guess: if the
+    // render hadn't happened yet, "no <script> element" and "no dialog" would
+    // both be trivially true and this security regression test would pass
+    // without ever exercising the boundary it exists to guard.
+    //
+    // `toHaveCount`, not `toBeVisible` — AcknowledgmentLettersPrint's container
+    // is `hidden print:block`, so the letter is attached but not visible on
+    // screen. That distinction matters here rather than being pedantry: a real
+    // <script> injected into a display:none subtree still executes, so "attached"
+    // is exactly the condition this test needs to wait for.
+    const printedLetter = page.locator("section").filter({ hasText: REQUIRED_SENTENCE });
+    await expect(printedLetter.first()).toHaveCount(1);
+
     const scriptElCount = await page.locator('script:has-text("alert(1)")').count();
     expect(scriptElCount).toBe(0);
     expect(dialogFired).toBe(false);

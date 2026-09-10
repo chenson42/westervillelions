@@ -375,21 +375,30 @@ test.describe("Budgeting page restructure — /admin/ledger/budgeting", () => {
     page.off("request", trackPatches);
 
     // --- Part 2: letting the hold expire commits the PATCH ---
-    const patchesAfterExpiry: Request[] = [];
-    page.on("request", (req) => {
-      if (
-        req.method() === "PATCH" &&
-        req.url().endsWith("/api/admin/ledger/budgets/cause-lines")
-      ) {
-        patchesAfterExpiry.push(req);
-      }
-    });
+    //
+    // Wait for the PATCH itself rather than sleeping past HOLD_MS. This used to
+    // be `waitForTimeout(7_000)` followed by inspecting a captured array, which
+    // has two problems: it always costs the full 7s even though the commit fires
+    // at 6s, and — more importantly — it silently couples the test to the
+    // CURRENT value of HOLD_MS. Raise the hold to 8s in the component and this
+    // assertion starts failing for a reason that has nothing to do with the
+    // behaviour under test.
+    //
+    // The condition that actually matters is "the pendingDelete PATCH is sent
+    // once the hold lapses, without the user doing anything", so wait for that
+    // request directly, with a bound comfortably past the hold.
     await page.getByRole("button", { name: "Remove Environment (E2E QA Env Two) line" }).click();
     await expect(page.getByText('Removed "E2E QA Env Two"').last()).toBeVisible();
 
-    // Do NOT click Undo — wait past the hold window (HOLD_MS = 6000ms)
-    await page.waitForTimeout(7_000);
-    expect(patchesAfterExpiry.some((r) => r.postDataJSON()?.pendingDelete === true)).toBe(true);
+    // Do NOT click Undo — let the hold window (HOLD_MS = 6000ms) lapse.
+    const expiryPatch = await page.waitForRequest(
+      (req) =>
+        req.method() === "PATCH" &&
+        req.url().endsWith("/api/admin/ledger/budgets/cause-lines") &&
+        req.postDataJSON()?.pendingDelete === true,
+      { timeout: 15_000 },
+    );
+    expect(expiryPatch.postDataJSON()?.pendingDelete).toBe(true);
 
     // Assert — live totals already reflect the pending-delete line's
     // subtraction (causeLinePendingCents third arg) without a page reload
