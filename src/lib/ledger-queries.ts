@@ -47,6 +47,7 @@ import {
 import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, ne, sql, count, getTableColumns } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { getFiscalYear, currentFiscalYear, fiscalYearLabel, fyBounds } from "@/lib/fiscal-year";
+import { formatTimestamp } from "@/lib/format-date";
 import {
   fundBalanceCents,
   rolledForwardOpeningCents,
@@ -1175,9 +1176,7 @@ export async function getBudgetNotes(
   return {
     notes: row.notes,
     updatedByName: row.updatedByName,
-    updatedAtLabel: row.updatedAt
-      ? row.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-      : null,
+    updatedAtLabel: row.updatedAt ? formatTimestamp(row.updatedAt) : null,
   };
 }
 

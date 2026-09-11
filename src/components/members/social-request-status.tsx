@@ -13,6 +13,7 @@
  */
 
 import { socialRequestStatusLabel } from "@/lib/social-requests";
+import { formatTimestamp } from "@/lib/format-date";
 
 export interface SocialRequestTimelineRow {
   id: string;
@@ -41,8 +42,7 @@ export function SocialRequestStatusBadge({ status }: { status: string }) {
 }
 
 function formatDate(d: Date | string): string {
-  const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatTimestamp(d, "long");
 }
 
 export function SocialRequestStatusTimeline({ rows }: { rows: SocialRequestTimelineRow[] }) {

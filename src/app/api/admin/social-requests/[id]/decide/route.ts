@@ -43,8 +43,8 @@ import {
   DECISION_NOTE_MAX_LEN,
 } from "@/lib/social-requests";
 import { decideSocialRequest, resolveRequesterContactEmail } from "@/lib/social-requests-queries";
-import { escapeHtml } from "@/lib/html-escape";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
 import type { SocialRequest, SocialRequestDecision } from "@/lib/db/schema";
 
 function decisionEmailHtml(request: SocialRequest, decision: SocialRequestDecision, appUrl: string): string {
@@ -108,8 +108,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     try {
       const contactEmail = await resolveRequesterContactEmail(socialRequest);
       if (contactEmail) {
-        const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
-        const appUrl = process.env.NEXTAUTH_URL ?? "";
+        const fromEmail = getFromEmail();
+        const appUrl = getAppUrl();
         await sendEmail({
           to: contactEmail,
           from: fromEmail,

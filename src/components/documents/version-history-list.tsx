@@ -1,3 +1,5 @@
+import { formatTimestamp } from "@/lib/format-date";
+
 export interface VersionHistoryCitingMinutes {
   id: string;
   label: string;
@@ -27,8 +29,7 @@ export interface VersionHistoryRow {
 }
 
 function formatDate(d: Date | string): string {
-  const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatTimestamp(d, "long");
 }
 
 function ChangeTypeBadge({ changeType }: { changeType: string }) {

@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import DonorForm from "./donor-form";
 import type { LedgerDonor } from "@/lib/db/schema";
 import { formatEmailList } from "@/lib/utils";
+import { formatTimestamp } from "@/lib/format-date";
 
 interface DonorListProps {
   donors: LedgerDonor[];
@@ -18,8 +19,7 @@ interface DonorListProps {
 
 function formatDate(d: Date | string | null): string {
   if (!d) return "—";
-  const dt = typeof d === "string" ? new Date(d) : d;
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return formatTimestamp(d);
 }
 
 /**

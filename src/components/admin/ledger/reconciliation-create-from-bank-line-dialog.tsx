@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import type { BankLineWithMatch } from "@/lib/reconciliation-queries";
 import type { LedgerFund, LedgerCategory } from "@/lib/db/schema";
+import { formatCalendarDate } from "@/lib/format-date";
 
 const METHOD_LABELS: Record<string, string> = {
   check: "Check",
@@ -19,15 +20,6 @@ const METHOD_LABELS: Record<string, string> = {
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-function formatDate(dateStr: string): string {
-  const [year, month, day] = dateStr.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 interface ReconciliationCreateFromBankLineDialogProps {
@@ -157,7 +149,7 @@ export default function ReconciliationCreateFromBankLineDialog({
             Create transaction from bank line
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-gray-500">
-            {formatDate(bankLine.postingDate)} &middot; {bankLine.description} &middot;{" "}
+            {formatCalendarDate(bankLine.postingDate)} &middot; {bankLine.description} &middot;{" "}
             <span className="font-semibold tabular-nums">
               {formatDollars(bankLine.amountCents)}
             </span>

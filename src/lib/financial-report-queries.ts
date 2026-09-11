@@ -51,6 +51,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getFundReport, type FundReportCategoryLine } from "@/lib/ledger-queries";
+import { formatCalendarDate, parseCalendarDate } from "@/lib/format-date";
 import {
   causeLineReferenceKey,
   resolveCauseLineActual,
@@ -253,21 +254,8 @@ function priorMonthKey(month: string): string {
   return `${y}-${pad2(m)}`;
 }
 
-/** Parse a 'YYYY-MM-DD' string as a local date (avoids UTC shift from
- *  `new Date(string)`) — same convention as getPhilanthropy()'s local
- *  parseYMD() in ledger-queries.ts. Only used to hand a Date to
- *  getFiscalYear(), never for calendar arithmetic (see monthBounds() above). */
-function parseYMD(s: string): Date {
-  const [y, m, d] = s.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
-
 function formatMonthEndLabel(monthEnd: string): string {
-  return parseYMD(monthEnd).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatCalendarDate(monthEnd, "long");
 }
 
 /**
@@ -749,12 +737,12 @@ export async function getMonthlyStatement(
     return { status: "gated" };
   }
 
-  const reportFY = getFiscalYear(parseYMD(monthEnd));
+  const reportFY = getFiscalYear(parseCalendarDate(monthEnd));
   const currentReport = await getFundReport(fund.id, reportFY, { asOfDate: monthEnd });
   if (!currentReport) return null; // defensive: fund vanished mid-request
 
   const priorMonthEnd = monthBounds(priorMonthKey(month)).monthEnd;
-  const priorFY = getFiscalYear(parseYMD(priorMonthEnd));
+  const priorFY = getFiscalYear(parseCalendarDate(priorMonthEnd));
   const priorReport = await getFundReport(fund.id, priorFY, { asOfDate: priorMonthEnd });
   const beginningBookBalanceCents = priorReport
     ? priorReport.endingCents

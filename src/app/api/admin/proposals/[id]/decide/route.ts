@@ -43,21 +43,21 @@ import {
   isValidDateString,
   proposalDecisionEmailSubject,
   proposalStatusLabel,
-  escapeProposalHtml,
   CHAIR_NAME_MAX_LEN,
   DECISION_NOTE_MAX_LEN,
 } from "@/lib/proposals";
 import { decideProposal, resolveProposerContactEmail } from "@/lib/proposals-queries";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
 import type { Proposal, ProposalDecision } from "@/lib/db/schema";
 
 function decisionEmailHtml(proposal: Proposal, decision: ProposalDecision, appUrl: string): string {
   // proposalStatusLabel(), never the raw enum — the raw value renders as
   // "under_review" (visible underscore) in the one sentence this email exists
   // to deliver.
-  return `<p>There's an update on your proposal, <strong>${escapeProposalHtml(proposal.projectName ?? "")}</strong>.</p>
+  return `<p>There's an update on your proposal, <strong>${escapeHtml(proposal.projectName ?? "")}</strong>.</p>
 <p><strong>New status:</strong> ${proposalStatusLabel(proposal.status)}</p>
-${decision.note ? `<p><strong>Note from the board:</strong> ${escapeProposalHtml(decision.note)}</p>` : ""}
+${decision.note ? `<p><strong>Note from the board:</strong> ${escapeHtml(decision.note)}</p>` : ""}
 <p>View the full details at <a href="${appUrl}/members/proposals/${proposal.id}">${appUrl}/members/proposals/${proposal.id}</a>.</p>`;
 }
 
@@ -143,8 +143,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     try {
       const contactEmail = await resolveProposerContactEmail(proposal);
       if (contactEmail) {
-        const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
-        const appUrl = process.env.NEXTAUTH_URL ?? "";
+        const fromEmail = getFromEmail();
+        const appUrl = getAppUrl();
         await sendEmail({
           to: contactEmail,
           from: fromEmail,

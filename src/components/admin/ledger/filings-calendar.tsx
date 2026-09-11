@@ -13,6 +13,7 @@ import type { FilingRow } from "@/lib/ledger-queries";
 import MarkFiledDialog from "@/components/admin/ledger/mark-filed-dialog";
 import DeleteFilingButton from "@/components/admin/ledger/delete-filing-button";
 import FilingFormDialog from "@/components/admin/ledger/filing-form-dialog";
+import { formatCalendarDate, formatTimestamp } from "@/lib/format-date";
 
 interface FilingsCalendarProps {
   filings: FilingRow[];
@@ -20,12 +21,6 @@ interface FilingsCalendarProps {
   fiscalYear: number;
   canRecord: boolean;
   canManage: boolean;
-}
-
-// ---- helpers ----------------------------------------------------------------
-
-function formatDate(d: Date): string {
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function StatusBadge({ status, overdue }: { status: string; overdue: boolean }) {
@@ -108,7 +103,7 @@ function FilingCard({
       <p className="text-xs text-gray-500 mt-0.5">
         Due{" "}
         <time dateTime={filing.dueDate.toISOString().slice(0, 10)}>
-          {formatDate(filing.dueDate)}
+          {formatTimestamp(filing.dueDate)}
         </time>
       </p>
 
@@ -119,11 +114,7 @@ function FilingCard({
             <p>
               Filed:{" "}
               <span className="text-gray-700 font-medium">
-                {new Date(filing.filedOn + "T00:00:00").toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+                {formatCalendarDate(filing.filedOn)}
               </span>
             </p>
           )}

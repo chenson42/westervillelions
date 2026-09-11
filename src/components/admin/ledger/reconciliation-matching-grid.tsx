@@ -10,21 +10,13 @@ import type {
   MatchedTransactionRow,
 } from "@/lib/reconciliation-queries";
 import type { LedgerFund, LedgerCategory } from "@/lib/db/schema";
+import { formatCalendarDate } from "@/lib/format-date";
 import ReconciliationMatchPicker from "./reconciliation-match-picker";
 import ReconciliationCreateFromBankLineDialog from "./reconciliation-create-from-bank-line-dialog";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-function formatDate(dateStr: string): string {
-  const [year, month, day] = dateStr.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 /** Same signed convention as the match picker's own `signedAmount()` and the
@@ -168,7 +160,7 @@ export default function ReconciliationMatchingGrid({
                   <Fragment key={line.id}>
                     <tr>
                       <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                        {formatDate(line.postingDate)}
+                        {formatCalendarDate(line.postingDate)}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 max-w-[20rem] truncate">
                         {line.description}
@@ -232,7 +224,7 @@ export default function ReconciliationMatchingGrid({
                                 className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                               >
                                 <div className="text-sm text-gray-700">
-                                  <span className="tabular-nums">{formatDate(m.txnDate)}</span>
+                                  <span className="tabular-nums">{formatCalendarDate(m.txnDate)}</span>
                                   {" · "}
                                   {m.party || m.memo || <span className="text-gray-400">&mdash;</span>}
                                 </div>
@@ -246,7 +238,7 @@ export default function ReconciliationMatchingGrid({
                                       onClick={() =>
                                         setUnmatchTarget({
                                           matchId: m.matchId,
-                                          label: `${formatDate(m.txnDate)} · ${
+                                          label: `${formatCalendarDate(m.txnDate)} · ${
                                             m.party || m.memo || "this transaction"
                                           } (${formatDollars(signedAmount(m))})`,
                                         })

@@ -30,6 +30,7 @@ import {
   classifyRecipients,
 } from "@/lib/dues-reminders";
 import { sendBulkMemberEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/email-compose";
 import type { NewDuesReminder } from "@/lib/db/schema";
 
 const NOTE_MAX_LEN = 1_000;
@@ -164,9 +165,14 @@ export async function POST(request: NextRequest) {
       freshStatuses.map((s) => ({ memberId: s.memberId, status: s.status, email: s.email })),
     );
 
+    // fromEmail is deliberately NOT getFromEmail() — this send is signed by
+    // the treasurer@ club alias, not the general RESEND_FROM_EMAIL fallback
+    // every other send site uses, so it's out of scope for the B-46
+    // from-address consolidation (see resolveTreasurer()/DECISION-086 for
+    // the "signed by the position holder" pattern this mirrors).
     const fromEmail = "treasurer@westervillelions.org";
     const subject = renderDuesReminderSubject(fiscalYear);
-    const membersDuesUrl = `${process.env.NEXTAUTH_URL ?? ""}/members/dues`;
+    const membersDuesUrl = `${getAppUrl()}/members/dues`;
 
     const recipients = toSend.map(({ memberId, cohort }) => {
       const member = byId.get(memberId)!;

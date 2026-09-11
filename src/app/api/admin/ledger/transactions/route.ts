@@ -62,6 +62,7 @@ import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
 import { sendBulkMemberEmail } from "@/lib/email";
+import { getFromEmail, getAppUrl } from "@/lib/email-compose";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
 import { resolveTreasurer } from "@/lib/board-positions";
@@ -380,7 +381,7 @@ export async function POST(request: NextRequest) {
     if (derivedStatus === "pending") {
       try {
         const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
-        const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+        const fromEmail = getFromEmail();
         const amountDollars = (amountCents / 100).toFixed(2);
         const treasurer = await resolveTreasurer();
         if (!treasurer.ok) {
@@ -402,7 +403,7 @@ export async function POST(request: NextRequest) {
   ${party ? `<li><strong>Payee:</strong> ${party}</li>` : ""}
   ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
 </ul>
-<p>Please review and approve or reject this disbursement from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`;
+<p>Please review and approve or reject this disbursement from the <a href="${getAppUrl()}/admin/ledger/approvals">Approvals screen</a>.</p>`;
         await sendBulkMemberEmail({
           from: fromEmail,
           subject: `Disbursement pending your approval — $${amountDollars}`,
@@ -699,7 +700,7 @@ async function handleTransfer(
   if (derivedStatus === "pending") {
     try {
       const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
-      const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+      const fromEmail = getFromEmail();
       const amountDollars = ((amountCents as number) / 100).toFixed(2);
       const label = direction.mode === "sweep" ? "Sweep" : "Transfer";
       const treasurer = await resolveTreasurer();
@@ -714,7 +715,7 @@ async function handleTransfer(
   <li><strong>Date:</strong> ${txnDate}</li>
   ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
 </ul>
-<p>Please review and approve or reject this ${label.toLowerCase()} from the <a href="${process.env.NEXTAUTH_URL ?? ""}/admin/ledger/approvals">Approvals screen</a>.</p>`;
+<p>Please review and approve or reject this ${label.toLowerCase()} from the <a href="${getAppUrl()}/admin/ledger/approvals">Approvals screen</a>.</p>`;
       await sendBulkMemberEmail({
         from: fromEmail,
         subject: `${label} pending your approval — $${amountDollars}`,

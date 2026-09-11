@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AdminRsvpRow } from "@/types/admin-rsvp";
 import { WriteInForm } from "@/components/admin/write-in-form";
+import { formatTimestamp } from "@/lib/format-date";
 
 interface AdminEventRsvpTableProps {
   eventId: string;
@@ -266,11 +267,7 @@ export function AdminEventRsvpTable({ eventId, rows: initialRows, members, extra
                     </td>
                   )}
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
-                    {new Date(rsvp.createdAt).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
+                    {formatTimestamp(rsvp.createdAt)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     {(rsvp.userId || rsvp.isGuest) && (

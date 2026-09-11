@@ -37,7 +37,7 @@ import {
   getEmailsForFeature,
 } from "@/lib/ledger-queries";
 import { sendBulkMemberEmail } from "@/lib/email";
-import { escapeHtml } from "@/lib/html-escape";
+import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
 import { FEATURES } from "@/lib/permissions";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 
@@ -167,9 +167,9 @@ export async function POST(request: NextRequest) {
     // E-2: Notify LEDGER_APPROVE holders of new submission
     try {
       const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
-      const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+      const fromEmail = getFromEmail();
       const amountDollars = (amountCents / 100).toFixed(2);
-      const appUrl = process.env.NEXTAUTH_URL ?? "";
+      const appUrl = getAppUrl();
 
       // escapeHtml() on the member-supplied fields. `description` arrives
       // straight from the submitting member (trimmed and length-capped, never

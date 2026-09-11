@@ -9,11 +9,23 @@ import { describe, it, expect } from "vitest";
 import { escapeHtml } from "@/lib/html-escape";
 
 describe("escapeHtml", () => {
-  it("escapes &, <, >, and \"", () => {
+  it("escapes &, <, >, \", and '", () => {
     expect(escapeHtml("&")).toBe("&amp;");
     expect(escapeHtml("<")).toBe("&lt;");
     expect(escapeHtml(">")).toBe("&gt;");
     expect(escapeHtml('"')).toBe("&quot;");
+    expect(escapeHtml("'")).toBe("&#39;");
+  });
+
+  // B-46 consolidation (2026-09-11): this file's escape set widened from 4
+  // chars to 5 (added '), matching the two prior local implementations
+  // (dues-reminders.ts, ledger-acknowledgment-letter.ts) that both already
+  // escaped '. The other two prior local implementations (proposals.ts's
+  // escapeProposalHtml, and this file's own original set) did not.
+  it("escapes an apostrophe inside ordinary prose, e.g. a possessive", () => {
+    expect(escapeHtml("the Foundation's youth programs")).toBe(
+      "the Foundation&#39;s youth programs",
+    );
   });
 
   it("leaves plain alphanumeric/punctuation text unchanged", () => {

@@ -1,4 +1,5 @@
 import RichMarkdownContent from "@/components/rich-markdown-content";
+import { formatTimestamp } from "@/lib/format-date";
 
 export interface DocumentViewData {
   title: string;
@@ -8,8 +9,7 @@ export interface DocumentViewData {
 }
 
 function formatDate(d: Date | string): string {
-  const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatTimestamp(d, "long");
 }
 
 /**

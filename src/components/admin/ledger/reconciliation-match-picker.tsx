@@ -6,19 +6,11 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import type { BankLineWithMatch, CandidateTransactionRow } from "@/lib/reconciliation-queries";
 import { computeSelectionSummary } from "@/lib/reconciliation";
+import { formatCalendarDate } from "@/lib/format-date";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-function formatDate(dateStr: string): string {
-  const [year, month, day] = dateStr.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 /** Income displays positive, expense displays negative — lets the treasurer
@@ -263,7 +255,7 @@ export default function ReconciliationMatchPicker({
             Match bank line
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-gray-500">
-            {formatDate(bankLine.postingDate)} &middot; {bankLine.description} &middot;{" "}
+            {formatCalendarDate(bankLine.postingDate)} &middot; {bankLine.description} &middot;{" "}
             <span className="font-semibold tabular-nums">
               {formatDollars(bankLine.amountCents)}
             </span>
@@ -374,7 +366,7 @@ export default function ReconciliationMatchPicker({
                               <label className="flex h-11 w-11 -my-3 cursor-pointer items-center justify-center">
                                 <span className="sr-only">
                                   Select {t.party || t.memo || "transaction"} for{" "}
-                                  {formatDollars(signedAmount(t))} on {formatDate(t.txnDate)}
+                                  {formatDollars(signedAmount(t))} on {formatCalendarDate(t.txnDate)}
                                 </span>
                                 <input
                                   type="checkbox"
@@ -385,7 +377,7 @@ export default function ReconciliationMatchPicker({
                               </label>
                             </td>
                             <td className="px-3 py-2 text-sm text-gray-700 whitespace-nowrap">
-                              {formatDate(t.txnDate)}
+                              {formatCalendarDate(t.txnDate)}
                             </td>
                             <td className="px-3 py-2 text-sm text-gray-700">
                               {t.party || t.memo || <span className="text-gray-400">&mdash;</span>}

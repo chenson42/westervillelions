@@ -1,5 +1,6 @@
 import { minutesKindLabel } from "@/lib/minutes";
 import RichMarkdownContent from "@/components/rich-markdown-content";
+import { formatCalendarDate } from "@/lib/format-date";
 
 export interface MinutesDetailMotionRow {
   id: string;
@@ -31,16 +32,7 @@ export interface MinutesDetailData {
 }
 
 function formatMeetingDate(dateStr: string): string {
-  // meetingDate is a plain "YYYY-MM-DD" column — parse as a calendar date,
-  // never through `new Date(string)` directly (that reads it as UTC
-  // midnight and can roll back a day in US timezones).
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatCalendarDate(dateStr, "full");
 }
 
 function resultBadgeClass(result: string): string {

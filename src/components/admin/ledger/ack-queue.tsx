@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import type { PendingAcknowledgmentRow } from "@/lib/ledger-queries";
 import { ackQueueRowAction } from "@/lib/ack-queue-ui";
+import { formatCalendarDate } from "@/lib/format-date";
 import AcknowledgeDialog from "./acknowledge-dialog";
 import MarkSentDialog from "./mark-sent-dialog";
 import LinkDonorDialog from "./link-donor-dialog";
@@ -17,23 +18,6 @@ interface AckQueueProps {
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-/**
- * Formats an ISO 'YYYY-MM-DD' string as "Aug 8, 2026" via an explicit local
- * Date construction — NOT `new Date(isoString)`, which parses as UTC
- * midnight and can display a day off in a US timezone (the same
- * naive-timestamp-as-UTC class of bug this codebase has hit before; mirrors
- * `formatYMD()` in acknowledgment-letter-selector.tsx and `formatDate()` in
- * reconciliation-matching-grid.tsx).
- */
-function formatDate(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 /**
@@ -140,7 +124,7 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
                 return (
                   <tr key={row.txn.id} className="hover:bg-gray-50">
                     <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                      {formatDate(row.txn.txnDate)}
+                      {formatCalendarDate(row.txn.txnDate)}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       <div className="font-medium">{row.txn.entityName}</div>

@@ -13,7 +13,7 @@ import { users, roles, userRoles, passwordResetTokens } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { generateResetToken } from "@/lib/auth/password-reset";
 import { sendEmail } from "@/lib/email";
-import { escapeHtml } from "@/lib/html-escape";
+import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
 import crypto from "crypto";
 
 // ---------------------------------------------------------------------------
@@ -117,13 +117,11 @@ async function sendWelcomeEmail(
   name: string,
   token: string
 ): Promise<void> {
-  const appUrl = process.env.NEXTAUTH_URL ?? "https://westervillelions.org";
+  const appUrl = getAppUrl();
   const setPasswordUrl = `${appUrl}/reset-password?token=${token}`;
-  const fromEmail =
-    process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
 
   await sendEmail({
-    from: `Westerville Lions Club <${fromEmail}>`,
+    from: getFromEmail("Westerville Lions Club"),
     to: email,
     subject: "Welcome to the Westerville Lions Club — Set Up Your Account",
     html: `
@@ -131,7 +129,7 @@ async function sendWelcomeEmail(
       <p>Welcome to the Westerville Lions Club! Your member portal account has been created.</p>
       <p>Click the button below to set your password and activate your account:</p>
       <p style="text-align:center; margin: 24px 0;">
-        <a href="${setPasswordUrl}" style="background-color:#1a56db; color:white; padding:12px 24px; border-radius:6px; text-decoration:none; font-weight:bold;">
+        <a href="${setPasswordUrl}" style="background-color:#003F87; color:white; padding:12px 24px; border-radius:6px; text-decoration:none; font-weight:bold;">
           Set Your Password
         </a>
       </p>

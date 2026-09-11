@@ -64,6 +64,12 @@ export function MinutesEditorShell({
     <div className="space-y-6">
       {isDraft && approvedAt && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+          {/* Deliberately NOT formatTimestamp() — this is the one site in the
+              codebase using toLocaleDateString() with no options (locale-
+              default numeric format, e.g. "9/11/2026"), not the "Sep 11,
+              2026" shape formatTimestamp produces. Migrating would silently
+              change the rendered string with no bug being fixed, which the
+              date-formatter consolidation explicitly must not do. */}
           Previously approved {new Date(approvedAt).toLocaleDateString()}, reopened for correction.
           Re-approving will replace the approval date.
         </div>

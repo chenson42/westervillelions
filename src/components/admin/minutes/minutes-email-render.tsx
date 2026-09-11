@@ -43,7 +43,8 @@
  *        `src/app/api/contact/route.ts`.
  *   §5 — Any email sent while `status !== 'approved'` carries an unmissable
  *        "DRAFT — subject to approval" banner in the body itself. Colored
- *        gold/amber (`#FFF8E1`/`#FFD700`), never `lions-red` (undefined in
+ *        gold/amber (`#FFF8E1` wash, `#F9B222` = lions-gold border), never
+ *        `lions-red` (undefined in
  *        this project's theme, per CLAUDE.md).
  *
  * Only `bodyMarkdown` goes through ReactMarkdown — motions/action items are
@@ -117,7 +118,7 @@ const minutesEmailMarkdownComponents = {
   ),
   em: ({ children }: { children?: React.ReactNode }) => <em style={{ fontStyle: "italic" }}>{children}</em>,
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a href={href} style={{ color: "#1a56db", textDecoration: "underline" }}>
+    <a href={href} style={{ color: "#003F87", textDecoration: "underline" }}>
       {children}
     </a>
   ),
@@ -178,7 +179,7 @@ export async function renderMinutesEmailHtml(
         <div
           style={{
             background: "#FFF8E1",
-            border: "1px solid #FFD700",
+            border: "1px solid #F9B222",
             borderRadius: "6px",
             padding: "10px 14px",
             marginBottom: "16px",

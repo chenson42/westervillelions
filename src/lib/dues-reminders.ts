@@ -7,6 +7,7 @@
  */
 
 import type { DuesStatus } from "@/lib/dues";
+import { escapeHtml } from "@/lib/html-escape";
 
 // ---------------------------------------------------------------------------
 // seasonLabel / formatDuesAmount
@@ -36,17 +37,11 @@ export function formatDuesAmount(cents: number): string {
 // ---------------------------------------------------------------------------
 // HTML escaping — this is a templated HTML email built from free text
 // (a member's stored first name, the treasurer's own note); neither is
-// trusted content.
+// trusted content. B-46 consolidation (2026-09-11): the local copy that
+// used to live here is gone — escapeHtml is now imported from
+// "@/lib/html-escape", the single source of truth (5-char set, including
+// the apostrophe escape this file's own copy already had).
 // ---------------------------------------------------------------------------
-
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 // ---------------------------------------------------------------------------
 // Subject

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { SocialRequestStatusBadge } from "@/components/members/social-request-status";
 import { socialRequestPlatformLabel } from "@/lib/social-requests";
+import { formatTimestamp } from "@/lib/format-date";
 
 export interface SocialRequestReviewRow {
   id: string;
@@ -30,7 +31,7 @@ function platformsText(platforms: string[]): string {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return formatTimestamp(iso);
 }
 
 /**

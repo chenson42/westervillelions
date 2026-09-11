@@ -26,8 +26,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getOwnedProposal, submitProposal } from "@/lib/proposals-queries";
-import { escapeProposalHtml } from "@/lib/proposals";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
 import { BOARD_EMAIL } from "@/lib/club-contacts";
 import type { Proposal } from "@/lib/db/schema";
 
@@ -58,11 +58,11 @@ function typeLabel(type: string | null): string {
 function boardNotificationHtml(proposal: Proposal, appUrl: string): string {
   return `<p>A new project/activity proposal has been submitted for board review.</p>
 <ul>
-  <li><strong>Proposed by:</strong> ${escapeProposalHtml(proposal.proposerNameSnapshot ?? "Unknown")}</li>
-  <li><strong>Project/activity name:</strong> ${escapeProposalHtml(proposal.projectName ?? "")}</li>
+  <li><strong>Proposed by:</strong> ${escapeHtml(proposal.proposerNameSnapshot ?? "Unknown")}</li>
+  <li><strong>Project/activity name:</strong> ${escapeHtml(proposal.projectName ?? "")}</li>
   <li><strong>Type:</strong> ${typeLabel(proposal.type)}</li>
-  <li><strong>Need / impact:</strong> ${escapeProposalHtml(proposal.needDescription ?? "")}</li>
-  <li><strong>Chairperson:</strong> ${escapeProposalHtml(proposal.chairName ?? "")}</li>
+  <li><strong>Need / impact:</strong> ${escapeHtml(proposal.needDescription ?? "")}</li>
+  <li><strong>Chairperson:</strong> ${escapeHtml(proposal.chairName ?? "")}</li>
   <li><strong>Money needed from the club:</strong> ${moneyAnswerText(proposal)}</li>
   <li><strong>Proposed date:</strong> ${dateAnswerText(proposal)}</li>
 </ul>
@@ -70,7 +70,7 @@ function boardNotificationHtml(proposal: Proposal, appUrl: string): string {
 }
 
 function proposerConfirmationHtml(proposal: Proposal, appUrl: string): string {
-  return `<p>Thanks for submitting your project or activity proposal, <strong>${escapeProposalHtml(proposal.projectName ?? "")}</strong>.</p>
+  return `<p>Thanks for submitting your project or activity proposal, <strong>${escapeHtml(proposal.projectName ?? "")}</strong>.</p>
 <p>The board reviews proposals at its next meeting; we'll email you when there's an update.</p>
 <p>You can check on your proposal any time at <a href="${appUrl}/members/proposals/${proposal.id}">${appUrl}/members/proposals/${proposal.id}</a>.</p>`;
 }
@@ -108,8 +108,8 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
 
     const { proposal } = result;
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
-    const appUrl = process.env.NEXTAUTH_URL ?? "";
+    const fromEmail = getFromEmail();
+    const appUrl = getAppUrl();
 
     // Fire after commit, best-effort — never blocks or fails the submission.
     try {

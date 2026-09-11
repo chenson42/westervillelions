@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { computeResizeDimensions } from "@/lib/image-resize";
+import { formatTimestamp } from "@/lib/format-date";
 import {
   SOCIAL_REQUEST_PLATFORMS,
   socialRequestPlatformLabel,
@@ -59,7 +60,7 @@ interface SocialRequestFormProps {
 
 function formatSubmittedDate(iso: string | null): string {
   if (!iso) return "Not yet submitted";
-  return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatTimestamp(iso, "long");
 }
 
 // ---------------------------------------------------------------------------

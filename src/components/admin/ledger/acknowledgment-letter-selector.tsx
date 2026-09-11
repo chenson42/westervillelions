@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { formatBudgetReferenceCents } from "@/lib/ledger";
+import { formatCalendarDate } from "@/lib/format-date";
 import type {
   GeneratableAcknowledgmentRow,
   EmailLetterResult,
@@ -30,22 +31,6 @@ type GenerateResult = {
 /** Batches above this size get a <ConfirmDialog> before writing (DECISION-072 §7 suggestion,
  *  Phase 3 Edge Cases — small batches, the common case, shouldn't need a confirm). */
 const LARGE_BATCH_THRESHOLD = 10;
-
-/**
- * Formats an ISO 'YYYY-MM-DD' string as "Aug 8, 2026" via an explicit local
- * Date construction — NOT `new Date(isoString)`, which parses as UTC
- * midnight and can display a day off in a US timezone (the same
- * naive-timestamp-as-UTC class of bug this codebase has hit before; mirrors
- * composeAcknowledgmentLetter()'s own formatGiftDate()).
- */
-function formatYMD(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
 
 function ackTypeLabel(type: string): string {
   if (type === "written_ack_250") return "Written ($250+)";
@@ -345,7 +330,7 @@ export default function AcknowledgmentLetterSelector({
                             />
                           </td>
                           <td className="whitespace-nowrap px-4 py-4 text-sm text-gray-600">
-                            {formatYMD(row.txnDate)}
+                            {formatCalendarDate(row.txnDate)}
                           </td>
                           <td className="px-4 py-4 text-sm text-gray-700">
                             {row.donor ? (

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { AcknowledgmentSummaryRow } from "@/lib/ledger-queries";
 import TxnDonorActions from "./txn-donor-actions";
+import { formatCalendarDate } from "@/lib/format-date";
 
 interface SentAckListProps {
   rows: AcknowledgmentSummaryRow[];
@@ -12,13 +13,6 @@ interface SentAckListProps {
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-function formatDate(d: string): string {
-  // txnDate/sentAt come through as YYYY-MM-DD (txnDate) or a Date (sentAt).
-  const dt = new Date(`${d}T00:00:00`);
-  if (Number.isNaN(dt.getTime())) return d;
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function SentViaBadge({ sentVia }: { sentVia: string | null }) {
@@ -143,7 +137,7 @@ export default function SentAckList({ rows, canRecord }: SentAckListProps) {
               {rows.map((row) => (
                 <tr key={row.id} className="hover:bg-gray-50">
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                    {formatDate(row.txnDate)}
+                    {formatCalendarDate(row.txnDate)}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-700">
                     <div className="font-medium">{row.entityName}</div>

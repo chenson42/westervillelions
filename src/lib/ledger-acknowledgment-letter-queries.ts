@@ -36,6 +36,7 @@ import {
   composeAcknowledgmentEmailHtml,
 } from "@/lib/ledger-acknowledgment-letter";
 import { sendBulkMemberEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/email-compose";
 import { resolveTreasurer } from "@/lib/board-positions";
 
 // ---------------------------------------------------------------------------
@@ -553,10 +554,11 @@ export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<Emai
   const recipients: { to: string; html: string }[] = [];
   const meta: { ackId: string; to: string }[] = [];
   for (const candidate of claimed) {
-    // Absolute origin, never the `?? ""` fallback other link builders use: an
-    // empty origin yields a root-relative <img src>, which no mail client can
+    // getAppUrl() (B-46, src/lib/email-compose.ts): absolute origin, never
+    // the `?? ""` fallback other link builders used to use — an empty
+    // origin yields a root-relative <img src>, which no mail client can
     // resolve. Falls back to the public site, which serves the same asset.
-    const logoUrl = `${process.env.NEXTAUTH_URL || "https://westervillelions.org"}/images/logo-official.png`;
+    const logoUrl = `${getAppUrl()}/images/logo-official.png`;
     const html = composeAcknowledgmentEmailHtml(candidate.letterText, logoUrl);
     for (const to of candidate.emails) {
       meta.push({ ackId: candidate.ackId, to });

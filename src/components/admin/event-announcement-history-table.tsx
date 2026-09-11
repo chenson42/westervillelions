@@ -1,9 +1,13 @@
 import type { AnnouncementHistoryBatch } from "@/lib/event-announcements-queries";
+import { formatCalendarDate } from "@/lib/format-date";
 
 interface EventAnnouncementHistoryTableProps {
   history: AnnouncementHistoryBatch[];
 }
 
+// Includes hour:minute — genuinely bespoke, not a bare calendar-date or
+// date-only-instant format, so it stays local rather than going through
+// formatCalendarDate/formatTimestamp.
 function formatSentAt(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
     month: "short",
@@ -15,12 +19,7 @@ function formatSentAt(iso: string): string {
 }
 
 function formatOccurrenceDate(dateKey: string): string {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatCalendarDate(dateKey);
 }
 
 /**

@@ -9,6 +9,8 @@
  * component, different surrounding chrome.
  */
 
+import { formatTimestamp } from "@/lib/format-date";
+
 export interface ProposalTimelineRow {
   id: string;
   status: string;
@@ -46,8 +48,7 @@ export function ProposalStatusBadge({ status }: { status: string }) {
 }
 
 function formatDate(d: Date | string): string {
-  const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatTimestamp(d, "long");
 }
 
 export function ProposalStatusTimeline({ rows }: { rows: ProposalTimelineRow[] }) {

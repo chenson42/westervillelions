@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { PhilanthropyByCause } from "@/lib/ledger-queries";
+import { formatCalendarDate } from "@/lib/format-date";
 
 interface ImpactByCauseProps {
   /** All-time cause breakdown — shown when the "All" pill is selected. */
@@ -30,20 +31,6 @@ function formatDollarsWhole(cents: number): string {
 /** Short pill label, e.g. fyPillLabel(2026) → "FY2026–27". */
 function fyPillLabel(fy: number): string {
   return `FY${fy}–${String(fy + 1).slice(-2)}`;
-}
-
-/** Matches formatDate() in src/app/members/impact/page.tsx exactly — local
- *  date parsing via split("-") rather than new Date(string) to avoid the
- *  known naive-timestamp/UTC-shift bug class. Duplicated deliberately
- *  (formatDollarsWhole above is already duplicated the same way in both
- *  files) rather than shared. */
-function formatDate(dateStr: string): string {
-  const [year, month, day] = dateStr.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 /**
@@ -197,7 +184,7 @@ export default function ImpactByCause({
                                   </p>
                                 )}
                                 <p className="text-xs text-gray-400 mt-0.5">
-                                  {formatDate(row.txnDate)}
+                                  {formatCalendarDate(row.txnDate, "long")}
                                 </p>
                               </div>
                               <span className="text-gray-900 font-medium shrink-0">

@@ -38,6 +38,7 @@ import { resolveMinutesEmailTarget } from "@/lib/minutes";
 import { getMinutesDetail } from "@/lib/minutes-queries";
 import { renderMinutesEmailHtml, capitalize } from "@/components/admin/minutes/minutes-email-render";
 import { sendEmail } from "@/lib/email";
+import { getFromEmail } from "@/lib/email-compose";
 
 const NOTE_MAX_LEN = 1_000;
 
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const html = await renderMinutesEmailHtml(detail, note);
     const subject = `${detail.title ? detail.title + " — " : ""}${capitalize(detail.kind)} Minutes — ${detail.meetingDate}`;
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+    const fromEmail = getFromEmail();
 
     const result = await sendEmail({
       to: resolution.address,

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { formatTimestamp } from "@/lib/format-date";
 
 export interface PendingVersionRow {
   id: string;
@@ -29,10 +30,6 @@ interface PendingVersionsPanelProps {
   pending: PendingVersionRow[];
   needsCitation: NeedsCitationRow[];
   minutesOptions: MinutesOption[];
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
 /**
@@ -138,7 +135,7 @@ export function PendingVersionsPanel({ slug, pending, needsCitation, minutesOpti
               </div>
               <p className="mt-2 text-sm text-gray-700">{row.changeNote}</p>
               <p className="mt-1 text-xs text-gray-500">
-                {row.authorName ? `Drafted by ${row.authorName}` : "Author not recorded"} — {formatDate(row.createdAt)}.
+                {row.authorName ? `Drafted by ${row.authorName}` : "Author not recorded"} — {formatTimestamp(row.createdAt, "long")}.
                 Diffs shown against this draft compare vs. current as of now — the current text may have changed
                 since this was drafted.
               </p>
@@ -235,7 +232,7 @@ export function PendingVersionsPanel({ slug, pending, needsCitation, minutesOpti
           {needsCitation.map((row) => (
             <div key={row.id} className="rounded-2xl border border-gray-200 bg-white p-4">
               <p className="text-sm text-gray-900">
-                Version {row.versionNumber} — adopted {formatDate(row.adoptedAt)}
+                Version {row.versionNumber} — adopted {formatTimestamp(row.adoptedAt, "long")}
               </p>
               <p className="text-xs text-gray-500 mt-1">
                 No minutes citation on record yet — normal until the meeting that approves the minutes has happened.

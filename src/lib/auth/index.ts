@@ -7,6 +7,7 @@ import { users, accounts, members, userRoles, roles, roleFeatures, features } fr
 import { and, eq, ilike } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml, getFromEmail } from "@/lib/email-compose";
 import { recordFailedLogin } from "@/lib/auth/failed-login";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -190,18 +191,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               // Gating on isFirstLogin prevents an unlinked user from flooding the
               // admin inbox by repeatedly signing in.
               if (isFirstLogin && !linkedMemberId) {
-                const esc = (s: string) =>
-                  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-                const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
                 await sendEmail({
-                  from: `Westerville Lions Portal <${fromEmail}>`,
+                  from: getFromEmail("Westerville Lions Portal"),
                   to: "info@westervillelions.org",
                   subject: "New portal user needs member record review",
                   html: `
                     <h2>Unlinked User Alert</h2>
                     <p>A user signed in to the member portal but is not linked to any member record.</p>
-                    <p><strong>Name:</strong> ${esc(userName || "(unknown)")}</p>
-                    <p><strong>Email:</strong> ${esc(userEmail)}</p>
+                    <p><strong>Name:</strong> ${escapeHtml(userName || "(unknown)")}</p>
+                    <p><strong>Email:</strong> ${escapeHtml(userEmail)}</p>
                     <p>Please review this account in the <a href="https://westervillelions.org/admin/users">Admin → Users</a> page and link them to a member record if appropriate.</p>
                   `,
                 });

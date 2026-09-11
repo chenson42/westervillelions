@@ -1,4 +1,5 @@
 import RichMarkdownContent from "@/components/rich-markdown-content";
+import { formatTimestamp } from "@/lib/format-date";
 
 export interface PrintableAcknowledgmentLetter {
   ackId: string;
@@ -43,11 +44,7 @@ export default function AcknowledgmentLettersPrint({
 }: {
   letters: PrintableAcknowledgmentLetter[];
 }) {
-  const formattedTodayDate = new Date().toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  const formattedTodayDate = formatTimestamp(new Date(), "long");
 
   return (
     <div className="hidden print:block text-gray-900">

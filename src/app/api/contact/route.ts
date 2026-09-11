@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { contactSubmissions } from "@/lib/db/schema";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml, getFromEmail } from "@/lib/email-compose";
 
 async function verifyTurnstile(token: string): Promise<boolean> {
   // Use test secret if no real one is configured
@@ -36,18 +37,13 @@ export async function POST(request: NextRequest) {
     // Always save to database
     await db.insert(contactSubmissions).values({ name, email, subject, message });
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
-
-    const esc = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-    const safeName = esc(name);
-    const safeEmail = esc(email);
-    const safeMessage = esc(message).replace(/\n/g, "<br>");
+    const safeName = escapeHtml(name);
+    const safeEmail = escapeHtml(email);
+    const safeMessage = escapeHtml(message).replace(/\n/g, "<br>");
 
     // Admin notification
     await sendEmail({
-      from: `Westerville Lions Website <${fromEmail}>`,
+      from: getFromEmail("Westerville Lions Website"),
       to: "info@westervillelions.org",
       replyTo: email,
       subject: `Website Contact: ${subject}`,
@@ -69,7 +65,7 @@ export async function POST(request: NextRequest) {
 
     // Submitter confirmation
     await sendEmail({
-      from: `Westerville Lions Club <${fromEmail}>`,
+      from: getFromEmail("Westerville Lions Club"),
       to: email,
       subject: "We received your message!",
       html: `

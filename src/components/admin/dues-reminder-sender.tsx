@@ -14,6 +14,7 @@ import {
 import type { DuesReminderCohort } from "@/lib/dues-reminders";
 import type { ReminderCandidate } from "@/lib/dues-reminders-queries";
 import type { TreasurerResolution } from "@/lib/board-positions";
+import { formatTimestamp } from "@/lib/format-date";
 
 interface DuesSettingsSummary {
   individualAmountCents: number;
@@ -70,14 +71,6 @@ function hasEmail(c: ReminderCandidate): boolean {
   return Boolean(c.email && c.email.trim());
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 function LastRemindedBadge({ lastReminded }: { lastReminded: ReminderCandidate["lastReminded"] }) {
   if (!lastReminded) {
     return (
@@ -93,7 +86,7 @@ function LastRemindedBadge({ lastReminded }: { lastReminded: ReminderCandidate["
         within ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-500"
       }`}
     >
-      Last reminded {formatDate(lastReminded.sentAt)}
+      Last reminded {formatTimestamp(lastReminded.sentAt)}
       {within ? ` (within ${REMINDER_COOLDOWN_DAYS} days)` : ""}
     </span>
   );

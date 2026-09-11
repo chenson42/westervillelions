@@ -73,7 +73,7 @@ import {
   getBudgetLineForLinkValidation,
 } from "@/lib/ledger-queries";
 import { sendEmail } from "@/lib/email";
-import { escapeHtml } from "@/lib/html-escape";
+import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { resolveTreasurer } from "@/lib/board-positions";
 
@@ -153,8 +153,8 @@ export async function PATCH(
       return NextResponse.json({ error: "Reimbursement not found" }, { status: 404 });
     }
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
-    const appUrl = process.env.NEXTAUTH_URL ?? "";
+    const fromEmail = getFromEmail();
+    const appUrl = getAppUrl();
 
     // ── approve ──────────────────────────────────────────────────────────────
     if (action === "approve") {

@@ -1,19 +1,11 @@
 import Link from "next/link";
 import type { UnremittedDepositRow } from "@/lib/ledger-queries";
 import { getFiscalYear } from "@/lib/fiscal-year";
+import { formatCalendarDate, parseCalendarDate } from "@/lib/format-date";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-function formatDate(dateStr: string): string {
-  const [year, month, day] = dateStr.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 // Small, colocated label map — mirrors the unexported one in
@@ -106,7 +98,13 @@ export default function UnremittedDepositsPanel({
               <tbody className="divide-y divide-gray-200 bg-white">
                 {deposits.map((row) => {
                   const isAged = row.ageDays > 90;
-                  const fy = getFiscalYear(new Date(row.txnDate));
+                  // BUG FIX (2026-09-11 date-formatter consolidation): was
+                  // `new Date(row.txnDate)`, which parses a bare 'YYYY-MM-DD'
+                  // string as UTC midnight — a deposit dated exactly on a
+                  // fiscal-year boundary (July 1) could misfile into the
+                  // prior FY in any US timezone. parseCalendarDate() does
+                  // explicit local construction instead.
+                  const fy = getFiscalYear(parseCalendarDate(row.txnDate));
                   return (
                     <tr key={row.id}>
                       <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
@@ -123,7 +121,7 @@ export default function UnremittedDepositsPanel({
                         {formatDollars(row.amountCents)}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                        {formatDate(row.txnDate)}
+                        {formatCalendarDate(row.txnDate)}
                       </td>
                       <td className="px-4 py-3 text-sm text-right whitespace-nowrap">
                         {isAged ? (

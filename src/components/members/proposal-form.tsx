@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { formatTimestamp } from "@/lib/format-date";
 
 /**
  * Single scrolling proposal form — three labeled sections (The Project /
@@ -79,7 +80,7 @@ function dollarStringToCents(value: string): number | null {
 
 function formatSubmittedDate(iso: string | null): string {
   if (!iso) return "Not yet submitted";
-  return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatTimestamp(iso, "long");
 }
 
 // ---------------------------------------------------------------------------

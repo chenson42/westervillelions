@@ -24,6 +24,7 @@ import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { CLUB_GROUP_EMAIL } from "@/lib/club-contacts";
 import { sendBulkMemberEmail } from "@/lib/email";
+import { getFromEmail, getAppUrl } from "@/lib/email-compose";
 import {
   dateKey,
   generateOccurrences,
@@ -50,9 +51,11 @@ import {
 
 type Params = { params: Promise<{ id: string }> };
 
-function siteUrl(): string {
-  return process.env.NEXTAUTH_URL?.replace(/\/$/, "") ?? "https://westervillelions.org";
-}
+// B-46 consolidation (2026-09-11): this used to be its own local copy of
+// the trim-and-fallback logic — it was the one prior call site the
+// 2026-09-10 code review named as already having the correct shape. Now a
+// thin alias so the four call sites below don't need touching.
+const siteUrl = getAppUrl;
 
 // ---------------------------------------------------------------------------
 // GET
@@ -282,7 +285,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     // ---- 7. Send. Always via sendBulkMemberEmail() — never a hand-rolled
     //         loop over sendEmail() for this shape. ----------------------
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
+    const fromEmail = getFromEmail();
     const { results } = await sendBulkMemberEmail({
       from: fromEmail,
       subject,

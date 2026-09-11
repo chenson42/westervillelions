@@ -20,7 +20,6 @@ import {
   validateProposalSubmission,
   isNoOpDecision,
   proposalStatusLabel,
-  escapeProposalHtml,
 } from "@/lib/proposals";
 
 // ── 1. isValidProposalStatus() ──────────────────────────────────────────
@@ -292,30 +291,9 @@ describe("proposalStatusLabel — B-42", () => {
 });
 
 // ── HTML escaping in outbound proposal email ────────────────────────────
-// The board notification goes to board@westervillelions.org — every board
-// member at once — and interpolates member-typed free text. Unescaped, a
-// stray "<" eats the rest of a line, and a deliberate anchor tag puts an
-// arbitrary link inside an email that looks like it came from the club.
-describe("escapeProposalHtml", () => {
-  it("neutralises an injected anchor tag", () => {
-    expect(escapeProposalHtml('<a href="http://evil.example">Donate here</a>')).toBe(
-      "&lt;a href=&quot;http://evil.example&quot;&gt;Donate here&lt;/a&gt;",
-    );
-  });
-
-  it("escapes ampersands first so existing entities are not double-decoded", () => {
-    expect(escapeProposalHtml("Parks &amp; Rec")).toBe("Parks &amp;amp; Rec");
-    expect(escapeProposalHtml("Parks & Rec")).toBe("Parks &amp; Rec");
-  });
-
-  it("leaves ordinary proposal prose untouched", () => {
-    const plain = "Rudolph Run 5K - raise funds for the Foundation's youth programs";
-    expect(escapeProposalHtml(plain)).toBe(plain);
-  });
-
-  it("escapes each dangerous character", () => {
-    expect(escapeProposalHtml("<")).toBe("&lt;");
-    expect(escapeProposalHtml(">")).toBe("&gt;");
-    expect(escapeProposalHtml('"')).toBe("&quot;");
-  });
-});
+// B-46 consolidation (2026-09-11): the local escapeProposalHtml() this
+// section used to test is gone — every proposal email builder now imports
+// escapeHtml from "@/lib/html-escape", and that function's own coverage
+// (src/lib/html-escape.test.ts) is the single source of truth for the
+// escape set, including the "neutralises an injected anchor tag" and
+// "escapes ampersands first" cases this section used to duplicate.

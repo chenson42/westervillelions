@@ -3,6 +3,7 @@ import { after } from "next/server";
 import { db } from "@/lib/db";
 import { membershipApplications } from "@/lib/db/schema";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml, getFromEmail } from "@/lib/email-compose";
 
 async function verifyTurnstile(token: string): Promise<boolean> {
   const secret = process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA";
@@ -82,20 +83,17 @@ export async function POST(request: NextRequest) {
 
     after(async () => {
       try {
-        const esc = (s: string) =>
-          s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-        const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
         await sendEmail({
-          from: `Westerville Lions Portal <${fromEmail}>`,
+          from: getFromEmail("Westerville Lions Portal"),
           to: "info@westervillelions.org",
           subject: "New membership application received",
           html: `
             <h2>New Membership Application</h2>
-            <p><strong>Name:</strong> ${esc(firstName)} ${esc(lastName)}</p>
-            <p><strong>Email:</strong> ${esc(email)}</p>
-            <p><strong>Phone:</strong> ${esc(phone || "(not provided)")}</p>
-            <p><strong>Member Type:</strong> ${esc(memberType || "new")}</p>
-            <p><strong>Submitted:</strong> ${esc(new Date().toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" }))}</p>
+            <p><strong>Name:</strong> ${escapeHtml(firstName)} ${escapeHtml(lastName)}</p>
+            <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+            <p><strong>Phone:</strong> ${escapeHtml(phone || "(not provided)")}</p>
+            <p><strong>Member Type:</strong> ${escapeHtml(memberType || "new")}</p>
+            <p><strong>Submitted:</strong> ${escapeHtml(new Date().toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" }))}</p>
             <p>Review this application in <a href="https://westervillelions.org/admin/membership">Admin &rarr; Membership</a>.</p>
           `,
         });

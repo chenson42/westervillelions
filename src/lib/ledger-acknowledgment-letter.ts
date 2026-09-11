@@ -47,6 +47,8 @@
  */
 
 import { formatBudgetReferenceCents } from "./ledger";
+import { escapeHtml } from "@/lib/html-escape";
+import { formatCalendarDate } from "@/lib/format-date";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -148,21 +150,9 @@ function formatTaxClassification(taxClassification: string): string {
   return match ? `501(c)(${match[1]})` : taxClassification;
 }
 
-/**
- * Formats an ISO 'YYYY-MM-DD' date string as "March 3, 2026". Parses the
- * date components explicitly and constructs a local Date from them (NOT
- * `new Date(isoString)`, which parses as UTC midnight and can shift a day
- * when displayed in a US timezone) — mirrors the parseYMD/formatDate
- * convention already used elsewhere in the ledger (e.g.
- * reconciliation-match-picker.tsx, financial-report-queries.ts).
- */
+/** Formats an ISO 'YYYY-MM-DD' date string as "March 3, 2026". */
 function formatGiftDate(txnDate: string): string {
-  const [year, month, day] = txnDate.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatCalendarDate(txnDate, "long");
 }
 
 // ---------------------------------------------------------------------------
@@ -327,25 +317,10 @@ export function composeAcknowledgmentLetter(args: {
 // (Emailing the Donor Acknowledgment Letter, 2026-08-12, DECISION-088)
 // ---------------------------------------------------------------------------
 
-/**
- * HTML-escapes free text for embedding in the email body. Local, private
- * copy of the same four-line shape src/lib/dues-reminders.ts already has
- * for the identical class of problem (plain template/free text into an
- * HTML email) — this is that pattern's third occurrence, not a fourth
- * variant. Not imported from dues-reminders.ts: that module is
- * feature-local, not a shared utility, and reaching into a sibling
- * feature's private helper would create the wrong kind of coupling. B-46
- * tracks giving this a single shared home (src/lib/email-compose.ts) as its
- * own, separately-scoped pass — not attempted here.
- */
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+// B-46 consolidation (2026-09-11): the local escapeHtml() that used to live
+// here (a private copy of the same shape src/lib/dues-reminders.ts had) is
+// gone. Both now import escapeHtml from "@/lib/html-escape", the single
+// shared home this comment used to say B-46 would eventually give it.
 
 /**
  * Wraps an already-composed letterText (verbatim — never re-derived, never

@@ -242,7 +242,12 @@ test.describe("acknowledgment letter generation — compliance block + core flow
     const anon = await page.context().browser()!.newContext();
 
     // Act
-    const res = await anon.request.patch("http://localhost:3000/api/admin/ledger/acknowledgments/letter-template", {
+    // Relative path, NOT an absolute http://localhost:3000 URL. Playwright
+    // resolves this against the config's baseURL, which honours
+    // PLAYWRIGHT_BASE_URL. The hardcoded form silently ignored that and failed
+    // with ECONNREFUSED the first time the suite was pointed at a different
+    // port — it was the only spec in e2e/ still doing this.
+    const res = await anon.request.patch("/api/admin/ledger/acknowledgments/letter-template", {
       data: { greeting: "unauthenticated attempt" },
     });
 

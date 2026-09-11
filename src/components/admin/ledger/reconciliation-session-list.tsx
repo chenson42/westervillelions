@@ -1,18 +1,10 @@
 import Link from "next/link";
 import type { ReconciliationSessionListRow } from "@/lib/reconciliation-queries";
+import { formatCalendarDate } from "@/lib/format-date";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-function formatDate(dateStr: string): string {
-  const [year, month, day] = dateStr.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 /**
@@ -74,7 +66,7 @@ export default function ReconciliationSessionList({
                   {s.bankAccountName}
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                  {formatDate(s.statementPeriodStart)} &ndash; {formatDate(s.statementPeriodEnd)}
+                  {formatCalendarDate(s.statementPeriodStart)} &ndash; {formatCalendarDate(s.statementPeriodEnd)}
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-700 tabular-nums text-right whitespace-nowrap">
                   {formatDollars(s.openingBalanceCents)}

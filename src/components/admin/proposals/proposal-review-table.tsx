@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ProposalStatusBadge } from "@/components/members/proposal-status-timeline";
+import { formatTimestamp } from "@/lib/format-date";
 
 export interface ProposalReviewRow {
   id: string;
@@ -32,7 +33,7 @@ function typeLabel(type: string | null): string {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return formatTimestamp(iso);
 }
 
 /**

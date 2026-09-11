@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import * as Dialog from "@radix-ui/react-dialog";
 import { AdminRsvpRow } from "@/types/admin-rsvp";
 import { WriteInForm } from "@/components/admin/write-in-form";
+import { formatTimestamp } from "@/lib/format-date";
 
 interface OccurrenceGroup {
   date: string; // ISO timestamp, sent as `occurrenceDate` to signup/RSVP APIs (preserves wall-clock time)
@@ -454,11 +455,7 @@ function OccurrenceAccordionRow({
                       </td>
                     )}
                     <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
-                      {new Date(row.createdAt).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
+                      {formatTimestamp(row.createdAt)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
                       {(row.userId || row.isGuest) && !isCancelled && (

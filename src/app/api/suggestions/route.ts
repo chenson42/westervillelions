@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { suggestions, users } from "@/lib/db/schema";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml, getFromEmail } from "@/lib/email-compose";
 import { eq } from "drizzle-orm";
 
 const ALLOWED_CATEGORIES = [
@@ -45,13 +46,8 @@ export async function POST(request: NextRequest) {
       isAnonymous: anonymous,
     });
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@westervillelions.org";
-
-    const esc = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-    const safeCategory = esc(category);
-    const safeMessage = esc(message.trim()).replace(/\n/g, "<br>");
+    const safeCategory = escapeHtml(category);
+    const safeMessage = escapeHtml(message.trim()).replace(/\n/g, "<br>");
 
     let submitterBlock = `<p><strong>From:</strong> Anonymous member</p>`;
     let replyTo: string | undefined;
@@ -67,14 +63,14 @@ export async function POST(request: NextRequest) {
       const email = submitter?.email ?? session.user.email ?? "";
       replyTo = email || undefined;
       submitterBlock = `
-        <p><strong>From:</strong> ${esc(name)}${
-          email ? ` &lt;<a href="mailto:${esc(email)}">${esc(email)}</a>&gt;` : ""
+        <p><strong>From:</strong> ${escapeHtml(name)}${
+          email ? ` &lt;<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>&gt;` : ""
         }</p>
       `;
     }
 
     await sendEmail({
-      from: `Westerville Lions Suggestion Box <${fromEmail}>`,
+      from: getFromEmail("Westerville Lions Suggestion Box"),
       to: "info@westervillelions.org",
       ...(replyTo && { replyTo }),
       subject: `Suggestion Box: ${category}`,
