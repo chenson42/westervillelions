@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { format, subMonths } from "date-fns";
 import Link from "next/link";
 import MarkdownContent from "@/components/markdown-content";
-import { getNextOccurrence, parseWallClock, formatEventWhen, dateKey, buildGoogleCalendarUrl, buildOutlookCalendarUrl, nowEastern, type IcsEventInput } from "@/lib/events";
+import { getNextOccurrence, parseWallClock, formatWallClockDate, formatRecurrence, dateKey, buildGoogleCalendarUrl, buildOutlookCalendarUrl, nowEastern, type IcsEventInput } from "@/lib/events";
 import { AddToCalendarDropdown } from "@/components/events/add-to-calendar-dropdown";
 
 export default async function MemberEventsPage() {
@@ -122,9 +122,18 @@ export default async function MemberEventsPage() {
                           <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                         </svg>
                       </Link>
+                      {/* Next occurrence, not the series' original startDate —
+                          the same bug the homepage fixed on 2026-09-03. The RSVP
+                          button below is already keyed to nextOccurrence, so the
+                          date line must agree with it. */}
                       <p className="text-gray-600 text-sm mb-1">
-                        {formatEventWhen(event)}
+                        {formatWallClockDate(event.nextOccurrence!, event.isAllDay)}
                       </p>
+                      {event.isRecurring && (
+                        <p className="text-lions-blue text-xs font-semibold mb-1">
+                          {formatRecurrence(event)}
+                        </p>
+                      )}
                       {event.location && (
                         <p className="text-gray-600 text-sm mb-2">{event.location}</p>
                       )}
