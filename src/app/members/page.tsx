@@ -169,8 +169,8 @@ export default async function MembersPage() {
             eight. */}
         <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6 mb-12">
           <a
-            href="/members"
-            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1"
+            href="/members#directory"
+            className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-lions-blue"
           >
             <h3 className="text-xl font-semibold mb-2 text-lions-blue">Member Directory</h3>
             <p className="text-gray-700">View contact information for all club members</p>

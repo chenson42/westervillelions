@@ -102,7 +102,10 @@ export function MemberDirectory({ members, filterGroups }: MemberDirectoryProps)
   }, [members, searchQuery, filterBranch, filterGroupId]);
 
   return (
-    <div className="bg-white rounded-2xl shadow-lg p-8">
+    // id + scroll-mt: the portal home's "Member Directory" tile links to
+    // /members#directory (the directory lives on the home page, below the
+    // tiles). scroll-mt keeps the heading clear of the sticky site header.
+    <div id="directory" className="bg-white rounded-2xl shadow-lg p-8 scroll-mt-24">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Member Directory</h2>

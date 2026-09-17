@@ -38,7 +38,11 @@ function SignInForm() {
         redirect: false,
       });
 
-      if (result?.ok) {
+      // NextAuth v5's client signIn() reports the HTTP status in `ok`, and a
+      // rejected credential still comes back 200 — the rejection lives in
+      // `error` ("CredentialsSignin"). Checking `ok` alone showed "Welcome
+      // back!" for a bad password and then bounced the user to /signin.
+      if (result?.ok && !result.error) {
         toast.success("Welcome back!");
         router.push(callbackUrl);
         router.refresh();
