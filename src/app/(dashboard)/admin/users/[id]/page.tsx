@@ -6,6 +6,7 @@ import Link from "next/link";
 import UserRoleManager from "@/components/admin/user-role-manager";
 import { EditUserForm } from "@/components/admin/edit-user-form";
 import { LinkMemberForm } from "@/components/admin/link-member-form";
+import { ResetPasswordButton } from "@/components/admin/reset-password-button";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
@@ -101,6 +102,31 @@ export default async function UserRolePage({
           initialName={user.name}
           initialEmail={user.email}
         />
+      </div>
+
+      {/* Account access */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Account Access</h2>
+        {id === session.user.id ? (
+          <p className="text-sm text-gray-600">
+            This is your own account. To reset your own password, use{" "}
+            <Link href="/forgot-password" className="text-lions-blue hover:underline">
+              Forgot password
+            </Link>{" "}
+            from the sign-in page.
+          </p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-500 mb-4">
+              Set a new password for this account directly — no email required.
+            </p>
+            <ResetPasswordButton
+              userId={user.id}
+              userName={user.name || user.email}
+              hasExistingPassword={user.password !== null}
+            />
+          </>
+        )}
       </div>
 
       {/* Member link */}

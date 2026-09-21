@@ -5,7 +5,7 @@ import { users, members, userRoles, roles } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-import bcrypt from "bcryptjs";
+import { hashPassword } from "@/lib/auth/password-reset";
 
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   const conflict = await db.query.users.findFirst({ where: eq(users.email, email.trim()) });
   if (conflict) return NextResponse.json({ error: "An account with this email already exists" }, { status: 409 });
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+  const hashedPassword = await hashPassword(password);
 
   let resolvedName = name?.trim() || null;
   if (!resolvedName && memberId) {

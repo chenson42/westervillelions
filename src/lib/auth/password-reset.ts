@@ -11,6 +11,49 @@ export function generateResetToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
+// Single home for the bcrypt cost factor — folded in from three previously
+// independent `bcrypt.hash(x, 10)` call sites (src/app/api/auth/register/route.ts,
+// src/app/api/admin/users/route.ts, and this file's own resetPassword()) per
+// docs/work-log/2026-09-18-admin-account-reset.md Phase 3. Value unchanged (10).
+const BCRYPT_COST = 10;
+
+// 32-character alphabet: A-Z minus I/O (look like 1/0 read aloud or on screen),
+// digits 2-9 (0/1 excluded for the same reason). 32 = 2^5 is deliberate: masking
+// the low 5 bits of a random byte (byte & 0x1f) selects a character with exactly
+// uniform probability — no modulo bias, no rejection sampling needed, because
+// 256 (the range of a byte) divides evenly by 32.
+const TEMP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const TEMP_PASSWORD_CHAR_COUNT = 12; // 12 * 5 bits = 60 bits of entropy
+const TEMP_PASSWORD_GROUP_SIZE = 4; // displayed/typed as XXXX-XXXX-XXXX
+
+/**
+ * Generate a random, human-relayable temporary password (e.g. for an
+ * admin-initiated in-band reset). Formatted XXXX-XXXX-XXXX so it reads
+ * cleanly over the phone; the hyphens are literal characters in the
+ * returned string, not display-only formatting.
+ */
+export function generateTempPassword(): string {
+  const bytes = crypto.randomBytes(TEMP_PASSWORD_CHAR_COUNT);
+  let chars = "";
+  for (let i = 0; i < TEMP_PASSWORD_CHAR_COUNT; i++) {
+    chars += TEMP_PASSWORD_ALPHABET[bytes[i] & 0x1f];
+  }
+  const groups: string[] = [];
+  for (let i = 0; i < chars.length; i += TEMP_PASSWORD_GROUP_SIZE) {
+    groups.push(chars.slice(i, i + TEMP_PASSWORD_GROUP_SIZE));
+  }
+  return groups.join("-");
+}
+
+/**
+ * Hash a plaintext password with the project's single named bcrypt cost
+ * factor. The only helper that should ever call bcrypt.hash() directly —
+ * see BCRYPT_COST above.
+ */
+export async function hashPassword(plain: string): Promise<string> {
+  return bcrypt.hash(plain, BCRYPT_COST);
+}
+
 /**
  * Create a password reset token for a user
  * @param email User's email address
@@ -103,7 +146,7 @@ export async function resetPassword(
   }
 
   // Hash new password
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  const hashedPassword = await hashPassword(newPassword);
 
   // Update user password
   await db.update(users)
