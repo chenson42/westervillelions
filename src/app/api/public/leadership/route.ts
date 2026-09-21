@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { groups, groupMemberships, members } from "@/lib/db/schema";
-import { eq, asc, sql } from "drizzle-orm";
+import { getBoardMemberships } from "@/lib/board-positions";
 
 const POSITION_ORDER: Record<string, number> = {
   president: 0,
@@ -24,28 +22,26 @@ function positionSortKey(position: string | null): [number, string] {
 
 export async function GET() {
   try {
-    // Find the Board group (case-insensitive)
-    const boardGroup = await db.query.groups.findFirst({
-      where: sql`lower(${groups.name}) = 'board of directors'`,
-    });
+    // getBoardMemberships() returns [] both when there's no "Board of
+    // Directors" group and when the group exists but has zero members —
+    // the response shape below is identical ([]) either way, matching the
+    // route's pre-refactor behavior byte-for-byte.
+    const boardMembers = await getBoardMemberships();
 
-    if (!boardGroup) {
-      return NextResponse.json([]);
-    }
+    const shaped = boardMembers.map((m) => ({
+      firstName: m.firstName,
+      lastName: m.lastName,
+      position: m.position,
+    }));
 
-    const boardMembers = await db
-      .select({
-        firstName: members.firstName,
-        lastName: members.lastName,
-        position: groupMemberships.position,
-      })
-      .from(groupMemberships)
-      .innerJoin(members, eq(groupMemberships.memberId, members.id))
-      .where(eq(groupMemberships.groupId, boardGroup.id))
-      .orderBy(asc(members.lastName));
+    // getBoardMemberships() has no ORDER BY (it's a shared, unordered bulk
+    // lookup); sort by lastName first so ties in the position sort below
+    // resolve the same way the old query's `orderBy(asc(members.lastName))`
+    // + stable JS sort did — response order is unchanged.
+    shaped.sort((a, b) => a.lastName.localeCompare(b.lastName));
 
     // Sort: known positions by rank first, then alphabetically by position name
-    const sorted = boardMembers.sort((a, b) => {
+    const sorted = shaped.sort((a, b) => {
       const [rankA, nameA] = positionSortKey(a.position);
       const [rankB, nameB] = positionSortKey(b.position);
       if (rankA !== rankB) return rankA - rankB;

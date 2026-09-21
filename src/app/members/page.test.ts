@@ -47,6 +47,16 @@ vi.mock("@/lib/db", () => {
         members: {
           findMany: vi.fn(() => Promise.resolve(mockDbState.membersResult)),
         },
+        // getBoardPositionsByMemberId() (src/lib/board-positions.ts) looks
+        // up the "Board of Directors" group via db.query.groups.findFirst —
+        // this page now calls it once to feed printMembers' authoritative
+        // board positions (Stale Board Positions fix, DECISION-097).
+        // undefined = "no such group", so getBoardMemberships() short-
+        // circuits without an extra db.select() call, keeping this file's
+        // "only one db.select() call" assertions below unchanged.
+        groups: {
+          findFirst: vi.fn(() => Promise.resolve(undefined)),
+        },
       },
       select: vi.fn(() => chain()),
     },

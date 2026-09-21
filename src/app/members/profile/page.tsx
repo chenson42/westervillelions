@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { members } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { getBoardPositionsByMemberId } from "@/lib/board-positions";
 import { ProfileForm } from "@/components/members/profile-form";
 import { ProfilePictureSection } from "@/components/members/profile-picture-section";
 import { SignOutButton } from "@/components/layout/signout-button";
@@ -19,6 +20,12 @@ export default async function ProfilePage() {
     ? await db.query.members.findFirst({
         where: eq(members.id, session.user.memberId),
       })
+    : null;
+
+  // Authoritative Board of Directors position (group_memberships.position),
+  // not the stale members.board_position column — see DECISION-097.
+  const boardPosition = member
+    ? ((await getBoardPositionsByMemberId()).get(member.id) ?? null)
     : null;
 
   return (
@@ -57,7 +64,7 @@ export default async function ProfilePage() {
                 />
               </div>
               <h2 className="text-xl font-semibold text-gray-900 mb-4">Member Information</h2>
-              <ProfileForm member={member} />
+              <ProfileForm member={member} boardPosition={boardPosition} />
             </>
           ) : (
             <div className="text-center py-8">

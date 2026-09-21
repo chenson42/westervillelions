@@ -259,7 +259,7 @@ export const ROLES = {
   BUDGET_COMMITTEE: "budget_committee",
   // Meeting Minutes (docs/work-log/2026-08-08-meeting-minutes.md) — bound to
   // minutes.manage only; granted manually by an admin, same as every other
-  // role today (no auto-derivation from members.boardPosition).
+  // role today (no auto-derivation from Board of Directors positions).
   NOTETAKER: "notetaker",
 } as const;
 

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { and, eq, inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { getBoardPositionsByMemberId } from "@/lib/board-positions";
 import { MemberDirectory } from "@/components/members/member-directory";
 import { MemberDirectoryPrint } from "@/components/members/member-directory-print";
 import { SuggestionBoxLauncher } from "@/components/suggestion-box-launcher";
@@ -65,6 +66,11 @@ export default async function MembersPage() {
           )
       : [];
 
+  // Authoritative Board of Directors positions (group_memberships.position),
+  // NOT the stale members.board_position column — see DECISION-097. One
+  // bulk lookup for the whole directory, never per-member (no N+1).
+  const boardPositionsByMemberId = await getBoardPositionsByMemberId();
+
   // Build a map of memberId -> group tag info
   const groupMap = new Map(directoryGroups.map((g) => [g.id, g]));
   const memberTagsMap = new Map<string, { groupId: string; groupName: string; color: string | null; tag: string }[]>();
@@ -96,7 +102,7 @@ export default async function MembersPage() {
     joinDate: member.joinDate,
     profilePicture: member.profilePicture,
     membershipStatus: member.membershipStatus as "active" | "prospective" | "ended",
-    boardPosition: member.boardPosition,
+    boardPosition: boardPositionsByMemberId.get(member.id) ?? null,
     groupTags: memberTagsMap.get(member.id) ?? [],
   }));
 

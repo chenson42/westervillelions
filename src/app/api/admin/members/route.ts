@@ -128,7 +128,6 @@ export async function POST(request: NextRequest) {
         state: data.state || null,
         zip: data.zip || null,
         branch: data.branch || null,
-        boardPosition: data.boardPosition || null,
         // Prospects never get a joinDate at create time — only set on the
         // prospective/ended → active transition (resolveJoinDate at PATCH time).
         joinDate:

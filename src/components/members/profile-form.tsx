@@ -14,11 +14,20 @@ type MemberRecord = {
   state: string | null;
   zip: string | null;
   branch: string | null;
-  boardPosition: string | null;
   memberNumber: number | null;
 };
 
-export function ProfileForm({ member }: { member: MemberRecord }) {
+export function ProfileForm({
+  member,
+  boardPosition,
+}: {
+  member: MemberRecord;
+  /** Authoritative Board of Directors position (group_memberships.position),
+   *  not a field on `member` — the stale members.board_position column was
+   *  removed. Null when the member holds no current Board position. See
+   *  DECISION-097. */
+  boardPosition: string | null;
+}) {
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -147,10 +156,10 @@ export function ProfileForm({ member }: { member: MemberRecord }) {
         </div>
       </div>
 
-      {(member.boardPosition || member.branch || member.memberNumber) && (
+      {(boardPosition || member.branch || member.memberNumber) && (
         <div className="bg-gray-50 rounded-lg p-4 space-y-2 text-sm text-gray-600">
           {member.memberNumber && <p><span className="font-medium">Member #:</span> {member.memberNumber}</p>}
-          {member.boardPosition && <p><span className="font-medium">Position:</span> {member.boardPosition}</p>}
+          {boardPosition && <p><span className="font-medium">Position:</span> {boardPosition}</p>}
           {member.branch && <p><span className="font-medium">Branch:</span> {member.branch}</p>}
         </div>
       )}
