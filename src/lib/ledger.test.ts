@@ -59,6 +59,7 @@ import {
   isAllZeroRow,
   matchBudgetLineForTransaction,
   escapeIlikeTerm,
+  isWithinReconciledLockCarveout,
   type GuardrailsInput,
   type AgedPublicFundFact,
   type SeedSourceLine,
@@ -1449,6 +1450,45 @@ describe("deriveAckType", () => {
 
   it("returns 'written_ack_250' for a large gift with null quid-pro-quo", () => {
     expect(deriveAckType(100_000_00, null)).toBe("written_ack_250");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isWithinReconciledLockCarveout — DECISION-099, Reconciled-Lock Donor-Link
+// Carve-Out. Phase 3 design specifies exactly these 7 test cases (tests 1-7).
+// ---------------------------------------------------------------------------
+
+describe("isWithinReconciledLockCarveout", () => {
+  it("returns true for { donorId: <uuid> } — the link case", () => {
+    expect(isWithinReconciledLockCarveout({ donorId: "donor-1" })).toBe(true);
+  });
+
+  it("returns true for { donorId: null } — the unlink case", () => {
+    expect(isWithinReconciledLockCarveout({ donorId: null })).toBe(true);
+  });
+
+  it("returns false when donorId is bundled with an arithmetic-affecting field (amountCents)", () => {
+    expect(
+      isWithinReconciledLockCarveout({ donorId: "donor-1", amountCents: 500 }),
+    ).toBe(false);
+  });
+
+  it("returns false when donorId is bundled with a non-arithmetic field (memo) — proves allowlist, not denylist", () => {
+    expect(
+      isWithinReconciledLockCarveout({ donorId: "donor-1", memo: "note" }),
+    ).toBe(false);
+  });
+
+  it("returns false when donorId is absent entirely", () => {
+    expect(isWithinReconciledLockCarveout({ categoryId: "cat-1" })).toBe(false);
+  });
+
+  it("returns false for an empty body", () => {
+    expect(isWithinReconciledLockCarveout({})).toBe(false);
+  });
+
+  it("returns false for a typo'd key name (case-sensitivity guard — fails closed, not open)", () => {
+    expect(isWithinReconciledLockCarveout({ donorID: "donor-1" })).toBe(false);
   });
 });
 

@@ -10,7 +10,13 @@
  *
  * Guard: if txn.approvedAt is set, returns 403 (inc2 immutability). Also 403
  * if txn.reconciledSessionId is set (Bank Reconciliation inc2 — the row was
- * cleared by a closed reconciliation session; reopen it first).
+ * cleared by a closed reconciliation session; reopen it first) UNLESS the
+ * request body's key set is EXACTLY `{ donorId }` (DECISION-099's narrow,
+ * allowlisted carve-out — see isWithinReconciledLockCarveout() in
+ * src/lib/ledger.ts). A successful carve-out edit writes an attributed
+ * ledgerAuditLog row (action: RECONCILED_DONOR_LINK_AUDIT_ACTION). The
+ * approvedAt and rejected guards below never honor this carve-out — they
+ * stay full, unconditional locks.
  *
  * Body (all fields optional):
  * {
@@ -75,6 +81,7 @@ import {
   ledgerCategories,
   ledgerDonors,
   ledgerAcknowledgments,
+  ledgerAuditLog,
 } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
@@ -82,7 +89,11 @@ import { FEATURES } from "@/lib/permissions";
 import { RECEIPT_KEY_REGEX, getReceiptStorage } from "@/lib/receipt-storage";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
-import { shouldClearBudgetLineLink } from "@/lib/ledger";
+import {
+  shouldClearBudgetLineLink,
+  isWithinReconciledLockCarveout,
+  RECONCILED_DONOR_LINK_AUDIT_ACTION,
+} from "@/lib/ledger";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
@@ -184,12 +195,24 @@ export async function PATCH(
       );
     }
 
+    const body = await request.json();
+
     // Bank Reconciliation inc2 guard: a row cleared by a closed reconciliation
-    // session is a FULL lock — structurally identical to the approvedAt guard
-    // above — consistent with this feature's hard-tie-out-with-no-override
-    // decision (silently degrading a closed session's arithmetic via an
-    // unflagged edit would contradict that decision's spirit).
-    if (existing.reconciledSessionId) {
+    // session is a FULL lock — consistent with this feature's hard-tie-out-
+    // with-no-override decision (silently degrading a closed session's
+    // arithmetic via an unflagged edit would contradict that decision's
+    // spirit) — UNLESS the request is DECISION-099's narrow, allowlisted
+    // carve-out: the body's key set is EXACTLY `{ donorId }`. `donorId` is
+    // read by nothing in the tie-out arithmetic, so this cannot move a closed
+    // session's numbers. `carveout` is deliberately computed even when the
+    // row is NOT reconciled (as `false`) so downstream code (the transfer-
+    // pair branch condition below) can reference one variable regardless of
+    // lock state, without ever letting a non-reconciled row's `carveout`
+    // read as `true`.
+    const carveout = existing.reconciledSessionId
+      ? isWithinReconciledLockCarveout(body)
+      : false;
+    if (existing.reconciledSessionId && !carveout) {
       return NextResponse.json(
         {
           error:
@@ -198,8 +221,6 @@ export async function PATCH(
         { status: 403 },
       );
     }
-
-    const body = await request.json();
 
     // Build validated update payload
     type UpdatePayload = Partial<{
@@ -551,7 +572,15 @@ export async function PATCH(
 
     // For transfer pairs with ?both=true, update both rows symmetrically
     // (amount and date changes are symmetric; category/party/flow changes only apply to requested row)
-    if (updateBoth && existing.transferGroupId) {
+    //
+    // `&& !carveout`: a donor is a fact about one leg, never a symmetric
+    // property of a transfer pair (donorId is never in symmetricUpdate
+    // below, and never was) — a carve-out-shaped edit therefore always takes
+    // the single-row path, regardless of `?both`, per DECISION-099's
+    // resolution of the transfer-pair open question (Phase 3 design doc).
+    // `carveout` can only be `true` when `existing.reconciledSessionId` was
+    // set, so this never changes behavior for a non-reconciled row.
+    if (updateBoth && existing.transferGroupId && !carveout) {
       // Find the partner row
       const partnerRows = await db
         .select({
@@ -615,6 +644,23 @@ export async function PATCH(
             .set({ donorId: update.donorId ?? null, updatedAt: new Date() })
             .where(eq(ledgerAcknowledgments.donationTxnId, id));
         }
+
+        // DECISION-099 item 7: attribute every carve-out edit. `carveout` can
+        // never be `true` inside this branch (its own condition requires
+        // `!carveout` to enter), so this never fires here today — kept for
+        // symmetry with the identical guard below, per the Phase 3 design,
+        // so the two donor-link write sites can't silently diverge if this
+        // branch's condition is ever revisited.
+        if (carveout) {
+          await tx.insert(ledgerAuditLog).values({
+            actorUserId: session.user.id,
+            action: RECONCILED_DONOR_LINK_AUDIT_ACTION,
+            targetTransactionId: id,
+            before: JSON.stringify({ donorId: existing.donorId }),
+            after: JSON.stringify({ donorId: update.donorId ?? null }),
+            details: `Reconciled-lock carve-out: transaction was cleared by session ${existing.reconciledSessionId}.`,
+          });
+        }
       });
     } else if (donorLinkChanged) {
       // Same-transaction so the two donor links can never diverge.
@@ -628,6 +674,21 @@ export async function PATCH(
           .update(ledgerAcknowledgments)
           .set({ donorId: update.donorId ?? null, updatedAt: new Date() })
           .where(eq(ledgerAcknowledgments.donationTxnId, id));
+
+        // DECISION-099 item 7: attribute a donor link/unlink written through
+        // the reconciled-lock carve-out. Only fires when the row WAS locked
+        // at write time — an ordinary donor-link edit on a non-reconciled
+        // row (carveout === false) writes no audit row.
+        if (carveout) {
+          await tx.insert(ledgerAuditLog).values({
+            actorUserId: session.user.id,
+            action: RECONCILED_DONOR_LINK_AUDIT_ACTION,
+            targetTransactionId: id,
+            before: JSON.stringify({ donorId: existing.donorId }),
+            after: JSON.stringify({ donorId: update.donorId ?? null }),
+            details: `Reconciled-lock carve-out: transaction was cleared by session ${existing.reconciledSessionId}.`,
+          });
+        }
       });
     } else {
       await db

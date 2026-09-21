@@ -805,6 +805,65 @@ export function deriveAckType(
 }
 
 // ---------------------------------------------------------------------------
+// Reconciled-Lock Donor-Link Carve-Out (2026-09-21 / DECISION-099)
+// ---------------------------------------------------------------------------
+
+/**
+ * The exact request-body key set the reconciled-row lock (DECISION-036 item
+ * 4) lets through, narrowed by DECISION-099. This is deliberately the ONLY
+ * place this rule is expressed — both the PATCH route and its tests must
+ * call isWithinReconciledLockCarveout() rather than re-deriving this list.
+ */
+export const RECONCILED_LOCK_CARVEOUT_FIELDS = ["donorId"] as const;
+
+/**
+ * True iff `body`'s key set is EXACTLY RECONCILED_LOCK_CARVEOUT_FIELDS — i.e.
+ * `{ donorId }` and nothing else (donorId may be a string id, to link, or
+ * `null`, to unlink). Any additional key at all — `memo`, `publicNote`,
+ * `beneficiaryCause`, and especially `categoryId`/`amountCents`/`txnDate`/
+ * `flow`/`bankAccountId`/`checkNumber` — fails the whole request.
+ *
+ * Allowlist, not denylist (DECISION-099 Ruling #3, overruling Phase 1's
+ * originally-proposed "reject donorId bundled with any of these six named
+ * arithmetic-affecting fields"). A denylist has to be remembered and
+ * extended every time a new arithmetic-adjacent column is added to
+ * `ledgerTransactions` — a maintenance burden with a silent failure mode if
+ * forgotten. This function instead recognizes exactly ONE safe body shape;
+ * anything else — including a field nobody has thought to denylist yet — is
+ * refused by construction, permanently, with nothing to keep in sync.
+ *
+ * A typo'd key (e.g. `donorID`) is NOT in the allowlist and therefore fails
+ * closed, same as any other unrecognized field — this is intentional, not a
+ * usability gap: the carve-out has exactly one legitimate shape.
+ *
+ * Only the PATCH route on `/api/admin/ledger/transactions/[id]` calls this.
+ * The acknowledge route's body shape is fixed by its own route code (never
+ * caller-extensible the way an arbitrary PATCH body is) — it never needed a
+ * lock, only the audit attribution this same ticket adds via
+ * RECONCILED_DONOR_LINK_AUDIT_ACTION below.
+ */
+export function isWithinReconciledLockCarveout(body: Record<string, unknown>): boolean {
+  const keys = Object.keys(body);
+  if (keys.length !== RECONCILED_LOCK_CARVEOUT_FIELDS.length) return false;
+  return (RECONCILED_LOCK_CARVEOUT_FIELDS as readonly string[]).every((field) =>
+    keys.includes(field),
+  );
+}
+
+/**
+ * Shared `ledgerAuditLog.action` value for a donor link/unlink written onto a
+ * transaction locked by a closed reconciliation session — written either via
+ * the PATCH route's carve-out above, or via the acknowledge route's
+ * always-permitted donor write (POST .../acknowledge never had a
+ * reconciled-lock guard and doesn't need one — donorId can't move the
+ * tie-out arithmetic — but writing into a locked row deserves the same
+ * attribution). One constant so the two write sites can never drift into
+ * different action names for what is, semantically, the same event.
+ */
+export const RECONCILED_DONOR_LINK_AUDIT_ACTION =
+  "donor_linked_on_reconciled_transaction" as const;
+
+// ---------------------------------------------------------------------------
 // countAgedPublicFunds — inc7 (revised 2026-07-20, Bug 2 fix / DECISION-028)
 // ---------------------------------------------------------------------------
 

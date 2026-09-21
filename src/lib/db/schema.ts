@@ -771,6 +771,22 @@ export const ledgerAuditLog = pgTable(
     // NOT audited in v1, per DECISION-066 item 5.)
     action: text("action").notNull(),
     targetCategoryId: uuid("target_category_id").references(() => ledgerCategories.id, { onDelete: "set null" }),
+    // Added 2026-09-21 (DECISION-099 / docs/work-log/2026-09-21-reconciled-donor-link-carveout.md):
+    // the target_transaction_id column this table's origin migration
+    // (0074_ledger_category_audit.sql) earmarked as a planned future
+    // addition. First use: attributing a donor-link edit made through the
+    // reconciled-row lock's narrow, allowlisted `donorId`-only carve-out.
+    // Forward reference — `ledgerTransactions` is declared further down in
+    // this file; Drizzle's `.references(() => table.column)` callback form
+    // supports this without reordering. Same nullable-FK, ON DELETE SET NULL
+    // shape as targetCategoryId, for the same reason: a deleted transaction
+    // must not delete its own audit history, only detach it (mirrors
+    // targetCategoryId's behavior on category deletion — an audit trail that
+    // vanishes when its subject is deleted would defeat its purpose).
+    // App-layer invariant: exactly one of targetCategoryId /
+    // targetTransactionId is non-null per row (or, for the one pre-existing
+    // case, 'ack_letter_template_updated', both are null).
+    targetTransactionId: uuid("target_transaction_id").references(() => ledgerTransactions.id, { onDelete: "set null" }),
     before: text("before"),
     after: text("after"),
     // Human-readable note: affected fiscal years, merge partner name/id, $ impact.
@@ -779,6 +795,7 @@ export const ledgerAuditLog = pgTable(
   },
   (t) => [
     index("ix_ledger_audit_log_category").on(t.targetCategoryId),
+    index("ix_ledger_audit_log_transaction").on(t.targetTransactionId),
     index("ix_ledger_audit_log_created").on(t.createdAt),
   ],
 );

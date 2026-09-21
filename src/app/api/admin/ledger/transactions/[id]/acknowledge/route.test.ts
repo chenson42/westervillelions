@@ -22,10 +22,20 @@
  * failure worth catching is a purpose edit that quietly marks a donor's
  * acknowledgment delivered, or a mark-sent that quietly rewrites their letter.
  *
+ * Since 2026-09-21 this file also covers named tests 18-20 from the
+ * reconciled-lock donor-link carve-out design (DECISION-099,
+ * docs/work-log/2026-09-21-reconciled-donor-link-carveout.md Phase 3): this
+ * route's donorId write was found to be an unattributed bypass of the
+ * reconciled-row lock — it never had a 403 guard and still doesn't (see the
+ * route's own file header) — so the fix is a ledgerAuditLog row written only
+ * when the write actually reaches a locked (reconciledSessionId-set) row.
+ *
  * Hermetic: mocks @/lib/auth, @/lib/permissions-server, @/lib/db — importing
  * the real @/lib/db module throws at import time without DATABASE_URL (see
  * the header comment in src/lib/ledger-queries.test.ts for the same
- * rationale).
+ * rationale). @/lib/db/schema is imported directly (real, unmocked) purely
+ * for table-reference identity — it does not touch a DB connection at import
+ * time (only src/lib/db/index.ts does).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -44,6 +54,10 @@ const { mockDbState } = vi.hoisted(() => ({
     // Top-level db.update() calls — PATCH's own writes, distinct from
     // txnUpdates, which are the ones POST issues inside db.transaction().
     ackUpdates: [] as { set: Record<string, unknown> }[],
+    // ledgerAuditLog rows inserted inside POST's db.transaction() — kept
+    // separate from ackInsertValues (ledgerAcknowledgments rows), since
+    // POST's tx.insert() is now called against two different tables.
+    auditInserts: [] as Record<string, unknown>[],
   },
 }));
 
@@ -80,13 +94,26 @@ vi.mock("@/lib/db", () => ({
     },
     transaction: vi.fn(async (cb: (tx: unknown) => unknown) => {
       const tx = {
-        insert: () => ({
-          values: (values: Record<string, unknown>) => ({
-            returning: () => {
-              mockDbState.ackInsertValues.push(values);
-              return Promise.resolve([{ id: "ack-1", ...values }]);
-            },
-          }),
+        // `table` distinguishes ledgerAcknowledgments (the ack row — chains
+        // .returning()) from ledgerAuditLog (the new DECISION-099 audit row —
+        // fire-and-forget, no .returning() call in the route). `ledgerAuditLog`
+        // referenced here is the real, unmocked @/lib/db/schema export
+        // imported below — the same module instance route.ts itself imports —
+        // safe because this closure isn't evaluated until a test actually
+        // invokes POST(), well after every module in the graph is resolved.
+        insert: (table: unknown) => ({
+          values: (values: Record<string, unknown>) => {
+            if (table === ledgerAuditLog) {
+              mockDbState.auditInserts.push(values);
+              return Promise.resolve(undefined);
+            }
+            return {
+              returning: () => {
+                mockDbState.ackInsertValues.push(values);
+                return Promise.resolve([{ id: "ack-1", ...values }]);
+              },
+            };
+          },
         }),
         update: () => ({
           set: (set: Record<string, unknown>) => ({
@@ -105,6 +132,7 @@ vi.mock("@/lib/db", () => ({
 import { POST, PATCH } from "./route";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
+import { ledgerAuditLog } from "@/lib/db/schema";
 
 function makeRequest(body: unknown): NextRequest {
   return { json: async () => body } as unknown as NextRequest;
@@ -121,6 +149,7 @@ const FOUNDATION_INCOME_TXN = {
     amountCents: 100000, // $1,000 — meets the $250 written-ack threshold
     txnDate: "2026-08-01",
     donorId: null,
+    reconciledSessionId: null,
   },
   donationsDeductible: true,
   entityName: "Foundation",
@@ -138,6 +167,7 @@ beforeEach(() => {
   mockDbState.txnUpdates = [];
   mockDbState.ackInsertValues = [];
   mockDbState.ackUpdates = [];
+  mockDbState.auditInserts = [];
 });
 
 describe("POST .../[id]/acknowledge — donor_id sync (2026-08-08 bug)", () => {
@@ -454,5 +484,72 @@ describe("PATCH .../[id]/acknowledge — mode routing", () => {
 
     expect(res.status).toBe(200);
     expect(mockDbState.ackUpdates[0].set).not.toHaveProperty("purpose");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reconciled-lock donor-link audit trail (DECISION-099) — Phase 3 named tests
+// 18-20 (docs/work-log/2026-09-21-reconciled-donor-link-carveout.md).
+// ---------------------------------------------------------------------------
+
+describe("POST .../[id]/acknowledge — reconciled-lock donor-link audit trail (DECISION-099)", () => {
+  it("test 18: donorId against a RECONCILED transaction still succeeds (this route never had a lock) AND now writes one attributed ledgerAuditLog row", async () => {
+    mockDbState.txnRows = [
+      {
+        ...FOUNDATION_INCOME_TXN,
+        txn: { ...FOUNDATION_INCOME_TXN.txn, donorId: null, reconciledSessionId: "session-1" },
+      },
+    ];
+
+    const res = await POST(makeRequest({ donorId: "donor-1" }), makeParams("txn-1"));
+    expect(res.status).toBe(201);
+
+    // Undocumented-but-real existing behavior: the donor write itself still
+    // succeeds — this route has no reconciled-lock 403 and this ticket does
+    // not add one (see file header, "Out of Scope").
+    expect(mockDbState.txnUpdates).toHaveLength(1);
+    expect(mockDbState.txnUpdates[0].set.donorId).toBe("donor-1");
+
+    // The fix: an attributed audit row now accompanies that write.
+    expect(mockDbState.auditInserts).toHaveLength(1);
+    const row = mockDbState.auditInserts[0];
+    expect(row.action).toBe("donor_linked_on_reconciled_transaction");
+    expect(row.targetTransactionId).toBe("txn-1");
+    expect(row.actorUserId).toBe("recorder-1");
+    expect(JSON.parse(row.before as string)).toEqual({ donorId: null });
+    expect(JSON.parse(row.after as string)).toEqual({ donorId: "donor-1" });
+    expect(row.details).toContain("session-1");
+    expect(row.details).toContain("via acknowledgment creation");
+  });
+
+  it("test 19: creating an acknowledgment WITHOUT a donorId against a reconciled transaction succeeds, donorId untouched, NO audit row (no donor write occurred at all)", async () => {
+    mockDbState.txnRows = [
+      {
+        ...FOUNDATION_INCOME_TXN,
+        txn: { ...FOUNDATION_INCOME_TXN.txn, reconciledSessionId: "session-1" },
+      },
+    ];
+
+    const res = await POST(makeRequest({}), makeParams("txn-1"));
+    expect(res.status).toBe(201);
+
+    expect(mockDbState.txnUpdates).toHaveLength(0);
+    expect(mockDbState.auditInserts).toHaveLength(0);
+  });
+
+  it("test 20: donorId against a NON-reconciled transaction succeeds unchanged from today, NO audit row (the exceptional-case-only audit rule applies here too)", async () => {
+    mockDbState.txnRows = [
+      {
+        ...FOUNDATION_INCOME_TXN,
+        txn: { ...FOUNDATION_INCOME_TXN.txn, reconciledSessionId: null },
+      },
+    ];
+
+    const res = await POST(makeRequest({ donorId: "donor-1" }), makeParams("txn-1"));
+    expect(res.status).toBe(201);
+
+    expect(mockDbState.txnUpdates).toHaveLength(1);
+    expect(mockDbState.txnUpdates[0].set.donorId).toBe("donor-1");
+    expect(mockDbState.auditInserts).toHaveLength(0);
   });
 });

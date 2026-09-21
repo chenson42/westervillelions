@@ -33,6 +33,21 @@
  * untouched — "leave blank to record without linking a donor" must not clear
  * a link that's already there.
  *
+ * This donorId write is NOT gated on the transaction's reconciledSessionId/
+ * approvedAt/status (2026-09-21 / DECISION-099 Phase 3 finding) — it never
+ * was, and it doesn't need to be: this route's body shape is fixed by its
+ * own code (donorId/typeOverride/quidProQuoValueCents/quidProQuoDescription/
+ * purpose only; amountCents is always copied server-side, never accepted
+ * from the request), so it can never touch tie-out arithmetic the way an
+ * open-ended PATCH body could. What it DID lack was attribution: when this
+ * write reaches a transaction locked by a closed reconciliation session, it
+ * now also writes a ledgerAuditLog row (action:
+ * RECONCILED_DONOR_LINK_AUDIT_ACTION, shared with the PATCH route's carve-out
+ * so the two donor-link write sites can never drift into different action
+ * names) in the SAME db.transaction(). No new 403/lock is added here — see
+ * DECISION-099's Phase 3 design doc, "Out of Scope".
+ *
+
  * PATCH has TWO modes, selected by an explicit `mode` field. Absent `mode`
  * means "mark_sent" — the original and only behaviour before 2026-08-12, kept
  * as the default so every existing caller (MarkSentDialog) is untouched.
@@ -72,9 +87,14 @@ import {
   ledgerFunds,
   ledgerAcknowledgments,
   ledgerDonors,
+  ledgerAuditLog,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { deriveAckType, GIFT_PURPOSE_MAX_LENGTH } from "@/lib/ledger";
+import {
+  deriveAckType,
+  GIFT_PURPOSE_MAX_LENGTH,
+  RECONCILED_DONOR_LINK_AUDIT_ACTION,
+} from "@/lib/ledger";
 
 /**
  * Validates and normalizes a caller-supplied gift purpose. Shared by POST
@@ -299,6 +319,22 @@ export async function POST(
           .update(ledgerTransactions)
           .set({ donorId, updatedAt: new Date() })
           .where(eq(ledgerTransactions.id, txnId));
+
+        // DECISION-099 item 7 / Phase 3 finding: this write was previously an
+        // unattributed bypass of the reconciled-row lock. Attribute it —
+        // only when it actually reaches a locked row — rather than adding a
+        // new restriction this route never had and doesn't need (see file
+        // header).
+        if (txn.reconciledSessionId) {
+          await tx.insert(ledgerAuditLog).values({
+            actorUserId: session.user.id,
+            action: RECONCILED_DONOR_LINK_AUDIT_ACTION,
+            targetTransactionId: txnId,
+            before: JSON.stringify({ donorId: txn.donorId }),
+            after: JSON.stringify({ donorId }),
+            details: `Reconciled-lock carve-out: transaction was cleared by session ${txn.reconciledSessionId} (donor linked via acknowledgment creation).`,
+          });
+        }
       }
 
       return inserted;
