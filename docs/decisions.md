@@ -28,6 +28,180 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-099: Reconciled-row lock gets one narrow, allowlisted carve-out — `donorId`-only edits pass through; every other field stays fully locked (amends DECISION-036 item 4)
+
+**Status:** Resolved
+**Date:** 2026-09-21
+**Amends:** DECISION-036 — item 4 only ("a full lock, not a `syncStale`-style silent-degradation marker... cannot be edited (any field)... until its closing session is reopened"). Items 1, 2, 3, and 5–10 of DECISION-036 are unaffected and still stand.
+
+**Decision:**
+
+Phase 2 architectural ruling for `docs/work-log/2026-09-21-reconciled-donor-link-carveout.md`. The Treasurer needs to link a donor to a transaction already cleared by a closed reconciliation session; today `PATCH /api/admin/ledger/transactions/[id]` 403s any edit to such a row, checked before the body is even parsed.
+
+1. **This is a legitimate refinement of DECISION-036's intent, not a violation of it.** DECISION-036 item 4's own rationale names exactly what the lock protects: "this feature's defining decision is a hard tie-out with no discrepancy-note escape hatch — silently degrading a closed session's arithmetic via an unflagged edit would contradict that decision's spirit." The User Decision behind it (parent work-log, Phase 1, 2026-07-21) was about refusing a soft escape hatch for **arithmetic** — it never considered donor metadata, because `donorId` didn't exist on `ledgerTransactions` until inc6a, a later increment. `donorId` is read by nothing in `computeTieOut()`, the overlap/gap validators, or the close/reopen routes; it cannot move a closed session's numbers. The "any field" wording in item 4 was tech-lead's implementation default at a time no narrower carve-out had been considered or needed — an implementation-level choice (owned by tech-lead per this file's own Format section), not a restatement of the User Decision itself. Narrowing it to a field that provably cannot touch the arithmetic keeps the User Decision's actual guarantee — a closed session's numbers never move without reopening — fully intact.
+2. **The carve-out is an allowlist of exactly one field, not a denylist of arithmetic-affecting fields.** Phase 1's proposed mechanism (reject the request if `donorId` appears alongside any of `amountCents`/`txnDate`/`flow`/`categoryId`/`bankAccountId`/`checkNumber`) is **revised, not adopted as specified**: implement it as "the request body's key set must be `{ donorId }` and nothing else," not "the request body must not contain these six named fields." A denylist has to be remembered and extended every time a new arithmetic-adjacent column is added to `ledgerTransactions` in the future; an allowlist of one field cannot make that mistake — anything that isn't literally `donorId` is refused by construction, permanently, with zero maintenance burden. This also trivially satisfies Phase 1's separate "explicitly not `memo`, not `publicNote`, not `beneficiaryCause`" scope rule — those fall out of the same check with no second list to keep in sync with the first.
+3. **One named, testable helper — not inline field-checking in the route.** `src/lib/ledger.ts` (the existing pure-function module for ledger business logic — no DB, no Next.js import, mirroring `reconciliation.ts`'s role) gains a small allowlist constant and a pure function, e.g. `RECONCILED_LOCK_CARVEOUT_FIELDS = ["donorId"] as const` and `isWithinReconciledLockCarveout(body: Record<string, unknown>): boolean`, unit-tested in `ledger.test.ts`. The PATCH route calls it once. Per CLAUDE.md's duplication rule, a field-classification list is exactly the kind of decision that gets silently copy-pasted the next time a carve-out or a similar guard is written; naming it once forecloses that.
+4. **Guard restructuring is scoped to the `reconciledSessionId` check only — `approvedAt` and `status === 'rejected'` stay exactly as they are today: unconditional, full locks, evaluated before `await request.json()`.** Only the `reconciledSessionId` guard moves to after body parsing, and only it gains the conditional: `existing.reconciledSessionId` set → if `isWithinReconciledLockCarveout(body)`, fall through to the existing `donorId`-handling block already in the route (lines ~437–461); otherwise return the existing 403 verbatim. These stay three textually separate guards, not a merged "immutability" check — collapsing them into one shared function would put the carve-out one accidental edit away from silently applying to approved or rejected rows too, which was never asked for and protects a different invariant (board-approval finality, audit-trail-on-rejection) that Phase 1 never touched. This is exactly the ordering discipline Phase 1's constraints called for.
+5. **The DELETE route is untouched**, per Phase 1's constraint — donor unlinking is `PATCH { donorId: null }`, never a delete, so DELETE's existing full lock needs no carve-out.
+6. **Open question, not resolved here:** the PATCH route's `?both=true` transfer-pair path independently 403s if the *partner* leg has `reconciledSessionId` set (lines ~578–586 today). This ticket's Phase 1 scope never considered transfer pairs, and the real `link-donor-dialog.tsx` client never sends `?both=true` on a donor-only edit — so this is very unlikely to be reachable in practice, but tech-lead must confirm in Phase 3 rather than have it silently inherit or silently miss the carve-out.
+7. **An audit trail is REQUIRED for approval, not a nice-to-have.** This is a deliberate, narrow hole punched in an otherwise-hard financial-integrity lock; this codebase already attributes every other action that reaches inside a closed or otherwise-locked financial record (DECISION-035's receipt-waiver actor/reason/timestamp trio; session close/reopen's `closedByUserId`/`reopenedByUserId`) — skipping attribution here would be the one exception to an otherwise-consistent invariant on this exact surface, not a new bar being invented. It must **not** extend `ledgerAuditLog` as it exists today — that table's `action` enum and `targetCategoryId` FK are contractually category-scoped (Phase 1 correctly flagged this), and every existing reader filters `WHERE target_category_id = ...`. Recommended shape, for database-admin/tech-lead to finalize in Phase 3: generalize `ledgerAuditLog` into the Ledger surface's one audit sink — add a nullable `targetTransactionId` FK alongside the existing `targetCategoryId` (app-layer invariant: exactly one target non-null per row) and extend the `action` value set — rather than a new, near-identical sibling table. This keeps exactly one audit table for the whole Ledger surface, in the same spirit as CLAUDE.md's duplication finding; it adds a nullable column and new action values that no existing category-audit query will ever match, so every current reader is unaffected. A last-state-only trio of columns directly on `ledgerTransactions` (mirroring `reopenedAt`/`reopenedByUserId`) is an acceptable cheaper fallback if Phase 3 finds the polymorphic-FK shape too invasive, but loses history across repeated edits and reintroduces the single-purpose-column clutter `ledgerAuditLog` was originally split out to avoid.
+8. **No new `FEATURES` key.** The existing `LEDGER_RECORD` gate on the PATCH route already covers this — this ticket changes what a `LEDGER_RECORD` holder is allowed to submit to an existing, already-gated route, not who may reach it.
+
+**Rationale:** The lock DECISION-036 built exists to guarantee one thing — a closed reconciliation session's tie-out arithmetic never silently moves. A carve-out that is (a) allowlisted to a single field proven to never enter that arithmetic, (b) enforced by one named, testable, fail-safe-by-construction helper, and (c) attributed with an audit trail, gives the Treasurer what he needs without weakening that guarantee anywhere it matters. Reusing a denylist or merging the three immutability guards into one function would each reintroduce exactly the kind of quiet, hard-to-audit erosion DECISION-036 was written to prevent — an allowlist and three separate guards close that gap by construction rather than by discipline.
+
+**Impact:** `src/lib/ledger.ts` (+`RECONCILED_LOCK_CARVEOUT_FIELDS`, `+isWithinReconciledLockCarveout()`), `src/lib/ledger.test.ts` (new named tests), `src/app/api/admin/ledger/transactions/[id]/route.ts` (PATCH only — `reconciledSessionId` guard moves after `await request.json()` and gains the carve-out conditional; `approvedAt`/`rejected` guards and the DELETE route are unchanged), `src/lib/db/schema.ts` + a new idempotent migration (audit-trail shape, database-admin to finalize placement per item 7). No `FEATURES` change. No UI change identified — `link-donor-dialog.tsx` already PATCHes `{ donorId }` / `{ donorId: null }` exclusively and already surfaces the server's `error` string verbatim via toast, so the fix is server-only unless Phase 3 finds otherwise.
+
+**Addendum (added post-Phase 6, 2026-09-21):** Phase 3 discovered that
+`POST /api/admin/ledger/transactions/[id]/acknowledge` also writes `donorId` onto
+`ledgerTransactions`, and did so with **no `reconciledSessionId`/`approvedAt`/`rejected` guard
+at all** — a silent bypass of DECISION-036's lock that predates this ticket and was already
+live in production.
+
+That route is **deliberately left unguarded**; it was given audit attribution only (the same
+`RECONCILED_DONOR_LINK_AUDIT_ACTION` row). Two reasons, and this is a considered decision
+rather than an oversight to be "fixed" later:
+
+1. Its request body shape is fixed by its own route code and can never carry an
+   arithmetic-affecting field, so it was never capable of moving a closed session's tie-out —
+   the property DECISION-036 exists to protect was never actually at risk on this path.
+2. Adding a 403 there would *reintroduce this ticket's original bug on a second route*: it
+   would block creating an acknowledgment letter for a donation that happens to have been
+   reconciled already, which is a normal and expected state for any gift more than a month old.
+
+A future reader finding an unguarded `donorId` write on that route should read this addendum
+before "hardening" it. See `docs/work-log/2026-09-21-reconciled-donor-link-carveout.md`
+Phases 3 and 6.
+
+---
+
+## DECISION-098: `/api/public/leadership`'s ad hoc board-position query is retired in favor of a shared `getBoardMemberships()` join
+
+**Status:** Resolved — Decision section's claim that `resolveTreasurer()` fully delegates to
+`getBoardMemberships()` was corrected in place 2026-09-21 (Phase 6 review; flagged by qa in Phase
+5) to match what actually shipped. No code changed as a result of this correction — only this
+entry's wording. See the struck-through sentence and "Impact" below.
+**Date:** 2026-09-18
+
+**Decision:**
+
+`src/lib/board-positions.ts`'s header comment (added for DECISION-086) explicitly declined to
+have `/api/public/leadership/route.ts` reuse `resolveTreasurer()`, on the grounds that the two
+have different semantics: `resolveTreasurer()` fails loudly on zero or multiple matches,
+while the leadership route wants "list and sort everyone." That reasoning still holds — the
+leadership route does not call `resolveTreasurer()` after this change either.
+
+What changes: this ticket (stale `members.board_position` column, 2026-09-18) was about to add
+a **third** independent copy of the same underlying query — find the "Board of Directors" group,
+join `group_memberships` to `members`, read `position` — for a new member-directory bulk lookup.
+Three copies of the same join trips CLAUDE.md's duplication rule ("the same decision implemented
+in more than two places"). The join itself, not either consumer's shaping of it, is extracted
+into `getBoardMemberships()` in `src/lib/board-positions.ts`. ~~`resolveTreasurer()`,
+`/api/public/leadership`, and the new directory lookup (`getBoardPositionsByMemberId()`) all call
+it and shape the result themselves.~~ **Corrected in place (2026-09-21, Phase 6 review) — not
+what shipped:** `/api/public/leadership` and the new directory lookup
+(`getBoardPositionsByMemberId()`) call `getBoardMemberships()` directly, exactly as planned here.
+`resolveTreasurer()` does not — it shares only the group-id lookup. See "Impact" below for the
+narrower seam and why.
+
+**Rationale:** Fixing "the board position query has drifted" by adding a third ad hoc copy of the
+query, instead of fixing the underlying duplication, would have been the same mistake at a larger
+scale. Extracting the join (not the filter/sort logic on top of it) respects the original
+non-reuse decision's actual reasoning instead of overturning it wholesale.
+
+**Impact:** `src/lib/board-positions.ts` gains `getBoardGroupId()` and `getBoardMemberships()`.
+`/api/public/leadership/route.ts`'s internals change to call `getBoardMemberships()` directly; its
+response shape and sort order do not.
+
+`resolveTreasurer()` does **not** fully delegate to `getBoardMemberships()` as originally planned
+here — it reuses `getBoardGroupId()` for the shared group lookup but keeps its own SQL-level
+`.where()` position filter (`lower(trim(position)) = 'treasurer'`) for the row fetch, rather than
+fetching every board row and filtering in application code. This narrower seam was forced by a
+constraint set during implementation: the existing regression test
+(`src/lib/board-positions.test.ts`) asserts on the literal SQL text captured by `resolveTreasurer()`'s
+`.where()` call, and that test file was required to stay byte-for-byte unmodified as the guarantee
+that this refactor changed zero behavior. Delegating row selection to `getBoardMemberships()` would
+have changed the captured `.where()` shape and broken that assertion. The duplication that remains
+(a ~4-line SQL filter) is proportionate: it encodes a genuinely different decision than
+`getBoardMemberships()`'s "return everything, let the caller decide" — "find exactly one row
+matching 'treasurer', fail loudly otherwise" — which is the same distinction this file's original,
+pre-DECISION-098 header comment already drew when it declined to have the leadership route reuse
+`resolveTreasurer()`. Behavior, query count, and all five of `resolveTreasurer()`'s existing test
+cases are unchanged. See `docs/work-log/2026-09-18-stale-board-positions.md`, Phase 3 (original
+plan) and Phase 4 "Deviations from the design doc" (what shipped and why).
+
+---
+
+## DECISION-097: `members.board_position` is dropped from the schema, not just stopped-being-read
+
+**Status:** Resolved
+**Date:** 2026-09-18
+
+**Decision:**
+
+`members.board_position` — a hand-maintained legacy column duplicating what
+`group_memberships.position` (joined through the "Board of Directors" group) already tracks
+authoritatively — is removed from `src/lib/db/schema.ts` and dropped from the database via an
+idempotent migration (`drizzle/migrations/0101_drop_stale_board_position.sql`,
+`ALTER TABLE members DROP COLUMN IF EXISTS board_position`), rather than left in place and simply
+no longer read.
+
+**Rationale:** `schema.ts` is this project's canonical source of truth (CLAUDE.md). A column that
+still exists but is no longer read by any of its former three call sites is a live landmine, not
+a safe state — a future `INSERT`/`SELECT *`-shaped change could silently repopulate or re-expose
+it, exactly reproducing the bug this fix exists to close. The user verified the column against
+production (6 of 13 current board members wrong, the rest null) and gave an explicit resolution
+policy: "you can get rid of the stale officers. system of record is the production database." Per
+CLAUDE.md's migration rules, migration `0101` sorts after `0002_roles_permissions_groups_campaigns.sql`
+(which still contains the original `ADD COLUMN IF NOT EXISTS board_position`) under the
+plain-string sort `drizzle/run-migrations.mjs` uses, so on every replay the column is re-added by
+`0002` and then dropped again by `0101` — net state is always "absent," matching `schema.ts`.
+
+**Impact:** The column and all of production's existing (already-known-wrong) values in it are
+permanently deleted on the next deploy. The user has already exported the production values to a
+location outside this repo as their own record; no additional backup step is part of this change.
+Three read sites (`src/app/members/page.tsx`, `src/components/members/profile-form.tsx` via
+`src/app/members/profile/page.tsx`) are repointed at `group_memberships.position` through the new
+`getBoardPositionsByMemberId()` helper (see DECISION-098); one dead write site
+(`src/app/api/admin/members/route.ts` `POST`, which no admin UI field ever actually fed) is
+deleted outright. See `docs/work-log/2026-09-18-stale-board-positions.md`, Phase 2/3.
+
+---
+
+## DECISION-096: Admin password reset reuses `FEATURES.ADMIN_USERS`; no new permission key
+
+**Status:** Resolved
+**Date:** 2026-09-18
+
+**Decision:**
+
+The admin "set a new password on an existing account" action (`/admin/users/[id]`, Flow A of
+the 2026-09-18 account-reset feature) is gated by the existing `admin.users`
+(`FEATURES.ADMIN_USERS`) key, not a new narrower permission. No change to
+`ADMIN_NAVIGATION` or `getAdminProtectionRules()` — the action lives on an already-protected
+`/admin/users/[id]` surface and does not widen what the outer proxy gate admits.
+
+**Rationale:**
+
+`ADMIN_USERS` already lets its holder create a brand-new user with an admin-chosen password
+(`POST /api/admin/users`) and grant that user (or themselves) the `admin` role via
+`user-role-manager.tsx`. A holder can already mint a fully-privileged account from nothing;
+in-band password reset on an *existing* account does not cross a privilege boundary that
+create-user-with-role doesn't already cross. Minting a second key here would be
+permission-catalog noise without a corresponding reduction in real blast radius — the
+project's own guidance (`ADMIN_USERS` bound to `admin` only) already treats this key as
+"trusted with everything."
+
+**Impact:**
+
+No migration, no new `FEATURES.*` entry, no `ADMIN_NAVIGATION` change. The new route
+(`POST /api/admin/users/[id]/reset-password`) and its button component check
+`hasFeature(session.user.id, FEATURES.ADMIN_USERS)` in the route body, per the existing
+per-page-gate invariant — the proxy is a coarse outer gate, never the only one. If a future
+feature ever wants a narrower "can reset passwords but not manage roles" admin, that's a new
+key at that time; nothing here forecloses it.
+
+---
+
 ## DECISION-095: Club Files upload transport is a chunked-upload session assembled server-side, not `@vercel/blob` transit
 
 **Status:** Resolved
@@ -2585,7 +2759,7 @@ comparison in the Phase 2 section of
 
 ## DECISION-036: Bank Reconciliation Sessions (inc2) — three new tables, `reconciledSessionId` provenance pointer (not a parallel status), many-to-one-ready match links, hard immutability lock on cleared rows, overlap-hard/gap-soft period validation, reopen-ordering rule, deposit-slip-vs-check-number split
 
-**Status:** Resolved
+**Status:** Resolved (item 4 narrowed by DECISION-099 — a strictly-allowlisted `donorId`-only carve-out on the PATCH route; items 1, 2, 3, and 5–10 below are unaffected and still stand)
 **Date:** 2026-07-21
 
 **Decision:**
