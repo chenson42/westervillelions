@@ -172,11 +172,19 @@ hole let a personal address reach `main`: the sweep ran while the new work-logs 
 untracked, reported clean, and the very next step committed and pushed them. Either pass
 `--untracked` (as below) or run the sweep AFTER staging, never before.
 
+**This repo sets `submodule.recurse=true`, so `--untracked` ALONE ABORTS** with
+`fatal: --untracked not supported with --recurse-submodules` — hence the explicit
+`--no-recurse-submodules` above. That abort prints nothing to stdout, so a sweep piped into
+`grep -v` and followed by an echoed "clean" reports a pass on a gate that never ran. This
+happened on 2026-09-22, in the very commit that added `--untracked`. **Check the exit status;
+do not infer cleanliness from empty output** — the sweep is clean only when git actually ran
+and matched nothing.
+
 ```bash
-git grep --untracked -InE "[a-zA-Z0-9._%+-]+@(gmail|hotmail|msn|att|yahoo|sbcglobal|aol|insight|live|outlook|comcast|icloud|me)\\.[a-z.]+" -- . \
+git grep --no-recurse-submodules --untracked -InE "[a-zA-Z0-9._%+-]+@(gmail|hotmail|msn|att|yahoo|sbcglobal|aol|insight|live|outlook|comcast|icloud|me)\\.[a-z.]+" -- . \
   | grep -v "example\\.\(com\|invalid\|test\)"
-git grep --untracked -InE "\\b[0-9]{3}-[0-9]{3}-[0-9]{4}\\b|\\([0-9]{3}\\) ?[0-9]{3}-[0-9]{4}" -- .
-git grep --untracked -InE "[0-9]{3,5} [A-Z][a-zA-Z]+ (Circle|Drive|Street|Road|Avenue|Ave|Lane|Court|Blvd|Way)\\b" -- .
+git grep --no-recurse-submodules --untracked -InE "\\b[0-9]{3}-[0-9]{3}-[0-9]{4}\\b|\\([0-9]{3}\\) ?[0-9]{3}-[0-9]{4}" -- .
+git grep --no-recurse-submodules --untracked -InE "[0-9]{3,5} [A-Z][a-zA-Z]+ (Circle|Drive|Street|Road|Avenue|Ave|Lane|Court|Blvd|Way)\\b" -- .
 ```
 
 **Any hit is a hard stop until you have triaged it.** Do not push on an untriaged hit. See
