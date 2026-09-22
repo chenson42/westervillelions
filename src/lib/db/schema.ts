@@ -29,7 +29,6 @@ export const members = pgTable("members", {
   state: text("state"),
   zip: text("zip"),
   branch: text("branch"), // Branch/chapter (e.g., "Somali Branch")
-  boardPosition: text("board_position"), // Board position (e.g., "President", "Treasurer")
   profilePicture: text("profile_picture"),
   dateOfBirth: text("date_of_birth"), // stored as YYYY-MM-DD
   gender: text("gender"),
