@@ -165,11 +165,18 @@ Moderate or low CVEs are advisory. Mention any new ones the user hasn't seen, bu
 
 **This repository is public. A personal address, phone number, or home address must never be pushed.**
 
+**Use `git grep --untracked`, never bare `git grep`.** Bare `git grep` searches only TRACKED
+files, so a brand-new file that has not been `git add`-ed yet is invisible to it — and a
+work-log or report written by an agent during the session is exactly that. On 2026-09-22 this
+hole let a personal address reach `main`: the sweep ran while the new work-logs were still
+untracked, reported clean, and the very next step committed and pushed them. Either pass
+`--untracked` (as below) or run the sweep AFTER staging, never before.
+
 ```bash
-git grep -InE "[a-zA-Z0-9._%+-]+@(gmail|hotmail|msn|att|yahoo|sbcglobal|aol|insight|live|outlook|comcast|icloud|me)\\.[a-z.]+" -- . \
+git grep --untracked -InE "[a-zA-Z0-9._%+-]+@(gmail|hotmail|msn|att|yahoo|sbcglobal|aol|insight|live|outlook|comcast|icloud|me)\\.[a-z.]+" -- . \
   | grep -v "example\\.\(com\|invalid\|test\)"
-git grep -InE "\\b[0-9]{3}-[0-9]{3}-[0-9]{4}\\b|\\([0-9]{3}\\) ?[0-9]{3}-[0-9]{4}" -- .
-git grep -InE "[0-9]{3,5} [A-Z][a-zA-Z]+ (Circle|Drive|Street|Road|Avenue|Ave|Lane|Court|Blvd|Way)\\b" -- .
+git grep --untracked -InE "\\b[0-9]{3}-[0-9]{3}-[0-9]{4}\\b|\\([0-9]{3}\\) ?[0-9]{3}-[0-9]{4}" -- .
+git grep --untracked -InE "[0-9]{3,5} [A-Z][a-zA-Z]+ (Circle|Drive|Street|Road|Avenue|Ave|Lane|Court|Blvd|Way)\\b" -- .
 ```
 
 **Any hit is a hard stop until you have triaged it.** Do not push on an untriaged hit. See

@@ -458,11 +458,11 @@ replay, matching what `schema.ts` declares.
 No interactive browser tool is available to me, and Playwright is this project's only real-browser
 driver, so I used it directly (outside the formal `e2e/` suite, which doesn't cover this feature)
 rather than treating "couldn't run e2e" as good enough. I signed in as an actual dev-DB board
-member (`chenson42@gmail.com`, roles: admin/member/board_member/treasurer, Board-group position
+member (the project owner's own dev account, roles: admin/member/board_member/treasurer, Board-group position
 "1st Year Director") rather than the synthetic E2E admin account, because the E2E admin has no
 linked member and so can never exercise the profile "Position:" line or a real board badge.
 
-**Before touching anything:** captured `chenson42@gmail.com`'s existing bcrypt password hash to a
+**Before touching anything:** captured that account's existing bcrypt password hash to a
 scratchpad file. Temporarily overwrote it with the project's own pre-computed `E2E_ADMIN_PASSWORD_HASH`
 (same one `scripts/create-test-user.mjs` already uses for a known plaintext) so Playwright could log
 in with a known password. Immediately after the click-through, restored the original hash and
@@ -542,7 +542,7 @@ version per the implementer's note — worth a follow-up doc correction, not a c
 - Temporary artifacts created and removed during verification (none left in the repo):
   `qa-click-through.tmp.mjs`, `qa-print-check.tmp.mjs`, `qa-admin-new-member.tmp.mjs` (all deleted
   after use); screenshots and captured text saved to the session scratchpad only, not the repo
-- Dev-database state: `chenson42@gmail.com`'s password hash was temporarily swapped and restored
+- Dev-database state: that account's password hash was temporarily swapped and restored
   byte-for-byte (verified). `members.board_position` was physically dropped from the dev DB during
   the migration-replay check — this is the intended end state of Commit B and was not reverted,
   consistent with the feature actually shipping; `.env.local`'s `PROD_DATABASE_URL` was never read
