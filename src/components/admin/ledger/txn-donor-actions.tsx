@@ -17,7 +17,14 @@ interface TxnDonorActionsProps {
 /**
  * Inline actions for a Foundation income transaction row:
  *  - Link Donor
- *  - Acknowledge (create ack record) — shown when no ack exists and amount >= $250
+ *  - Acknowledge (create ack record) — shown whenever no ack exists yet, at
+ *    any amount. Below $250 this creates a courtesy acknowledgment rather
+ *    than an IRS-required one — AcknowledgeDialog pre-selects the
+ *    `written_ack_250` type override and shows an inline note explaining the
+ *    distinction (docs/work-log/2026-09-22-donor-worklist-and-any-amount-ack.md
+ *    Part 2). Previously gated on an amountCents floor of $250 (25000
+ *    cents), which made it
+ *    impossible to acknowledge a sub-$250 gift at all — removed deliberately.
  *  - Mark Sent — shown when ack exists but not yet sent
  *
  * Only rendered on Foundation entity income rows (caller must gate).
@@ -50,8 +57,8 @@ export default function TxnDonorActions({
           {donorId ? "Re-link" : "Link donor"}
         </button>
 
-        {/* Acknowledge (only if no ack and amount >= $250) */}
-        {ackStatus === null && amountCents >= 25000 && (
+        {/* Acknowledge (only if no ack exists yet — any amount) */}
+        {ackStatus === null && (
           <button
             type="button"
             onClick={() => setAckOpen(true)}
@@ -105,6 +112,7 @@ export default function TxnDonorActions({
       {ackOpen && (
         <AcknowledgeDialog
           txnId={txnId}
+          amountCents={amountCents}
           donorId={donorId ?? undefined}
           open={true}
           onOpenChange={(open) => { if (!open) setAckOpen(false); }}

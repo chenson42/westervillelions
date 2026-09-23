@@ -5127,6 +5127,81 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
   }));
 }
 
+export type UnlinkedGiftRow = {
+  txn: LedgerTransaction & { fundName: string; entityName: string; categoryName: string | null };
+};
+
+/**
+ * Foundation income transactions with no donor linked — the "Unlinked Gifts"
+ * worklist (docs/work-log/2026-09-22-donor-worklist-and-any-amount-ack.md).
+ * Deliberately a DIFFERENT filter shape from listPendingAcknowledgments():
+ *  - No amount floor (listPendingAcknowledgments floors at $250 — that floor
+ *    means "needs an IRS letter" and must not change, per that ticket).
+ *  - No category exclusion — ackNotRequired-flagged categories ARE included
+ *    (Treasurer's explicit decision: "any income category should be
+ *    considered" — an org donor record can be attached to a grant or
+ *    sponsorship even though that category will never produce an
+ *    acknowledgment letter). Do NOT add the ackNotRequired filter here even
+ *    though listPendingAcknowledgments() has one two functions away — that
+ *    is the one deliberate divergence this function exists for.
+ *  - transferGroupId IS NULL — a DIFFERENT axis from the category decision
+ *    above: a transfer leg has no donor by definition, structurally, not as
+ *    an acknowledgment-policy choice. Matches the register's own !isTransfer
+ *    guard ([fundSlug]/page.tsx).
+ *  - donorId IS NULL — the whole point of the worklist.
+ *  - flow='income', status='posted' — same baseline as listPendingAcknowledgments().
+ *  - entity.donationsDeductible = true — same as listPendingAcknowledgments();
+ *    NOT scoped to a specific entity id, in case more than one entity is
+ *    ever flagged donationsDeductible (matches existing convention).
+ *
+ * fiscalYear omitted (undefined) returns all years — the tab's "All Years"
+ * option. When provided, uses the same fyBounds()-based gte/lt bracket
+ * listTransactions() already uses, for identical FY-boundary semantics
+ * across the app.
+ */
+export async function listUnlinkedGifts(opts: {
+  fiscalYear?: number;
+} = {}): Promise<UnlinkedGiftRow[]> {
+  const { fiscalYear } = opts;
+
+  const conditions = [
+    eq(ledgerEntities.donationsDeductible, true),
+    eq(ledgerTransactions.flow, "income"),
+    eq(ledgerTransactions.status, "posted"),
+    isNull(ledgerTransactions.donorId),
+    isNull(ledgerTransactions.transferGroupId),
+  ];
+
+  if (fiscalYear !== undefined) {
+    const { start, end } = fyBounds(fiscalYear);
+    conditions.push(gte(ledgerTransactions.txnDate, start));
+    conditions.push(lt(ledgerTransactions.txnDate, end));
+  }
+
+  const rows = await db
+    .select({
+      txn: ledgerTransactions,
+      fundName: ledgerFunds.name,
+      entityName: ledgerEntities.name,
+      categoryName: ledgerCategories.name,
+    })
+    .from(ledgerTransactions)
+    .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .innerJoin(ledgerEntities, eq(ledgerTransactions.entityId, ledgerEntities.id))
+    .leftJoin(ledgerCategories, eq(ledgerTransactions.categoryId, ledgerCategories.id))
+    .where(and(...conditions))
+    .orderBy(desc(ledgerTransactions.txnDate));
+
+  return rows.map((r) => ({
+    txn: {
+      ...r.txn,
+      fundName: r.fundName ?? "Unknown Fund",
+      entityName: r.entityName ?? "Unknown Entity",
+      categoryName: r.categoryName ?? null,
+    },
+  }));
+}
+
 /**
  * Returns the acknowledgment queue summary.
  * The `includePii` flag controls whether `donorId` and `donorName` are included.

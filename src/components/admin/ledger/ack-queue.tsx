@@ -280,6 +280,7 @@ export default function AckQueue({ rows, canRecord }: AckQueueProps) {
       {acknowledgeFor && (
         <AcknowledgeDialog
           txnId={acknowledgeFor}
+          amountCents={rows.find((r) => r.txn.id === acknowledgeFor)?.txn.amountCents ?? 0}
           open={true}
           onOpenChange={(open) => { if (!open) setAcknowledgeFor(null); }}
         />

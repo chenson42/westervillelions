@@ -6,12 +6,22 @@ import { useRouter } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { LedgerDonor } from "@/lib/db/schema";
 import { formatEmailList } from "@/lib/utils";
+import { defaultTypeOverride, showCourtesyNote } from "@/lib/acknowledge-dialog-ui";
 import GiftPurposeField from "./gift-purpose-field";
 
 interface AcknowledgeDialogProps {
   txnId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * The transaction's amount, in cents. Used to pre-select the type
+   * override for a sub-$250 gift (deriveAckType() returns null below $250
+   * with no qualifying quid-pro-quo value, and the route 422s unless an
+   * override is supplied — this is what lets "any amount" actually submit
+   * successfully without the treasurer needing to know to touch the
+   * dropdown) and to show the courtesy-vs-required note below $250.
+   */
+  amountCents: number;
   /** Pre-selected donor id (optional) */
   donorId?: string;
   /** Called on successful ack creation */
@@ -25,17 +35,27 @@ interface AcknowledgeDialogProps {
  */
 export default function AcknowledgeDialog({
   txnId,
+  amountCents,
   open,
   onOpenChange,
   donorId: initialDonorId,
   onSuccess,
 }: AcknowledgeDialogProps) {
   const router = useRouter();
+  const showNote = showCourtesyNote(amountCents);
   const [donorId, setDonorId] = useState(initialDonorId ?? "");
   const [qppCents, setQppCents] = useState(""); // quid-pro-quo value in dollars
   const [qppDescription, setQppDescription] = useState(""); // e.g. "one Rudolph Run 5K entry"
   const [purpose, setPurpose] = useState(""); // e.g. "the 2026 Rudolph Run"
-  const [typeOverride, setTypeOverride] = useState<"" | "written_ack_250" | "quid_pro_quo_75">("");
+  // Pre-selected to "written_ack_250" for a sub-$250 gift, since
+  // deriveAckType() would otherwise return null and the route would 422 —
+  // the dropdown stays fully editable, so a treasurer entering a genuine
+  // quid-pro-quo value on a sub-$250 gift can still switch it manually. See
+  // @/lib/acknowledge-dialog-ui for why this decision is a pure, separately
+  // unit-tested helper rather than inline logic.
+  const [typeOverride, setTypeOverride] = useState<"" | "written_ack_250" | "quid_pro_quo_75">(
+    defaultTypeOverride(amountCents),
+  );
   const [submitting, setSubmitting] = useState(false);
 
   // Donor typeahead state
@@ -159,6 +179,14 @@ export default function AcknowledgeDialog({
             Create an acknowledgment record for this Foundation donation. After sending the letter
             to the donor, use &ldquo;Mark Sent&rdquo; to close it out.
           </Dialog.Description>
+
+          {showNote && (
+            <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-900 mb-4">
+              This gift is under the $250 IRS threshold, so a written acknowledgment isn&rsquo;t
+              legally required — but sending one is a nice courtesy, and the letter&rsquo;s wording
+              is exactly the same either way.
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Donor typeahead — search by name or email, or leave blank */}
@@ -299,7 +327,7 @@ export default function AcknowledgeDialog({
                 className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-8 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
               >
                 <option value="">Auto-detect from amount</option>
-                <option value="written_ack_250">Written acknowledgment ($250+)</option>
+                <option value="written_ack_250">Written acknowledgment</option>
                 <option value="quid_pro_quo_75">Quid-pro-quo disclosure ($75+ FMV)</option>
               </select>
             </div>

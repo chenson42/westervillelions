@@ -33,6 +33,7 @@ was deleted on the strength of this review alone.
 - B-58 — Choose and ship the new homepage hero tagline
 - B-60 — Trust-content follow-ups from the site review
 - B-62 — Add www.westervillelions.org in the Vercel dashboard
+- B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
 - B-13 — Centralize the ledger payment-method list + labels
@@ -272,6 +273,26 @@ was deleted on the strength of this review alone.
   Not a code change. The `www` DNS record points at Vercel but no cert covers it, so
   `https://www.westervillelions.org` shows a browser security error. Add the domain to the
   Vercel project (issues a cert and 308s to the apex). Five minutes, needs dashboard access.
+
+- [ ] **B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request.** *(Raised
+  2026-09-22, Phase 6 of `docs/work-log/2026-09-22-donor-worklist-and-any-amount-ack.md`.)*
+  `generateAcknowledgmentLetters()` / `listGeneratableAcknowledgments()`
+  (`src/lib/ledger-acknowledgment-letter-queries.ts`) hard-exclude any acknowledgment whose
+  transaction's category is flagged `ackNotRequired`, regardless of amount and regardless of
+  whether an acknowledgment record was deliberately created via `typeOverride`. This was already
+  true today for $250+ gifts in those categories (grants, race entries, pooled fundraiser
+  deposits, internal transfers) — it is pre-existing behavior, not a regression. It became more
+  reachable with the 2026-09-22 ticket above, where the Treasurer's own scoping decision ("any
+  income category should be considered") now lets him link a donor and record a courtesy
+  acknowledgment against a gift in one of these categories — and that acknowledgment will then
+  silently never appear on `/admin/ledger/donors/letters`. Three separate phases of that ticket
+  (tech-lead, ux-developer, qa) each recommended logging this and none did, which is why it's
+  showing up here three weeks later instead of the day it was found. **Needs the Treasurer's
+  decision**, not an implementation default: should `ackNotRequired` mean "never generate a letter"
+  (current, silent) or "not legally required, but generate on request" (a real code change to stop
+  hard-excluding a category once an acknowledgment record already exists for it)? Until decided, he
+  should be told directly that acknowledgments he records against these categories won't show up in
+  Generate Letters.
 
 ---
 

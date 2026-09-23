@@ -245,8 +245,22 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
                               Re-link donor
                             </button>
 
-                            {/* Acknowledge / Mark Sent */}
-                            {row.ackStatus === null && row.txn.amountCents >= 25000 && (
+                            {/* Acknowledge / Mark Sent — available at ANY amount
+                                (docs/work-log/2026-09-22-donor-worklist-and-any-amount-ack.md
+                                Part 2). This used to also require an
+                                amountCents floor of $250 (25000 cents), a
+                                THIRD inline
+                                copy of the same amount check
+                                txn-donor-actions.tsx and acknowledge-dialog.tsx
+                                already stopped duplicating — removed so this
+                                page's Acknowledge button doesn't silently
+                                disagree with the register and the Unlinked
+                                Gifts worklist for the same transaction. See
+                                @/lib/acknowledge-dialog-ui for the one place
+                                the $250 UI-affordance threshold is decided;
+                                nothing here should ever restate that
+                                inline again. */}
+                            {row.ackStatus === null && (
                               <button
                                 type="button"
                                 onClick={() => setAcknowledgeFor(row.txn.id)}
@@ -299,6 +313,9 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
       {acknowledgeFor && (
         <AcknowledgeDialog
           txnId={acknowledgeFor}
+          amountCents={
+            donor.givingHistory.find((r) => r.txn.id === acknowledgeFor)?.txn.amountCents ?? 0
+          }
           open={true}
           donorId={donor.id}
           onOpenChange={(open) => { if (!open) setAcknowledgeFor(null); }}

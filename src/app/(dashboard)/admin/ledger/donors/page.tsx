@@ -7,19 +7,25 @@ import {
   listDonors,
   listPendingAcknowledgments,
   listAcknowledgmentsSummary,
+  listUnlinkedGifts,
+  listLedgerFiscalYears,
+  getEntities,
 } from "@/lib/ledger-queries";
+import { currentFiscalYear } from "@/lib/fiscal-year";
 import DonorList from "@/components/admin/ledger/donor-list";
 import AckQueue from "@/components/admin/ledger/ack-queue";
 import SentAckList from "@/components/admin/ledger/sent-ack-list";
+import UnlinkedGiftsList from "@/components/admin/ledger/unlinked-gifts-list";
+import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
 
 export const dynamic = "force-dynamic";
 
-type TabParam = "donors" | "acknowledgments" | "sent";
+type TabParam = "donors" | "acknowledgments" | "sent" | "unlinked";
 
 export default async function AdminLedgerDonorsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; search?: string }>;
+  searchParams: Promise<{ tab?: string; search?: string; fy?: string }>;
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
@@ -30,24 +36,53 @@ export default async function AdminLedgerDonorsPage({
 
   const canManage = await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE);
 
-  const { tab: tabParam, search } = await searchParams;
-  const validTabs: TabParam[] = ["donors", "acknowledgments", "sent"];
+  const { tab: tabParam, search, fy: fyParam } = await searchParams;
+  const validTabs: TabParam[] = ["donors", "acknowledgments", "sent", "unlinked"];
   const activeTab: TabParam =
     tabParam && validTabs.includes(tabParam as TabParam)
       ? (tabParam as TabParam)
       : "donors";
 
+  const currentFY = currentFiscalYear(new Date());
+  // "all" is the worklist's own sentinel (FiscalYearSelector's allowAll
+  // option) — translated to `fiscalYear: undefined` before calling
+  // listUnlinkedGifts(), never passed through as a parse failure. Mirrors
+  // the search/page.tsx:237 precedent for this exact translation.
+  const unlinkedFyValue: number | "all" =
+    fyParam === "all" ? "all" : fyParam && !isNaN(parseInt(fyParam, 10)) ? parseInt(fyParam, 10) : currentFY;
+
   // Always load the pending ack list (for count badge + tab content).
-  // Donors list and sent-ack list are only loaded on their own tabs.
-  const [donors, pendingAcks, sentAcks] = await Promise.all([
+  // Donors list, sent-ack list, and the unlinked-gifts list are only loaded
+  // on their own tabs.
+  //
+  // `anyUnsentAck` answers "does any unsent acknowledgment exist at all,"
+  // with no $250 floor — this deliberately does NOT reuse `pendingAcks`
+  // (which floors at $250), so the "Generate Letters…" entry point stays
+  // reachable even when the only unsent acknowledgment is sub-$250
+  // (docs/work-log/2026-09-22-donor-worklist-and-any-amount-ack.md Part 3,
+  // bug #1). `pendingAcks` and its badge count are untouched, and must stay
+  // meaning "needs an IRS letter".
+  const [donors, pendingAcks, sentAcks, anyUnsentAckRows, unlinkedGifts, entities] = await Promise.all([
     activeTab === "donors" ? listDonors({ search: search ?? undefined }) : Promise.resolve([]),
     listPendingAcknowledgments(),
     activeTab === "sent"
       ? listAcknowledgmentsSummary({ sentOnly: true, includePii: canRecord })
       : Promise.resolve([]),
+    activeTab === "acknowledgments"
+      ? listAcknowledgmentsSummary({ pendingOnly: true, includePii: false })
+      : Promise.resolve([]),
+    activeTab === "unlinked"
+      ? listUnlinkedGifts({ fiscalYear: unlinkedFyValue === "all" ? undefined : unlinkedFyValue })
+      : Promise.resolve([]),
+    activeTab === "unlinked" ? getEntities() : Promise.resolve([]),
   ]);
 
   const pendingAckCount = pendingAcks.length;
+  const anyUnsentAck = anyUnsentAckRows.length > 0;
+
+  const foundation = entities.find((e) => e.donationsDeductible === true) ?? null;
+  const unlinkedFiscalYears =
+    activeTab === "unlinked" && foundation ? await listLedgerFiscalYears(foundation.id) : [currentFY];
 
   return (
     <div className="space-y-6">
@@ -74,14 +109,16 @@ export default async function AdminLedgerDonorsPage({
 
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-0">
-        {(["donors", "acknowledgments", "sent"] as TabParam[]).map((tab) => {
+        {(["donors", "unlinked", "acknowledgments", "sent"] as TabParam[]).map((tab) => {
           const isActive = tab === activeTab;
           const label =
             tab === "donors"
               ? "Donors"
-              : tab === "acknowledgments"
-                ? "Pending Acknowledgments"
-                : "Sent Acknowledgments";
+              : tab === "unlinked"
+                ? "Unlinked Gifts"
+                : tab === "acknowledgments"
+                  ? "Pending Acknowledgments"
+                  : "Sent Acknowledgments";
           const count = tab === "acknowledgments" ? pendingAckCount : null;
           return (
             <Link
@@ -119,9 +156,21 @@ export default async function AdminLedgerDonorsPage({
         />
       )}
 
+      {activeTab === "unlinked" && (
+        <div className="space-y-4">
+          <FiscalYearSelector
+            fiscalYears={unlinkedFiscalYears}
+            currentFY={unlinkedFyValue}
+            basePath="/admin/ledger/donors"
+            allowAll
+          />
+          <UnlinkedGiftsList rows={unlinkedGifts} canRecord={canRecord} />
+        </div>
+      )}
+
       {activeTab === "acknowledgments" && (
         <div className="space-y-4">
-          {canRecord && pendingAcks.some((r) => r.ackId !== null) && (
+          {canRecord && anyUnsentAck && (
             <div className="flex justify-end">
               <Link
                 href="/admin/ledger/donors/letters"

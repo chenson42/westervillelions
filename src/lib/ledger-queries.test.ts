@@ -103,6 +103,7 @@ import {
   getPendingApprovals,
   listPendingAcknowledgments,
   listAcknowledgmentsSummary,
+  listUnlinkedGifts,
 } from "./ledger-queries";
 import { ledgerBudgets, ledgerBudgetLines } from "./db/schema";
 import { causeLineReferenceKey } from "./ledger";
@@ -2619,5 +2620,198 @@ describe("listAcknowledgmentsSummary — sentOnly filter", () => {
     expect(rows[0].donorId).toBeUndefined();
     expect(rows[0].donorName).toBeUndefined();
     expect(rows[0].sentVia).toBe("email");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listAcknowledgmentsSummary — regression coverage for Part 3 bug #1
+// (docs/work-log/2026-09-22-donor-worklist-and-any-amount-ack.md). The
+// "Generate Letters…" entry point on the Pending Acknowledgments tab used to
+// gate its visibility on `pendingAcks.some(r => r.ackId !== null)`, where
+// pendingAcks comes from listPendingAcknowledgments() — which floors at
+// $250. If the ONLY unsent acknowledgment in the system was sub-$250, that
+// check was false and the link never rendered — a dead end, since
+// listGeneratableAcknowledgments() (the letters screen's own query) would
+// still find and generate it correctly if reached by direct URL. The fix
+// (donors/page.tsx) switched the visibility check to
+// listAcknowledgmentsSummary({ pendingOnly: true }) instead, which this
+// pins has no amount floor at all — this function itself is UNMODIFIED;
+// this test proves the *existing* behavior the fixed gate now depends on.
+// ---------------------------------------------------------------------------
+describe("listAcknowledgmentsSummary — no amount floor (Part 3 bug #1 regression)", () => {
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  it("pendingOnly:true returns an unsent acknowledgment on a sub-$250 transaction — absent from listPendingAcknowledgments' results but still reachable here", async () => {
+    mockDbState.queue.push([
+      {
+        id: "ack-small",
+        donationTxnId: "txn-small",
+        amountCents: 2000, // $20 — well under listPendingAcknowledgments' $250 floor
+        txnDate: "2026-09-01",
+        type: "written_ack_250",
+        sentAt: null,
+        sentVia: null,
+        quidProQuoValueCents: null,
+        donorId: null,
+        entityName: "Foundation",
+        fundName: "Charitable Fund",
+        donorName: null,
+      },
+    ]);
+
+    const rows = await listAcknowledgmentsSummary({ pendingOnly: true, includePii: false });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].amountCents).toBe(2000);
+    expect(rows[0].sentAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listUnlinkedGifts — "Unlinked Gifts" worklist
+// (docs/work-log/2026-09-22-donor-worklist-and-any-amount-ack.md, Phase 3
+// Tests #1-7). Deliberately a DIFFERENT filter shape from
+// listPendingAcknowledgments(): no amount floor, no category exclusion, but
+// WITH a transferGroupId IS NULL exclusion that listPendingAcknowledgments()
+// doesn't have at all. The hermetic mock's where() only CAPTURES the
+// composed condition (it doesn't evaluate it against the canned queue), so —
+// mirroring the established "ack_not_required exclusion" pattern above —
+// several of these assert the compiled WHERE clause structurally, rather
+// than a row-level filtering result a real DB round trip would be needed to
+// prove.
+// ---------------------------------------------------------------------------
+describe("listUnlinkedGifts", () => {
+  const dialect = new PgDialect();
+
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  const TXN = {
+    id: "txn-unlinked-1",
+    entityId: "entity-foundation",
+    fundId: "fund-charitable",
+    txnDate: "2026-08-01",
+    flow: "income",
+    amountCents: 5000, // $50 — deliberately sub-$250
+    status: "posted",
+    donorId: null,
+    transferGroupId: null,
+  };
+
+  it("returns a Foundation income transaction with donorId null, no fiscal year filter", async () => {
+    mockDbState.queue.push([
+      { txn: TXN, fundName: "Charitable Fund", entityName: "Foundation", categoryName: "General Gifts" },
+    ]);
+
+    const rows = await listUnlinkedGifts({});
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].txn.id).toBe("txn-unlinked-1");
+    expect(rows[0].txn.fundName).toBe("Charitable Fund");
+    expect(rows[0].txn.entityName).toBe("Foundation");
+    expect(rows[0].txn.categoryName).toBe("General Gifts");
+  });
+
+  it("returns a transaction under $250 — proves there is no amount floor (the defining difference from listPendingAcknowledgments)", async () => {
+    mockDbState.queue.push([
+      { txn: { ...TXN, amountCents: 2000 }, fundName: "Charitable Fund", entityName: "Foundation", categoryName: null },
+    ]);
+
+    const rows = await listUnlinkedGifts({});
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].txn.amountCents).toBe(2000);
+
+    // Structurally: the compiled WHERE clause never mentions amount_cents at
+    // all — no floor of any kind, unlike listPendingAcknowledgments's
+    // `amount_cents >= 25000`.
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).not.toContain("amount_cents");
+  });
+
+  it("returns a transaction whose category has ack_not_required = true — proves there is no category exclusion", async () => {
+    mockDbState.queue.push([
+      {
+        txn: TXN,
+        fundName: "Charitable Fund",
+        entityName: "Foundation",
+        categoryName: "Race Entry Fees", // an ackNotRequired-flagged category
+      },
+    ]);
+
+    const rows = await listUnlinkedGifts({});
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].txn.categoryName).toBe("Race Entry Fees");
+
+    // Structurally: unlike listPendingAcknowledgments, the compiled WHERE
+    // never references ack_not_required at all.
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).not.toContain("ack_not_required");
+  });
+
+  it("WHERE clause excludes rows with a donor already linked (donor_id IS NULL)", async () => {
+    mockDbState.queue.push([]);
+
+    await listUnlinkedGifts({});
+
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).toContain('"ledger_transactions"."donor_id" is null');
+  });
+
+  it("WHERE clause excludes internal transfers (transfer_group_id IS NULL), independent of the category decision", async () => {
+    mockDbState.queue.push([]);
+
+    await listUnlinkedGifts({});
+
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).toContain('"ledger_transactions"."transfer_group_id" is null');
+  });
+
+  it("WHERE clause requires donations_deductible=true, flow='income' and status='posted' — same baseline as listPendingAcknowledgments", async () => {
+    mockDbState.queue.push([]);
+
+    await listUnlinkedGifts({});
+
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql, params } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).toContain('"ledger_entities"."donations_deductible"');
+    expect(sql).toContain('"ledger_transactions"."flow"');
+    expect(sql).toContain('"ledger_transactions"."status"');
+    expect(params).toContain(true);
+    expect(params).toContain("income");
+    expect(params).toContain("posted");
+  });
+
+  it("fiscalYear omitted returns rows across multiple fiscal years — the WHERE clause carries no txn_date bound at all", async () => {
+    mockDbState.queue.push([]);
+
+    await listUnlinkedGifts({});
+
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).not.toContain("txn_date");
+  });
+
+  it("fiscalYear provided bounds the WHERE clause to that FY's fyBounds() gte/lt bracket", async () => {
+    mockDbState.queue.push([]);
+
+    await listUnlinkedGifts({ fiscalYear: 2025 });
+
+    expect(mockDbState.wheres).toHaveLength(1);
+    const { sql, params } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).toContain('"ledger_transactions"."txn_date" >=');
+    expect(sql).toContain('"ledger_transactions"."txn_date" <');
+    expect(params).toContain("2025-07-01");
+    expect(params).toContain("2026-07-01");
   });
 });
