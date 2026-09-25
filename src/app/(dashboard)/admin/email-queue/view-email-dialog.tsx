@@ -8,7 +8,8 @@ export type QueuedEmailStatus =
   | "sent"
   | "failed"
   | "blocked_non_production"
-  | "dev_no_api_key";
+  | "dev_no_api_key"
+  | "retrying";
 
 const STATUS_LABEL: Record<QueuedEmailStatus, string> = {
   pending: "Pending",
@@ -20,6 +21,15 @@ const STATUS_LABEL: Record<QueuedEmailStatus, string> = {
   // the deliberate non-production block above it. See
   // docs/work-log/2026-09-25-email-silent-success.md.
   dev_no_api_key: "Not sent — no API key (dev)",
+  // A transient claim status (src/app/api/admin/email-queue/retry/route.ts) —
+  // no /admin/email-queue section queries for it, so this label only matters
+  // if a row is ever caught mid-claim (e.g. an admin refreshes at the exact
+  // instant a retry request is in flight) or briefly before
+  // resetStaleRetryingEmails() catches a stranded one. Given a labeled entry
+  // rather than the unknown-status fallback (the same call made for
+  // dev_no_api_key above, docs/work-log/2026-09-25-retry-stranding.md) so it
+  // reads as "in progress," never as an unrecognized/broken state.
+  retrying: "Retrying…",
 };
 
 const STATUS_CLASS: Record<QueuedEmailStatus, string> = {
@@ -28,6 +38,7 @@ const STATUS_CLASS: Record<QueuedEmailStatus, string> = {
   failed: "bg-amber-100 text-amber-800",
   blocked_non_production: "bg-lions-blue/10 text-lions-blue",
   dev_no_api_key: "bg-purple-100 text-purple-800",
+  retrying: "bg-blue-100 text-blue-800",
 };
 
 /** Small status pill shared by the queue tables and the preview dialog. */

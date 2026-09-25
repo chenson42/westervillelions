@@ -318,7 +318,17 @@ was deleted on the strength of this review alone.
   themselves. Until this lands, catching a new violation is review-only — flag it explicitly in
   any future architect/tech-lead review of a feature that persists a "sent" outcome.
 
-- [ ] **B-67 — A blocked (non-production) send still satisfies the acknowledgment-letter claim.**
+  **Extended 2026-09-25 (after the B-67 fix):** a fifth instance of this class was found while
+  fixing B-67 — `SendBulkMemberEmailResult` in `src/lib/email.ts` **does not propagate `blocked`
+  at all**, so every durable-claim caller routed through `sendBulkMemberEmail()` is structurally
+  unable to obey DECISION-102's caller rule even if it wants to. B-67's fix had to work around
+  this by reading back each message's persisted `email_queue.status` — correct, and it avoided
+  duplicating the guard predicate, but indirect. Propagating `blocked` through
+  `SendBulkMemberEmailResult` belongs in this item's scope: the point of the discriminated-union
+  redesign is that a caller *cannot* fail to handle the third outcome, and a wrapper type that
+  silently drops it defeats that at the first hop.
+
+- [x] **B-67 — A blocked (non-production) send still satisfies the acknowledgment-letter claim.**
   (added 2026-09-25, found while fixing the same defect in `financial-report-send.ts`; priority: should-do)
   `emailAcknowledgmentLetters()` in `src/lib/ledger-acknowledgment-letter-queries.ts` claims the
   acknowledgment atomically **before** sending and reverts only when every address genuinely fails. A
@@ -331,6 +341,18 @@ was deleted on the strength of this review alone.
   Needs a short design pass first: what *should* "blocked, not delivered, not failed" mean for an
   acknowledgment? Lower-severity cousins: the per-recipient `event_announcements` and `dues_reminders`
   writes record the same inaccuracy but carry no durable claim, so nothing becomes un-resendable.
+  **Closed 2026-09-25 — `docs/work-log/2026-09-25-ack-letter-blocked-claim.md` (bug-fix variant, Phases
+  1–3 skipped per DECISION-102's existing diagnosis).** `emailAcknowledgmentLetters()` now branches on the
+  full three-way outcome: any address genuinely delivered keeps the claim (`emailed`), zero delivered with
+  a real rejection reports `failed` and reverts, zero delivered with everything blocked reports a new
+  `blocked` status and reverts. Because `sendBulkMemberEmail()` doesn't forward `sendEmail()`'s `blocked`
+  field, the fix reads back `email_queue.status` for the batch's own queued rows — a documented,
+  caller-specific workaround, not a new general pattern. Analyst Phase 6: **SHIP WITH NOTES** — both halves
+  of the invariant hold (verified independently, not just re-read from qa's report); two follow-ups filed
+  (soften the `"blocked"` reason copy for a non-technical reader; add a pinning test for the read-back
+  workaround's reachability assumption, since nothing today would catch it silently breaking if
+  `sendBulkMemberEmail()`'s bulk-guard behavior ever changes). See that work-log's Phase 6 section for the
+  analyst's position that B-70 should now gate any *new* durable-claim email caller.
 
 - [x] **B-65 — `sendEmail()` discards the Resend SDK's returned `error` and records the send as `sent`.**
   (added 2026-09-25, from `docs/work-log/2026-09-25-email-silent-success.md`; priority: **high — this is the
@@ -366,7 +388,7 @@ was deleted on the strength of this review alone.
   anything currently in flight — but the pointer-comment mitigation is exactly the "protected only by
   someone remembering" pattern that let the original B-65/B-66/B-67-class bugs survive.
 
-- [ ] **B-66 — A retry stranded at `retrying` is invisible and un-retryable.**
+- [x] **B-66 — A retry stranded at `retrying` is invisible and un-retryable.**
   (added 2026-09-25, from `docs/work-log/2026-09-25-email-silent-success.md` Phase 5 re-verification;
   priority: should-do) The duplicate-send fix claims a row atomically via
   `UPDATE ... SET status='retrying' WHERE id=$1 AND status='failed' RETURNING id` before sending, and
@@ -379,6 +401,16 @@ was deleted on the strength of this review alone.
   timestamp column and fold a staleness reset (`retrying` older than N minutes → back to `failed`) into the
   existing bulk sweep — no new cron infrastructure required, which matters given this project deliberately
   has none.
+  **Closed 2026-09-25 — `docs/work-log/2026-09-25-retry-stranding.md` (bug-fix variant, Phase 2 skipped and
+  documented).** Added `email_queue.retrying_at`, `RETRY_STALE_MINUTES = 5` (a 30x margin over Vercel
+  Hobby's 10-second function cap, verified absent any `vercel.json`/`maxDuration`), and
+  `resetStaleRetryingEmails()` called from both the bulk sweep and the `/admin/email-queue` page load, plus
+  a read-only fold-in on the failed-count badge — no new cron infrastructure. A stranded row is now visible
+  within 5 minutes and self-heals with no manual SQL. Analyst Phase 6: **SHIP WITH NOTES** — invisibility is
+  genuinely cured (traced independently); two follow-ups filed (cross-reference the hosting-tier assumption
+  from a location a future plan/timeout change would actually touch, not only from `RETRY_STALE_MINUTES`'s
+  own file; watch the failed-count badge's independent staleness predicate if a third caller ever needs the
+  same check). See that work-log's Phase 6 section for detail.
 
 - [ ] **B-69 — No nav-level signal that a financial statement is ready to send to the board.**
   (added 2026-09-25, Phase 6 follow-up from `docs/work-log/2026-09-25-financial-report-auto-send.md`;

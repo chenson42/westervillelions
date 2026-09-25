@@ -115,6 +115,16 @@ vi.mock("@/lib/db/schema", () => ({ emailQueue: {} }));
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
 
+// B-66 (docs/work-log/2026-09-25-retry-stranding.md): resetStaleRetryingEmails()
+// is exercised on its own behavior in src/lib/email-queue-stats.test.ts — here
+// it's mocked so this file can assert WHERE and HOW OFTEN this route calls it,
+// without needing this file's already-elaborate db mock to also model the
+// reset's own UPDATE predicate.
+const resetStaleRetryingEmailsMock = vi.fn().mockResolvedValue(0);
+vi.mock("@/lib/email-queue-stats", () => ({
+  resetStaleRetryingEmails: (...args: unknown[]) => resetStaleRetryingEmailsMock(...args),
+}));
+
 // Real drizzle-orm query builders, but spy-wrapped so a test can assert
 // which predicate the route actually composed: `lte` (the nextRetryAt
 // cooldown) for bulk retry, `inArray` (explicit ids, no cooldown) for
@@ -181,6 +191,7 @@ beforeEach(() => {
   vi.mocked(hasFeature).mockResolvedValue(true);
   vi.mocked(lte).mockClear();
   vi.mocked(inArray).mockClear();
+  resetStaleRetryingEmailsMock.mockClear().mockResolvedValue(0);
 });
 
 afterEach(() => {
@@ -555,5 +566,58 @@ describe("POST /api/admin/email-queue/retry — blocked by the non-production de
     expect(body).toMatchObject({ succeeded: 0, failed: 0 });
     const row = eligibleRows.find((r) => r.id === "eq-guard-bulk");
     expect(row?.status).toBe("blocked_non_production");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `retrying`-row stranding — B-66 (docs/work-log/2026-09-25-retry-stranding.md)
+//
+// qa's Phase 5 re-verification of the atomic claim (docs/work-log/
+// 2026-09-25-email-silent-success.md) flagged that a hard process death
+// between claimFailedRow() and settleClaim()'s terminal write leaves a row
+// stranded at "retrying" forever — a JS try/catch cannot run after the
+// process itself is killed. The fix stamps retryingAt at claim time and
+// folds a staleness reset (resetStaleRetryingEmails(), tested on its own in
+// src/lib/email-queue-stats.test.ts) into the bulk sweep. These tests cover
+// this route's own two responsibilities: stamping the claim timestamp, and
+// invoking the sweep from the right place.
+// ---------------------------------------------------------------------------
+
+describe("POST /api/admin/email-queue/retry — retrying-row stranding (B-66)", () => {
+  it("the atomic claim stamps retryingAt with the current time — this is the ONLY signal that lets a stranded row be told apart from a live one", async () => {
+    eligibleRows = [makeEligibleRow({ id: "eq-claim-stamp" })];
+
+    await POST(targetedRequest(["eq-claim-stamp"]));
+
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "retrying", retryingAt: expect.any(Date) }),
+    );
+  });
+
+  it("every terminal write clears retryingAt back to null, so a completed row is never mistaken for a stranded one", async () => {
+    eligibleRows = [makeEligibleRow({ id: "eq-terminal-clear" })];
+
+    await POST(targetedRequest(["eq-terminal-clear"]));
+
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "sent", retryingAt: null }),
+    );
+  });
+
+  it("the bulk sweep runs resetStaleRetryingEmails() before selecting eligible rows, so a stranded row from an earlier crashed request can rejoin this very sweep", async () => {
+    eligibleRows = [];
+
+    await POST(bulkRequest());
+
+    expect(resetStaleRetryingEmailsMock).toHaveBeenCalledTimes(1);
+    expect(resetStaleRetryingEmailsMock).toHaveBeenCalledWith(expect.any(Date));
+  });
+
+  it("targeted (single-row) retry does NOT run the sweep — an explicit admin click on one row has no need to sweep the whole table", async () => {
+    eligibleRows = [makeEligibleRow({ id: "eq-targeted-no-sweep" })];
+
+    await POST(targetedRequest(["eq-targeted-no-sweep"]));
+
+    expect(resetStaleRetryingEmailsMock).not.toHaveBeenCalled();
   });
 });

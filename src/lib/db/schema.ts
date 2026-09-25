@@ -334,6 +334,19 @@ export const emailQueue = pgTable("email_queue", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   sentAt: timestamp("sent_at"),
   nextRetryAt: timestamp("next_retry_at"),
+  // Stamped by claimFailedRow() the instant a row is atomically claimed into
+  // the transient 'retrying' status, cleared back to null by settleClaim()'s
+  // every terminal write. Exists ONLY to let resetStaleRetryingEmails()
+  // (src/lib/email-queue-stats.ts) tell "genuinely still in flight" apart
+  // from "the process died mid-request and the row is stranded" — a JS
+  // try/catch cannot survive a hard process death (Vercel timeout, instance
+  // kill, mid-request deploy), so this is the sole recovery signal. A
+  // genuine instant, not a naive local time — see the 2026-09-03 security
+  // review's `timestamp`-vs-`timestamptz` drift finding — so this column
+  // uses `withTimezone: true` even though the pre-existing columns above it
+  // don't (that drift is out of scope for this fix). See
+  // docs/work-log/2026-09-25-retry-stranding.md.
+  retryingAt: timestamp("retrying_at", { withTimezone: true }),
 }, (t) => [
   // Backs both the admin email-queue page's three status-filtered queries
   // and the failed-count badge on the admin nav (getFailedEmailCount(),

@@ -7,6 +7,7 @@ import { FEATURES } from "@/lib/permissions";
 import { and, eq, inArray, lte } from "drizzle-orm";
 import { Resend } from "resend";
 import { shouldBlockNonProductionSend } from "@/lib/email-guard";
+import { resetStaleRetryingEmails } from "@/lib/email-queue-stats";
 
 const RETRY_BACKOFF_MS = 15 * 60 * 1000;
 
@@ -26,23 +27,28 @@ const RETRY_BACKOFF_MS = 15 * 60 * 1000;
  * actual retry — every caller downstream reuses the returned `attempts`
  * value rather than incrementing again.
  *
- * `"retrying"` is a genuinely transient status: it only exists between this
- * claim and the terminal update a few lines later in the same request. It
- * intentionally does not appear in any /admin/email-queue section query or
- * StatusPill label (it falls through to the pre-existing unknown-status
- * fallback if ever observed) — a row should not linger there long enough to
- * need its own UI treatment, and `settleClaim()` below guarantees it always
- * moves to a terminal status even if something inside the try block throws
- * unexpectedly, so a row can never be stranded claimed-but-never-settled.
+ * `"retrying"` is meant to be a transient status: it only exists between this
+ * claim and the terminal update a few lines later in the same request, and
+ * `settleClaim()` below guarantees it always moves to a terminal status even
+ * if something inside the try block throws unexpectedly. But a JS
+ * `try/catch` cannot survive a hard process death (a Vercel function
+ * timeout, an instance being killed, a deploy landing mid-request) — so this
+ * claim also stamps `retryingAt` with the claim time. That's the sole signal
+ * `resetStaleRetryingEmails()` (src/lib/email-queue-stats.ts) has to tell "a
+ * request is still genuinely holding this row" apart from "the process died
+ * and this row is stranded," and it's what lets a stranded row recover
+ * without a manual SQL fix. See
+ * docs/work-log/2026-09-25-retry-stranding.md (B-66).
  */
 async function claimFailedRow(
   id: string,
-  currentAttempts: number
+  currentAttempts: number,
+  now: Date
 ): Promise<{ claimed: true; attempts: number } | { claimed: false }> {
   const attempts = currentAttempts + 1;
   const [claim] = await db
     .update(emailQueue)
-    .set({ status: "retrying", attempts })
+    .set({ status: "retrying", attempts, retryingAt: now })
     .where(and(eq(emailQueue.id, id), eq(emailQueue.status, "failed")))
     .returning({ id: emailQueue.id });
 
@@ -82,7 +88,7 @@ async function settleClaim(
       );
       await db
         .update(emailQueue)
-        .set({ status: "blocked_non_production", attempts })
+        .set({ status: "blocked_non_production", attempts, retryingAt: null })
         .where(eq(emailQueue.id, item.id));
       return {
         success: false,
@@ -99,7 +105,7 @@ async function settleClaim(
     if (outcome.success) {
       await db
         .update(emailQueue)
-        .set({ status: "sent", sentAt: now, attempts, lastError: null })
+        .set({ status: "sent", sentAt: now, attempts, lastError: null, retryingAt: null })
         .where(eq(emailQueue.id, item.id));
       return { success: true, countsAsFailed: false };
     }
@@ -107,7 +113,7 @@ async function settleClaim(
     const nextRetryAt = new Date(now.getTime() + RETRY_BACKOFF_MS);
     await db
       .update(emailQueue)
-      .set({ status: "failed", attempts, lastError: outcome.error, nextRetryAt })
+      .set({ status: "failed", attempts, lastError: outcome.error, nextRetryAt, retryingAt: null })
       .where(eq(emailQueue.id, item.id));
     return { success: false, error: outcome.error, countsAsFailed: true };
   } catch (err) {
@@ -116,7 +122,7 @@ async function settleClaim(
     const nextRetryAt = new Date(now.getTime() + RETRY_BACKOFF_MS);
     await db
       .update(emailQueue)
-      .set({ status: "failed", attempts, lastError: errMsg, nextRetryAt })
+      .set({ status: "failed", attempts, lastError: errMsg, nextRetryAt, retryingAt: null })
       .where(eq(emailQueue.id, item.id));
     return { success: false, error: errMsg, countsAsFailed: true };
   }
@@ -208,7 +214,7 @@ async function handleMissingApiKey(
     const nextRetryAt = new Date(now.getTime() + RETRY_BACKOFF_MS);
     await db
       .update(emailQueue)
-      .set({ status: "failed", attempts, lastError: errMsg, nextRetryAt })
+      .set({ status: "failed", attempts, lastError: errMsg, nextRetryAt, retryingAt: null })
       .where(eq(emailQueue.id, item.id));
     return { success: false, error: errMsg, countsAsFailed: true };
   }
@@ -218,7 +224,7 @@ async function handleMissingApiKey(
   console.log(`[Email Queue Retry] Dev mode (no RESEND_API_KEY) — NOT sending ${item.id}`);
   await db
     .update(emailQueue)
-    .set({ status: "dev_no_api_key", attempts })
+    .set({ status: "dev_no_api_key", attempts, retryingAt: null })
     .where(eq(emailQueue.id, item.id));
   return {
     success: false,
@@ -274,7 +280,7 @@ async function handleTargetedRetry(ids: string[], resend: Resend | null, now: Da
     // Atomic claim BEFORE any send is attempted — see claimFailedRow()'s
     // doc comment. A lost race (another concurrent request already claimed
     // this row) is reported, never silently retried a second time.
-    const claim = await claimFailedRow(id, item.attempts);
+    const claim = await claimFailedRow(id, item.attempts, now);
     if (!claim.claimed) {
       results.push({
         id,
@@ -302,8 +308,17 @@ async function handleTargetedRetry(ids: string[], resend: Resend | null, now: Da
  * A row that loses the claim race is simply skipped by this run — it was
  * already claimed by whichever concurrent request got there first, and that
  * request's own accounting covers it.
+ *
+ * Also runs `resetStaleRetryingEmails()` first (see that function's doc
+ * comment, src/lib/email-queue-stats.ts) — this is one of the two places a
+ * row stranded at `retrying` by a hard process death gets a chance to
+ * self-heal back to `failed`, the other being a read of `/admin/email-queue`
+ * itself. Safe to call every time: it only ever touches rows well past the
+ * point a live request could still be holding them.
  */
 async function handleBulkRetry(resend: Resend | null, now: Date) {
+  await resetStaleRetryingEmails(now);
+
   const eligible = await db
     .select()
     .from(emailQueue)
@@ -317,7 +332,7 @@ async function handleBulkRetry(resend: Resend | null, now: Date) {
   let failed = 0;
 
   for (const item of eligible) {
-    const claim = await claimFailedRow(item.id, item.attempts);
+    const claim = await claimFailedRow(item.id, item.attempts, now);
     if (!claim.claimed) continue;
 
     const outcome = await settleClaim(item, resend, now, claim.attempts);

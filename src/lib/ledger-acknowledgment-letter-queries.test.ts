@@ -721,6 +721,184 @@ describe("emailAcknowledgmentLetters — partial multi-address success (Test 11)
   });
 });
 
+describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / DECISION-102", () => {
+  it("a fully blocked send does NOT leave the claim in place, reports 'blocked' (not 'emailed'), and the letter is re-sendable afterward — fails against pre-fix code, which collapsed sendEmail()'s blocked success:true into anySucceeded and kept the claim forever", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+
+    // listGeneratableAcknowledgments()'s select.
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]); // claim succeeds
+    // sendBulkMemberEmail()'s per-recipient result on the blocked path is
+    // success: true (DECISION-085 — deliberate, unchanged here) with no
+    // `blocked` field forwarded (SendBulkMemberEmailResult doesn't carry
+    // one) — exactly what a real blocked send looks like from this
+    // module's vantage point.
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    });
+    // The email_queue status lookup this fix adds: q-1 was persisted as
+    // blocked_non_production by sendEmail() itself.
+    mockDbState.selectQueue.push([{ id: "q-1", status: "blocked_non_production" }]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "blocked",
+        reason:
+          "delivery blocked outside production for all addresses — nothing was sent, not marked sent, safe to retry",
+      },
+    ]);
+
+    // Claim reverted: the claim UPDATE, then the compensating revert to
+    // NULL — same shape asserted for genuine total failure (Test 10).
+    expect(mockDbState.updateCalls).toHaveLength(2);
+    expect(mockDbState.updateCalls[0].values).toMatchObject({
+      sentAt: expect.any(Date),
+      sentVia: "email",
+    });
+    expect(mockDbState.updateCalls[1].values).toMatchObject({ sentAt: null, sentVia: null });
+
+    // A later call for the same ack is a fresh candidate, not skipped
+    // "already sent" — the whole point of reverting the claim. This time
+    // nothing is blocked (e.g. running in production) and it delivers.
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-2" }],
+    });
+    mockDbState.selectQueue.push([]); // no blocked_non_production rows this time
+
+    const retryResults = await emailAcknowledgmentLetters(["ack-1"]);
+    expect(retryResults).toEqual([
+      { ackId: "ack-1", status: "emailed", addresses: [{ to: "donor@example.com", success: true }] },
+    ]);
+  });
+
+  it("mixed batch, one address delivered + one blocked -> still 'emailed' (a donor who received it at any address received it, same rule as a delivered+failed mix), with the blocked address flagged per-address rather than reported as success", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["a@example.com", "b@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [
+        { to: "a@example.com", success: true, emailQueueId: "q-1" },
+        { to: "b@example.com", success: true, emailQueueId: "q-2" }, // blocked, but reports success: true
+      ],
+    });
+    mockDbState.selectQueue.push([
+      { id: "q-1", status: "sent" },
+      { id: "q-2", status: "blocked_non_production" },
+    ]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "emailed",
+        addresses: [
+          { to: "a@example.com", success: true },
+          { to: "b@example.com", success: false, blocked: true },
+        ],
+      },
+    ]);
+    // Claim kept — exactly one update call (the claim), no revert, because
+    // at least one address genuinely delivered.
+    expect(mockDbState.updateCalls).toHaveLength(1);
+  });
+
+  it("mixed batch, zero delivered, one genuinely failed + one blocked -> reports 'failed' (not 'blocked') and reverts the claim exactly as a total genuine failure would, since a real send was attempted and rejected", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["a@example.com", "b@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [
+        { to: "a@example.com", success: false, error: "bounced", emailQueueId: "q-1" },
+        { to: "b@example.com", success: true, emailQueueId: "q-2" }, // blocked
+      ],
+    });
+    mockDbState.selectQueue.push([{ id: "q-2", status: "blocked_non_production" }]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "failed",
+        reason: "delivery failed for all addresses — not marked sent, safe to retry",
+      },
+    ]);
+    expect(mockDbState.updateCalls).toHaveLength(2);
+    expect(mockDbState.updateCalls[1].values).toMatchObject({ sentAt: null, sentVia: null });
+  });
+
+  it("a genuine total failure (nothing blocked) still reverts the claim and reports 'failed' exactly as before — no regression from the blocked-aware rewrite", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [
+        { to: "donor@example.com", success: false, error: "Resend rejected", emailQueueId: "q-1" },
+      ],
+    });
+    // Not blocked — a genuinely attempted, rejected send.
+    mockDbState.selectQueue.push([{ id: "q-1", status: "failed" }]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "failed",
+        reason: "delivery failed for all addresses — not marked sent, safe to retry",
+      },
+    ]);
+    expect(mockDbState.updateCalls).toHaveLength(2);
+    expect(mockDbState.updateCalls[1].values).toMatchObject({ sentAt: null, sentVia: null });
+  });
+
+  it("a genuine full success (nothing blocked) still keeps the claim and reports 'emailed' exactly as before — a donor must still never get two receipts", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    });
+    mockDbState.selectQueue.push([{ id: "q-1", status: "sent" }]);
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "emailed",
+        addresses: [{ to: "donor@example.com", success: true }],
+      },
+    ]);
+    expect(mockDbState.updateCalls).toHaveLength(1);
+  });
+});
+
 describe("emailAcknowledgmentLetters — shared address across two donors (Test 12)", () => {
   it("Test 12: results are zipped by array index, never by address string, so two donors sharing one inbox each get their own outcome", async () => {
     const row1 = joinedRow({

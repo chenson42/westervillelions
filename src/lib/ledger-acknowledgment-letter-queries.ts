@@ -27,6 +27,7 @@ import {
   ledgerDonors,
   ledgerLetterTemplates,
   ledgerAuditLog,
+  emailQueue,
   type LedgerLetterTemplate,
   type NewLedgerLetterTemplate,
 } from "@/lib/db/schema";
@@ -419,10 +420,11 @@ export type EmailLetterResult =
   | {
       ackId: string;
       status: "emailed";
-      addresses: Array<{ to: string; success: boolean; error?: string }>;
+      addresses: Array<{ to: string; success: boolean; error?: string; blocked?: true }>;
     }
   | { ackId: string; status: "skipped"; reason: string }
-  | { ackId: string; status: "failed"; reason: string };
+  | { ackId: string; status: "failed"; reason: string }
+  | { ackId: string; status: "blocked"; reason: string };
 
 const EMAIL_SUBJECT = "Your Official Gift Acknowledgment — Thank You for Your Generosity";
 const EMAIL_FROM = "treasurer@westervillelions.org";
@@ -457,14 +459,43 @@ const EMAIL_FROM = "treasurer@westervillelions.org";
  * result to the other.
  *
  * Per claimed ack, once results are back:
- *   - at least one address succeeded -> keep the claim, report "emailed"
+ *   - at least one address DELIVERED -> keep the claim, report "emailed"
  *     with full per-address detail (a donor who received it at one of two
  *     addresses did receive it — Phase 1's recommended partial-failure
  *     rule, adopted as final).
- *   - every address failed -> revert the claim (`sent_at`/`sent_via` back
- *     to NULL, guarded by `sent_via = 'email'` so this can never clear a
- *     legitimate 'print' row) and report "failed" — never leave a row
- *     saying "sent" with nothing delivered.
+ *   - zero delivered, at least one address genuinely FAILED -> revert the
+ *     claim and report "failed" (unchanged from before — B-67).
+ *   - zero delivered, zero failed, every address BLOCKED (B-67, DECISION-102) ->
+ *     revert the claim and report "blocked". Nothing was handed to Resend at
+ *     all, so nothing can have been duplicated by trying again — holding the
+ *     claim in this case protects no one and permanently prevents a donor
+ *     from ever receiving a real receipt.
+ *
+ * "Blocked" is `sendEmail()`'s deny-by-production-only guard
+ * (`shouldBlockNonProductionSend()`, DECISION-085/102) refusing to reach
+ * Resend outside production — not a delivery failure, and not success
+ * either. `sendBulkMemberEmail()` does not currently forward `sendEmail()`'s
+ * own `blocked` field on its per-recipient results (see the doc comment
+ * below Step 4 for why this module reads it back from `email_queue` instead
+ * of reading `sendResults[i].blocked`, which does not exist on that type —
+ * flagged as a further instance of the DECISION-102 shape, not fixed here
+ * because `src/lib/email.ts` is out of scope for this change).
+ *
+ * A batch mixing a delivered address with a blocked one is treated the same
+ * as a batch mixing a delivered address with a failed one: the ack is
+ * "emailed" (a donor who received it at ANY address received it), and the
+ * blocked/failed sibling address is surfaced in that ack's per-address
+ * detail, never as a separate top-level outcome. Only when NO address
+ * delivered does the distinction between "some genuinely failed" and "all
+ * were blocked" change the outcome (failed vs. blocked), because only then
+ * does whether-to-revert depend on it — a mix of failed + blocked with zero
+ * delivered is reported "failed" (a real send was attempted and rejected,
+ * which is worth surfacing distinctly from "the environment never tried"),
+ * matching pre-existing "failed" semantics exactly when at least one
+ * address was a genuine attempt.
+ *
+ * Never leave a row saying "sent" with nothing delivered — the invariant
+ * "blocked" exists to uphold, same as "failed" always has.
  */
 export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<EmailLetterResult[]> {
   const rows = await listGeneratableAcknowledgments({ ackIds });
@@ -573,26 +604,72 @@ export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<Emai
     recipients,
   });
 
+  // Step 3b — resolve which of THIS batch's queued rows were blocked by
+  // sendEmail()'s deny-by-default-outside-production guard rather than
+  // genuinely attempted (DECISION-085/102, B-67).
+  //
+  // sendBulkMemberEmail()'s per-recipient result is `{ to, success, error?,
+  // emailQueueId }` — it does NOT forward sendEmail()'s own `blocked` field,
+  // so `sendResults[i].blocked` does not exist to read. Rather than
+  // duplicate `shouldBlockNonProductionSend()`'s predicate here (which would
+  // also misclassify under Vitest, where NODE_ENV is never "production" and
+  // every mocked send would read as blocked regardless of what a test
+  // scripted), this reads back the ACTUAL status sendEmail() itself
+  // persisted for each queued row: 'blocked_non_production' is a value only
+  // that one code path writes. This is ground truth, not an inference — it
+  // is the exact fact `blocked: true` exists to communicate, sourced from
+  // where sendEmail() already recorded it, via the emailQueueId
+  // sendBulkMemberEmail() already returns per recipient.
+  //
+  // Deliberately NOT fixed by adding `blocked` to
+  // SendBulkMemberEmailResult in src/lib/email.ts — out of scope for this
+  // change (a concurrent agent may be working there); flagged in this
+  // work's write-up as a further instance of the DECISION-102 shape for a
+  // follow-up that touches that file directly.
+  const queueIds = sendResults.map((r) => r.emailQueueId).filter((id): id is string => Boolean(id));
+  const blockedQueueIds = new Set<string>();
+  if (queueIds.length > 0) {
+    const queueRows = await db
+      .select({ id: emailQueue.id, status: emailQueue.status })
+      .from(emailQueue)
+      .where(inArray(emailQueue.id, queueIds));
+    for (const row of queueRows) {
+      if (row.status === "blocked_non_production") blockedQueueIds.add(row.id);
+    }
+  }
+
   // Step 4 — regroup by ack via array-index zip (never by address string —
-  // see the function doc comment), decide keep-vs-revert.
-  const addressesByAckId = new Map<string, Array<{ to: string; success: boolean; error?: string }>>();
+  // see the function doc comment), decide keep-vs-revert on the full
+  // three-way outcome (delivered / failed / blocked), never on `success`
+  // alone (DECISION-102 rule 2).
+  const addressesByAckId = new Map<
+    string,
+    Array<{ to: string; success: boolean; error?: string; blocked?: true }>
+  >();
   for (let i = 0; i < meta.length; i++) {
     const { ackId, to } = meta[i];
     const sendResult = sendResults[i];
+    const blocked = blockedQueueIds.has(sendResult.emailQueueId);
     const list = addressesByAckId.get(ackId) ?? [];
     list.push({
       to,
-      success: sendResult.success,
+      // A blocked send reports success: true from sendEmail() (DECISION-085
+      // — deliberate, load-bearing) but nothing was delivered. Report it
+      // here as success: false so per-address detail in the API/UI never
+      // implies delivery for an address that was never attempted.
+      success: sendResult.success && !blocked,
       ...(sendResult.error ? { error: sendResult.error } : {}),
+      ...(blocked ? { blocked: true as const } : {}),
     });
     addressesByAckId.set(ackId, list);
   }
 
   for (const candidate of claimed) {
     const addresses = addressesByAckId.get(candidate.ackId) ?? [];
-    const anySucceeded = addresses.some((a) => a.success);
+    const anyDelivered = addresses.some((a) => a.success);
+    const anyGenuinelyFailed = addresses.some((a) => !a.success && !a.blocked);
 
-    if (anySucceeded) {
+    if (anyDelivered) {
       resultByAckId.set(candidate.ackId, {
         ackId: candidate.ackId,
         status: "emailed",
@@ -601,8 +678,10 @@ export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<Emai
       continue;
     }
 
-    // Every address failed — revert the claim. Guarded by sent_via = 'email'
-    // so this can never accidentally clear a legitimate 'print' sentVia.
+    // Zero delivered. Guarded by sent_via = 'email' so this can never
+    // accidentally clear a legitimate 'print' sentVia — revert either way,
+    // since nothing was delivered and the claim exists only to prevent a
+    // donor receiving a duplicate of something that actually went out.
     await db
       .update(ledgerAcknowledgments)
       .set({ sentAt: null, sentVia: null, updatedAt: new Date() })
@@ -612,11 +691,29 @@ export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<Emai
           eq(ledgerAcknowledgments.sentVia, "email"),
         ),
       );
-    resultByAckId.set(candidate.ackId, {
-      ackId: candidate.ackId,
-      status: "failed",
-      reason: "delivery failed for all addresses — not marked sent, safe to retry",
-    });
+
+    if (anyGenuinelyFailed) {
+      // At least one address was a real, rejected send attempt — report it
+      // as "failed" exactly as before (no regression for the all-failed or
+      // failed+blocked-mixed case).
+      resultByAckId.set(candidate.ackId, {
+        ackId: candidate.ackId,
+        status: "failed",
+        reason: "delivery failed for all addresses — not marked sent, safe to retry",
+      });
+    } else {
+      // Every address was blocked by the non-production guard — nothing was
+      // ever handed to Resend, so this is neither a delivery nor a failed
+      // attempt. B-67 / DECISION-102: holding the claim here protects no
+      // one (nothing was delivered to duplicate) and would otherwise make
+      // this donor's receipt permanently un-sendable outside production.
+      resultByAckId.set(candidate.ackId, {
+        ackId: candidate.ackId,
+        status: "blocked",
+        reason:
+          "delivery blocked outside production for all addresses — nothing was sent, not marked sent, safe to retry",
+      });
+    }
   }
 
   return ackIds.map((ackId) => resultByAckId.get(ackId)!);

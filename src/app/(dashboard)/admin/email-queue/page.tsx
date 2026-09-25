@@ -8,6 +8,7 @@ import { desc, eq, inArray } from "drizzle-orm";
 import RetryButton from "./retry-button";
 import RowRetryButton from "./row-retry-button";
 import { ViewEmailDialog, StatusPill } from "./view-email-dialog";
+import { resetStaleRetryingEmails } from "@/lib/email-queue-stats";
 
 export default async function AdminEmailQueuePage() {
   const session = await auth();
@@ -15,6 +16,15 @@ export default async function AdminEmailQueuePage() {
 
   const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
   if (!canManage) redirect("/admin");
+
+  // Self-heals a row stranded at the transient 'retrying' status (a hard
+  // process death mid-retry — see resetStaleRetryingEmails()'s doc comment,
+  // src/lib/email-queue-stats.ts) back to 'failed' every time this page is
+  // read, not only when an admin happens to click "Retry Failed Emails" —
+  // this page is the one place a stranded row would otherwise sit invisible
+  // indefinitely. Awaited before the section queries below so a row reset
+  // here shows up correctly in "Failed Emails" on this same render.
+  await resetStaleRetryingEmails(new Date());
 
   const [failed, blocked, recentSent] = await Promise.all([
     db

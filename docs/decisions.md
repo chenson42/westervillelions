@@ -106,12 +106,22 @@ do with what it returns — both hold at once, for the same call.
   `blocked_non_production` path) as part of closing the financial-report defect on 2026-09-25;
   this entry is what makes that field's presence a require-to-check contract for durable-claim
   callers generally, not a one-off local to `financial-report-send.ts`.
-- **Known open violation:** `emailAcknowledgmentLetters()`
-  (`src/lib/ledger-acknowledgment-letter-queries.ts`) still claims a donor acknowledgment as sent
-  without checking `blocked`, and its claim is deliberately permanent (a donor must never receive
-  one receipt twice) — tracked as backlog **B-67**, now the oldest open instance of this shape and
-  higher-stakes than the one just fixed, since the subject is a donor receipt rather than an
-  internal board email. It should not sit indefinitely.
+- **Resolved 2026-09-25** (`docs/work-log/2026-09-25-ack-letter-blocked-claim.md`, backlog
+  **B-67**): `emailAcknowledgmentLetters()` (`src/lib/ledger-acknowledgment-letter-queries.ts`) now
+  branches on the full three-way outcome per address (delivered / failed / blocked) rather than on
+  `success` alone, reverting the atomic claim whenever nothing genuinely delivered — including the
+  all-blocked case this decision originally flagged as open. It could not read
+  `SendEmailResult.blocked` directly, because it sends through `sendBulkMemberEmail()`, whose
+  result type does not forward that field (a further instance of this same shape — see next
+  bullet); it instead reads back the persisted `email_queue.status` for each send, which is the
+  same fact `blocked` exists to communicate, sourced from where `sendEmail()` already recorded it.
+- **Newly identified in closing B-67:** `SendBulkMemberEmailResult` (`src/lib/email.ts`) does not
+  forward `sendEmail()`'s `blocked` field on its per-recipient results at all, so every current and
+  future durable-claim caller that goes through `sendBulkMemberEmail()` (not just the
+  acknowledgment-letter case) faces the same gap. Not fixed as part of B-67 since it requires
+  editing `src/lib/email.ts`; recommended as a small follow-up alongside B-70 — add `blocked?: true`
+  to that result shape, then retire the `email_queue`-read-back workaround in
+  `emailAcknowledgmentLetters()` in favor of reading the field directly.
 - **Enforcement today is review-only.** `blocked` is an optional field on `SendEmailResult` —
   nothing at the type level, lint level, or test level stops a new durable-claim caller from
   reading `success` alone and repeating defect #4's shape. Filed **B-70** to make this enforceable

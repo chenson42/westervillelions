@@ -22,10 +22,19 @@
  *     | { ackId: string; status: "emailed"; addresses: Array<{ to: string; success: boolean; error?: string }> }
  *     | { ackId: string; status: "skipped"; reason: string }
  *     | { ackId: string; status: "failed"; reason: string }   // claimed, but delivery
- *                                                               // failed at every
- *                                                               // address — the claim
- *                                                               // was reverted, safe
- *                                                               // to retry
+ *                                                               // genuinely failed at
+ *                                                               // every address — the
+ *                                                               // claim was reverted,
+ *                                                               // safe to retry
+ *     | { ackId: string; status: "blocked"; reason: string }  // claimed, but every
+ *                                                               // address was refused
+ *                                                               // by the non-production
+ *                                                               // send guard, not a
+ *                                                               // delivery failure —
+ *                                                               // the claim was
+ *                                                               // reverted, safe to
+ *                                                               // retry (B-67 /
+ *                                                               // DECISION-102)
  *   >;
  * }
  *
