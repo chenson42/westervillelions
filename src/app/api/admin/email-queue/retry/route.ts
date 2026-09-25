@@ -7,6 +7,7 @@ import { FEATURES } from "@/lib/permissions";
 import { and, eq, inArray, lte } from "drizzle-orm";
 import { Resend } from "resend";
 import { shouldBlockNonProductionSend } from "@/lib/email-guard";
+import { attemptResendSend } from "@/lib/email-send-attempt";
 import { resetStaleRetryingEmails } from "@/lib/email-queue-stats";
 
 const RETRY_BACKOFF_MS = 15 * 60 * 1000;
@@ -142,48 +143,33 @@ type SendableQueueItem = Pick<EmailQueueItem, "from" | "to" | "subject" | "html"
  * persisted `to`/`attachments`/etc. rather than going through the queue
  * helper — see the attachment-forwarding tests below).
  *
- * IMPORTANT — do not remove the `result.error` check. Resend's SDK (v6)
- * returns `{ data, error }` and does NOT throw on an API-level rejection
- * (invalid address, suspended domain, rate limit, ...) — only a network/
- * transport failure throws. This is the exact defect that produced the
- * month-long silent outbound-mail outage documented in
- * docs/work-log/2026-09-25-email-silent-success.md: a "success" path that
- * never inspected the returned value. `src/lib/email.ts`'s `sendEmail()`
- * had the same unchecked-`error` bug on its primary send path — that was
- * fixed in B-65 (docs/work-log/2026-09-25-sendemail-unchecked-error.md),
- * mirroring this function's shape. The two checks are semantically
- * equivalent today (both treat a resolved `{ error }` as a failure, never
- * as success) but are NOT extracted into one shared helper yet — see that
- * work-log's "Retry route / sendEmail() shared-helper assessment" for why,
- * and CLAUDE.md's duplication rule for why this is tracked as a follow-up
- * rather than left silent. If you change the error-handling shape here,
- * check whether `sendEmail()`'s loop in `src/lib/email.ts` needs the same
- * change, and vice versa.
+ * The send-and-classify step itself (inspecting Resend's `{ data, error }`
+ * return value, which the SDK resolves rather than throws on an API-level
+ * rejection) is shared with `sendEmail()`'s loop in `src/lib/email.ts` via
+ * `attemptResendSend()` (src/lib/email-send-attempt.ts) — see that module's
+ * doc comment for why the extraction exists. This function makes exactly
+ * one attempt per invocation (retries here happen across separate admin
+ * clicks or sweep passes, not within one call) and deliberately ignores the
+ * shared helper's `retryable` classification — a retried row always lands
+ * back in `failed` either way, same as before this extraction.
  */
 async function attemptSend(
   resend: Resend,
   item: SendableQueueItem
 ): Promise<{ success: true } | { success: false; error: string }> {
-  try {
-    const result = await resend.emails.send({
-      from: item.from,
-      to: [item.to],
-      subject: item.subject,
-      html: item.html,
-      // DECISION-092: forward a persisted attachments array so a retried
-      // announcement (or any future attachment-bearing send) doesn't
-      // silently arrive without its calendar invite.
-      ...(item.attachments && { attachments: item.attachments }),
-    });
+  const outcome = await attemptResendSend(resend, {
+    from: item.from,
+    to: item.to,
+    subject: item.subject,
+    html: item.html,
+    // DECISION-092: forward a persisted attachments array so a retried
+    // announcement (or any future attachment-bearing send) doesn't
+    // silently arrive without its calendar invite.
+    attachments: item.attachments ?? undefined,
+  });
 
-    if (result.error) {
-      return { success: false, error: result.error.message ?? String(result.error) };
-    }
-
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
+  if (outcome.success) return { success: true };
+  return { success: false, error: outcome.error };
 }
 
 /**

@@ -56,6 +56,7 @@ export default function AdminSidebar({
   userFeatures,
   isAdmin = false,
   failedEmailCount = 0,
+  readyToSendReportCount = 0,
 }: {
   userFeatures: string[];
   isAdmin?: boolean;
@@ -65,6 +66,12 @@ export default function AdminSidebar({
   // (defense in depth) so a future caller passing this by mistake can never
   // leak the count to a user who couldn't open the page.
   failedEmailCount?: number;
+  // Count of actionable (never_sent/corrected) monthly financial statements
+  // — getReadyToSendReportCount() (src/lib/financial-report-send.ts), B-69.
+  // Already gated by the caller (admin layout) on FEATURES.LEDGER_REPORT_SEND
+  // — the same permission the send action itself requires. Re-checked below
+  // anyway (defense in depth), same shape as failedEmailCount.
+  readyToSendReportCount?: number;
 }) {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -319,6 +326,15 @@ export default function AdminSidebar({
                     item.href === "/admin/email-queue" &&
                     failedEmailCount > 0 &&
                     (isAdmin || userFeatures.includes(FEATURES.ADMIN_USERS));
+                  // Same defense-in-depth shape as showFailedBadge above:
+                  // only the Reports item, only nonzero, only for a user who
+                  // could actually send (FEATURES.LEDGER_REPORT_SEND) — not
+                  // merely view (LEDGER_VIEW, which is all the Reports nav
+                  // item itself requires).
+                  const showReadyToSendBadge =
+                    item.href === "/admin/ledger/reports" &&
+                    readyToSendReportCount > 0 &&
+                    (isAdmin || userFeatures.includes(FEATURES.LEDGER_REPORT_SEND));
                   return (
                     <Link
                       key={item.name}
@@ -345,6 +361,18 @@ export default function AdminSidebar({
                           aria-label={`${failedEmailCount} failed email${failedEmailCount === 1 ? "" : "s"}`}
                         >
                           {formatBadgeCount(failedEmailCount)}
+                        </span>
+                      )}
+                      {showReadyToSendBadge && (
+                        <span
+                          className={`ml-auto inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full px-1.5 text-xs font-bold ${
+                            isActive ? "bg-white text-lions-blue" : "bg-lions-gold text-lions-blue"
+                          }`}
+                          aria-label={`${readyToSendReportCount} financial statement${
+                            readyToSendReportCount === 1 ? "" : "s"
+                          } ready to send`}
+                        >
+                          {formatBadgeCount(readyToSendReportCount)}
                         </span>
                       )}
                     </Link>

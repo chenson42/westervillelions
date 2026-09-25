@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { canAccessAdminArea, FEATURES } from "@/lib/permissions";
 import AdminSidebar from "@/components/admin/admin-sidebar";
 import { getFailedEmailCount } from "@/lib/email-queue-stats";
+import { getReadyToSendReportCountCached } from "@/lib/financial-report-send";
 
 /**
  * Admin Layout
@@ -46,6 +47,21 @@ export default async function AdminLayout({
   const canSeeEmailQueue = isAdmin || userFeatures.includes(FEATURES.ADMIN_USERS);
   const failedEmailCount = canSeeEmailQueue ? await getFailedEmailCount() : 0;
 
+  // Ready-to-send-reports badge (B-69, docs/work-log/2026-09-25-ready-to-send-badge.md).
+  // Gated on the SAME permission the send action and the Reports page's send
+  // panel require (FEATURES.LEDGER_REPORT_SEND) — narrower than LEDGER_VIEW,
+  // which merely lets someone open /admin/ledger/reports read-only. The query
+  // must not even run for a user who can't send, mirroring the failed-email
+  // badge's gate-before-fetch shape above.
+  //
+  // Uses the CACHED wrapper (B-71 stopgap, financial-report-send.ts's own doc
+  // comment on getReadyToSendReportCountCached()) because this call now runs
+  // on every admin page render for a LEDGER_REPORT_SEND holder, and the
+  // underlying walk is not cheap — see that doc comment for the full
+  // reasoning and TTL justification.
+  const canSeeReadyToSendCount = isAdmin || userFeatures.includes(FEATURES.LEDGER_REPORT_SEND);
+  const readyToSendReportCount = canSeeReadyToSendCount ? await getReadyToSendReportCountCached() : 0;
+
   return (
     <div className="flex min-h-screen bg-gray-50 print:bg-white">
       {/* Sidebar — hidden entirely when printing (e.g. the budget worksheet) */}
@@ -54,6 +70,7 @@ export default async function AdminLayout({
           userFeatures={userFeatures}
           isAdmin={isAdmin}
           failedEmailCount={failedEmailCount}
+          readyToSendReportCount={readyToSendReportCount}
         />
       </div>
 

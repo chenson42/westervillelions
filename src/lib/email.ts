@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { emailQueue } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { shouldBlockNonProductionSend } from "@/lib/email-guard";
+import { attemptResendSend } from "@/lib/email-send-attempt";
 
 /**
  * A MIME attachment for an outbound email. `content` is the raw text (e.g. a
@@ -99,43 +100,6 @@ const RETRY_MINUTES = 15;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Resend error codes (from `RESEND_ERROR_CODE_KEY` in the SDK's types) that
- * will fail identically on every attempt — a bad/revoked API key, an
- * unverified sending domain, a malformed payload, an invalid address, and
- * so on. Retrying one of these burns attempts and adds latency for no
- * benefit (harmless, but pointless), so the send loop stops after the
- * first attempt instead of spending all MAX_ATTEMPTS on it.
- *
- * Everything NOT in this list — including a genuinely transient condition
- * like `rate_limit_exceeded`, and any error code the SDK introduces after
- * this list was written — is treated as retryable. That is a deliberate
- * conservative default: guessing a *new* code is permanent risks silently
- * giving up on something that would have succeeded a second later, where
- * guessing a known-permanent code is retryable only costs a little time.
- */
-const PERMANENT_RESEND_ERROR_CODES = new Set<string>([
-  "invalid_idempotency_key",
-  "validation_error",
-  "missing_api_key",
-  "restricted_api_key",
-  "invalid_api_key",
-  "not_found",
-  "method_not_allowed",
-  "invalid_idempotent_request",
-  "invalid_attachment",
-  "invalid_from_address",
-  "invalid_access",
-  "invalid_parameter",
-  "invalid_region",
-  "missing_required_field",
-  "security_error",
-]);
-
-function isRetryableResendError(code: string | undefined): boolean {
-  return code === undefined || !PERMANENT_RESEND_ERROR_CODES.has(code);
 }
 
 /**
@@ -260,63 +224,32 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     attemptsMade = attempt;
-    try {
-      // IMPORTANT — do not remove the `result.error` check below. Resend's
-      // SDK (v6) resolves with `{ data: null, error }` on an API-level
-      // rejection (revoked/invalid key, unverified sending domain, exceeded
-      // quota, suppressed recipient, malformed payload, ...) — it does NOT
-      // throw for those. Only a network/transport failure throws, which the
-      // catch block below already handled. Discarding the resolved value
-      // and treating `await` not throwing as "sent" is the exact defect
-      // that produced the month-long silent outbound-mail outage
-      // documented in docs/work-log/2026-09-25-email-silent-success.md and
-      // its follow-up docs/work-log/2026-09-25-sendemail-unchecked-error.md:
-      // the club's Resend key was revoked for ~90 days while every one of
-      // ~98 attempted sends landed `status: 'sent'` in email_queue with
-      // zero retries and zero failures recorded, because nothing ever
-      // looked at what `resend.emails.send()` resolved to.
-      //
-      // src/app/api/admin/email-queue/retry/route.ts's `attemptSend()` was
-      // fixed for the same defect first and is the reference shape this
-      // mirrors. The two checks are semantically equivalent but not
-      // extracted into a shared helper yet (see that function's own doc
-      // comment for why, and CLAUDE.md's duplication rule) — if this check
-      // changes, check whether `attemptSend()` needs the same change.
-      const result = await resend.emails.send({
-        from,
-        to: [to],
-        subject,
-        html,
-        ...(replyTo && { replyTo }),
-        ...(cc && { cc: [cc] }),
-        ...(bcc && { bcc: [bcc] }),
-        ...(attachments && { attachments }),
-      });
+    // The send-and-classify step (inspecting Resend's `{ data, error }`
+    // return value, which the SDK resolves rather than throws on an
+    // API-level rejection) is shared with the admin email-queue retry
+    // route's single-attempt send — see src/lib/email-send-attempt.ts's doc
+    // comment for why that extraction exists and what it does and doesn't
+    // own.
+    const outcome = await attemptResendSend(resend, { from, to, subject, html, replyTo, cc, bcc, attachments });
 
-      if (result?.error) {
-        lastError = result.error.message ?? String(result.error);
-        if (isRetryableResendError(result.error.name) && attempt < MAX_ATTEMPTS) {
-          await sleep(RETRY_DELAY_MS);
-          continue;
-        }
-        // Permanent error (or out of attempts) — stop now rather than
-        // burning the remaining attempts on a request that will fail
-        // identically every time.
-        break;
-      }
-
+    if (outcome.success) {
       await db
         .update(emailQueue)
         .set({ status: "sent", sentAt: new Date(), attempts: attempt })
         .where(eq(emailQueue.id, queued.id));
 
       return { success: true, emailQueueId: queued.id };
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
-      if (attempt < MAX_ATTEMPTS) {
-        await sleep(RETRY_DELAY_MS);
-      }
     }
+
+    lastError = outcome.error;
+    if (outcome.retryable && attempt < MAX_ATTEMPTS) {
+      await sleep(RETRY_DELAY_MS);
+      continue;
+    }
+    // Permanent error (or out of attempts) — stop now rather than burning
+    // the remaining attempts on a request that will fail identically every
+    // time.
+    break;
   }
 
   // All attempts failed (or a permanent error stopped us early) — mark for

@@ -28,7 +28,7 @@
  *     FIFO-queue style as financial-report-queries.test.ts.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockDbState } = vi.hoisted(() => ({
   mockDbState: {
@@ -90,6 +90,9 @@ vi.mock("@/lib/email-durable-claim", () => ({ sendEmailForDurableClaim: vi.fn() 
 import {
   computeTotalsFingerprint,
   listReadyToSendReports,
+  getReadyToSendReportCount,
+  getReadyToSendReportCountCached,
+  __resetReadyToSendReportCountCacheForTests,
   sendMonthlyReportToBoard,
   CUTOFF_MONTH,
 } from "./financial-report-send";
@@ -110,6 +113,7 @@ beforeEach(() => {
   vi.mocked(getMonthlyStatement).mockReset();
   vi.mocked(resolveTreasurer).mockReset();
   vi.mocked(sendEmailForDurableClaim).mockReset();
+  __resetReadyToSendReportCountCacheForTests();
 });
 
 // ---------------------------------------------------------------------------
@@ -375,6 +379,192 @@ describe("listReadyToSendReports", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].state).toBe("corrected");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getReadyToSendReportCount (B-69, admin nav badge)
+// ---------------------------------------------------------------------------
+
+describe("getReadyToSendReportCount", () => {
+  it("counts never_sent and corrected rows but excludes sent rows", async () => {
+    vi.mocked(getEntities).mockResolvedValue([
+      makeEntity({ id: "e1", slug: "club" }),
+      makeEntity({ id: "e2", slug: "foundation" }),
+      makeEntity({ id: "e3", slug: "activity-fund" }),
+    ]);
+    vi.mocked(getFunds).mockResolvedValue([makeFund()]);
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(CUTOFF_MONTH);
+
+    const statement = makeStatement({ month: CUTOFF_MONTH });
+    const matchingFingerprint = computeTotalsFingerprint(statement);
+
+    // e1: no prior send -> never_sent (actionable)
+    mockDbState.selectQueue.push([]);
+    // e2: prior send with a matching fingerprint -> sent (NOT actionable)
+    mockDbState.selectQueue.push([
+      {
+        monthEnd: "2026-09-30",
+        sentAt: new Date("2026-09-26T00:00:00.000Z"),
+        success: true,
+        totalsFingerprint: matchingFingerprint,
+        error: null,
+        signedAsFirstName: "Pat",
+        signedAsLastName: "Example",
+      },
+    ]);
+    // e3: prior send with a stale fingerprint -> corrected (actionable)
+    mockDbState.selectQueue.push([
+      {
+        monthEnd: "2026-09-30",
+        sentAt: new Date("2026-09-26T00:00:00.000Z"),
+        success: true,
+        totalsFingerprint: "a-stale-fingerprint-that-will-never-match",
+        error: null,
+        signedAsFirstName: "Pat",
+        signedAsLastName: "Example",
+      },
+    ]);
+    vi.mocked(getMonthlyStatement).mockResolvedValue({ status: "ready", statement });
+
+    const count = await getReadyToSendReportCount();
+
+    // never_sent (e1) + corrected (e3) count; sent (e2) does not.
+    expect(count).toBe(2);
+  });
+
+  it("returns 0 when every ready month has already been sent with a matching fingerprint", async () => {
+    vi.mocked(getEntities).mockResolvedValue([makeEntity()]);
+    vi.mocked(getFunds).mockResolvedValue([makeFund()]);
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(CUTOFF_MONTH);
+    const statement = makeStatement({ month: CUTOFF_MONTH });
+    const fingerprint = computeTotalsFingerprint(statement);
+    mockDbState.selectQueue.push([
+      {
+        monthEnd: "2026-09-30",
+        sentAt: new Date("2026-09-26T00:00:00.000Z"),
+        success: true,
+        totalsFingerprint: fingerprint,
+        error: null,
+        signedAsFirstName: "Pat",
+        signedAsLastName: "Example",
+      },
+    ]);
+    vi.mocked(getMonthlyStatement).mockResolvedValue({ status: "ready", statement });
+
+    const count = await getReadyToSendReportCount();
+
+    expect(count).toBe(0);
+  });
+
+  it("returns 0 when nothing is ready at all — the badge's zero-renders-nothing contract starts at the data layer", async () => {
+    vi.mocked(getEntities).mockResolvedValue([makeEntity()]);
+    vi.mocked(getFunds).mockResolvedValue([makeFund()]);
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(null);
+
+    const count = await getReadyToSendReportCount();
+
+    expect(count).toBe(0);
+    expect(getMonthlyStatement).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getReadyToSendReportCountCached (B-71 stopgap — admin-nav-badge perf fix)
+// ---------------------------------------------------------------------------
+
+describe("getReadyToSendReportCountCached", () => {
+  function setupOneReadyMonth() {
+    vi.mocked(getEntities).mockResolvedValue([makeEntity()]);
+    vi.mocked(getFunds).mockResolvedValue([makeFund()]);
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(CUTOFF_MONTH);
+    mockDbState.selectQueue.push([]); // no prior send -> never_sent (actionable)
+    vi.mocked(getMonthlyStatement).mockResolvedValue({
+      status: "ready",
+      statement: makeStatement({ month: CUTOFF_MONTH }),
+    });
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not re-run the underlying walk on a second call within the TTL", async () => {
+    setupOneReadyMonth();
+
+    const first = await getReadyToSendReportCountCached();
+    expect(first).toBe(1);
+    expect(getEntities).toHaveBeenCalledTimes(1);
+
+    // Change what the walk WOULD return, to prove a second call within the
+    // TTL doesn't re-run it — if it did, this would return 0, not 1.
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(null);
+
+    const second = await getReadyToSendReportCountCached();
+    expect(second).toBe(1);
+    expect(getEntities).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-runs the underlying walk on a call after the TTL elapses", async () => {
+    vi.useFakeTimers();
+    setupOneReadyMonth();
+
+    const first = await getReadyToSendReportCountCached();
+    expect(first).toBe(1);
+    expect(getEntities).toHaveBeenCalledTimes(1);
+
+    // Advance past the 2-minute TTL and change the underlying result.
+    vi.advanceTimersByTime(2 * 60 * 1000 + 1);
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(null);
+
+    const second = await getReadyToSendReportCountCached();
+    expect(second).toBe(0);
+    expect(getEntities).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not leak a stale nonzero count to a fresh (post-reset) caller that should see none", async () => {
+    setupOneReadyMonth();
+    const first = await getReadyToSendReportCountCached();
+    expect(first).toBe(1);
+
+    // Simulate a distinct permission/request context by resetting the cache
+    // the way a cold serverless instance would start with none — the cache
+    // must never hand back a previous context's nonzero count when the
+    // underlying data now says zero.
+    __resetReadyToSendReportCountCacheForTests();
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(null);
+
+    const second = await getReadyToSendReportCountCached();
+    expect(second).toBe(0);
+  });
+
+  it("listReadyToSendReports() itself remains uncached and always reflects fresh data", async () => {
+    vi.mocked(getEntities).mockResolvedValue([makeEntity()]);
+    vi.mocked(getFunds).mockResolvedValue([makeFund()]);
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(CUTOFF_MONTH);
+    mockDbState.selectQueue.push([]);
+    vi.mocked(getMonthlyStatement).mockResolvedValue({
+      status: "ready",
+      statement: makeStatement({ month: CUTOFF_MONTH }),
+    });
+
+    // Warm the COUNT cache with a nonzero value.
+    const cachedCount = await getReadyToSendReportCountCached();
+    expect(cachedCount).toBe(1);
+
+    // Now flip the underlying data so nothing is ready, and confirm
+    // listReadyToSendReports() — the function the Reports page panel and the
+    // send route's own re-validation both rely on — sees the change
+    // immediately, uninfluenced by the count cache still being warm.
+    vi.mocked(getLatestOpenMonthForEntity).mockResolvedValue(null);
+    const freshRows = await listReadyToSendReports();
+    expect(freshRows).toEqual([]);
+
+    // The count cache, unaffected, still returns the stale cached value —
+    // proving the two are genuinely independent, not that one silently reset
+    // the other.
+    const stillCachedCount = await getReadyToSendReportCountCached();
+    expect(stillCachedCount).toBe(1);
   });
 });
 

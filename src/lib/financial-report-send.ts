@@ -322,6 +322,122 @@ export async function listReadyToSendReports(): Promise<ReadyToSendReport[]> {
   return results;
 }
 
+/**
+ * Count of ACTIONABLE ready-to-send rows — `state !== "sent"` — for the
+ * admin nav's "Reports" badge (docs/work-log/2026-09-25-ready-to-send-badge.md,
+ * B-69). A `sent` row (matching fingerprint already delivered) must never
+ * count, or the badge never clears once the treasurer catches up and becomes
+ * exactly the kind of permanent wallpaper this feature exists to avoid.
+ *
+ * DELIBERATELY reuses listReadyToSendReports() rather than a parallel "cheap
+ * count" query. That function's per-month "ready" determination walks real
+ * financial-gating logic (isMonthGatedForEntity's outstanding-check and
+ * uncleared-deposit carve-outs, hasMonthElapsed, the totals fingerprint) —
+ * re-deriving any slice of that in a second place is exactly the
+ * near-financial-code duplication CLAUDE.md's 30-day code review flags
+ * (a rule living in two places is two places to get it wrong), and this
+ * agent's own scope-discipline rule treats a reordered check in money-
+ * adjacent logic as a design decision, not a cleanup a badge should be
+ * inlining.
+ *
+ * Cost, assessed honestly: this is NOT cheap like getFailedEmailCount()'s
+ * single indexed COUNT(*) — it recomputes a full MonthlyStatement (category/
+ * cause-line breakdown included) per (entity, member-exposed fund, month)
+ * from CUTOFF_MONTH through each entity's latest open month, on every admin
+ * page render for a LEDGER_REPORT_SEND holder. Two things keep this
+ * defensible today rather than a silent performance trap:
+ *   1. The gated population is tiny by construction — LEDGER_REPORT_SEND is
+ *      bound narrowly (admin + treasurer), not every admin page viewer.
+ *   2. The walked range is bounded by real entities (2 today) and by how far
+ *      behind the treasurer has fallen since CUTOFF_MONTH (2026-09) — which
+ *      is exactly the backlog this badge exists to pressure toward zero, not
+ *      a value this feature lets grow unbounded on its own.
+ * This IS a real unbounded-growth risk if a treasurer stops sending for many
+ * months running: the badge's own query would get slower the longer the
+ * problem it flags goes unaddressed. Flagged rather than silently accepted —
+ * if that ever becomes real (a backlog measured in dozens of months), the
+ * fix is a materialized readiness table updated on reconciliation, not a
+ * second hand-rolled gating implementation here.
+ */
+export async function getReadyToSendReportCount(): Promise<number> {
+  const rows = await listReadyToSendReports();
+  return rows.filter((r) => r.state !== "sent").length;
+}
+
+// ---------------------------------------------------------------------------
+// getReadyToSendReportCountCached — the stopgap (B-71 follow-up files the
+// structural fix; see docs/backlog.md).
+// ---------------------------------------------------------------------------
+
+/**
+ * A short-lived, per-server-instance cache around getReadyToSendReportCount(),
+ * added because QA (docs/work-log/2026-09-25-ready-to-send-badge.md, Phase 5)
+ * found that moving the count into the admin layout means it now runs on
+ * EVERY admin page render for any FEATURES.LEDGER_REPORT_SEND holder, and
+ * the underlying walk costs ~15-16 sequential DB round trips per (entity,
+ * month) with no skip for already-`sent` months — ~360 round trips/render at
+ * 12 elapsed months, ~720 at 24. See B-71 in docs/backlog.md for the
+ * structural fix; this function is only the immediate mitigation.
+ *
+ * Mechanism: a plain module-level variable, not Next.js's `unstable_cache` or
+ * any external store. This code runs inside a Server Component render on
+ * Vercel, where each serverless/edge instance is short-lived and NOT shared
+ * across concurrent requests or regions — so this cache is per-instance, not
+ * global. That is fine for a nav badge (worst case: a cold instance recomputes
+ * once, and different instances may briefly show slightly different counts),
+ * but it is explicitly NOT a substitute for a real shared cache if this ever
+ * needs cross-instance consistency. `unstable_cache` was considered and
+ * rejected: it's keyed for revalidation by tags/paths tied to Next's own data
+ * cache, which is more machinery than a single in-memory number needs, and it
+ * would not fix the underlying round-trip cost — it would just relocate the
+ * same TTL behavior implemented more simply below.
+ *
+ * TTL: 2 minutes. Chosen because the count only changes on two rare,
+ * human-triggered events — a month becoming fully reconciled, or a treasurer
+ * completing a send — never on a timer and never at high frequency. A couple
+ * of minutes of staleness on a *badge* (whose entire job is "eventually catch
+ * the treasurer's eye," not "be real-time") is unobservable in practice, and
+ * it converts "one full recompute per admin page render" into "at most one
+ * full recompute per two minutes across all admin traffic on a given
+ * instance" — the single biggest real-world cost multiplier QA identified.
+ *
+ * Deliberately does NOT invalidate on a successful send. QA's own
+ * recommendation allowed either invalidation or "just let the short TTL
+ * expire" — a 2-minute window of the badge still showing a just-sent month is
+ * harmless (worst case, the treasurer sees a stale "1" for up to 2 minutes
+ * after sending), and skipping invalidation keeps the send path
+ * (sendMonthlyReportToBoard()) completely untouched, which matters because
+ * that path is durable-claim / financial-write-adjacent code this task must
+ * not touch.
+ *
+ * Correctness boundary: this wraps getReadyToSendReportCount() ONLY.
+ * listReadyToSendReports() — which drives the actual Reports page panel and
+ * is re-validated from scratch inside sendMonthlyReportToBoard() regardless —
+ * is untouched and remains fully uncached, per its own doc comment above
+ * ("Never trusts a cached 'ready' flag").
+ */
+const READY_TO_SEND_COUNT_CACHE_TTL_MS = 2 * 60 * 1000;
+
+let readyToSendCountCache: { value: number; expiresAt: number } | null = null;
+
+export async function getReadyToSendReportCountCached(): Promise<number> {
+  const now = Date.now();
+  if (readyToSendCountCache && readyToSendCountCache.expiresAt > now) {
+    return readyToSendCountCache.value;
+  }
+  const value = await getReadyToSendReportCount();
+  readyToSendCountCache = { value, expiresAt: now + READY_TO_SEND_COUNT_CACHE_TTL_MS };
+  return value;
+}
+
+/**
+ * Test-only escape hatch — clears the module-level cache so test cases don't
+ * leak state into one another. Never called from application code.
+ */
+export function __resetReadyToSendReportCountCacheForTests(): void {
+  readyToSendCountCache = null;
+}
+
 // ---------------------------------------------------------------------------
 // Email composition
 // ---------------------------------------------------------------------------

@@ -36,6 +36,8 @@ was deleted on the strength of this review alone.
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
+- B-72 — A permanent send failure is indistinguishable from a transient one in the retry UI
+- B-71 — `listReadyToSendReports()` recomputes every already-`sent` month forever; no skip-window
 - B-70 — No type/lint enforcement that a durable-claim caller checks `SendEmailResult.blocked`
 - B-69 — No nav-level signal that a financial statement is ready to send to the board
 - B-68 — Extract a shared `attemptResendSend()` helper for `sendEmail()` and the retry route
@@ -304,6 +306,66 @@ was deleted on the strength of this review alone.
 
 ## Soon
 
+- [ ] **B-72 — A permanent send failure is indistinguishable from a transient one in the retry UI.**
+  (added 2026-09-25, from `docs/work-log/2026-09-25-shared-resend-attempt.md` Phase 6; priority:
+  should-do, needs a real Phase 1) `attemptResendSend()` returns a `retryable` flag classifying the
+  Resend error as permanent (revoked key, invalid from-address, validation error) or transient
+  (rate limit, transport). `sendEmail()` uses it to skip wasted in-request retries. The email-queue
+  retry route **receives it and discards it** — `.retryable` appears nowhere in that route. So an
+  admin retrying a message that can never succeed sees exactly the same `failed` + `nextRetryAt`
+  outcome as one that merely needs a moment, with nothing to tell them apart. They can retry a
+  revoked-key failure indefinitely and learn nothing.
+  This predates the B-68 extraction (the retry route never classified at all); B-68 deliberately
+  preserved the asymmetry because a behaviour-identical refactor should stay behaviour-identical.
+  Resolving it is a **UX and scheduling decision** — should a permanent failure be labelled, hidden
+  from bulk retry, or block retry entirely? — so it needs a genuine Phase 1, not a cleanup pass.
+
+- [ ] **B-71 — `listReadyToSendReports()` recomputes every already-`sent` month forever; no skip-window.**
+  (added 2026-09-25, from QA's Phase 5 review of the ready-to-send-badge feature,
+  `docs/work-log/2026-09-25-ready-to-send-badge.md`; priority: should-do, not urgent today)
+  `listReadyToSendReports()` (`src/lib/financial-report-send.ts`) walks every month from
+  `CUTOFF_MONTH` through each entity's latest open month on **every call**, recomputing a full
+  `MonthlyStatement` via `getMonthlyStatement()` for each one — roughly **15-16 sequential DB round
+  trips per (entity, month)** (two full `getFundReport()` calls, each 6 sequential queries, plus
+  gating checks). There is no skip for a month whose `state` is already `"sent"`. QA's numbers:
+  ~30 round trips/render at 1 elapsed month, ~360 at 12 elapsed months, ~720 at 24 — and this now
+  runs on **every admin page render** for a `FEATURES.LEDGER_REPORT_SEND` holder (not just on
+  `/admin/ledger/reports`), because B-69 moved the count into the admin layout for the nav badge.
+  QA's assessment: this plausibly degrades the whole admin area within about a year of ship, for
+  any admin/treasurer account, regardless of how promptly statements are sent — the range only
+  grows, month over month, forever.
+
+  **Immediate stopgap already shipped** (same work-log, this task, 2026-09-25): a 2-minute
+  module-level TTL cache around `getReadyToSendReportCount()` specifically
+  (`getReadyToSendReportCountCached()`), used only by the admin layout's badge fetch. This bounds
+  *how often* the expensive walk runs (at most once per 2 minutes per server instance, instead of
+  once per page render) but does **not** bound its *size* as the calendar advances — the walk
+  itself still gets slower every month, just less frequently paid for. `listReadyToSendReports()`
+  itself (the Reports page panel, and re-validated fresh inside `sendMonthlyReportToBoard()`)
+  remains deliberately uncached and exact — this backlog item must not touch that guarantee.
+
+  **The real fix is a product decision, not just an optimization.** The tempting fix — skip
+  `getMonthlyStatement()` entirely for any month already `state: "sent"` — doesn't work as stated,
+  because detecting `state: "corrected"` (a books correction made to an already-sent month)
+  *requires* recomputing that month's fingerprint to compare against the stored one. Skipping
+  sent months entirely would silently stop catching corrections to old months. The likely shape is
+  a **trailing window**: only recompute-and-compare the last N elapsed months (e.g. 2-3) for
+  possible correction, and treat anything older that's already `sent` as settled without
+  recomputation. That means choosing N — i.e., deciding **how far back a books correction can
+  still be caught and re-flagged as "corrected, needs resend"** — which is a policy call for
+  whoever owns the treasury workflow, not something to pick unilaterally inside a performance fix.
+  Needs Phase 1 (analyst) before implementation: what's an acceptable correction-detection window
+  in practice, and does it ever need to be reopened wider (e.g. during an audit)?
+
+  **Forcing function (added 2026-09-25, on analyst's Phase 6 recommendation):** this item has a
+  *deadline*, not just a priority. Act on it when the walked range reaches **~6 months past
+  `CUTOFF_MONTH` (i.e. by 2026-03)**, not when a slowdown becomes visible — by then the admin area
+  is already degraded for every `ledger.report_send` holder. **The 30-day Code review must check
+  this item explicitly each cycle** and report the current walked-month count. This forcing
+  function exists because 2026-09-25 produced six same-shaped defects whose common thread was a
+  correct diagnosis sitting in a document nobody re-opened on schedule; a well-specified backlog
+  entry alone was judged insufficient for this one.
+
 - [x] **B-70 — No type/lint enforcement that a durable-claim caller checks `SendEmailResult.blocked`.**
   (added 2026-09-25, resolved 2026-09-25 — see DECISION-103, `docs/work-log/2026-09-25-send-result-type.md`,
   Phase 6: SHIP WITH NOTES) DECISION-102
@@ -386,7 +448,7 @@ was deleted on the strength of this review alone.
   code) and confirmed the fix on the two highest-stakes call sites (acknowledgment-letter claim,
   event-announcement per-recipient rows). See B-68 below for the one follow-up this shipped with.
 
-- [ ] **B-68 — Extract a shared `attemptResendSend()` helper for `sendEmail()` and the email-queue retry
+- [x] **B-68 — Extract a shared `attemptResendSend()` helper for `sendEmail()` and the email-queue retry
   route.** (added 2026-09-25, follow-up from closing B-65, `docs/work-log/2026-09-25-sendemail-unchecked-error.md`;
   priority: should-do) `sendEmail()`'s send loop (`src/lib/email.ts`) and `attemptSend()` in
   `src/app/api/admin/email-queue/retry/route.ts` both now independently implement "a resolved `{ error }`
@@ -426,7 +488,7 @@ was deleted on the strength of this review alone.
   own file; watch the failed-count badge's independent staleness predicate if a third caller ever needs the
   same check). See that work-log's Phase 6 section for detail.
 
-- [ ] **B-69 — No nav-level signal that a financial statement is ready to send to the board.**
+- [x] **B-69 — No nav-level signal that a financial statement is ready to send to the board.**
   (added 2026-09-25, Phase 6 follow-up from `docs/work-log/2026-09-25-financial-report-auto-send.md`;
   priority: should-do) The board-send feature is deliberately one-click, not literal autosend — the
   treasurer must reconcile (on `/admin/ledger/[fundSlug]`), then separately visit `/admin/ledger/reports`
