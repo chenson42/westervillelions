@@ -68,6 +68,7 @@ export const FEATURES = {
   LEDGER_RECORD: "ledger.record",
   LEDGER_MANAGE: "ledger.manage",
   LEDGER_APPROVE: "ledger.approve",  // inc2: approve/reject pending disbursements + reimbursements
+  LEDGER_REPORT_SEND: "ledger.report_send",  // Send the monthly financial statement to the board (DECISION-100)
 
   // Budget permissions (Budget Committee role) — additive to LEDGER_MANAGE/
   // LEDGER_APPROVE on /admin/ledger/budgeting. No budget.approve key exists
@@ -220,6 +221,7 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.LEDGER_MANAGE]:
     "Manage funds, budgets, entities, opening balances, and acknowledgment letter templates",
   [FEATURES.LEDGER_APPROVE]: "Approve and reject pending disbursements and reimbursements",
+  [FEATURES.LEDGER_REPORT_SEND]: "Send the monthly financial statement to the board",
 
   [FEATURES.BUDGET_VIEW]: "View budgets",
   [FEATURES.BUDGET_EDIT]: "Create and edit budget line items",

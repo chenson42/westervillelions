@@ -28,6 +28,151 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-102: Send-status honesty is a two-layer invariant — a send helper must not report delivery it didn't get, and a durable "sent" claim must not collapse `blocked` into `success`
+
+**Status:** Resolved
+**Date:** 2026-09-25
+
+**Decision:**
+
+Four defects of one shape surfaced in a single day of work on the email send path
+(`docs/work-log/2026-09-25-sendemail-unchecked-error.md`,
+`docs/work-log/2026-09-25-financial-report-auto-send.md`): code that reported a message as sent
+when it had not, in fact, been handed to Resend and accepted. This entry records two
+complementary rules, one for each layer where the defect occurred, rather than one rule pitched
+vaguely at both:
+
+1. **Send-helper layer.** `sendEmail()`, `sendBulkMemberEmail()`, and the email-queue retry
+   route's `attemptSend()` — collectively "the send helpers" — may write a `sent`/`success`
+   outcome only for a message that was (a) actually handed to the Resend SDK, and (b) resolved a
+   response with no `error` field. A missing API key, a not-yet-attempted send, or a resolved
+   `{ error }` response are all failures, never a silent success, regardless of environment. This
+   is what defects #1–#3 violated: `sendEmail()`'s "dev mode — no API key" branch was unguarded on
+   `NODE_ENV` and marked mail `sent` in production for a month (2026-08-28 → 2026-09-25: 98 rows
+   recorded `sent` in prod, Resend's own dashboard showed 1 actual send, ~34 real messages —
+   proposal notifications, dues reminders, contact-form replies, donor acknowledgments,
+   reimbursement requests — silently discarded); the email-queue retry route carried the
+   identical unguarded branch independently; and `sendEmail()` separately discarded the Resend
+   SDK's resolved `{ data, error }` return (the SDK does not throw on an API-level rejection), so
+   every revoked-key/unverified-domain/quota/suppression rejection was written `sent` too — this
+   last one is what made #1 invisible for a month, since a caller watching for a thrown exception
+   saw none.
+
+2. **Caller layer.** Any code that writes a *durable, hard-to-reverse* claim that a message was
+   sent — an `email_queue` row read back as delivery evidence, `ledgerAcknowledgments.sentAt` /
+   `sentVia`, `financialReportSends`' partial-unique-indexed success row, or any future
+   equivalent — must branch on the send helper's full three-way outcome (delivered / failed /
+   blocked-by-the-non-production-guard), never on the boolean `success` field alone.
+   `SendEmailResult.blocked` (added the same day, `src/lib/email.ts`) exists for exactly this and
+   must be consulted wherever such a claim is written. This is what defect #4 violated:
+   `sendMonthlyReportToBoard()` took `sendEmail()`'s `success: true` on a blocked
+   (non-production) send at face value and permanently claimed a partial-unique-indexed row for a
+   board financial statement that was never delivered — caught in QA before ship, not after.
+
+Both rules are needed, and neither substitutes for the other: #1–#3 are the send helper itself
+misreporting what happened; #4 is a caller correctly told the truth (`success: true`,
+`blocked: true`) and discarding the second half of it. A rule aimed only at the helper would not
+have caught #4; a rule aimed only at callers would not have caught #1–#3.
+
+**Rationale:**
+
+Fixing each of the four defects independently, as it was found, would treat a structural problem
+as four unrelated bugs. All four are one shape — a durable record asserting delivery that never
+happened — surfacing in the highest-stakes shared infrastructure in this codebase: every
+proposal notification, dues reminder, contact-form reply, donor acknowledgment, reimbursement
+request, and now board financial statement flows through these same few functions. The
+email-queue retry route independently reinventing the same missing-key bug (#2) is itself
+evidence that fixing `sendEmail()` alone, as a point fix, was not enough — had this invariant
+existed and been checked when the retry route was written, #2 would not have shipped as a second,
+independent instance of #1.
+
+**Relationship to DECISION-085:** This entry does not weaken or contradict DECISION-085, which
+requires `sendEmail()` to return `success: true` on the `blocked_non_production` path so that
+ordinary callers — the great majority, which hold no durable claim and only care whether they
+can stop retrying — behave identically to how they would in production. Rule 1 above governs a
+different question (was the provider actually reached, and did it accept the message?), which is
+orthogonal to whether a given process is allowed to reach the provider at all. Rule 2 does not
+ask `sendEmail()` to change what it returns for ordinary callers either — `success: true` plus
+`blocked: true` on the blocked path is exactly right and stays exactly as DECISION-085 specified.
+Rule 2 asks something narrower: that the *few* callers turning that return value into a
+permanent, non-retryable database claim read the field that was already there for them. A future
+maintainer who senses tension between the two entries should read DECISION-085 as governing what
+`sendEmail()` must return, and this entry as governing what a caller holding a durable claim must
+do with what it returns — both hold at once, for the same call.
+
+**Impact:**
+
+- `src/lib/email.ts`: `SendEmailResult` already gained `blocked?: true` (set only on the
+  `blocked_non_production` path) as part of closing the financial-report defect on 2026-09-25;
+  this entry is what makes that field's presence a require-to-check contract for durable-claim
+  callers generally, not a one-off local to `financial-report-send.ts`.
+- **Known open violation:** `emailAcknowledgmentLetters()`
+  (`src/lib/ledger-acknowledgment-letter-queries.ts`) still claims a donor acknowledgment as sent
+  without checking `blocked`, and its claim is deliberately permanent (a donor must never receive
+  one receipt twice) — tracked as backlog **B-67**, now the oldest open instance of this shape and
+  higher-stakes than the one just fixed, since the subject is a donor receipt rather than an
+  internal board email. It should not sit indefinitely.
+- **Enforcement today is review-only.** `blocked` is an optional field on `SendEmailResult` —
+  nothing at the type level, lint level, or test level stops a new durable-claim caller from
+  reading `success` alone and repeating defect #4's shape. Filed **B-70** to make this enforceable
+  rather than dependent on a reviewer remembering, the same way "a developer will remember" is
+  exactly what let #1 recur as #2. Candidate shapes for whoever picks it up: (a) a
+  discriminated-union return type (e.g. `{ outcome: "delivered" } | { outcome: "failed"; error:
+  string } | { outcome: "blocked" }`) that removes `success` as a shortcut and forces every caller
+  to handle three cases; (b) a second, narrower helper (e.g. `sendEmailForDurableClaim()`)
+  returning a type with no bare `success` field, reserved for callers writing a permanent claim;
+  or (c) a lint rule flagging a `.success` read on a `SendEmailResult`-typed value outside
+  `sendEmail()`/`sendBulkMemberEmail()` themselves. A type-level fix is preferred over a checklist
+  item — the first three defects show that "someone will remember to check" is not a reliable
+  enforcement mechanism on this exact surface.
+
+---
+
+## DECISION-101: Financial-report send claim uses a partial unique index (`WHERE success`), and a failed-to-resolve Treasurer hard-blocks the send
+
+**Status:** Resolved
+**Date:** 2026-09-25
+
+**Decision:**
+
+Phase 3 technical design for `docs/work-log/2026-09-25-financial-report-auto-send.md` (implements DECISION-100). Two implementation-level calls, both narrower than the architect's Phase 2 shape but not in conflict with it:
+
+1. **The `financial_report_sends` claim row is written on every send attempt, success or failure** — not only on success. The uniqueness constraint that gives the double-click guard is a **partial** unique index, `(entity_id, month_end, totals_fingerprint) WHERE success = true`. A failed attempt's row never collides with anything (it falls outside the partial index), so a retry after failure is always insertable with no cleanup step, while two concurrent *successful* sends for the same (entity, month, fingerprint) still collide and the loser gets `already_sent`. This also resolves Phase 1's still-open "failure visibility" gap for free: the admin panel reads the latest row per (entity, month) and surfaces a `success: false` row as "last attempt failed," without a second table or a text-match against `email_queue`.
+2. **`resolveTreasurer()` failing (`ok: false`) hard-blocks the send** (`treasurer_unresolved`, no email sent), rather than the tolerant "send anyway, just without a signature" posture `board-positions.ts` documents for its five treasury-CC call sites. This mirrors the dues-reminder signer's posture, not the CC sites', because the Treasurer's name is load-bearing to the board's trust in the statement (it's presented as "the treasurer's report"), not an optional courtesy copy.
+
+The totals fingerprint itself is a SHA-256 digest of a fixed, explicitly-ordered 9-field subset of `MonthlyStatement`'s totals (month + beginning/ending book balance + one-month and twelve-month revenue/expense/net + book-vs-cash divergence) — deliberately excluding line-item and cause-line detail, since the email/UI never surfaces that detail and Flow 3's "materially different totals" question is answered entirely by these nine numbers.
+
+**Rationale:**
+
+The architect's Phase 2 ruling specified the claim mechanism ("a single atomic `UPDATE/INSERT ... RETURNING`") and the unique index's columns, but explicitly left "failure visibility" and the exact fingerprint composition to Phase 3. A plain (non-partial) unique index on the same three columns, written only on success per Phase 2's literal wording, would satisfy the double-click guard but leave failures with no DB trace at all — forcing a treasurer to notice a failed send only via `/admin/email-queue`, which Phase 1 flagged as a real gap and Phase 2 assigned to this phase to close. Writing failure rows too, under a partial index, closes that gap with the same table and the same query shape the panel already needs, rather than a second mechanism.
+
+**Impact:**
+
+`src/lib/db/schema.ts` gains `financialReportSends` with a `uniqueIndex(...).where(sql\`success = true\`)` rather than a plain unique index; the matching migration uses a guarded `CREATE UNIQUE INDEX ... WHERE success = true`. `src/lib/financial-report-send.ts`'s send path inserts unconditionally after `sendEmail()` returns (via `ON CONFLICT ... WHERE success DO NOTHING`), not conditionally on its result. Named implementer: database-admin (schema) → api-developer (send logic + route) → ux-developer (panel), per the Phase 3 design doc.
+
+---
+
+## DECISION-100: Financial-report board-send is read-side detection + one-click send, not a write-path hook on the reconciliation routes
+
+**Status:** Resolved
+**Date:** 2026-09-25
+
+**Decision:**
+
+Phase 2 architectural ruling for `docs/work-log/2026-09-25-financial-report-auto-send.md`. The feature (notify the board when a month's financial statement is fully reconciled, treasurer clicks "Send to Board" behind a `<ConfirmDialog>`) does **not** hook into either of the two routes that can flip a transaction's `reconciled` flag (`POST .../reconciliation/sessions/[id]/close` and `POST .../transactions/[id]/reconcile`). Both routes are left untouched.
+
+"Ready to send" is a **read-side** computation: a new module, `src/lib/financial-report-send.ts` (kept separate from the existing `financial-report-queries.ts`, whose own docblock declares it read-only, mirroring the `reconciliation-queries.ts`/`ledger-queries.ts` split — DECISION-049), calls the existing `isMonthGatedForEntity()` fresh on every render of the new "ready to send" admin panel, compares against a totals fingerprint recorded at last-send time, and excludes any month before a hardcoded ship-date cutoff constant (no seeded backfill migration). The only new write path is the send action itself, claimed **after** confirmed send success (not before) via a unique index on `(entity_id, month_end, totals_fingerprint)`.
+
+A new permission, `FEATURES.LEDGER_REPORT_SEND`, gates the send action specifically (bound to `admin` + `treasurer`), narrower than `ledger.record`/`ledger.manage` — same shape of decision as `EVENTS_ANNOUNCE` being narrower than `EVENTS_EDIT`. It hangs off the existing `/admin/ledger/reports` nav entry (already gated `LEDGER_VIEW`) — no new admin nav entry, so DECISION-082's derive-from-nav machinery is untouched.
+
+**Rationale:** Phase 1's functional review (analyst) correctly identified that two independent write paths — one transactional, one not — can each cause a reconciliation gate to clear, and worried at length about atomically claiming a send across both to prevent a double-fire race. That hazard is an artifact of the *rejected* pure-auto-send design (send fires automatically from inside whichever route closes the gate). Once the user settled on one-click send (a human must read current state and click a button before anything sends), nothing is claimed or committed at gate-clear time — the race Phase 1 was defending against cannot occur, because there is no write to race over until a human acts. Building a shared write-path helper anyway would be defending against a hazard that no longer exists in the chosen design, at the cost of touching two already-working, differently-shaped routes. The one real remaining atomicity need — two people (or one double-click) hitting "Send" for the same entity+month at the same instant — is fully solved by a unique constraint at the single send call site, which is far lighter than the cross-route claim Phase 1 sketched.
+
+This also means the acknowledgment-letter feature's permanent "claim atomically before send, never resend" pattern does not transfer here wholesale: that pattern exists to prevent a donor ever receiving one receipt twice for one gift, where a resend is never legitimate. Here, a resend after a genuine correction to a previously-sent, now-materially-different statement *is* legitimate and required, so the send is claimed only after success, and a fingerprint comparison — not a permanent claim — decides whether a resend is offered.
+
+**Impact:** New file `src/lib/financial-report-send.ts` (server-only: ready-to-send read query, fingerprint comparison, cutoff-date filter, send action). New table (schema.ts first, then a matching idempotent migration — database-admin re-derives the real next-free migration number at Phase 4 start per CLAUDE.md's migration-numbers-are-tentative note) with a unique index on `(entity_id, month_end, totals_fingerprint)`. New `FEATURES.LEDGER_REPORT_SEND` key bound to `admin` + `treasurer`. No changes to `sessions/[id]/close/route.ts` or `transactions/[id]/reconcile/route.ts`. No new admin nav entry. No new npm dependency. Full rulings and the Phase 1 items this resolves are in the work-log's Phase 2 section.
+
+---
+
 ## DECISION-099: Reconciled-row lock gets one narrow, allowlisted carve-out — `donorId`-only edits pass through; every other field stays fully locked (amends DECISION-036 item 4)
 
 **Status:** Resolved

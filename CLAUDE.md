@@ -689,6 +689,28 @@ Never add another member's address, and never add a club distribution list (thos
 even if allowlisted). **To email many members at once, use `sendBulkMemberEmail()`** — never a
 hand-rolled loop over `sendEmail()`.
 
+### A Send Helper Must Never Claim Delivery It Didn't Get — and Neither May a Caller (DECISION-102)
+
+Four defects of one shape shipped in a single day (2026-09-25): `sendEmail()`'s missing-key
+branch marked mail `sent` in production for a month with zero real delivery (~34 messages lost);
+the email-queue retry route had the identical bug independently; `sendEmail()` also discarded the
+Resend SDK's returned `{ error }`, so an API-level rejection was written `sent` too; and a
+financial-report send took `sendEmail()`'s (correct, DECISION-085-mandated) `success: true` on a
+blocked non-production send and permanently claimed a statement as delivered that never went out.
+Two rules, not one, because the defects sit at two layers:
+
+1. **Send helpers** (`sendEmail()`, `sendBulkMemberEmail()`, the email-queue retry route) may
+   report `sent`/`success` only for a message actually handed to the provider and accepted with
+   no `error`.
+2. **Any caller writing a durable, hard-to-reverse "sent" claim** (a permanent `sentAt`, a
+   partial-unique-indexed success row, etc.) must check `SendEmailResult.blocked`, not just
+   `success` — `success: true` on a blocked send is correct and load-bearing (see above) for
+   ordinary callers, but a trap for one holding a permanent claim.
+
+Enforcement is review-only today (`blocked` is optional, nothing type- or lint-level requires
+checking it — backlog B-70). Full incident detail and the DECISION-085 reconciliation are in
+`docs/decisions.md` DECISION-102.
+
 ### No Personal Data in the Repository
 
 **This repository is intended to be public.** Nothing in it may identify a member personally.

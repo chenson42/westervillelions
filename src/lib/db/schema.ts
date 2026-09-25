@@ -1,4 +1,5 @@
 import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, primaryKey, varchar, customType, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // Users table for authentication
 export const users = pgTable("users", {
@@ -1263,6 +1264,69 @@ export const ledgerSettings = pgTable("ledger_settings", {
 
 export type LedgerSettings = typeof ledgerSettings.$inferSelect;
 export type NewLedgerSettings = typeof ledgerSettings.$inferInsert;
+
+// Financial Report "Send to Board" — one row per attempted send, success or
+// failure (DECISION-101 extends DECISION-100's Phase 2 shape). Detection of
+// "ready to send" is entirely read-side (src/lib/financial-report-send.ts);
+// this table only records what was actually attempted/sent. Mirrors
+// duesReminders' shape (per-attempt row, success/error, resolved-treasurer
+// signer) rather than ledgerAcknowledgments' claim-before-send pattern —
+// here a corrected resend after a genuine restatement is legitimate, so the
+// claim is a fingerprint comparison, not a permanent lock (DECISION-100).
+export const financialReportSends = pgTable(
+  "financial_report_sends",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => ledgerEntities.id, { onDelete: "cascade" }),
+    // Recorded for joins/rendering (which fund this statement covers), but
+    // deliberately NOT part of the uniqueness key below — every seeded
+    // entity has exactly one member-exposed fund today (Phase 1 ground
+    // truth). If that ever changes, the unique index would need a second
+    // look — flagging here rather than silently building on the assumption.
+    fundId: uuid("fund_id")
+      .notNull()
+      .references(() => ledgerFunds.id, { onDelete: "cascade" }),
+    // Calendar date, not an instant — matches monthBounds().monthEnd
+    // ('YYYY-MM-DD'), the last day of the statement month. Using `date`
+    // (not `timestamp`) avoids any timezone reinterpretation of a value
+    // that was never a point in time to begin with.
+    monthEnd: date("month_end").notNull(),
+    // SHA-256 hex digest of the 9-field totals subset api-developer computes
+    // from MonthlyStatement (DECISION-101) — this table only stores it.
+    totalsFingerprint: text("totals_fingerprint").notNull(),
+    // Who clicked Send (any LEDGER_REPORT_SEND holder).
+    sentByUserId: uuid("sent_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    // The resolved Board position='Treasurer' holder at send time
+    // (resolveTreasurer()) — never the clicking user. Mirrors
+    // duesReminders.signedAsMemberId.
+    signedAsMemberId: uuid("signed_as_member_id").references(() => members.id, {
+      onDelete: "set null",
+    }),
+    emailQueueId: uuid("email_queue_id").references(() => emailQueue.id, { onDelete: "set null" }),
+    success: boolean("success").notNull(),
+    error: text("error"),
+    // Genuine instant — when this send attempt was made.
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Double-click / concurrent-send guard, claimed AFTER confirmed success
+    // (DECISION-100/101) — a failed attempt's row never collides with
+    // anything, so a retry after failure is always insertable with no
+    // cleanup step, while two concurrent successful sends for the same
+    // (entity, month, fingerprint) collide and the loser gets already_sent.
+    // A changed fingerprint (corrected resend) is a new row and therefore
+    // allowed even against a prior successful send.
+    uniqueIndex("financial_report_sends_unique_success")
+      .on(t.entityId, t.monthEnd, t.totalsFingerprint)
+      .where(sql`${t.success} = true`),
+    index("financial_report_sends_entity_month_idx").on(t.entityId, t.monthEnd),
+  ],
+);
+
+export type FinancialReportSend = typeof financialReportSends.$inferSelect;
+export type NewFinancialReportSend = typeof financialReportSends.$inferInsert;
 
 // ─────────────────────────────────────────────────────────────────────────
 // The Ledger — Bank Reconciliation inc2: sessions, bank lines, match links

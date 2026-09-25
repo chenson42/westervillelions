@@ -1,7 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
-import { hasAnyFeature } from "@/lib/permissions-server";
+import { hasAnyFeature, hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import {
   getEntities,
@@ -10,9 +10,11 @@ import {
   getOverview,
   listLedgerFiscalYears,
 } from "@/lib/ledger-queries";
+import { listReadyToSendReports } from "@/lib/financial-report-send";
 import { currentFiscalYear, fiscalYearLabel } from "@/lib/fiscal-year";
 import EntitySwitcher from "@/components/admin/ledger/entity-switcher";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
+import FinancialReportSendPanel from "@/components/admin/ledger/financial-report-send-panel";
 import type { GuardrailFlag } from "@/lib/ledger";
 import type { FundReport } from "@/lib/ledger-queries";
 
@@ -178,6 +180,13 @@ export default async function AdminLedgerReportsPage({
   ]);
   if (!canView) redirect("/access-pending");
 
+  // Send permission is strictly narrower than the LEDGER_VIEW gate above —
+  // computed server-side here and passed down as a plain boolean. The panel
+  // uses it only to decide whether to render a Send button at all (cosmetic);
+  // POST /api/admin/ledger/reports/send independently re-checks the same
+  // feature and is the real gate.
+  const canSendReports = await hasFeature(session.user.id, FEATURES.LEDGER_REPORT_SEND);
+
   // --- Params ---
   const { entity: entityParam, fy: fyParam } = await searchParams;
 
@@ -204,11 +213,18 @@ export default async function AdminLedgerReportsPage({
     !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
 
   // --- Data (parallel) ---
-  const [entityReport, overview, fiscalYears] = await Promise.all([
+  const [entityReport, overview, fiscalYears, readyToSendReports] = await Promise.all([
     getEntityReport(entity.id, fiscalYear),
     getOverview(entity.id, fiscalYear),
     listLedgerFiscalYears(entity.id),
+    listReadyToSendReports(),
   ]);
+
+  // listReadyToSendReports() is entity-agnostic (it scans every ledger
+  // entity); scope it down to the entity currently selected on this page so
+  // the panel never shows a different entity's statements than the rest of
+  // the page is displaying.
+  const entityReadyToSendReports = readyToSendReports.filter((r) => r.entityId === entity.id);
 
   const fyLabel = fiscalYearLabel(fiscalYear);
 
@@ -270,6 +286,16 @@ export default async function AdminLedgerReportsPage({
           basePath="/admin/ledger/reports"
         />
       </div>
+
+      {/* "Send to Board" panel — statements ready to send, awaiting resend
+          after a correction, or already sent, for the currently selected
+          entity's member-exposed fund. Not fiscal-year scoped. */}
+      <section>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          Monthly Statement — Send to Board
+        </h2>
+        <FinancialReportSendPanel rows={entityReadyToSendReports} canSend={canSendReports} />
+      </section>
 
       {/* Guardrail flags (from getOverview — by design, getEntityReport returns []) */}
       {overview && overview.guardrailFlags.length > 0 && (

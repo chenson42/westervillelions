@@ -44,6 +44,25 @@ interface SendEmailResult {
    *  without a second lookup. Additive — every existing caller destructures
    *  only { success, error } today and is unaffected. */
   emailQueueId: string;
+  /**
+   * Set only on the `blocked_non_production` path below — never present on
+   * a genuine success or a genuine failure. `success: true` on that path is
+   * deliberate and load-bearing (DECISION-085: callers and their tests must
+   * behave exactly as in production) and this field does NOT change that
+   * contract — it's a non-breaking, additive way for a caller that cares to
+   * tell "delivered" apart from "reported success because nothing was ever
+   * attempted." Every existing caller destructures only `{ success, error }`
+   * and ignores this field, so nothing about their behavior changes.
+   *
+   * Added for docs/work-log/2026-09-25-financial-report-auto-send.md's
+   * follow-up: `sendMonthlyReportToBoard()` (src/lib/financial-report-send.ts)
+   * was writing a durable `success: true` claim row for a blocked send,
+   * which is both a false record and — because of the partial unique index
+   * on (entity_id, month_end, totals_fingerprint) WHERE success — permanent,
+   * making that statement un-resendable in dev forever after the first
+   * local test. See that file for the consuming logic.
+   */
+  blocked?: true;
 }
 
 const MAX_ATTEMPTS = 3;
@@ -52,6 +71,43 @@ const RETRY_MINUTES = 15;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Resend error codes (from `RESEND_ERROR_CODE_KEY` in the SDK's types) that
+ * will fail identically on every attempt — a bad/revoked API key, an
+ * unverified sending domain, a malformed payload, an invalid address, and
+ * so on. Retrying one of these burns attempts and adds latency for no
+ * benefit (harmless, but pointless), so the send loop stops after the
+ * first attempt instead of spending all MAX_ATTEMPTS on it.
+ *
+ * Everything NOT in this list — including a genuinely transient condition
+ * like `rate_limit_exceeded`, and any error code the SDK introduces after
+ * this list was written — is treated as retryable. That is a deliberate
+ * conservative default: guessing a *new* code is permanent risks silently
+ * giving up on something that would have succeeded a second later, where
+ * guessing a known-permanent code is retryable only costs a little time.
+ */
+const PERMANENT_RESEND_ERROR_CODES = new Set<string>([
+  "invalid_idempotency_key",
+  "validation_error",
+  "missing_api_key",
+  "restricted_api_key",
+  "invalid_api_key",
+  "not_found",
+  "method_not_allowed",
+  "invalid_idempotent_request",
+  "invalid_attachment",
+  "invalid_from_address",
+  "invalid_access",
+  "invalid_parameter",
+  "invalid_region",
+  "missing_required_field",
+  "security_error",
+]);
+
+function isRetryableResendError(code: string | undefined): boolean {
+  return code === undefined || !PERMANENT_RESEND_ERROR_CODES.has(code);
 }
 
 /**
@@ -133,7 +189,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       .update(emailQueue)
       .set({ status: "blocked_non_production", attempts: 0 })
       .where(eq(emailQueue.id, queued.id));
-    return { success: true, emailQueueId: queued.id };
+    return { success: true, emailQueueId: queued.id, blocked: true };
   }
 
   // No API key configured. This branch used to report success unconditionally —
@@ -172,10 +228,33 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
 
   const resend = new Resend(process.env.RESEND_API_KEY);
   let lastError: string | undefined;
+  let attemptsMade = 0;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    attemptsMade = attempt;
     try {
-      await resend.emails.send({
+      // IMPORTANT — do not remove the `result.error` check below. Resend's
+      // SDK (v6) resolves with `{ data: null, error }` on an API-level
+      // rejection (revoked/invalid key, unverified sending domain, exceeded
+      // quota, suppressed recipient, malformed payload, ...) — it does NOT
+      // throw for those. Only a network/transport failure throws, which the
+      // catch block below already handled. Discarding the resolved value
+      // and treating `await` not throwing as "sent" is the exact defect
+      // that produced the month-long silent outbound-mail outage
+      // documented in docs/work-log/2026-09-25-email-silent-success.md and
+      // its follow-up docs/work-log/2026-09-25-sendemail-unchecked-error.md:
+      // the club's Resend key was revoked for ~90 days while every one of
+      // ~98 attempted sends landed `status: 'sent'` in email_queue with
+      // zero retries and zero failures recorded, because nothing ever
+      // looked at what `resend.emails.send()` resolved to.
+      //
+      // src/app/api/admin/email-queue/retry/route.ts's `attemptSend()` was
+      // fixed for the same defect first and is the reference shape this
+      // mirrors. The two checks are semantically equivalent but not
+      // extracted into a shared helper yet (see that function's own doc
+      // comment for why, and CLAUDE.md's duplication rule) — if this check
+      // changes, check whether `attemptSend()` needs the same change.
+      const result = await resend.emails.send({
         from,
         to: [to],
         subject,
@@ -185,6 +264,18 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
         ...(bcc && { bcc: [bcc] }),
         ...(attachments && { attachments }),
       });
+
+      if (result?.error) {
+        lastError = result.error.message ?? String(result.error);
+        if (isRetryableResendError(result.error.name) && attempt < MAX_ATTEMPTS) {
+          await sleep(RETRY_DELAY_MS);
+          continue;
+        }
+        // Permanent error (or out of attempts) — stop now rather than
+        // burning the remaining attempts on a request that will fail
+        // identically every time.
+        break;
+      }
 
       await db
         .update(emailQueue)
@@ -200,14 +291,17 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     }
   }
 
-  // All attempts failed — mark for deferred retry
+  // All attempts failed (or a permanent error stopped us early) — mark for
+  // deferred retry. `attempts` reflects the number of attempts actually
+  // made, not always MAX_ATTEMPTS, so a permanent error recorded on the
+  // first try doesn't misreport itself as having been retried 3 times.
   const nextRetryAt = new Date(Date.now() + RETRY_MINUTES * 60 * 1000);
   await db
     .update(emailQueue)
     .set({
       status: "failed",
       lastError,
-      attempts: MAX_ATTEMPTS,
+      attempts: attemptsMade,
       nextRetryAt,
     })
     .where(eq(emailQueue.id, queued.id));

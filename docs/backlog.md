@@ -36,7 +36,10 @@ was deleted on the strength of this review alone.
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
-- B-65 — `sendEmail()` discards the Resend SDK's returned `error` and records the send as `sent`
+- B-70 — No type/lint enforcement that a durable-claim caller checks `SendEmailResult.blocked`
+- B-69 — No nav-level signal that a financial statement is ready to send to the board
+- B-68 — Extract a shared `attemptResendSend()` helper for `sendEmail()` and the retry route
+- B-67 — A blocked (non-production) send still satisfies the acknowledgment-letter claim
 - B-66 — A retry stranded at `retrying` is invisible and un-retryable
 - B-64 — Persist `replyTo` on `email_queue` so a retried send keeps it
 - B-13 — Centralize the ledger payment-method list + labels
@@ -301,7 +304,35 @@ was deleted on the strength of this review alone.
 
 ## Soon
 
-- [ ] **B-65 — `sendEmail()` discards the Resend SDK's returned `error` and records the send as `sent`.**
+- [ ] **B-70 — No type/lint enforcement that a durable-claim caller checks `SendEmailResult.blocked`.**
+  (added 2026-09-25, from `docs/decisions.md` DECISION-102; priority: should-do) DECISION-102
+  requires any caller writing a durable, hard-to-reverse "this was sent" claim to branch on
+  `sendEmail()`'s full three-way outcome (delivered / failed / blocked), not on the boolean
+  `success` field alone — `blocked` is optional on `SendEmailResult` and nothing today stops a new
+  caller from reading `success` alone and repeating the financial-report false-claim defect
+  (fixed 2026-09-25) or the still-open B-67. Candidate fixes, in order of preference: (a) a
+  discriminated-union return type that removes `success` as a shortcut and forces every caller to
+  handle three cases; (b) a second, narrower helper (`sendEmailForDurableClaim()`, or similar)
+  with no bare `success` field, reserved for durable-claim callers; (c) a lint rule flagging a
+  `.success` read on a `SendEmailResult`-typed value outside `sendEmail()`/`sendBulkMemberEmail()`
+  themselves. Until this lands, catching a new violation is review-only — flag it explicitly in
+  any future architect/tech-lead review of a feature that persists a "sent" outcome.
+
+- [ ] **B-67 — A blocked (non-production) send still satisfies the acknowledgment-letter claim.**
+  (added 2026-09-25, found while fixing the same defect in `financial-report-send.ts`; priority: should-do)
+  `emailAcknowledgmentLetters()` in `src/lib/ledger-acknowledgment-letter-queries.ts` claims the
+  acknowledgment atomically **before** sending and reverts only when every address genuinely fails. A
+  merely *blocked* address (non-production, per DECISION-085) returns `success: true` from `sendEmail()`,
+  so `anySucceeded` stays true and the claim sticks — the row records a donor receipt as sent that was
+  never delivered, and because the claim is deliberately permanent ("a donor must never receive one
+  receipt twice") nobody can re-send it. Same defect class as the financial-report false claim fixed on
+  2026-09-25, but with the timing inverted and higher stakes, since the subject is a donor receipt.
+  `sendEmail()` now exposes a `blocked?: true` field for exactly this — the fix is to consult it.
+  Needs a short design pass first: what *should* "blocked, not delivered, not failed" mean for an
+  acknowledgment? Lower-severity cousins: the per-recipient `event_announcements` and `dues_reminders`
+  writes record the same inaccuracy but carry no durable claim, so nothing becomes un-resendable.
+
+- [x] **B-65 — `sendEmail()` discards the Resend SDK's returned `error` and records the send as `sent`.**
   (added 2026-09-25, from `docs/work-log/2026-09-25-email-silent-success.md`; priority: **high — this is the
   bug that caused the 2026-08-28 → 2026-09-25 outage**) Resend's SDK v6 returns `{ data, error }` and does
   **not throw** on API errors. `src/lib/email.ts`'s primary send path does `await resend.emails.send(...)`
@@ -311,6 +342,29 @@ was deleted on the strength of this review alone.
   a month with zero failed rows to show for it. The **retry** path was fixed (it now inspects `error`); the
   primary path was deliberately left out of that scope. Fix = check `error` and treat non-null as a failure,
   mirroring what `handleTargetedRetry()` already does.
+  **Closed 2026-09-25 — `docs/work-log/2026-09-25-sendemail-unchecked-error.md` (bug-fix variant, Phases
+  1–3 skipped, root cause already diagnosed by the task brief).** `sendEmail()`'s primary send loop now
+  inspects `result?.error`, classifies it permanent-vs-retryable against Resend's `RESEND_ERROR_CODE_KEY`
+  enum, and lands `status: 'failed'` with the real message on any unresolved error — never `sent`. QA
+  independently reproduced the pre-fix failure (5/7 new regression tests fail against the stashed pre-fix
+  code) and confirmed the fix on the two highest-stakes call sites (acknowledgment-letter claim,
+  event-announcement per-recipient rows). See B-68 below for the one follow-up this shipped with.
+
+- [ ] **B-68 — Extract a shared `attemptResendSend()` helper for `sendEmail()` and the email-queue retry
+  route.** (added 2026-09-25, follow-up from closing B-65, `docs/work-log/2026-09-25-sendemail-unchecked-error.md`;
+  priority: should-do) `sendEmail()`'s send loop (`src/lib/email.ts`) and `attemptSend()` in
+  `src/app/api/admin/email-queue/retry/route.ts` both now independently implement "a resolved `{ error }`
+  from `resend.emails.send()` is a failure, never a success" — the exact decision CLAUDE.md's duplication
+  rule targets when the same decision lives in more than one place. The two are not fully identical
+  (`sendEmail()` additionally classifies permanent-vs-retryable Resend error codes; the retry route treats
+  every failure as retryable-by-admin-click, which is a defensible but undocumented-as-permanent
+  divergence) and are currently kept in sync only by hand-written, two-way pointer comments in both files —
+  not a build-time guarantee. Proposed: a small `attemptResendSend(resend, params): Promise<{success:true} |
+  {success:false, error:string, retryable:boolean}>` in `src/lib/email-guard.ts` or a new
+  `src/lib/resend-send.ts`, used by both call sites, folding the permanent/retryable classification in for
+  both. Not a correctness bug today (both paths are independently verified correct), so this doesn't block
+  anything currently in flight — but the pointer-comment mitigation is exactly the "protected only by
+  someone remembering" pattern that let the original B-65/B-66/B-67-class bugs survive.
 
 - [ ] **B-66 — A retry stranded at `retrying` is invisible and un-retryable.**
   (added 2026-09-25, from `docs/work-log/2026-09-25-email-silent-success.md` Phase 5 re-verification;
@@ -325,6 +379,22 @@ was deleted on the strength of this review alone.
   timestamp column and fold a staleness reset (`retrying` older than N minutes → back to `failed`) into the
   existing bulk sweep — no new cron infrastructure required, which matters given this project deliberately
   has none.
+
+- [ ] **B-69 — No nav-level signal that a financial statement is ready to send to the board.**
+  (added 2026-09-25, Phase 6 follow-up from `docs/work-log/2026-09-25-financial-report-auto-send.md`;
+  priority: should-do) The board-send feature is deliberately one-click, not literal autosend — the
+  treasurer must reconcile (on `/admin/ledger/[fundSlug]`), then separately visit `/admin/ledger/reports`
+  and click "Send to Board." Nothing prompts that second visit: no nav badge, no toast on reconciliation
+  close, no reminder if a month sits `never_sent` or `corrected` for a week. The admin sidebar already
+  grew exactly this kind of signal today for a different silent-state problem
+  (`failedEmailCount` in `src/components/admin/admin-sidebar.tsx`, wired in
+  `src/app/(dashboard)/admin/layout.tsx`) — the same pattern (a cheap count query, gated on the same
+  permission that gates the action, `formatBadgeCount`-capped) would close this gap: a small "N ready to
+  send" badge on the Ledger/Reports nav entry, visible only to `LEDGER_REPORT_SEND` holders, computed from
+  `listReadyToSendReports()`'s existing `never_sent`/`corrected` count. Without it, the honest risk is that
+  the treasurer reconciles monthly but doesn't habitually revisit the Reports page afterward, and the
+  board simply doesn't get statements — the exact failure mode "autosend" was meant to prevent, now
+  reintroduced one layer up as "remember to click."
 
 - [ ] **B-64 — Persist `replyTo` on `email_queue` so a retried send keeps it.**
   (added 2026-09-25, from `docs/work-log/2026-09-25-proposal-board-email.md` Phase 5;
