@@ -7,20 +7,46 @@
  *   - List page: sum RSVPs across all non-cancelled occurrences
  *   - Detail page: rollup header above the per-occurrence breakdown
  *
- * Target event: "Farmer's Market Signup" (id: 291c76f3-ab75-4c64-8173-ac285345cfe9)
- *   Private recurring weekly (Saturdays) event with requiresRsvp: true.
- *   Series runs through Sep 2026.
+ * Self-seeding fixture (2026-09-25 remediation, docs/reviews/2026-09-25-test-coverage.md):
+ * this suite used to point at a real seeded event ("Farmer's Market Signup",
+ * id 291c76f3-ab75-4c64-8173-ac285345cfe9) with a hardcoded `recurrence_end_date`
+ * of 2026-09-26 and hardcoded occurrence dates in June 2026. `ADMIN_LIST_URL`
+ * ("/admin/events") defaults to `view=upcoming`, which
+ * `src/app/(dashboard)/admin/events/page.tsx` scopes to
+ * `recurrenceEndDate IS NULL OR recurrenceEndDate >= now` — so the moment "now"
+ * passed 2026-09-26, the fixture series dropped out of the default list Tests 1
+ * and 2 navigate to, and every assertion that reads the list page would have
+ * started failing with no code regression at all. This is the exact defect
+ * shape `cancel-occurrence.spec.ts` was rewritten to avoid on 2026-09-09 (see
+ * that file's header comment) — this suite had the same shared, calendar-pinned
+ * fixture and had simply not rotted yet.
+ *
+ * Fix: like `cancel-occurrence.spec.ts`, this suite now creates its own private,
+ * RSVP-enabled, weekly-recurring event in a top-level `beforeAll`, with a rolling
+ * window computed from the real wall-clock "now" at run time (first occurrence
+ * 10 days out, recurring for 90 days), and deletes it in `afterAll` (pass or
+ * fail). Because the window is always computed relative to "now", the fixture
+ * can never again age out of the "upcoming" list — there is no fixed calendar
+ * date left anywhere in this file for the clock to walk past. `events` ->
+ * `event_occurrence_overrides` and `events` -> `event_rsvps` are both
+ * `ON DELETE CASCADE` (schema.ts), so deleting the event is sufficient cleanup.
+ *
+ * A brand-new fixture also starts with an "attending" count of exactly 0 across
+ * the whole run, which the old shared fixture (accumulating real member RSVPs
+ * over months) never did — `readListAttending()` below is rewritten to scope
+ * its read to this fixture's own table row (by its unique title) rather than
+ * grabbing the first "✓ N attending" text anywhere in the page's `<tbody>`.
+ * Without that scoping, a zero-RSVP fixture sorted after some other event with
+ * real attendees would silently read the wrong row's count.
  *
  * Non-recurring target: "Lions Club Meeting" (id: 2a68b4c6-2068-4d5d-84d6-223167260c7b)
  *   Public non-recurring event used to verify the non-recurring path is unchanged.
- *
- * Dates used (Saturdays, 12:30 PM wall-clock — distinct from cancel-occurrence tests):
- *   ROLLUP_DATE_A      = 2026-06-13  (first occurrence: receives one test RSVP)
- *   ROLLUP_DATE_B      = 2026-06-20  (second occurrence: receives one test RSVP in Test 1)
- *   ROLLUP_CANCEL_DATE = 2026-06-27  (occurrence cancelled in Test 2 — RSVP on it is excluded)
- *
- * Assertions are relative to a baseline captured before adding any test RSVPs so that
- * pre-existing RSVPs from real member data do not cause false failures.
+ *   Left as a shared fixture on purpose: Test 4 only ever navigates to it by ID
+ *   (`/admin/events/[id]`), which — confirmed by reading
+ *   `src/app/(dashboard)/admin/events/[id]/page.tsx` — has no upcoming/past date
+ *   filter at all (it queries `events` by primary key and generates all
+ *   occurrences from the series' own start, independent of "now"). It is not
+ *   exposed to the list-view date-rot mechanism this remediation targets.
  *
  * All API calls go directly to route handlers to keep tests focused and fast.
  *
@@ -33,26 +59,28 @@
 
 import { test, expect } from "@playwright/test";
 import { signInAsAdmin } from "./helpers/auth";
+import { addDays, format } from "date-fns";
 
-const EVENT_ID = "291c76f3-ab75-4c64-8173-ac285345cfe9";
 const NON_RECURRING_EVENT_ID = "2a68b4c6-2068-4d5d-84d6-223167260c7b";
 
-// Saturdays in the Farmer's Market series, wall-clock time 12:30 PM
-// These dates must not overlap with cancel-occurrence.spec.ts dates (05-30, 06-06).
-const ROLLUP_DATE_A = "2026-06-13";
-const ROLLUP_DATE_B = "2026-06-20";
-const ROLLUP_CANCEL_DATE = "2026-06-27";
+// Populated by the top-level beforeAll below — real fixture id/dates/title,
+// computed relative to wall-clock "now" at run time, never hardcoded.
+let EVENT_ID = "";
+let FIXTURE_TITLE = "";
+let userId = "";
 
-// ISO timestamps at the event's wall-clock start time (12:30 PM)
-const ROLLUP_ISO_A = `${ROLLUP_DATE_A}T12:30:00`;
-const ROLLUP_ISO_B = `${ROLLUP_DATE_B}T12:30:00`;
-const ROLLUP_ISO_CANCEL = `${ROLLUP_CANCEL_DATE}T12:30:00`;
+let ROLLUP_DATE_A = "";
+let ROLLUP_DATE_B = "";
+let ROLLUP_CANCEL_DATE = "";
+let ROLLUP_ISO_A = "";
+let ROLLUP_ISO_B = "";
+let ROLLUP_ISO_CANCEL = "";
 
-const signupUrl = `/api/admin/events/${EVENT_ID}/signup`;
+const signupUrl = () => `/api/admin/events/${EVENT_ID}/signup`;
 const cancelUrl = (date: string) =>
   `/api/admin/events/${EVENT_ID}/occurrences/${date}/cancel`;
 const ADMIN_LIST_URL = "/admin/events";
-const ADMIN_DETAIL_URL = `/admin/events/${EVENT_ID}`;
+const ADMIN_DETAIL_URL = () => `/admin/events/${EVENT_ID}`;
 const NON_RECURRING_DETAIL_URL = `/admin/events/${NON_RECURRING_EVENT_ID}`;
 
 // Fetch the current user's ID from the NextAuth session endpoint.
@@ -60,10 +88,72 @@ async function getCurrentUserId(page: import("@playwright/test").Page): Promise<
   const resp = await page.request.get("/api/auth/session");
   expect(resp.status()).toBe(200);
   const data = await resp.json();
-  const userId = data?.user?.id as string | undefined;
-  if (!userId) throw new Error("Could not determine current user ID from session");
-  return userId;
+  const uid = data?.user?.id as string | undefined;
+  if (!uid) throw new Error("Could not determine current user ID from session");
+  return uid;
 }
+
+test.beforeAll(async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await signInAsAdmin(page);
+  userId = await getCurrentUserId(page);
+
+  // First occurrence 10 days out — comfortably clear of "now" under any
+  // reasonable clock/timezone skew between the test runner and the app's
+  // Eastern-wall-clock guard (nowEastern(), src/lib/events.ts), and clear of
+  // cancel-occurrence.spec.ts's own fixture (which starts 7 days out) since
+  // both suites may run in the same overall test session.
+  const start = addDays(new Date(), 10);
+  const dayOfWeek = start.getDay();
+  const startDate = `${format(start, "yyyy-MM-dd")}T12:30`;
+  // 90-day window — far past the 24-day-out occurrence these tests use, and
+  // far short of MAX_OCCURRENCES (200) at a weekly cadence. Recomputed from
+  // "now" every run, so this fixture can never again drift into the past.
+  const recurrenceEndDate = `${format(addDays(start, 90), "yyyy-MM-dd")}T00:00`;
+
+  FIXTURE_TITLE = `E2E QA Rollup Fixture ${Date.now()}`;
+
+  const createResp = await page.request.post("/api/admin/events", {
+    data: {
+      title: FIXTURE_TITLE,
+      startDate,
+      isPublic: false, // private — doesn't pollute the public /events list
+      requiresRsvp: true,
+      isRecurring: true,
+      recurrenceType: "weekly",
+      recurrenceDays: [dayOfWeek],
+      recurrenceEndDate,
+    },
+  });
+  expect(
+    createResp.ok(),
+    `fixture event creation failed: ${createResp.status()} ${await createResp.text()}`
+  ).toBe(true);
+  const created = await createResp.json();
+  EVENT_ID = created.id;
+
+  // Three future occurrences of the weekly series — 10, 17, and 24 days out.
+  ROLLUP_DATE_A = format(start, "yyyy-MM-dd");
+  ROLLUP_DATE_B = format(addDays(start, 7), "yyyy-MM-dd");
+  ROLLUP_CANCEL_DATE = format(addDays(start, 14), "yyyy-MM-dd");
+  ROLLUP_ISO_A = `${ROLLUP_DATE_A}T12:30:00`;
+  ROLLUP_ISO_B = `${ROLLUP_DATE_B}T12:30:00`;
+  ROLLUP_ISO_CANCEL = `${ROLLUP_CANCEL_DATE}T12:30:00`;
+
+  await ctx.close();
+});
+
+test.afterAll(async ({ browser }) => {
+  // Pass or fail, always clean up — cascades to event_occurrence_overrides
+  // and event_rsvps (both ON DELETE CASCADE, schema.ts).
+  if (!EVENT_ID) return;
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await signInAsAdmin(page);
+  await page.request.delete(`/api/admin/events/${EVENT_ID}`);
+  await ctx.close();
+});
 
 /**
  * Read the rollup header from the detail page and return the attending count and
@@ -73,7 +163,7 @@ async function getCurrentUserId(page: import("@playwright/test").Page): Promise<
 async function readDetailRollup(
   page: import("@playwright/test").Page
 ): Promise<{ attending: number; occurrences: number }> {
-  await page.goto(ADMIN_DETAIL_URL);
+  await page.goto(ADMIN_DETAIL_URL());
   await page.waitForLoadState("networkidle");
 
   const rollupBlock = page.locator("#attendance .bg-blue-50").first();
@@ -93,47 +183,46 @@ async function readDetailRollup(
 }
 
 /**
- * Read the Farmer's Market attending count from the admin events list page.
- * The EventTableRow renders an expanded sub-row (bg-blue-50) with text like
- * "✓ 33 attending~ 0 maybe". We read the tbody and parse the first "N attending"
- * occurrence. Both the header row and RSVP summary row are children of <tbody>.
+ * Read this fixture's own attending count from the admin events list page.
  *
- * NOTE: This reads from the list page that is already loaded. Caller must navigate
- * to ADMIN_LIST_URL and wait for networkidle before calling this function.
+ * The EventTableRow component renders the event as a main <tr> (with the
+ * event's title) followed, only when `requiresRsvp && expanded`, by a sibling
+ * <tr class="bg-blue-50"> holding text like "✓ N attending ~ 0 maybe" — see
+ * src/components/admin/event-table-row.tsx. `expanded` defaults to true only
+ * when the rollup total is > 0, so a fixture with zero RSVPs renders no
+ * sub-row at all; that is 0 attending, not a missing element.
+ *
+ * We locate the row by this fixture's unique title rather than reading the
+ * first "✓ N attending" match anywhere in the page, because the list can
+ * contain other recurring events (real club events, or a concurrently-running
+ * suite's own fixture) with their own nonzero attending counts sorted ahead
+ * of ours.
+ *
+ * Caller must navigate to ADMIN_LIST_URL and wait for networkidle first.
  */
 async function readListAttending(
   page: import("@playwright/test").Page
 ): Promise<number> {
-  const text = await page.locator("tbody").innerText();
-  // The expanded sub-row text starts with "✓ N attending"
+  const mainRow = page.locator("tr").filter({ hasText: FIXTURE_TITLE }).first();
+  await expect(mainRow).toBeVisible({ timeout: 10000 });
+
+  const subRow = mainRow.locator("xpath=following-sibling::tr[1]");
+  if ((await subRow.count()) === 0) return 0;
+
+  const text = await subRow.innerText();
   const match = text.match(/✓\s*(\d+)\s+attending/);
-  if (!match) {
-    throw new Error(
-      `Could not find "✓ N attending" in list tbody text. tbody: "${text.slice(0, 200)}"`
-    );
-  }
-  return parseInt(match[1], 10);
+  return match ? parseInt(match[1], 10) : 0;
 }
 
 // serial: tests share occurrence dates and the DB; must not run in parallel.
 test.describe.serial("recurring-signup-rollup — list and detail page", () => {
-  let userId: string;
-
-  test.beforeAll(async ({ browser }) => {
-    const ctx = await browser.newContext();
-    const p = await ctx.newPage();
-    await signInAsAdmin(p);
-    userId = await getCurrentUserId(p);
-    await ctx.close();
-  });
-
   // Clean up all test RSVPs and overrides before each test so tests start from a known state.
   test.beforeEach(async ({ page }) => {
     await signInAsAdmin(page);
 
     // Remove any RSVPs for the three test dates
     for (const iso of [ROLLUP_ISO_A, ROLLUP_ISO_B, ROLLUP_ISO_CANCEL]) {
-      await page.request.delete(signupUrl, { data: { userId, occurrenceDate: iso } });
+      await page.request.delete(signupUrl(), { data: { userId, occurrenceDate: iso } });
     }
     // Restore any cancelled dates
     for (const date of [ROLLUP_DATE_A, ROLLUP_DATE_B, ROLLUP_CANCEL_DATE]) {
@@ -141,59 +230,42 @@ test.describe.serial("recurring-signup-rollup — list and detail page", () => {
     }
   });
 
-  test.afterAll(async ({ browser }) => {
-    const ctx = await browser.newContext();
-    const p = await ctx.newPage();
-    await signInAsAdmin(p);
-    // Full cleanup: remove RSVPs and restore cancelled dates
-    for (const iso of [ROLLUP_ISO_A, ROLLUP_ISO_B, ROLLUP_ISO_CANCEL]) {
-      await p.request.delete(signupUrl, { data: { userId, occurrenceDate: iso } });
-    }
-    for (const date of [ROLLUP_DATE_A, ROLLUP_DATE_B, ROLLUP_CANCEL_DATE]) {
-      await p.request.post(cancelUrl(date), { data: { cancelled: false } });
-    }
-    await ctx.close();
-  });
-
   test("Test 1 — admin events list shows sum of RSVPs across two occurrences — rollup-bug regression", async ({
     page,
   }) => {
     // ── Phase 1: Capture list attending count before adding any RSVPs ──────
-    // We read the list page first so we have a within-test baseline that is
-    // insulated from the transient effects of cancel-occurrence.spec.ts running
-    // concurrently (those tests only touch 2026-05-30 and 2026-06-06, which are
-    // not our dates and do not affect the list attending count we read here).
+    // This is our own private fixture with no pre-existing RSVPs, so this is
+    // expected to be exactly 0 — captured dynamically anyway rather than
+    // hardcoded, since the point of this test is the DELTA the fix produces.
     await page.goto(ADMIN_LIST_URL);
     await page.waitForLoadState("networkidle");
-    await expect(page.locator("body")).toContainText("Farmer", { timeout: 10000 });
+    await expect(page.locator("body")).toContainText(FIXTURE_TITLE, { timeout: 10000 });
     const listBefore = await readListAttending(page);
 
     // ── Phase 2: Add RSVPs on two distinct occurrence dates ────────────────
-    const respA = await page.request.post(signupUrl, {
+    const respA = await page.request.post(signupUrl(), {
       data: { userId, occurrenceDate: ROLLUP_ISO_A },
     });
     expect([200, 201]).toContain(respA.status());
 
-    const respB = await page.request.post(signupUrl, {
+    const respB = await page.request.post(signupUrl(), {
       data: { userId, occurrenceDate: ROLLUP_ISO_B },
     });
     expect([200, 201]).toContain(respB.status());
 
-    // ── Phase 3: Assert list page count increased by at least 2 ──────────────
+    // ── Phase 3: Assert list page count increased by exactly 2 ─────────────
     // The regression test: the old code counted only the NEXT upcoming occurrence;
-    // after the fix, BOTH dates A and B are counted. We assert >= listBefore + 2
-    // (rather than ===) because cancel-occurrence.spec.ts runs concurrently and may
-    // transiently restore a cancelled occurrence between the two reads, adding 1 more
-    // to the count. That is not a regression; the +2 minimum proves both dates counted.
+    // after the fix, BOTH dates A and B are counted. This fixture is private to
+    // this test run, so the count is exact (no other test/suite can touch it).
     await page.goto(ADMIN_LIST_URL);
     await page.waitForLoadState("networkidle");
     const listAfter = await readListAttending(page);
-    expect(listAfter).toBeGreaterThanOrEqual(listBefore + 2);
+    expect(listAfter).toBe(listBefore + 2);
 
     // ── Phase 4: Assert detail page rollup header exists ───────────────────
     // Before the fix, recurring events had NO series-level rollup header at all.
     // After the fix, the blue panel with "X attending across Y occurrences" must appear.
-    await page.goto(ADMIN_DETAIL_URL);
+    await page.goto(ADMIN_DETAIL_URL());
     await page.waitForLoadState("networkidle");
     const rollupBlock = page.locator("#attendance .bg-blue-50").first();
     await expect(rollupBlock).toBeVisible({ timeout: 10000 });
@@ -205,43 +277,35 @@ test.describe.serial("recurring-signup-rollup — list and detail page", () => {
   }) => {
     // ── Phase 1: Baseline before any changes ───────────────────────────────
     // beforeEach ensured the three test dates are not cancelled and the test
-    // admin user has no RSVPs on them.
+    // admin user has no RSVPs on them. This fixture is private to this run,
+    // so the baseline is deterministic (no concurrent suite can touch it).
     const baseline = await readDetailRollup(page);
     // baseline.occurrences includes ROLLUP_CANCEL_DATE (it is non-cancelled at this point).
 
     // ── Arrange: add RSVPs on date A and CANCEL_DATE ───────────────────────
-    await page.request.post(signupUrl, {
+    await page.request.post(signupUrl(), {
       data: { userId, occurrenceDate: ROLLUP_ISO_A },
     });
-    await page.request.post(signupUrl, {
+    await page.request.post(signupUrl(), {
       data: { userId, occurrenceDate: ROLLUP_ISO_CANCEL },
     });
 
     // ── Phase 2: Read rollup BEFORE cancellation ───────────────────────────
-    // Both RSVPs are now counted. There may be pre-existing RSVPs on either date
-    // from real club members; we do not assume a specific value — we just record it.
-    // NOTE: cancel-occurrence.spec.ts runs concurrently and may transiently cancel
-    // 2026-05-30 or 2026-06-06, which can cause the occurrence count to differ from
-    // baseline.occurrences by 1. We use a >= check to tolerate this.
+    // Both RSVPs are now counted, and only these two (this is a private fixture).
     const beforeCancel = await readDetailRollup(page);
-    // Sanity: at least the date A RSVP must have been counted. We use >= baseline + 1
-    // rather than + 2 because cancel-occurrence.spec.ts may concurrently cancel a
-    // different occurrence (2026-05-30 or 2026-06-06), temporarily reducing the count
-    // by 1 between our baseline read and this read. The core regression assertion below
-    // (afterCancel < beforeCancel) is what matters, not this sanity check.
-    expect(beforeCancel.attending).toBeGreaterThanOrEqual(baseline.attending + 1);
+    expect(beforeCancel.attending).toBe(baseline.attending + 2);
 
     // ── Cancel CANCEL_DATE ─────────────────────────────────────────────────
-    // This removes CANCEL_DATE from the non-cancelled occurrence set, and all
-    // RSVPs on CANCEL_DATE (pre-existing + the test RSVP) must be excluded
-    // from the rollup. Only date A's RSVP should remain from the two we added.
+    // This removes CANCEL_DATE from the non-cancelled occurrence set, and the
+    // RSVP on CANCEL_DATE must be excluded from the rollup. Only date A's RSVP
+    // should remain from the two we added.
     const cancelResp = await page.request.post(cancelUrl(ROLLUP_CANCEL_DATE), {
       data: { cancelled: true, reason: "Rollup e2e test cancel" },
     });
     expect(cancelResp.status()).toBe(200);
 
     // ── Phase 3: Assert detail page rollup AFTER cancellation ──────────────
-    await page.goto(ADMIN_DETAIL_URL);
+    await page.goto(ADMIN_DETAIL_URL());
     await page.waitForLoadState("networkidle");
 
     const rollupBlock = page.locator("#attendance .bg-blue-50").first();
@@ -259,49 +323,37 @@ test.describe.serial("recurring-signup-rollup — list and detail page", () => {
     // attending count. In the pre-fix code both counts were equal.
     expect(afterCancel.attending).toBeLessThan(beforeCancel.attending);
 
-    // The test RSVP on CANCEL_DATE plus any pre-existing RSVPs on CANCEL_DATE are
-    // all excluded. Only the date A RSVP remains from what we added.
-    // beforeCancel.attending = baseline + 2 + (pre-existing on both dates already counted)
-    // afterCancel.attending = beforeCancel.attending - (all RSVPs on CANCEL_DATE)
-    // We don't know the pre-existing count on CANCEL_DATE exactly, but we know the
-    // test admin's RSVP on date A is the only new attending contribution.
-    // Therefore: afterCancel.attending <= baseline.attending + 1
-    // (at most: baseline + date-A test RSVP, because all CANCEL_DATE RSVPs were excluded)
-    expect(afterCancel.attending).toBeLessThanOrEqual(baseline.attending + 1);
+    // Exact invariant, now that the fixture is private: only date A's RSVP
+    // remains — CANCEL_DATE's RSVP (the only thing on that date) is excluded.
+    expect(afterCancel.attending).toBe(baseline.attending + 1);
 
-    // Occurrence count must have decreased by exactly 1 compared to the state
-    // JUST BEFORE we cancelled (beforeCancel.occurrences). Using beforeCancel rather
-    // than baseline prevents false failures if cancel-occurrence.spec.ts concurrently
-    // changes the occurrence count between the baseline read and this assertion.
+    // Occurrence count must have decreased by exactly 1.
     expect(afterCancel.occurrences).toBe(beforeCancel.occurrences - 1);
 
     // ── Assert list page matches detail page ───────────────────────────────
     // The list page's expanded RSVP sub-row must show the same attending count.
     await page.goto(ADMIN_LIST_URL);
     await page.waitForLoadState("networkidle");
-    const farmerMainRow = page.locator("tr").filter({ hasText: /Farmer/i }).first();
-    await expect(farmerMainRow).toBeVisible({ timeout: 10000 });
+    const mainRow = page.locator("tr").filter({ hasText: FIXTURE_TITLE }).first();
+    await expect(mainRow).toBeVisible({ timeout: 10000 });
 
-    // EventTableRow splits across two <tr> siblings; check the table body as a whole.
-    await expect(page.locator("tbody")).toContainText(
-      `${afterCancel.attending} attending`,
-      { timeout: 10000 }
-    );
+    const listAttending = await readListAttending(page);
+    expect(listAttending).toBe(afterCancel.attending);
   });
 
   test("Test 3 — recurring event detail page shows rollup header with correct text — rollup-bug regression", async ({
     page,
   }) => {
     // Arrange — add RSVPs on date A and date B (two non-cancelled occurrences)
-    await page.request.post(signupUrl, {
+    await page.request.post(signupUrl(), {
       data: { userId, occurrenceDate: ROLLUP_ISO_A },
     });
-    await page.request.post(signupUrl, {
+    await page.request.post(signupUrl(), {
       data: { userId, occurrenceDate: ROLLUP_ISO_B },
     });
 
     // Act — navigate to the detail page
-    await page.goto(ADMIN_DETAIL_URL);
+    await page.goto(ADMIN_DETAIL_URL());
     await page.waitForLoadState("networkidle");
 
     // Assert — rollup header is visible and contains the expected text pattern

@@ -39,7 +39,7 @@ vi.mock("@/lib/event-announcements-queries", () => ({
   getEventAnnouncementHistory: vi.fn(),
   insertEventAnnouncementRows: vi.fn(),
 }));
-vi.mock("@/lib/email", () => ({ sendBulkMemberEmail: vi.fn() }));
+vi.mock("@/lib/email-durable-claim", () => ({ sendBulkMemberEmailForDurableClaim: vi.fn() }));
 
 import { GET, POST } from "./route";
 import { auth } from "@/lib/auth";
@@ -53,7 +53,7 @@ import {
   getEventAnnouncementHistory,
   insertEventAnnouncementRows,
 } from "@/lib/event-announcements-queries";
-import { sendBulkMemberEmail } from "@/lib/email";
+import { sendBulkMemberEmailForDurableClaim } from "@/lib/email-durable-claim";
 
 function makeRequest(body: unknown = {}): NextRequest {
   return { json: async () => body } as unknown as NextRequest;
@@ -91,7 +91,7 @@ beforeEach(() => {
   vi.mocked(getCancelledOccurrenceDates).mockReset().mockResolvedValue(new Set());
   vi.mocked(getEventAnnouncementHistory).mockReset().mockResolvedValue([]);
   vi.mocked(insertEventAnnouncementRows).mockReset().mockResolvedValue(undefined);
-  vi.mocked(sendBulkMemberEmail).mockReset();
+  vi.mocked(sendBulkMemberEmailForDurableClaim).mockReset();
 });
 
 describe("GET /api/admin/events/[id]/announce", () => {
@@ -138,8 +138,8 @@ describe("POST /api/admin/events/[id]/announce", () => {
     vi.mocked(getAnnouncementRecipients).mockResolvedValue([
       { memberId: "m-1", firstName: "Pat", lastName: "Lee", email: "pat@westervillelions.org" },
     ]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValue({
-      results: [{ to: "pat@westervillelions.org", success: true, emailQueueId: "eq-1" }],
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValue({
+      results: [{ to: "pat@westervillelions.org", outcome: "delivered", emailQueueId: "eq-1" }],
     });
   });
 
@@ -150,7 +150,7 @@ describe("POST /api/admin/events/[id]/announce", () => {
       makeParams("event-1"),
     );
     expect(response.status).toBe(400);
-    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+    expect(sendBulkMemberEmailForDurableClaim).not.toHaveBeenCalled();
   });
 
   it("rejects a non-existent occurrenceDate with 400", async () => {
@@ -160,7 +160,7 @@ describe("POST /api/admin/events/[id]/announce", () => {
       makeParams("event-1"),
     );
     expect(response.status).toBe(400);
-    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+    expect(sendBulkMemberEmailForDurableClaim).not.toHaveBeenCalled();
   });
 
   it("rejects an empty resolved recipient set with 400", async () => {
@@ -174,7 +174,7 @@ describe("POST /api/admin/events/[id]/announce", () => {
     const body = await response.json();
     expect(response.status).toBe(400);
     expect(body.error).toBe("No recipients to send to.");
-    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+    expect(sendBulkMemberEmailForDurableClaim).not.toHaveBeenCalled();
   });
 
   it("rejects when the event has zero future occurrences with 400", async () => {
@@ -186,7 +186,7 @@ describe("POST /api/admin/events/[id]/announce", () => {
     const body = await response.json();
     expect(response.status).toBe(400);
     expect(body.error).toBe("This event has no upcoming occurrences to announce.");
-    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+    expect(sendBulkMemberEmailForDurableClaim).not.toHaveBeenCalled();
   });
 
   it("a partial send failure (1 of 3) still returns 200, one row per attempt, all sharing one batchId", async () => {
@@ -195,11 +195,11 @@ describe("POST /api/admin/events/[id]/announce", () => {
       { memberId: "m-2", firstName: "Sam", lastName: "Ng", email: "sam@westervillelions.org" },
       { memberId: "m-3", firstName: "Jo", lastName: "Kim", email: "jo@westervillelions.org" },
     ]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValue({
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValue({
       results: [
-        { to: "pat@westervillelions.org", success: true, emailQueueId: "eq-1" },
-        { to: "sam@westervillelions.org", success: false, error: "Resend API error", emailQueueId: "eq-2" },
-        { to: "jo@westervillelions.org", success: true, emailQueueId: "eq-3" },
+        { to: "pat@westervillelions.org", outcome: "delivered", emailQueueId: "eq-1" },
+        { to: "sam@westervillelions.org", outcome: "failed", error: "Resend API error", emailQueueId: "eq-2" },
+        { to: "jo@westervillelions.org", outcome: "delivered", emailQueueId: "eq-3" },
       ],
     });
 
@@ -292,5 +292,85 @@ describe("POST /api/admin/events/[id]/announce", () => {
     const response = await POST(makeRequest(), makeParams("event-1"));
     expect(response.status).toBe(403);
     expect(hasFeature).toHaveBeenCalledWith("user-1", FEATURES.EVENTS_ANNOUNCE);
+  });
+
+  // B-73 / DECISION-102/103's eighth instance: a blocked or no-API-key send
+  // must never be recorded as a successful announcement.
+
+  it("a blocked (non-production) send records success:false with the honest reason, not a false success — fails against pre-fix code", async () => {
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValue({
+      results: [
+        {
+          to: "pat@westervillelions.org",
+          outcome: "not_delivered",
+          reason: "blocked_non_production",
+          emailQueueId: "eq-1",
+        },
+      ],
+    });
+
+    const response = await POST(
+      makeRequest({ scope: "occurrence", occurrenceDate: "2020-01-14", memberIds: ["m-1"] }),
+      makeParams("event-1"),
+    );
+    const body = await response.json();
+
+    const expectedError =
+      "Blocked — outbound email is disabled outside production (EMAIL_DEV_ALLOWLIST). Nothing was delivered.";
+    expect(response.status).toBe(200);
+    expect(body.sent).toEqual([{ memberId: "m-1", success: false, error: expectedError }]);
+
+    const insertedRows = vi.mocked(insertEventAnnouncementRows).mock.calls[0][0];
+    const row = insertedRows.find((r) => r.memberId === "m-1");
+    expect(row?.success).toBe(false);
+    expect(row?.error).toBe(expectedError);
+  });
+
+  it("a dev_no_api_key send records success:false with the dev-no-key reason, not a false success", async () => {
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValue({
+      results: [
+        {
+          to: "pat@westervillelions.org",
+          outcome: "not_delivered",
+          reason: "dev_no_api_key",
+          emailQueueId: "eq-1",
+        },
+      ],
+    });
+
+    const response = await POST(
+      makeRequest({ scope: "occurrence", occurrenceDate: "2020-01-14", memberIds: ["m-1"] }),
+      makeParams("event-1"),
+    );
+    const body = await response.json();
+
+    const expectedError =
+      "Blocked — no RESEND_API_KEY is configured outside production. Nothing was delivered.";
+    expect(response.status).toBe(200);
+    expect(body.sent).toEqual([{ memberId: "m-1", success: false, error: expectedError }]);
+
+    const insertedRows = vi.mocked(insertEventAnnouncementRows).mock.calls[0][0];
+    const row = insertedRows.find((r) => r.memberId === "m-1");
+    expect(row?.success).toBe(false);
+    expect(row?.error).toBe(expectedError);
+  });
+
+  it("a recipient missing from the send results still gets an honest, non-null fallback error", async () => {
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValue({ results: [] });
+
+    const response = await POST(
+      makeRequest({ scope: "occurrence", occurrenceDate: "2020-01-14", memberIds: ["m-1"] }),
+      makeParams("event-1"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.sent).toEqual([
+      {
+        memberId: "m-1",
+        success: false,
+        error: "Internal error: no send result recorded for this recipient.",
+      },
+    ]);
   });
 });

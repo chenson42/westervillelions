@@ -23,7 +23,8 @@ import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { CLUB_GROUP_EMAIL } from "@/lib/club-contacts";
-import { sendBulkMemberEmail } from "@/lib/email";
+import { sendBulkMemberEmailForDurableClaim } from "@/lib/email-durable-claim";
+import { durableOutcomeToRow } from "@/lib/durable-claim-row";
 import { getFromEmail, getAppUrl } from "@/lib/email-compose";
 import {
   dateKey,
@@ -283,10 +284,15 @@ export async function POST(request: NextRequest, { params }: Params) {
       return { memberId, email, html };
     });
 
-    // ---- 7. Send. Always via sendBulkMemberEmail() — never a hand-rolled
-    //         loop over sendEmail() for this shape. ----------------------
+    // ---- 7. Send. Always via sendBulkMemberEmailForDurableClaim() — this
+    //         route writes a durable "announced" claim
+    //         (event_announcements.success), so DECISION-102/103 require
+    //         the durable-claim entrypoint rather than sendBulkMemberEmail()
+    //         directly: its DurableSendResult has no bare `success` field,
+    //         so treating a blocked/no-API-key send as delivered is a
+    //         compile error, not a reviewable mistake. ------------------
     const fromEmail = getFromEmail();
-    const { results } = await sendBulkMemberEmail({
+    const { results } = await sendBulkMemberEmailForDurableClaim({
       from: fromEmail,
       subject,
       replyTo: CLUB_GROUP_EMAIL,
@@ -295,11 +301,28 @@ export async function POST(request: NextRequest, { params }: Params) {
     });
     const resultByEmail = new Map(results.map((r) => [r.to, r]));
 
+    // Defensive fallback for the (not expected in practice — toSend and
+    // results are always the same set) case where a recipient has no
+    // matching entry in resultByEmail. Must produce an honest, non-null
+    // error rather than silently defaulting to success:false/error:null,
+    // which would trade one silent-success bug for a silent-null-error one.
+    const FALLBACK_ROW = {
+      success: false,
+      error: "Internal error: no send result recorded for this recipient.",
+    } as const;
+    const rowFor = (email: string) => {
+      const outcome = resultByEmail.get(email);
+      return outcome ? durableOutcomeToRow(outcome) : FALLBACK_ROW;
+    };
+
     // ---- 8. One event_announcements row per attempted recipient, all
-    //         sharing one batchId. -----------------------------------
+    //         sharing one batchId (DECISION-093 — success and failure
+    //         alike). success/error come from the full three-way
+    //         DurableSendOutcome (delivered / failed / not_delivered),
+    //         never a bare `success` boolean read off the raw send result
+    //         (B-73 — DECISION-102/103's eighth instance). --------------
     const batchId = randomUUID();
     const rows: NewEventAnnouncement[] = toSend.map((r) => {
-      const result = resultByEmail.get(r.email);
       return {
         batchId,
         eventId,
@@ -307,9 +330,8 @@ export async function POST(request: NextRequest, { params }: Params) {
         occurrenceDate: scope === "series" ? null : occurrenceDate,
         memberId: r.memberId,
         sentByUserId: session.user.id,
-        emailQueueId: result?.emailQueueId ?? null,
-        success: result?.success ?? false,
-        error: result?.error ?? null,
+        emailQueueId: resultByEmail.get(r.email)?.emailQueueId ?? null,
+        ...rowFor(r.email),
         note,
       };
     });
@@ -322,11 +344,11 @@ export async function POST(request: NextRequest, { params }: Params) {
       scope,
       occurrenceDate: scope === "series" ? null : occurrenceDate,
       sent: toSend.map((r) => {
-        const result = resultByEmail.get(r.email);
+        const row = rowFor(r.email);
         return {
           memberId: r.memberId,
-          success: result?.success ?? false,
-          ...(result?.error ? { error: result.error } : {}),
+          success: row.success,
+          ...(row.error ? { error: row.error } : {}),
         };
       }),
       skipped,

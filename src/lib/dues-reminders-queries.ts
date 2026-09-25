@@ -29,12 +29,23 @@ export type ReminderCandidate = {
 };
 
 /**
- * Most recent dues_reminders row per member for a fiscal year (used for the
- * "Last reminded" badge, Flow 3). DISTINCT ON isn't expressible declaratively
- * via Drizzle's query builder, so this is a small raw sql query — matches
- * the existing style in dues-queries.ts (listMemberDuesStatus/
+ * Most recent *successful* dues_reminders row per member for a fiscal year
+ * (used for the "Last reminded" badge, Flow 3). DISTINCT ON isn't expressible
+ * declaratively via Drizzle's query builder, so this is a small raw sql query
+ * — matches the existing style in dues-queries.ts (listMemberDuesStatus/
  * getDuesMethodTotals both use db.execute with the sql tag for the same
  * reason).
+ *
+ * `AND success = true` is in the WHERE clause, not a filter applied after
+ * DISTINCT ON — this matters. DISTINCT ON picks one row per member_id from
+ * whatever rows survive the WHERE clause, so filtering before selection means
+ * a member's badge reflects their most recent SUCCESSFUL send, not their most
+ * recent send of any kind. A member reminded (successfully) Monday and then
+ * unsuccessfully (blocked/failed) Tuesday must still show Monday's date, not
+ * "never reminded" and not Tuesday's non-delivery. (B-73 follow-up: this
+ * query previously had no `success` filter at all, so even a genuinely
+ * failed send lit up the badge — see docs/work-log/2026-09-25-bulk-send-
+ * success-columns.md.)
  */
 async function getLastRemindedMap(
   fiscalYear: number,
@@ -42,7 +53,7 @@ async function getLastRemindedMap(
   const rows = await db.execute<{ member_id: string; sent_at: string; cohort: string }>(sql`
     SELECT DISTINCT ON (member_id) member_id, sent_at, cohort
     FROM dues_reminders
-    WHERE fiscal_year = ${fiscalYear}
+    WHERE fiscal_year = ${fiscalYear} AND success = true
     ORDER BY member_id, sent_at DESC
   `);
 

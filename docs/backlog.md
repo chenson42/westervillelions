@@ -36,6 +36,9 @@ was deleted on the strength of this review alone.
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
+- B-75 — `financial-report-send.ts`'s `not_delivered` case writes the same message for both blocked-non-production and no-API-key
+- B-74 — Generic email-queue retry has no awareness of any durable-claim table it doesn't own
+- B-73 — `dues_reminders`/`event_announcements` read raw `.success`, never migrated to the durable-claim helpers
 - B-72 — A permanent send failure is indistinguishable from a transient one in the retry UI
 - B-71 — `listReadyToSendReports()` recomputes every already-`sent` month forever; no skip-window
 - B-70 — No type/lint enforcement that a durable-claim caller checks `SendEmailResult.blocked`
@@ -305,6 +308,89 @@ was deleted on the strength of this review alone.
 ---
 
 ## Soon
+
+- [ ] **B-75 — `financial-report-send.ts`'s `not_delivered` case writes the same message for both
+  `blocked_non_production` and `dev_no_api_key`, so the panel can't tell an admin which one
+  actually happened.**
+  (added 2026-09-25, from the B-73 follow-up sweep,
+  `docs/work-log/2026-09-25-bulk-send-success-columns.md`; priority: nice-to-have, small) In
+  `sendMonthlyFinancialReport()`'s `switch (sendResult.outcome)` (`src/lib/financial-report-send.ts`,
+  the `case "not_delivered":` block around line 636), the inserted `financialReportSends` row and
+  the returned `{ reason: "blocked_non_production", detail }` both always use the single
+  `blockedError` string — `"Blocked — outbound email is disabled outside production
+  (EMAIL_DEV_ALLOWLIST). Nothing was delivered."` — regardless of whether
+  `sendResult.reason` (a real, already-typed field on `DurableSendOutcome`, see
+  `src/lib/email-durable-claim.ts`) is actually `"blocked_non_production"` or `"dev_no_api_key"`.
+  The two reasons are meaningfully different for a developer debugging a dev/QA environment — one
+  means "add yourself to `EMAIL_DEV_ALLOWLIST`," the other means "no `RESEND_API_KEY` is set at
+  all" — but today's message always suggests the allowlist fix even when the real problem is a
+  missing key. B-73's new shared helper, `src/lib/durable-claim-row.ts`'s
+  `durableOutcomeToRow()`, already makes exactly this distinction (it has two separate message
+  constants, one per reason) for its two call sites (`dues_reminders`, `event_announcements`); this
+  item is bringing `financial-report-send.ts`'s pre-existing, untouched inline `switch` up to that
+  same precision, once that file is next legitimately open — not folding it into
+  `durableOutcomeToRow()` itself, since `financial_report_sends` has a stricter invariant (a
+  partial unique index on `success = true`) and its own established inline pattern that Phase 2/3
+  of B-73 both explicitly ruled out-of-scope to touch. Fix: branch on `sendResult.reason` and use
+  `durable-claim-row.ts`'s two existing message strings (or copy them) instead of the single
+  `blockedError` constant. No schema change. Small enough this likely doesn't need a full Phase 1,
+  but per this project's Bug-Fix Variant, it still gets a documented root-cause note and an
+  explicit phase-skip notation in whatever work-log picks it up.
+
+- [ ] **B-74 — The generic email-queue retry route has no awareness of any durable-claim table it
+  doesn't own, which can re-open the exact double-send risk the claim exists to prevent.**
+  (added 2026-09-25, from the 7-day test-coverage review, `docs/reviews/2026-09-25-test-coverage.md`;
+  priority: should-do, needs a real Phase 1) `src/app/api/admin/email-queue/retry/route.ts` retries
+  any `email_queue` row with `status = 'failed'`, with no join to and no awareness of
+  `ledger_acknowledgments`, `financial_report_sends`, `dues_reminders`, or `event_announcements` —
+  the durable "this was sent" tables DECISION-102 names. Each of those tables independently decides
+  "sent" vs. "not sent" once, at the original send attempt, and — by design — leaves a failed
+  attempt re-sendable from its own feature (`ledgerAcknowledgments.sentAt` reverts to null on
+  failure; `financialReportSends`' partial unique index only ever covers a successful claim). If an
+  admin instead retries the same underlying row from the generic `/admin/email-queue` screen and it
+  succeeds, the message is actually delivered while the domain table's own claim is untouched — a
+  human looking at the ack-letters or financial-reports screen sees "not sent" for something that
+  already went out, and clicking "send" again there creates a genuine second delivery. For
+  `dues_reminders`/`event_announcements` the consequence is milder but still real: the "last
+  reminded"/"already announced" badge stays permanently wrong in the understating direction.
+  Established by reading code across module boundaries (retry route confirmed to touch only
+  `email_queue`; ack-letter and financial-report revert/re-attempt logic confirmed by their own
+  test suites) — not reproduced live. Needs a real Phase 1: should the retry route look up and
+  update any linked durable claim on success? Should a claim-bearing `email_queue` row be excluded
+  from the generic retry UI and only retryable from its own feature? Recommended regression test
+  once designed: send via a durable-claim caller such that it fails (claim reverts, `email_queue`
+  row lands `failed`) → retry that row via the admin route → mock the retry as a Resend success →
+  assert the claim table's own state, before and after the fix.
+
+- [x] **B-73 — `dues_reminders` and `event_announcements` read `sendBulkMemberEmail()`'s raw
+  `.success` directly, the exact pre-DECISION-102 pattern, and were never migrated to the new
+  durable-claim helpers.**
+  (added 2026-09-25, resolved 2026-09-25 —
+  `docs/work-log/2026-09-25-bulk-send-success-columns.md`) Fixed: both routes now go through
+  `sendBulkMemberEmailForDurableClaim()` and a new shared helper, `src/lib/durable-claim-row.ts`,
+  mapping the exhaustive `DurableSendOutcome` to an honest `{success, error}` row — a
+  `not_delivered` (blocked or no-API-key) send now records `success: false` with a distinguishing
+  reason, never a false `success: true`. No schema change; no wire-shape change to either route's
+  JSON response. `dues/reminders/route.test.ts` created (10 tests, this route had none before);
+  `events/[id]/announce/route.test.ts` extended (3 new tests) plus its existing mocks migrated to
+  the new entrypoint. Original text preserved below for context.
+  `src/app/api/admin/dues/reminders/route.ts` and
+  `src/app/api/admin/events/[id]/announce/route.ts` both write `success: result?.success ?? false`
+  into their durable per-recipient table straight off `sendBulkMemberEmail()`'s result.
+  `SendBulkMemberEmailResult` now forwards `blocked`/`notAttempted` (DECISION-103), so `success:
+  true` is returned — and written to the durable table — for a blocked-non-production or
+  no-API-key send. Since `sendBulkMemberEmail()` unconditionally sets the bulk guard, every
+  dev/QA test of either feature against real member/board addresses hits the blocked path,
+  guaranteeing a false `success: true` row the next time either is manually tested outside
+  production. Missed by 2026-09-25's own "hunt for a third instance"
+  (`docs/work-log/2026-09-25-email-silent-success.md`) because that audit was scoped to "who writes
+  `emailQueue.status` directly" (correctly clearing these two files of *that* defect) and never
+  asked the separate caller-layer question DECISION-102 rule 2 poses. `dues/reminders/route.ts` has
+  no test file at all; `events/[id]/announce/route.test.ts` exists (18 tests) but no test passes
+  `blocked: true`/`notAttempted: true` through the mocked `sendBulkMemberEmail()`. Fix: migrate
+  both routes to `sendBulkMemberEmailForDurableClaim()` (`src/lib/email-durable-claim.ts`), matching
+  DECISION-103's two existing migrations — the type has no bare `success` field, making this exact
+  mistake uncompilable. Implementer: api-developer.
 
 - [ ] **B-72 — A permanent send failure is indistinguishable from a transient one in the retry UI.**
   (added 2026-09-25, from `docs/work-log/2026-09-25-shared-resend-attempt.md` Phase 6; priority:

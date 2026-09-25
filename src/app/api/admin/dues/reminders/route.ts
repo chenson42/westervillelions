@@ -29,7 +29,8 @@ import {
   renderDuesReminderBody,
   classifyRecipients,
 } from "@/lib/dues-reminders";
-import { sendBulkMemberEmail } from "@/lib/email";
+import { sendBulkMemberEmailForDurableClaim } from "@/lib/email-durable-claim";
+import { durableOutcomeToRow } from "@/lib/durable-claim-row";
 import { getAppUrl } from "@/lib/email-compose";
 import type { NewDuesReminder } from "@/lib/db/schema";
 
@@ -193,11 +194,15 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // 4. Send. Always via sendBulkMemberEmail() — never a hand-rolled loop
-    //    over sendEmail() for this shape (DECISION-085/086). BCC and
+    // 4. Send. Always via sendBulkMemberEmailForDurableClaim() — this route
+    //    writes a durable "reminded" claim (dues_reminders.success), so
+    //    DECISION-102/103 require the durable-claim entrypoint rather than
+    //    sendBulkMemberEmail() directly: its DurableSendResult has no bare
+    //    `success` field, so treating a blocked/no-API-key send as
+    //    delivered is a compile error, not a reviewable mistake. BCC and
     //    Reply-To both go to the office-holder's own address — treasurer@
     //    is a forwarding alias that may retain no copy.
-    const { results } = await sendBulkMemberEmail({
+    const { results } = await sendBulkMemberEmailForDurableClaim({
       from: fromEmail,
       subject,
       replyTo: treasurer.email,
@@ -206,8 +211,25 @@ export async function POST(request: NextRequest) {
     });
     const resultByEmail = new Map(results.map((r) => [r.to, r]));
 
+    // Defensive fallback for the (not expected in practice — recipients and
+    // results are always the same set) case where a recipient has no
+    // matching entry in resultByEmail. Must produce an honest, non-null
+    // error rather than silently defaulting to success:false/error:null,
+    // which would trade one silent-success bug for a silent-null-error one.
+    const FALLBACK_ROW = {
+      success: false,
+      error: "Internal error: no send result recorded for this recipient.",
+    } as const;
+    const rowFor = (email: string) => {
+      const outcome = resultByEmail.get(email);
+      return outcome ? durableOutcomeToRow(outcome) : FALLBACK_ROW;
+    };
+
     // 5. One dues_reminders row per attempted send — the domain record,
-    //    independent of email_queue's own retention.
+    //    independent of email_queue's own retention. success/error come
+    //    from the full three-way DurableSendOutcome (delivered / failed /
+    //    not_delivered), never a bare `success` boolean read off the raw
+    //    send result (B-73 — DECISION-102/103's seventh instance).
     const reminderRows: NewDuesReminder[] = recipients.map((r) => {
       const result = resultByEmail.get(r.email);
       return {
@@ -217,8 +239,7 @@ export async function POST(request: NextRequest) {
         sentByUserId: session.user.id,
         signedAsMemberId: treasurer.memberId,
         emailQueueId: result?.emailQueueId ?? null,
-        success: result?.success ?? false,
-        error: result?.error ?? null,
+        ...rowFor(r.email),
         note,
       };
     });
@@ -229,13 +250,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       signer: { firstName: treasurer.firstName, lastName: treasurer.lastName },
       sent: recipients.map((r) => {
-        const result = resultByEmail.get(r.email);
+        const row = rowFor(r.email);
         return {
           memberId: r.memberId,
           email: r.email,
           cohort: r.cohort,
-          success: result?.success ?? false,
-          ...(result?.error ? { error: result.error } : {}),
+          success: row.success,
+          ...(row.error ? { error: row.error } : {}),
         };
       }),
       skipped,
