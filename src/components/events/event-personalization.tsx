@@ -83,7 +83,10 @@ export function EventPersonalization({
 
   useEffect(() => {
     let cancelled = false;
-    setRosterStatus((prev) => (prev === "ready" ? prev : "loading"));
+    // NOTE: deliberately no setState here. `rosterStatus` already initializes
+    // to "loading", and the retry path resets it in the click handler below —
+    // setting state synchronously in an effect body triggers cascading
+    // renders (react-hooks/set-state-in-effect).
     fetch(`/api/events/${eventId}/viewer-context`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`status ${res.status}`))))
       .then((data: ViewerContext) => {
@@ -103,7 +106,10 @@ export function EventPersonalization({
     };
   }, [eventId, retryToken]);
 
-  const retryRoster = () => setRetryToken((t) => t + 1);
+  const retryRoster = () => {
+    setRosterStatus("loading");
+    setRetryToken((t) => t + 1);
+  };
 
   const isLoggedIn = context?.isLoggedIn ?? false;
   const currentUserName = context?.userName ?? null;
