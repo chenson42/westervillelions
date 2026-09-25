@@ -76,6 +76,20 @@ describe("getNextOccurrence", () => {
     expect(result).toBeNull();
   });
 
+  // ── regression: midnight recurrenceEndDate must not make getNextOccurrence
+  // (and its findNextDayOfWeek helper) return null on the series' final day ──
+  // docs/work-log/2026-09-25-recurring-occurrence-visibility.md — Defect A.
+  // Same Farmers Market shape as the generateOccurrences regression above:
+  // "now" is the week of the final Saturday (Sep 26), before the 12:30 PM
+  // start time. The final occurrence must still be findable, or the event
+  // gets pushed from "Upcoming" to "Past" a week early.
+  it("finds the final occurrence when 'now' is on the series' last day, before start time — regression for dropped last occurrence", () => {
+    const result = getNextOccurrence(baseRecurring, new Date("2026-09-24T12:00:00.000Z"));
+
+    expect(result).not.toBeNull();
+    expect(dateKey(result!)).toBe("2026-09-26");
+  });
+
   it("returns a future occurrence when the recurring series is still active", () => {
     // "Now" is mid-May 2026; the next Saturday occurrence should be May 23.
     const result = getNextOccurrence(baseRecurring, new Date("2026-05-18T00:00:00.000Z"));
@@ -296,6 +310,51 @@ describe("generateOccurrences", () => {
     const keys = result.map((d) => dateKey(d));
     // May 30 is after the end date
     expect(keys).not.toContain("2026-05-30");
+  });
+
+  // ── regression: midnight recurrenceEndDate must not drop the final occurrence ──
+  // docs/work-log/2026-09-25-recurring-occurrence-visibility.md — Defect A.
+  // recurrenceEndDate is stored at midnight (the admin form only collects a
+  // date) while occurrences inherit the event's start *time*. Without
+  // end-of-day normalization, a 12:30 PM final occurrence on the end date is
+  // "after" a midnight windowEnd and is silently dropped. This is the exact
+  // Westerville Farmers Market shape: weekly Saturday 12:30 PM series ending
+  // "2026-09-26 00:00:00" (a Saturday) — the final market on Sep 26 must appear.
+  it("includes the final occurrence when recurrenceEndDate falls at midnight on that same day — regression for dropped last occurrence", () => {
+    const result = generateOccurrences(baseRecurring, new Date("2026-09-01T00:00:00.000Z"));
+
+    const keys = result.map((d) => dateKey(d));
+    expect(keys).toContain("2026-09-26");
+  });
+
+  // ── regression: past occurrences must be reachable by generating from the
+  // series start, not from "now" ──
+  // docs/work-log/2026-09-25-recurring-occurrence-visibility.md — Defect B.
+  // /events/[id] previously called generateOccurrences(event, now), which
+  // silently dropped an occurrence and its signup roster the instant its
+  // start time passed. The fix calls generateOccurrences(event,
+  // parseWallClock(event.startDate), 520) instead, matching the admin page
+  // and the signup API. This test documents that generateOccurrences() does
+  // include past dates when the `from` window starts at the series start.
+  it("includes occurrences before an external 'now' when generated from the series start — regression for hidden past rosters", () => {
+    const event: RecurringEvent = {
+      startDate: "2026-01-03 12:30:00", // Saturday
+      isRecurring: true,
+      recurrenceType: "weekly",
+      recurrenceDays: [6],
+      recurrenceEndDate: null,
+    };
+    const laterNow = new Date("2026-03-01T00:00:00.000Z");
+
+    // Old (buggy) call site: generateOccurrences(event, now) — January occurrences
+    // are already in the past relative to laterNow and are excluded.
+    const fromNow = generateOccurrences(event, laterNow, 520);
+    expect(fromNow.map((d) => dateKey(d))).not.toContain("2026-01-03");
+
+    // Fixed call site: generateOccurrences(event, parseWallClock(event.startDate), 520)
+    // — the January occurrence (and its roster) is reachable.
+    const fromStart = generateOccurrences(event, parseWallClock(event.startDate), 520);
+    expect(fromStart.map((d) => dateKey(d))).toContain("2026-01-03");
   });
 });
 

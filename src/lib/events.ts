@@ -1,4 +1,4 @@
-import { format, parse, addDays, addWeeks, addMonths, setDate, isBefore, isAfter, differenceInCalendarWeeks } from "date-fns";
+import { format, parse, addDays, addWeeks, addMonths, setDate, isBefore, isAfter, differenceInCalendarWeeks, endOfDay } from "date-fns";
 
 export type RecurringEvent = {
   startDate: string;              // wall-clock "YYYY-MM-DD HH:MM:SS" from Drizzle mode:"string"
@@ -215,7 +215,12 @@ export function getNextOccurrence(
   cancelledDates: Set<string> = new Set()
 ): Date | null {
   const start = parseWallClock(event.startDate);
-  const end = event.recurrenceEndDate ? parseWallClock(event.recurrenceEndDate) : null;
+  // recurrenceEndDate is stored as a date (the admin form only collects a date, so it
+  // is persisted at midnight) while occurrences inherit the event's start *time*. Without
+  // normalizing to end-of-day, the final occurrence's start time falls after midnight of
+  // the end date and is incorrectly treated as past the series end. See
+  // docs/work-log/2026-09-25-recurring-occurrence-visibility.md.
+  const end = event.recurrenceEndDate ? endOfDay(parseWallClock(event.recurrenceEndDate)) : null;
 
   if (!event.isRecurring) {
     // Non-recurring: it "occurs" at its startDate
@@ -329,7 +334,10 @@ export function generateOccurrences(
   }
 
   const start = parseWallClock(event.startDate);
-  const seriesEnd = event.recurrenceEndDate ? parseWallClock(event.recurrenceEndDate) : null;
+  // See the matching comment in getNextOccurrence(): recurrenceEndDate is a date-only
+  // value stored at midnight, so it must be normalized to end-of-day before comparing
+  // against an occurrence's start time or the final occurrence is silently dropped.
+  const seriesEnd = event.recurrenceEndDate ? endOfDay(parseWallClock(event.recurrenceEndDate)) : null;
   const windowEnd = seriesEnd
     ? (isBefore(seriesEnd, addWeeks(from, maxWeeks)) ? seriesEnd : addWeeks(from, maxWeeks))
     : addWeeks(from, maxWeeks);

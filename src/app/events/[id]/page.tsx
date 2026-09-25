@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { events, eventRsvps, users, eventOccurrenceOverrides } from "@/lib/db/schema";
+import { events, eventRsvps, eventOccurrenceOverrides } from "@/lib/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { format } from "date-fns";
 import { formatRecurrence, generateOccurrences, parseWallClock, dateKey, easternOffsetFor, formatEventWhen, getNextOccurrence, buildGoogleCalendarUrl, buildOutlookCalendarUrl, nowEastern, type IcsEventInput } from "@/lib/events";
@@ -87,29 +87,31 @@ export default async function EventDetailPage({ params }: Props) {
   // /api/events/[id]/viewer-context.
   const attachedFiles = await getPublicAttachedFiles(event.id);
 
-  // Per-occurrence signup data (only when signups are enabled). This is all
-  // public aggregate data — counts and signee names — computed the same way
-  // for every viewer, so it's safe to compute at build/revalidate time. Only
-  // "is *this* viewer signed up" is personal; that baseline stays false
-  // here and is corrected client-side by <EventPersonalization>.
+  // Per-occurrence signup data (only when signups are enabled). Attendee
+  // *counts* are public aggregate data — the same number regardless of who's
+  // asking — so they're safe to compute here at build/revalidate time.
+  // Signee *names*, however, are member data: this page is public and has no
+  // auth() check, so nothing derived from a real name may enter the payload
+  // handed to <EventPersonalization> (a Client Component — every prop
+  // crossing that boundary is serialized into the page's RSC payload and
+  // ships to the browser regardless of session). `signees` therefore always
+  // starts as an empty baseline here, exactly like `isSignedUp` above, and a
+  // signed-in viewer's real roster is fetched client-side from
+  // /api/events/[id]/viewer-context, which does its own auth() check.
+  // See docs/work-log/2026-09-25-recurring-occurrence-visibility.md (Phase 6
+  // rework) — this query used to also select and join member names to build
+  // that baseline; it no longer needs to.
   let occurrenceRows: OccurrenceRow[] = [];
   const signupsByDate = new Map<string, number>();
-
-  const signeesByDate = new Map<string, string[]>();
 
   if (event.requiresRsvp) {
     const [allRsvps, overrides] = await Promise.all([
       db
         .select({
           occurrenceDate: eventRsvps.occurrenceDate,
-          userId: eventRsvps.userId,
-          status: eventRsvps.status,
           guestCount: eventRsvps.guestCount,
-          userName: users.name,
-          rsvpName: eventRsvps.rsvpName,
         })
         .from(eventRsvps)
-        .leftJoin(users, eq(eventRsvps.userId, users.id))
         .where(and(eq(eventRsvps.eventId, id), ne(eventRsvps.status, "declined"))),
       db
         .select({
@@ -131,18 +133,16 @@ export default async function EventDetailPage({ params }: Props) {
       // Count the attendee + their guests
       const attendeeTotal = 1 + (r.guestCount ?? 0);
       signupsByDate.set(key, (signupsByDate.get(key) ?? 0) + attendeeTotal);
-      const displayName = r.userName ?? r.rsvpName;
-      if (displayName) {
-        const names = signeesByDate.get(key) ?? [];
-        names.push(displayName);
-        signeesByDate.set(key, names);
-      }
     }
 
     if (event.isRecurring) {
       // nowEastern(), not new Date(): see src/lib/events.ts nowEastern() doc comment.
       const now = nowEastern();
-      const occurrenceDates = generateOccurrences(event, now);
+      // Generate from the series start (like the admin page and signup API do), not from
+      // `now` — a member looking up who signed up for a market that already happened needs
+      // the past occurrence and its roster to still be here. See
+      // docs/work-log/2026-09-25-recurring-occurrence-visibility.md.
+      const occurrenceDates = generateOccurrences(event, parseWallClock(event.startDate), 520);
 
       // Build IcsEventInput for per-occurrence URL generation
       const siteUrl = process.env.NEXTAUTH_URL ?? "https://westervillelions.org";
@@ -178,7 +178,9 @@ export default async function EventDetailPage({ params }: Props) {
           isSignedUp: false,
           isFull: event.maxAttendees != null && count >= event.maxAttendees,
           isPast: d < now,
-          signees: signeesByDate.get(key) ?? [],
+          // Signed-out baseline — real names come only from
+          // /api/events/[id]/viewer-context, gated on a signed-in session.
+          signees: [],
           isCancelled: cancelled !== undefined,
           cancellationReason: cancelled?.reason ?? null,
           // Pre-built provider URLs for AddToCalendarDropdown
@@ -338,7 +340,10 @@ export default async function EventDetailPage({ params }: Props) {
           extraQuestionOptions={event.extraQuestionOptions ?? []}
           extraQuestionRequired={event.extraQuestionRequired}
           singleEventSignedUpCount={signupsByDate.get("null") ?? 0}
-          singleEventSignees={signeesByDate.get("null") ?? []}
+          // Signed-out baseline — see the comment above occurrenceRows'
+          // `signees: []`. Real names for the "null" (non-recurring) key
+          // come from /api/events/[id]/viewer-context once signed in.
+          singleEventSignees={[]}
           attachedFilesBaseline={attachedFiles}
         />
 
