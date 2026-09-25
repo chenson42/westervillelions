@@ -19,7 +19,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/email", () => ({ sendBulkMemberEmail: vi.fn() }));
+vi.mock("@/lib/email-durable-claim", () => ({ sendBulkMemberEmailForDurableClaim: vi.fn() }));
 vi.mock("@/lib/board-positions", () => ({ resolveTreasurer: vi.fn() }));
 
 const { mockDbState } = vi.hoisted(() => ({
@@ -91,7 +91,7 @@ import {
   type LetterTemplatePatch,
 } from "./ledger-acknowledgment-letter-queries";
 import { composeAcknowledgmentLetter } from "./ledger-acknowledgment-letter";
-import { sendBulkMemberEmail } from "@/lib/email";
+import { sendBulkMemberEmailForDurableClaim } from "@/lib/email-durable-claim";
 import { resolveTreasurer } from "@/lib/board-positions";
 
 function resetMockDb() {
@@ -112,7 +112,7 @@ const DEFAULT_TREASURER = {
 
 beforeEach(() => {
   resetMockDb();
-  vi.mocked(sendBulkMemberEmail).mockReset();
+  vi.mocked(sendBulkMemberEmailForDurableClaim).mockReset();
   vi.mocked(resolveTreasurer).mockReset();
   vi.mocked(resolveTreasurer).mockResolvedValue(DEFAULT_TREASURER);
 });
@@ -530,7 +530,7 @@ describe("emailAcknowledgmentLetters — guards (Tests 4-8)", () => {
 
     expect(results).toEqual([{ ackId: "ack-missing", status: "skipped", reason: "not found" }]);
     expect(mockDbState.updateCalls).toHaveLength(0);
-    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+    expect(sendBulkMemberEmailForDurableClaim).not.toHaveBeenCalled();
   });
 
   it("Test 5: skips an ack whose sentAt is already non-null (pre-check), reason 'already sent', without attempting the claim UPDATE at all", async () => {
@@ -547,7 +547,7 @@ describe("emailAcknowledgmentLetters — guards (Tests 4-8)", () => {
     // The pre-check short-circuits BEFORE the write, not merely produces the
     // same outcome as if it hadn't — no claim UPDATE was even attempted.
     expect(mockDbState.updateCalls).toHaveLength(0);
-    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+    expect(sendBulkMemberEmailForDurableClaim).not.toHaveBeenCalled();
   });
 
   it("Test 6: skips an ack with letterText === null, reason 'letter not yet generated'", async () => {
@@ -605,8 +605,8 @@ describe("emailAcknowledgmentLetters — the atomic claim (Test 9, load-bearing)
     // (returns the row), the send succeeds.
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
-      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", outcome: "delivered", emailQueueId: "q-1" }],
     });
 
     const firstResults = await emailAcknowledgmentLetters(["ack-1"]);
@@ -632,9 +632,9 @@ describe("emailAcknowledgmentLetters — the atomic claim (Test 9, load-bearing)
       { ackId: "ack-1", status: "skipped", reason: "already sent" },
     ]);
     // The second call's claim lost the race BEFORE any send was attempted
-    // for it — sendBulkMemberEmail was invoked exactly once across both
+    // for it — sendBulkMemberEmailForDurableClaim was invoked exactly once across both
     // calls, never twice for the same ack.
-    expect(sendBulkMemberEmail).toHaveBeenCalledTimes(1);
+    expect(sendBulkMemberEmailForDurableClaim).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -647,9 +647,9 @@ describe("emailAcknowledgmentLetters — revert on total failure (Test 10)", () 
 
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]); // claim succeeds
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
       results: [
-        { to: "donor@example.com", success: false, error: "Resend rejected", emailQueueId: "q-1" },
+        { to: "donor@example.com", outcome: "failed", error: "Resend rejected", emailQueueId: "q-1" },
       ],
     });
 
@@ -678,8 +678,8 @@ describe("emailAcknowledgmentLetters — revert on total failure (Test 10)", () 
     // revert means it's a fresh candidate again.
     mockDbState.selectQueue.push([row]); // sentAt still null (as reverted)
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
-      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-2" }],
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", outcome: "delivered", emailQueueId: "q-2" }],
     });
 
     const retryResults = await emailAcknowledgmentLetters(["ack-1"]);
@@ -697,10 +697,10 @@ describe("emailAcknowledgmentLetters — partial multi-address success (Test 11)
 
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
       results: [
-        { to: "a@example.com", success: true, emailQueueId: "q-1" },
-        { to: "b@example.com", success: false, error: "bounced", emailQueueId: "q-2" },
+        { to: "a@example.com", outcome: "delivered", emailQueueId: "q-1" },
+        { to: "b@example.com", outcome: "failed", error: "bounced", emailQueueId: "q-2" },
       ],
     });
 
@@ -721,8 +721,8 @@ describe("emailAcknowledgmentLetters — partial multi-address success (Test 11)
   });
 });
 
-describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / DECISION-102", () => {
-  it("a fully blocked send does NOT leave the claim in place, reports 'blocked' (not 'emailed'), and the letter is re-sendable afterward — fails against pre-fix code, which collapsed sendEmail()'s blocked success:true into anySucceeded and kept the claim forever", async () => {
+describe("emailAcknowledgmentLetters — blocked (non-production) / not_delivered sends, B-67 / DECISION-102 / DECISION-103", () => {
+  it("a fully not_delivered send does NOT leave the claim in place, reports 'blocked' (not 'emailed'), and the letter is re-sendable afterward — regression-proofs the DECISION-103 migration off the email_queue read-back", async () => {
     const row = joinedRow({
       ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
       donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
@@ -731,17 +731,19 @@ describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / 
     // listGeneratableAcknowledgments()'s select.
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]); // claim succeeds
-    // sendBulkMemberEmail()'s per-recipient result on the blocked path is
-    // success: true (DECISION-085 — deliberate, unchanged here) with no
-    // `blocked` field forwarded (SendBulkMemberEmailResult doesn't carry
-    // one) — exactly what a real blocked send looks like from this
-    // module's vantage point.
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
-      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    // sendBulkMemberEmailForDurableClaim()'s per-recipient outcome on the
+    // blocked path — read DIRECTLY, no email_queue read-back needed
+    // (DECISION-103 closed that gap by propagating the field).
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [
+        {
+          to: "donor@example.com",
+          outcome: "not_delivered",
+          reason: "blocked_non_production",
+          emailQueueId: "q-1",
+        },
+      ],
     });
-    // The email_queue status lookup this fix adds: q-1 was persisted as
-    // blocked_non_production by sendEmail() itself.
-    mockDbState.selectQueue.push([{ id: "q-1", status: "blocked_non_production" }]);
 
     const results = await emailAcknowledgmentLetters(["ack-1"]);
 
@@ -768,10 +770,9 @@ describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / 
     // nothing is blocked (e.g. running in production) and it delivers.
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
-      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-2" }],
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", outcome: "delivered", emailQueueId: "q-2" }],
     });
-    mockDbState.selectQueue.push([]); // no blocked_non_production rows this time
 
     const retryResults = await emailAcknowledgmentLetters(["ack-1"]);
     expect(retryResults).toEqual([
@@ -779,7 +780,41 @@ describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / 
     ]);
   });
 
-  it("mixed batch, one address delivered + one blocked -> still 'emailed' (a donor who received it at any address received it, same rule as a delivered+failed mix), with the blocked address flagged per-address rather than reported as success", async () => {
+  it("the notAttempted/dev_no_api_key not_delivered reason is treated identically to blocked_non_production — the sixth DECISION-102 instance, closed by DECISION-103", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [
+        {
+          to: "donor@example.com",
+          outcome: "not_delivered",
+          reason: "dev_no_api_key",
+          emailQueueId: "q-1",
+        },
+      ],
+    });
+
+    const results = await emailAcknowledgmentLetters(["ack-1"]);
+
+    expect(results).toEqual([
+      {
+        ackId: "ack-1",
+        status: "blocked",
+        reason:
+          "delivery blocked outside production for all addresses — nothing was sent, not marked sent, safe to retry",
+      },
+    ]);
+    // Reverted, exactly as the blocked_non_production case is.
+    expect(mockDbState.updateCalls).toHaveLength(2);
+    expect(mockDbState.updateCalls[1].values).toMatchObject({ sentAt: null, sentVia: null });
+  });
+
+  it("mixed batch, one address delivered + one not_delivered -> still 'emailed' (a donor who received it at any address received it, same rule as a delivered+failed mix), with the blocked address flagged per-address rather than reported as success", async () => {
     const row = joinedRow({
       ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
       donor: donorRow({ id: "donor-1", emails: ["a@example.com", "b@example.com"] }),
@@ -787,16 +822,17 @@ describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / 
 
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
       results: [
-        { to: "a@example.com", success: true, emailQueueId: "q-1" },
-        { to: "b@example.com", success: true, emailQueueId: "q-2" }, // blocked, but reports success: true
+        { to: "a@example.com", outcome: "delivered", emailQueueId: "q-1" },
+        {
+          to: "b@example.com",
+          outcome: "not_delivered",
+          reason: "blocked_non_production",
+          emailQueueId: "q-2",
+        },
       ],
     });
-    mockDbState.selectQueue.push([
-      { id: "q-1", status: "sent" },
-      { id: "q-2", status: "blocked_non_production" },
-    ]);
 
     const results = await emailAcknowledgmentLetters(["ack-1"]);
 
@@ -815,7 +851,7 @@ describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / 
     expect(mockDbState.updateCalls).toHaveLength(1);
   });
 
-  it("mixed batch, zero delivered, one genuinely failed + one blocked -> reports 'failed' (not 'blocked') and reverts the claim exactly as a total genuine failure would, since a real send was attempted and rejected", async () => {
+  it("mixed batch, zero delivered, one genuinely failed + one not_delivered -> reports 'failed' (not 'blocked') and reverts the claim exactly as a total genuine failure would, since a real send was attempted and rejected", async () => {
     const row = joinedRow({
       ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
       donor: donorRow({ id: "donor-1", emails: ["a@example.com", "b@example.com"] }),
@@ -823,13 +859,17 @@ describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / 
 
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
       results: [
-        { to: "a@example.com", success: false, error: "bounced", emailQueueId: "q-1" },
-        { to: "b@example.com", success: true, emailQueueId: "q-2" }, // blocked
+        { to: "a@example.com", outcome: "failed", error: "bounced", emailQueueId: "q-1" },
+        {
+          to: "b@example.com",
+          outcome: "not_delivered",
+          reason: "blocked_non_production",
+          emailQueueId: "q-2",
+        },
       ],
     });
-    mockDbState.selectQueue.push([{ id: "q-2", status: "blocked_non_production" }]);
 
     const results = await emailAcknowledgmentLetters(["ack-1"]);
 
@@ -852,13 +892,11 @@ describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / 
 
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
       results: [
-        { to: "donor@example.com", success: false, error: "Resend rejected", emailQueueId: "q-1" },
+        { to: "donor@example.com", outcome: "failed", error: "Resend rejected", emailQueueId: "q-1" },
       ],
     });
-    // Not blocked — a genuinely attempted, rejected send.
-    mockDbState.selectQueue.push([{ id: "q-1", status: "failed" }]);
 
     const results = await emailAcknowledgmentLetters(["ack-1"]);
 
@@ -881,10 +919,9 @@ describe("emailAcknowledgmentLetters — blocked (non-production) sends, B-67 / 
 
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
-      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", outcome: "delivered", emailQueueId: "q-1" }],
     });
-    mockDbState.selectQueue.push([{ id: "q-1", status: "sent" }]);
 
     const results = await emailAcknowledgmentLetters(["ack-1"]);
 
@@ -918,10 +955,10 @@ describe("emailAcknowledgmentLetters — shared address across two donors (Test 
     // implementation regrouped results by looking up the "to" address
     // instead of the parallel meta[]/sendResults[] index, both acks would
     // incorrectly collapse onto the same outcome.
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
       results: [
-        { to: "shared@example.com", success: false, error: "mailbox full", emailQueueId: "q-1" },
-        { to: "shared@example.com", success: true, emailQueueId: "q-2" },
+        { to: "shared@example.com", outcome: "failed", error: "mailbox full", emailQueueId: "q-1" },
+        { to: "shared@example.com", outcome: "delivered", emailQueueId: "q-2" },
       ],
     });
 
@@ -942,8 +979,8 @@ describe("emailAcknowledgmentLetters — shared address across two donors (Test 
   });
 });
 
-describe("emailAcknowledgmentLetters — one sendBulkMemberEmail() call per batch (Test 13)", () => {
-  it("Test 13: calls sendBulkMemberEmail exactly once per invocation for a multi-ack batch, not once per ack", async () => {
+describe("emailAcknowledgmentLetters — one sendBulkMemberEmailForDurableClaim() call per batch (Test 13)", () => {
+  it("Test 13: calls sendBulkMemberEmailForDurableClaim exactly once per invocation for a multi-ack batch, not once per ack", async () => {
     const row1 = joinedRow({
       ack: ackRow({ id: "ack-1", letterText: "Letter 1" }),
       donor: donorRow({ id: "donor-1", emails: ["a@example.com"] }),
@@ -961,18 +998,18 @@ describe("emailAcknowledgmentLetters — one sendBulkMemberEmail() call per batc
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
     mockDbState.updateReturningQueue.push([{ id: "ack-2" }]);
     mockDbState.updateReturningQueue.push([{ id: "ack-3" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
       results: [
-        { to: "a@example.com", success: true, emailQueueId: "q-1" },
-        { to: "b@example.com", success: true, emailQueueId: "q-2" },
-        { to: "c@example.com", success: true, emailQueueId: "q-3" },
+        { to: "a@example.com", outcome: "delivered", emailQueueId: "q-1" },
+        { to: "b@example.com", outcome: "delivered", emailQueueId: "q-2" },
+        { to: "c@example.com", outcome: "delivered", emailQueueId: "q-3" },
       ],
     });
 
     await emailAcknowledgmentLetters(["ack-1", "ack-2", "ack-3"]);
 
-    expect(sendBulkMemberEmail).toHaveBeenCalledTimes(1);
-    const call = vi.mocked(sendBulkMemberEmail).mock.calls[0][0];
+    expect(sendBulkMemberEmailForDurableClaim).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(sendBulkMemberEmailForDurableClaim).mock.calls[0][0];
     expect(call.recipients).toHaveLength(3);
   });
 });
@@ -986,13 +1023,13 @@ describe("emailAcknowledgmentLetters — envelope (from/subject/replyTo/bcc) and
 
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
-      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", outcome: "delivered", emailQueueId: "q-1" }],
     });
 
     await emailAcknowledgmentLetters(["ack-1"]);
 
-    const call = vi.mocked(sendBulkMemberEmail).mock.calls[0][0];
+    const call = vi.mocked(sendBulkMemberEmailForDurableClaim).mock.calls[0][0];
     expect(call.from).toBe("treasurer@westervillelions.org");
     expect(call.subject).toBe(
       "Your Official Gift Acknowledgment — Thank You for Your Generosity",
@@ -1013,14 +1050,14 @@ describe("emailAcknowledgmentLetters — envelope (from/subject/replyTo/bcc) and
 
     mockDbState.selectQueue.push([row]);
     mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
-    vi.mocked(sendBulkMemberEmail).mockResolvedValueOnce({
-      results: [{ to: "donor@example.com", success: true, emailQueueId: "q-1" }],
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", outcome: "delivered", emailQueueId: "q-1" }],
     });
 
     const results = await emailAcknowledgmentLetters(["ack-1"]);
 
     expect(results[0].status).toBe("emailed");
-    const call = vi.mocked(sendBulkMemberEmail).mock.calls[0][0];
+    const call = vi.mocked(sendBulkMemberEmailForDurableClaim).mock.calls[0][0];
     expect(call.replyTo).toBeUndefined();
     expect(call.bcc).toBeUndefined();
   });

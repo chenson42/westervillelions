@@ -40,7 +40,7 @@ import {
   type MonthlyStatement,
 } from "@/lib/financial-report-queries";
 import { resolveTreasurer } from "@/lib/board-positions";
-import { sendEmail } from "@/lib/email";
+import { sendEmailForDurableClaim } from "@/lib/email-durable-claim";
 import { escapeHtml, getAppUrl, getFromEmail } from "@/lib/email-compose";
 import { BOARD_EMAIL } from "@/lib/club-contacts";
 
@@ -420,23 +420,25 @@ export type SendReportResult =
  *      unlike the five tolerant treasury-CC call sites in board-positions.ts,
  *      the Treasurer's name is the statement's signature here, not an
  *      optional courtesy copy.
- *   6. Send via sendEmail() (never Resend directly, never a second HTML
- *      renderer of the statement's line items).
- *   7. If sendEmail() reports `blocked: true` (the non-production deny-by-
- *      default guard refused delivery — src/lib/email-guard.ts), treat it as
- *      NOT sent: write a `success: false` row (never a `success: true`
- *      claim) and return `blocked_non_production`, distinct from
- *      `send_failed`. sendEmail() itself still returns `{ success: true }`
- *      for this case BY DESIGN (DECISION-085 — callers and their tests must
- *      behave exactly as in production) and that contract is untouched; the
- *      `blocked` field is what lets this caller, which durably records a
- *      claim, tell "delivered" apart from "reported success because nothing
- *      was ever attempted." Getting this wrong previously meant: any
- *      developer who exercised this feature once locally against `board@`
- *      (always blocked outside production, allowlist or not) wrote a
- *      permanent `success: true` claim row, and because the unique index
- *      covers `success = true` rows, that exact (entity, month, fingerprint)
- *      could never be tested as a genuine send again.
+ *   6. Send via sendEmailForDurableClaim() (src/lib/email-durable-claim.ts —
+ *      never sendEmail() directly, never Resend directly, never a second
+ *      HTML renderer of the statement's line items). This function persists
+ *      a durable success/failure claim, so DECISION-103 requires the
+ *      durable-claim entrypoint: its `DurableSendResult` has no bare
+ *      `success` field, so treating `not_delivered` as delivered is a
+ *      compile error, not a reviewable mistake.
+ *   7. Branch on the exhaustive three-way `outcome` (DECISION-102/103):
+ *      `not_delivered` (the non-production deny-by-default guard refused
+ *      delivery, or no RESEND_API_KEY is configured outside production —
+ *      src/lib/email-guard.ts) is treated as NOT sent: write a
+ *      `success: false` row (never a `success: true` claim) and return
+ *      `blocked_non_production`, distinct from `send_failed`. Getting this
+ *      wrong previously meant: any developer who exercised this feature once
+ *      locally against `board@` (always blocked outside production,
+ *      allowlist or not) wrote a permanent `success: true` claim row, and
+ *      because the unique index covers `success = true` rows, that exact
+ *      (entity, month, fingerprint) could never be tested as a genuine send
+ *      again.
  *   8. Claim AFTER the send attempt, success or failure alike (DECISION-101)
  *      — a row is written either way, so a failure is visible on the panel
  *      and a retry after failure is never blocked (the unique index only
@@ -506,7 +508,7 @@ export async function sendMonthlyReportToBoard(
   const subjectBase = `${entity.shortName ?? entity.name} Financial Statement — ${monthLabelFor(month)}`;
   const subject = corrected ? `Corrected: ${subjectBase}` : subjectBase;
 
-  const sendResult = await sendEmail({
+  const sendResult = await sendEmailForDurableClaim({
     to: BOARD_EMAIL,
     from: getFromEmail("Westerville Lions Club"),
     replyTo: treasurer.email,
@@ -514,83 +516,104 @@ export async function sendMonthlyReportToBoard(
     html,
   });
 
-  if (sendResult.blocked) {
-    // The non-production deny-by-default guard refused delivery (board@ is
-    // a club distribution list — src/lib/email-guard.ts blocks it
-    // unconditionally, allowlist or not). sendEmail() itself reports
-    // `success: true` for this case by design (DECISION-085); this function
-    // must NOT let that become a durable `success: true` claim row, or the
-    // partial unique index on (entity_id, month_end, totals_fingerprint)
-    // WHERE success would permanently block ever testing a real send of
-    // this exact statement again. Write an honest `success: false` row
-    // instead — never conflicts with the partial index, so the statement
-    // stays fully re-sendable — and report a distinct reason so the panel
-    // can say "blocked (non-production)" rather than a generic failure.
-    const blockedError =
-      "Blocked — outbound email is disabled outside production (EMAIL_DEV_ALLOWLIST). Nothing was delivered.";
-    await db.insert(financialReportSends).values({
-      entityId,
-      fundId: fund.id,
-      monthEnd: bounds.monthEnd,
-      totalsFingerprint: fingerprint,
-      sentByUserId,
-      signedAsMemberId: treasurer.memberId,
-      emailQueueId: sendResult.emailQueueId ?? null,
-      success: false,
-      error: blockedError,
-    });
-    return { ok: false, reason: "blocked_non_production", detail: blockedError };
+  switch (sendResult.outcome) {
+    case "not_delivered": {
+      // The non-production deny-by-default guard refused delivery (board@
+      // is a club distribution list — src/lib/email-guard.ts blocks it
+      // unconditionally, allowlist or not), or no RESEND_API_KEY is
+      // configured outside production. Either way, nothing was handed to
+      // Resend. This function must NOT let that become a durable
+      // `success: true` claim row, or the partial unique index on
+      // (entity_id, month_end, totals_fingerprint) WHERE success would
+      // permanently block ever testing a real send of this exact statement
+      // again. Write an honest `success: false` row instead — never
+      // conflicts with the partial index, so the statement stays fully
+      // re-sendable — and report a distinct reason so the panel can say
+      // "blocked (non-production)" rather than a generic failure.
+      const blockedError =
+        "Blocked — outbound email is disabled outside production (EMAIL_DEV_ALLOWLIST). Nothing was delivered.";
+      await db.insert(financialReportSends).values({
+        entityId,
+        fundId: fund.id,
+        monthEnd: bounds.monthEnd,
+        totalsFingerprint: fingerprint,
+        sentByUserId,
+        signedAsMemberId: treasurer.memberId,
+        emailQueueId: sendResult.emailQueueId ?? null,
+        success: false,
+        error: blockedError,
+      });
+      return { ok: false, reason: "blocked_non_production", detail: blockedError };
+    }
+
+    case "failed": {
+      // No conflict possible — the partial unique index only covers
+      // success = true rows, so a failed attempt's row always inserts.
+      const baseRow: NewFinancialReportSend = {
+        entityId,
+        fundId: fund.id,
+        monthEnd: bounds.monthEnd,
+        totalsFingerprint: fingerprint,
+        sentByUserId,
+        signedAsMemberId: treasurer.memberId,
+        emailQueueId: sendResult.emailQueueId ?? null,
+        success: false,
+        error: sendResult.error,
+      };
+      await db.insert(financialReportSends).values(baseRow);
+      return { ok: false, reason: "send_failed", detail: sendResult.error };
+    }
+
+    case "delivered": {
+      const baseRow: NewFinancialReportSend = {
+        entityId,
+        fundId: fund.id,
+        monthEnd: bounds.monthEnd,
+        totalsFingerprint: fingerprint,
+        sentByUserId,
+        signedAsMemberId: treasurer.memberId,
+        emailQueueId: sendResult.emailQueueId ?? null,
+        success: true,
+        error: null,
+      };
+
+      // Claim: INSERT ... ON CONFLICT (entity_id, month_end, totals_fingerprint)
+      // WHERE success DO NOTHING RETURNING id. Two concurrent successful sends
+      // for the same (entity, month, fingerprint) both reach this point (an
+      // acceptable, documented cost — at most one duplicate email in the
+      // double-click window, never a duplicate DB claim); only the first
+      // INSERT wins the partial unique index, the second returns zero rows.
+      const inserted = await db
+        .insert(financialReportSends)
+        .values(baseRow)
+        .onConflictDoNothing({
+          target: [
+            financialReportSends.entityId,
+            financialReportSends.monthEnd,
+            financialReportSends.totalsFingerprint,
+          ],
+          where: sql`${financialReportSends.success} = true`,
+        })
+        .returning({ id: financialReportSends.id, sentAt: financialReportSends.sentAt });
+
+      if (inserted.length === 0) {
+        // Lost the race to a concurrent successful send for the identical
+        // fingerprint. The email already went out (unavoidable), but the
+        // claim itself is exactly what already_sent means to a caller.
+        return { ok: false, reason: "already_sent" };
+      }
+
+      return {
+        ok: true,
+        emailQueueId: sendResult.emailQueueId,
+        sentAt: inserted[0].sentAt.toISOString(),
+        corrected,
+      };
+    }
+
+    default: {
+      const _exhaustive: never = sendResult;
+      throw new Error(`Unhandled send outcome: ${JSON.stringify(_exhaustive)}`);
+    }
   }
-
-  const baseRow: NewFinancialReportSend = {
-    entityId,
-    fundId: fund.id,
-    monthEnd: bounds.monthEnd,
-    totalsFingerprint: fingerprint,
-    sentByUserId,
-    signedAsMemberId: treasurer.memberId,
-    emailQueueId: sendResult.emailQueueId ?? null,
-    success: sendResult.success,
-    error: sendResult.error ?? null,
-  };
-
-  if (!sendResult.success) {
-    // No conflict possible — the partial unique index only covers
-    // success = true rows, so a failed attempt's row always inserts.
-    await db.insert(financialReportSends).values(baseRow);
-    return { ok: false, reason: "send_failed", detail: sendResult.error };
-  }
-
-  // Claim: INSERT ... ON CONFLICT (entity_id, month_end, totals_fingerprint)
-  // WHERE success DO NOTHING RETURNING id. Two concurrent successful sends
-  // for the same (entity, month, fingerprint) both reach this point (an
-  // acceptable, documented cost — at most one duplicate email in the
-  // double-click window, never a duplicate DB claim); only the first
-  // INSERT wins the partial unique index, the second returns zero rows.
-  const inserted = await db
-    .insert(financialReportSends)
-    .values(baseRow)
-    .onConflictDoNothing({
-      target: [
-        financialReportSends.entityId,
-        financialReportSends.monthEnd,
-        financialReportSends.totalsFingerprint,
-      ],
-      where: sql`${financialReportSends.success} = true`,
-    })
-    .returning({ id: financialReportSends.id, sentAt: financialReportSends.sentAt });
-
-  if (inserted.length === 0) {
-    // Lost the race to a concurrent successful send for the identical
-    // fingerprint. The email already went out (unavoidable), but the claim
-    // itself is exactly what already_sent means to a caller.
-    return { ok: false, reason: "already_sent" };
-  }
-
-  return {
-    ok: true,
-    emailQueueId: sendResult.emailQueueId,
-    sentAt: inserted[0].sentAt.toISOString(),
-    corrected,
-  };
 }

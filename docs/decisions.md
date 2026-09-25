@@ -28,6 +28,76 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-103: Durable-claim email callers get a second, narrower helper pair with no `success` field, instead of a discriminated union across all `sendEmail()` call sites
+
+**Status:** Resolved — implemented and shipped (B-70)
+**Date:** 2026-09-25
+
+**Decision:**
+
+To close B-70 (`docs/backlog.md`, from DECISION-102), a caller that persists a durable, hard-to-
+reverse "this was sent" claim must go through one of two new functions —
+`sendEmailForDurableClaim()` / `sendBulkMemberEmailForDurableClaim()` in a new file,
+`src/lib/email-durable-claim.ts` — rather than reading `SendEmailResult.blocked` (or the newly
+added `SendEmailResult.notAttempted`) off `sendEmail()`/`sendBulkMemberEmail()` directly. The new
+functions return a discriminated `DurableSendOutcome` (`delivered` / `failed` / `not_delivered`)
+with **no `success` boolean anywhere in the type** — the field a caller could previously read and
+stop at simply does not exist on this type, so a durable-claim caller that adopts it cannot
+compile `if (result.success)`. `sendEmail()` and `sendBulkMemberEmail()` themselves are unchanged
+in their existing contract (`success`, `error?`, `emailQueueId`, `blocked?`) and gain only one new
+optional field each (`notAttempted?: true`, covering the `dev_no_api_key` path, which is exactly
+as much a non-delivery as `blocked` is and was not covered by anything before this). The two known
+durable-claim callers (`sendMonthlyReportToBoard()` in `src/lib/financial-report-send.ts`,
+`emailAcknowledgmentLetters()` in `src/lib/ledger-acknowledgment-letter-queries.ts`) migrate to the
+new functions; the other ~16 `sendEmail()`/`sendBulkMemberEmail()` call sites are untouched.
+
+**Rationale:**
+
+The alternative B-70 named first — a discriminated union replacing `SendEmailResult` everywhere —
+would make the mistake unrepresentable for every caller, not just the two that need it, but at the
+cost of a mechanical rewrite across ~18 call sites (most with no durable claim and no bug today) in
+code that was stabilized, incident by incident, over the preceding day. DECISION-085 requires
+`sendEmail()` to keep returning success-shaped results so ordinary callers and their tests behave
+identically to production; a union removing `success` outright would force rewriting the 17
+guardrail tests and 4 no-API-key tests that assert on it directly, for no safety benefit to the 16
+sites that never write a durable claim. A lint rule (B-70's option (c)) would generalize better to
+a future, unknown third caller, but a type-aware custom ESLint rule is a real ongoing tooling
+investment disproportionate to a two-caller problem, and a text-based scan only discourages, it
+doesn't prevent — easily defeated by a rename or a level of indirection. The chosen shape gets full
+unrepresentability for the callers that matter today, zero churn for the callers that don't, and
+leaves the harder, more general fix (a real lint rule) as the correct next step *if and when* a
+third durable-claim caller appears — not built speculatively against a problem that doesn't exist
+yet.
+
+The design additionally closes a previously-undiscovered sixth instance of DECISION-102's defect
+shape: `sendEmail()`'s `dev_no_api_key` branch returns `success: true` with no signal at all that
+nothing was attempted. Both current durable-claim callers happen to be safe from this today, but
+only because of an unstated coincidence of their recipients (`BOARD_EMAIL` is a club distribution
+list that can never be allowlisted; acknowledgment sends always go through the bulk path, which
+forces the block unconditionally) — not because anything about the type or the callers' logic
+required it. `notAttempted?: true` and `DurableSendOutcome`'s `not_delivered` variant cover this by
+construction rather than by coincidence.
+
+**Impact:**
+
+- New file `src/lib/email-durable-claim.ts`: `DurableSendOutcome`, `DurableSendResult`,
+  `sendEmailForDurableClaim()`, `sendBulkMemberEmailForDurableClaim()`.
+- `src/lib/email.ts`: `SendEmailOptions` and `SendEmailResult` become exported (were file-private);
+  `SendEmailResult` and `SendBulkMemberEmailResult`'s per-recipient shape each gain
+  `notAttempted?: true`, set on the `dev_no_api_key` path. No change to any existing field's
+  meaning, to `email_queue` writes, or to `sendEmail()`/`sendBulkMemberEmail()`'s call signature.
+- `src/lib/financial-report-send.ts` and `src/lib/ledger-acknowledgment-letter-queries.ts` migrate
+  to the new functions; the ack-letter file's `email_queue` read-back workaround (B-67) is deleted
+  entirely, replaced by direct field propagation — closing the "untested implicit coupling" the
+  analyst flagged in that file's Phase 6 review, rather than merely pinning it with a test.
+- Full design: `docs/work-log/2026-09-25-send-result-type.md`. Implemented by api-developer,
+  verified by qa (PASS), shipped 2026-09-25 (Phase 6: SHIP WITH NOTES).
+- Does **not** absorb B-68 (the separate `sendEmail()`-vs-retry-route error-classification
+  duplication) — different layer (inside a single send attempt, not what a caller does with the
+  result), left as its own ticket.
+
+---
+
 ## DECISION-102: Send-status honesty is a two-layer invariant — a send helper must not report delivery it didn't get, and a durable "sent" claim must not collapse `blocked` into `success`
 
 **Status:** Resolved

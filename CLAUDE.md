@@ -528,6 +528,19 @@ A loop-back from any later phase returns to the **earliest** phase where the fai
 | 5 (qa) | Reproduces the original bug on the pre-fix code, then confirms the fix removes the failure. |
 | 6 (analyst) | Confirms the bug no longer manifests for the user. |
 
+**Durable-claim exception.** A change that adds, modifies, or converts a code path into one that
+writes a durable "this was sent" claim — a permanent `sentAt`, a partial-unique-indexed success row,
+an append-only history row recording a message as sent, or any equivalent — is **never** eligible for
+a Phase 2 skip or an abbreviated Phase 3, regardless of how small the diff is. Phase 2 must confirm
+the change uses `sendEmailForDurableClaim()` / `sendBulkMemberEmailForDurableClaim()`
+(DECISION-102/103); Phase 3 must name which of the three outcomes reverts the claim.
+
+This is phrased as a standing exception rather than a judgment call on purpose. The rule it backstops
+("don't skip review when you're touching this invariant") is circular — the person who would skip it
+is precisely the one who didn't notice they were touching it. Recognising *"am I writing a durable
+sent-claim?"* requires no knowledge of DECISION-102. Six same-shaped defects shipped in 24 hours on
+2026-09-25, several through exactly this seam; one of them cost a month of undelivered club mail.
+
 **Skipping a phase requires explicit notation in the work-log. No silent skips.** Even a trivial bug fix gets a minimal work-log stub (slug, one-line root cause, reproduction steps, which phases were skipped and why) — the work-log is the pipeline's source of truth and an untracked fix is invisible to the next session.
 
 ### Per-Feature Tracking
@@ -703,13 +716,27 @@ Two rules, not one, because the defects sit at two layers:
    report `sent`/`success` only for a message actually handed to the provider and accepted with
    no `error`.
 2. **Any caller writing a durable, hard-to-reverse "sent" claim** (a permanent `sentAt`, a
-   partial-unique-indexed success row, etc.) must check `SendEmailResult.blocked`, not just
-   `success` — `success: true` on a blocked send is correct and load-bearing (see above) for
-   ordinary callers, but a trap for one holding a permanent claim.
+   partial-unique-indexed success row, etc.) must use `sendEmailForDurableClaim()` /
+   `sendBulkMemberEmailForDurableClaim()` (`src/lib/email-durable-claim.ts`, DECISION-103)
+   instead of calling `sendEmail()`/`sendBulkMemberEmail()` directly. Those two functions return a
+   `DurableSendResult` with **no bare `success` field** — `if (result.success)` is a `tsc`
+   compile error, not a reviewable mistake, and an exhaustive `switch (result.outcome)` over
+   `"delivered" | "failed" | "not_delivered"` is required (a `never`-check catches a missing
+   branch). `success: true` on a blocked or no-API-key send is correct and load-bearing on
+   `sendEmail()` itself (rule 1, above) for ordinary callers, but a trap for one holding a
+   permanent claim — this is exactly the shape that shipped twice
+   (docs/work-log/2026-09-25-financial-report-auto-send.md,
+   docs/work-log/2026-09-25-ack-letter-blocked-claim.md).
 
-Enforcement is review-only today (`blocked` is optional, nothing type- or lint-level requires
-checking it — backlog B-70). Full incident detail and the DECISION-085 reconciliation are in
-`docs/decisions.md` DECISION-102.
+Enforcement is now type-level for the two known durable-claim callers
+(`sendMonthlyReportToBoard()` in `src/lib/financial-report-send.ts`,
+`emailAcknowledgmentLetters()` in `src/lib/ledger-acknowledgment-letter-queries.ts`), which
+migrated to the new entrypoints under DECISION-103 (B-70). **Before adding a third durable-claim
+caller, use `sendEmailForDurableClaim()`/`sendBulkMemberEmailForDurableClaim()` from the start** —
+a brand-new caller that calls `sendEmail()`/`sendBulkMemberEmail()` directly and writes its own
+durable claim is still able to repeat this defect; the type only closes the gap for callers that
+adopt it. Full incident detail and the DECISION-085 reconciliation are in `docs/decisions.md`
+DECISION-102 and DECISION-103.
 
 ### No Personal Data in the Repository
 

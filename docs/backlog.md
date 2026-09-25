@@ -304,8 +304,9 @@ was deleted on the strength of this review alone.
 
 ## Soon
 
-- [ ] **B-70 — No type/lint enforcement that a durable-claim caller checks `SendEmailResult.blocked`.**
-  (added 2026-09-25, from `docs/decisions.md` DECISION-102; priority: should-do) DECISION-102
+- [x] **B-70 — No type/lint enforcement that a durable-claim caller checks `SendEmailResult.blocked`.**
+  (added 2026-09-25, resolved 2026-09-25 — see DECISION-103, `docs/work-log/2026-09-25-send-result-type.md`,
+  Phase 6: SHIP WITH NOTES) DECISION-102
   requires any caller writing a durable, hard-to-reverse "this was sent" claim to branch on
   `sendEmail()`'s full three-way outcome (delivered / failed / blocked), not on the boolean
   `success` field alone — `blocked` is optional on `SendEmailResult` and nothing today stops a new
@@ -327,6 +328,19 @@ was deleted on the strength of this review alone.
   `SendBulkMemberEmailResult` belongs in this item's scope: the point of the discriminated-union
   redesign is that a caller *cannot* fail to handle the third outcome, and a wrapper type that
   silently drops it defeats that at the first hop.
+
+  **Phase 3 design complete 2026-09-25 — `docs/work-log/2026-09-25-send-result-type.md`,
+  DECISION-103.** Chose option (b): a second, narrower helper pair
+  (`sendEmailForDurableClaim()` / `sendBulkMemberEmailForDurableClaim()`, new file
+  `src/lib/email-durable-claim.ts`) whose return type has no bare `success` field at all, rather
+  than rewriting `SendEmailResult` everywhere. `sendEmail()`/`sendBulkMemberEmail()` keep their
+  exact existing contract (DECISION-085 holds, the 17+4 guardrail tests are untouched); the other
+  ~16 call sites see zero churn. `SendBulkMemberEmailResult` gains the `blocked` propagation this
+  extension asked for, plus a further fix found during design: a `notAttempted` field for the
+  `dev_no_api_key` path, a sixth latent instance of the same defect shape that neither `blocked`
+  nor B-67's read-back workaround covered. The two known durable-claim callers migrate to the new
+  functions; the ack-letter DB read-back workaround is deleted, not just pinned. Implementer:
+  api-developer. Does not absorb B-68 (separate layer, separately filed).
 
 - [x] **B-67 — A blocked (non-production) send still satisfies the acknowledgment-letter claim.**
   (added 2026-09-25, found while fixing the same defect in `financial-report-send.ts`; priority: should-do)

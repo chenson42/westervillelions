@@ -16,8 +16,12 @@
  *   - monthBounds()/MEMBER_EXPOSED_FUND_KINDS are the REAL implementations
  *     (imported via importOriginal) since they're pure and this file's
  *     month-boundary logic depends on their real behavior.
- *   - @/lib/board-positions (resolveTreasurer) and @/lib/email (sendEmail)
- *     are mocked.
+ *   - @/lib/board-positions (resolveTreasurer) and
+ *     @/lib/email-durable-claim (sendEmailForDurableClaim) are mocked —
+ *     financial-report-send.ts migrated to the durable-claim entrypoint
+ *     under DECISION-103/B-70; the assertions below are unchanged from
+ *     before that migration except for the mock target and reading
+ *     `outcome` instead of `blocked`/`success` on the mocked return value.
  *   - @/lib/db is mocked at the query-builder level for the two direct
  *     queries this file issues against financial_report_sends (a select
  *     history/latest-successful-send lookup, and the claim insert) — same
@@ -81,7 +85,7 @@ vi.mock("@/lib/financial-report-queries", async (importOriginal) => {
 });
 
 vi.mock("@/lib/board-positions", () => ({ resolveTreasurer: vi.fn() }));
-vi.mock("@/lib/email", () => ({ sendEmail: vi.fn() }));
+vi.mock("@/lib/email-durable-claim", () => ({ sendEmailForDurableClaim: vi.fn() }));
 
 import {
   computeTotalsFingerprint,
@@ -92,7 +96,7 @@ import {
 import { getEntities, getEntityById, getFunds } from "@/lib/ledger-queries";
 import { getLatestOpenMonthForEntity, getMonthlyStatement } from "./financial-report-queries";
 import { resolveTreasurer } from "@/lib/board-positions";
-import { sendEmail } from "@/lib/email";
+import { sendEmailForDurableClaim } from "@/lib/email-durable-claim";
 import type { MonthlyStatement } from "./financial-report-queries";
 import type { LedgerEntity, LedgerFund } from "./db/schema";
 
@@ -105,7 +109,7 @@ beforeEach(() => {
   vi.mocked(getLatestOpenMonthForEntity).mockReset();
   vi.mocked(getMonthlyStatement).mockReset();
   vi.mocked(resolveTreasurer).mockReset();
-  vi.mocked(sendEmail).mockReset();
+  vi.mocked(sendEmailForDurableClaim).mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -437,7 +441,7 @@ describe("sendMonthlyReportToBoard", () => {
     const result = await sendMonthlyReportToBoard("entity-1", CUTOFF_MONTH, "user-1");
 
     expect(result).toEqual({ ok: false, reason: "treasurer_unresolved", detail: "none" });
-    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendEmailForDurableClaim).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -447,7 +451,7 @@ describe("sendMonthlyReportToBoard", () => {
   it("on a successful send, writes a success:true claim row and returns ok:true", async () => {
     setupHappyPath();
     mockDbState.selectQueue.push([]); // getLatestSuccessfulSend: never sent
-    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-1" });
+    vi.mocked(sendEmailForDurableClaim).mockResolvedValue({ outcome: "delivered", emailQueueId: "eq-1" });
     mockDbState.insertReturningQueue.push([
       { id: "row-1", sentAt: new Date("2026-09-26T00:00:00.000Z") },
     ]);
@@ -476,9 +480,9 @@ describe("sendMonthlyReportToBoard", () => {
   it("on a blocked (non-production) send, does NOT write a success:true row and reports blocked_non_production, not send_failed", async () => {
     setupHappyPath();
     mockDbState.selectQueue.push([]); // getLatestSuccessfulSend: never sent
-    vi.mocked(sendEmail).mockResolvedValue({
-      success: true,
-      blocked: true,
+    vi.mocked(sendEmailForDurableClaim).mockResolvedValue({
+      outcome: "not_delivered",
+      reason: "blocked_non_production",
       emailQueueId: "eq-blocked",
     });
 
@@ -503,9 +507,9 @@ describe("sendMonthlyReportToBoard", () => {
     // row (a blocked send writes success:false, so it can never appear as a
     // "prior successful send" for this lookup).
     mockDbState.selectQueue.push([]);
-    vi.mocked(sendEmail).mockResolvedValue({
-      success: true,
-      blocked: true,
+    vi.mocked(sendEmailForDurableClaim).mockResolvedValue({
+      outcome: "not_delivered",
+      reason: "blocked_non_production",
       emailQueueId: "eq-blocked-1",
     });
     const first = await sendMonthlyReportToBoard("entity-1", CUTOFF_MONTH, "user-1");
@@ -519,7 +523,7 @@ describe("sendMonthlyReportToBoard", () => {
     // still sees nothing (the first call never wrote success:true), so this
     // is free to actually claim and succeed — never "already_sent".
     mockDbState.selectQueue.push([]);
-    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-real-send" });
+    vi.mocked(sendEmailForDurableClaim).mockResolvedValue({ outcome: "delivered", emailQueueId: "eq-real-send" });
     mockDbState.insertReturningQueue.push([
       { id: "row-real", sentAt: new Date("2026-09-28T00:00:00.000Z") },
     ]);
@@ -537,8 +541,8 @@ describe("sendMonthlyReportToBoard", () => {
   it("on a failed send, writes a success:false row (not a missing row) and returns send_failed — never claimed", async () => {
     setupHappyPath();
     mockDbState.selectQueue.push([]); // getLatestSuccessfulSend: never sent
-    vi.mocked(sendEmail).mockResolvedValue({
-      success: false,
+    vi.mocked(sendEmailForDurableClaim).mockResolvedValue({
+      outcome: "failed",
       error: "resend down",
       emailQueueId: "eq-2",
     });
@@ -554,7 +558,7 @@ describe("sendMonthlyReportToBoard", () => {
     // failure never appears here, so this returns [] exactly as it would
     // for a never-attempted month.
     mockDbState.selectQueue.push([]);
-    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-3" });
+    vi.mocked(sendEmailForDurableClaim).mockResolvedValue({ outcome: "delivered", emailQueueId: "eq-3" });
     mockDbState.insertReturningQueue.push([
       { id: "row-2", sentAt: new Date("2026-09-26T01:00:00.000Z") },
     ]);
@@ -578,15 +582,15 @@ describe("sendMonthlyReportToBoard", () => {
     const result = await sendMonthlyReportToBoard("entity-1", CUTOFF_MONTH, "user-1");
 
     expect(result).toEqual({ ok: false, reason: "already_sent" });
-    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendEmailForDurableClaim).not.toHaveBeenCalled();
   });
 
-  it("concurrent double-click: a losing insert (0 rows from ON CONFLICT) returns already_sent even though its own sendEmail succeeded", async () => {
+  it("concurrent double-click: a losing insert (0 rows from ON CONFLICT) returns already_sent even though its own send succeeded", async () => {
     setupHappyPath();
     // Both requests' pre-check ran before either committed — this call's
     // own pre-check also sees no prior successful row.
     mockDbState.selectQueue.push([]);
-    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-4" });
+    vi.mocked(sendEmailForDurableClaim).mockResolvedValue({ outcome: "delivered", emailQueueId: "eq-4" });
     // The other request's INSERT won the partial unique index; this one's
     // ON CONFLICT ... DO NOTHING returns zero rows.
     mockDbState.insertReturningQueue.push([]);
@@ -601,7 +605,7 @@ describe("sendMonthlyReportToBoard", () => {
     mockDbState.selectQueue.push([
       { totalsFingerprint: "a-stale-fingerprint", sentAt: new Date("2026-09-20T00:00:00.000Z") },
     ]);
-    vi.mocked(sendEmail).mockResolvedValue({ success: true, emailQueueId: "eq-5" });
+    vi.mocked(sendEmailForDurableClaim).mockResolvedValue({ outcome: "delivered", emailQueueId: "eq-5" });
     mockDbState.insertReturningQueue.push([
       { id: "row-3", sentAt: new Date("2026-09-27T00:00:00.000Z") },
     ]);

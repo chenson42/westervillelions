@@ -18,7 +18,9 @@ export interface EmailAttachment {
   contentType?: string;
 }
 
-interface SendEmailOptions {
+// Exported (was file-private) so src/lib/email-durable-claim.ts can name it
+// in its own signatures. No change to the shape or meaning of any field.
+export interface SendEmailOptions {
   to: string;
   from: string;
   subject: string;
@@ -35,7 +37,18 @@ interface SendEmailOptions {
   _bulkMemberSend?: boolean;
 }
 
-interface SendEmailResult {
+// Exported (was file-private) so src/lib/email-durable-claim.ts can name it.
+// Shape unchanged except the addition of `notAttempted` below — DECISION-103.
+//
+// IMPORTANT FOR ANY CALLER THAT WILL PERSIST A DURABLE "THIS WAS SENT" CLAIM
+// (an append-only decision history row, a partial-unique-indexed "success"
+// row, an atomic sentAt/sentVia claim, or any future equivalent —
+// DECISION-102 rule 2): do not read `success`/`blocked`/`notAttempted` off
+// this type directly. Use `sendEmailForDurableClaim()` /
+// `sendBulkMemberEmailForDurableClaim()` from
+// src/lib/email-durable-claim.ts instead, whose result type has no bare
+// `success` field to accidentally stop at. See DECISION-103.
+export interface SendEmailResult {
   success: boolean;
   error?: string;
   /** The persisted email_queue row id — present whether the send succeeded,
@@ -63,6 +76,21 @@ interface SendEmailResult {
    * local test. See that file for the consuming logic.
    */
   blocked?: true;
+  /**
+   * NEW (DECISION-103, B-70). Set only on the `dev_no_api_key` branch below
+   * — non-production, no RESEND_API_KEY configured, recipient already
+   * cleared the deny-by-default guard above. As undelivered as `blocked` is,
+   * for exactly the same reason (nothing was handed to the Resend SDK), but
+   * kept as its own field rather than folded into `blocked` so that field's
+   * existing, precise contract ("set only on the blocked_non_production
+   * path") stays literally true for every reader who already trusts it.
+   * A durable-claim caller must treat `blocked` and `notAttempted`
+   * identically — see src/lib/email-durable-claim.ts, the only place that
+   * needs to know that. Every existing caller destructures only
+   * `{ success, error }` and ignores this field, so nothing about their
+   * behavior changes.
+   */
+  notAttempted?: true;
 }
 
 const MAX_ATTEMPTS = 3;
@@ -223,7 +251,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       .update(emailQueue)
       .set({ status: "dev_no_api_key", attempts: 1 })
       .where(eq(emailQueue.id, queued.id));
-    return { success: true, emailQueueId: queued.id };
+    return { success: true, emailQueueId: queued.id, notAttempted: true };
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
@@ -343,7 +371,21 @@ export interface SendBulkMemberEmailOptions {
 }
 
 export interface SendBulkMemberEmailResult {
-  results: Array<{ to: string; success: boolean; error?: string; emailQueueId: string }>;
+  results: Array<{
+    to: string;
+    success: boolean;
+    error?: string;
+    emailQueueId: string;
+    /** Mirrors SendEmailResult.blocked 1:1 — forwarded from this recipient's
+     *  own sendEmail() call. Added for DECISION-103/B-70: previously this
+     *  shape did not forward `blocked` at all, forcing
+     *  emailAcknowledgmentLetters() to infer it from an email_queue
+     *  read-back instead. See src/lib/email-durable-claim.ts. */
+    blocked?: true;
+    /** Mirrors SendEmailResult.notAttempted 1:1 — see that field's doc
+     *  comment. */
+    notAttempted?: true;
+  }>;
 }
 
 /**
@@ -382,6 +424,8 @@ export async function sendBulkMemberEmail(
       success: result.success,
       error: result.error,
       emailQueueId: result.emailQueueId,
+      ...(result.blocked ? { blocked: true as const } : {}),
+      ...(result.notAttempted ? { notAttempted: true as const } : {}),
     });
   }
   return { results };

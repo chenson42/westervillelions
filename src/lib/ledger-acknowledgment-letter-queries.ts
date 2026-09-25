@@ -27,7 +27,6 @@ import {
   ledgerDonors,
   ledgerLetterTemplates,
   ledgerAuditLog,
-  emailQueue,
   type LedgerLetterTemplate,
   type NewLedgerLetterTemplate,
 } from "@/lib/db/schema";
@@ -36,7 +35,7 @@ import {
   composeAcknowledgmentLetter,
   composeAcknowledgmentEmailHtml,
 } from "@/lib/ledger-acknowledgment-letter";
-import { sendBulkMemberEmail } from "@/lib/email";
+import { sendBulkMemberEmailForDurableClaim } from "@/lib/email-durable-claim";
 import { getAppUrl } from "@/lib/email-compose";
 import { resolveTreasurer } from "@/lib/board-positions";
 
@@ -473,13 +472,14 @@ const EMAIL_FROM = "treasurer@westervillelions.org";
  *
  * "Blocked" is `sendEmail()`'s deny-by-production-only guard
  * (`shouldBlockNonProductionSend()`, DECISION-085/102) refusing to reach
- * Resend outside production — not a delivery failure, and not success
- * either. `sendBulkMemberEmail()` does not currently forward `sendEmail()`'s
- * own `blocked` field on its per-recipient results (see the doc comment
- * below Step 4 for why this module reads it back from `email_queue` instead
- * of reading `sendResults[i].blocked`, which does not exist on that type —
- * flagged as a further instance of the DECISION-102 shape, not fixed here
- * because `src/lib/email.ts` is out of scope for this change).
+ * Resend outside production, or `dev_no_api_key` (no RESEND_API_KEY
+ * configured outside production) — neither is a delivery failure, and
+ * neither is success either. This module sends through
+ * `sendBulkMemberEmailForDurableClaim()` (src/lib/email-durable-claim.ts,
+ * DECISION-103), whose per-recipient result is a `DurableSendOutcome` with
+ * no bare `success` field — `not_delivered` (covering both reasons above)
+ * is read directly off `sendResult.outcome`, not inferred from an
+ * `email_queue` read-back the way the prior (B-67) fix had to.
  *
  * A batch mixing a delivered address with a blocked one is treated the same
  * as a batch mixing a delivered address with a failed one: the ack is
@@ -597,51 +597,19 @@ export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<Emai
     }
   }
 
-  const { results: sendResults } = await sendBulkMemberEmail({
+  const { results: sendResults } = await sendBulkMemberEmailForDurableClaim({
     from: EMAIL_FROM,
     subject: EMAIL_SUBJECT,
     ...(treasurer.ok ? { replyTo: treasurer.email, bcc: treasurer.email } : {}),
     recipients,
   });
 
-  // Step 3b — resolve which of THIS batch's queued rows were blocked by
-  // sendEmail()'s deny-by-default-outside-production guard rather than
-  // genuinely attempted (DECISION-085/102, B-67).
-  //
-  // sendBulkMemberEmail()'s per-recipient result is `{ to, success, error?,
-  // emailQueueId }` — it does NOT forward sendEmail()'s own `blocked` field,
-  // so `sendResults[i].blocked` does not exist to read. Rather than
-  // duplicate `shouldBlockNonProductionSend()`'s predicate here (which would
-  // also misclassify under Vitest, where NODE_ENV is never "production" and
-  // every mocked send would read as blocked regardless of what a test
-  // scripted), this reads back the ACTUAL status sendEmail() itself
-  // persisted for each queued row: 'blocked_non_production' is a value only
-  // that one code path writes. This is ground truth, not an inference — it
-  // is the exact fact `blocked: true` exists to communicate, sourced from
-  // where sendEmail() already recorded it, via the emailQueueId
-  // sendBulkMemberEmail() already returns per recipient.
-  //
-  // Deliberately NOT fixed by adding `blocked` to
-  // SendBulkMemberEmailResult in src/lib/email.ts — out of scope for this
-  // change (a concurrent agent may be working there); flagged in this
-  // work's write-up as a further instance of the DECISION-102 shape for a
-  // follow-up that touches that file directly.
-  const queueIds = sendResults.map((r) => r.emailQueueId).filter((id): id is string => Boolean(id));
-  const blockedQueueIds = new Set<string>();
-  if (queueIds.length > 0) {
-    const queueRows = await db
-      .select({ id: emailQueue.id, status: emailQueue.status })
-      .from(emailQueue)
-      .where(inArray(emailQueue.id, queueIds));
-    for (const row of queueRows) {
-      if (row.status === "blocked_non_production") blockedQueueIds.add(row.id);
-    }
-  }
-
   // Step 4 — regroup by ack via array-index zip (never by address string —
   // see the function doc comment), decide keep-vs-revert on the full
-  // three-way outcome (delivered / failed / blocked), never on `success`
-  // alone (DECISION-102 rule 2).
+  // three-way outcome (delivered / failed / not_delivered), never on
+  // `success` alone (DECISION-102 rule 2). `sendResult.outcome` is read
+  // directly — no email_queue read-back needed (DECISION-103 closed that
+  // gap by propagating the field instead of inferring it).
   const addressesByAckId = new Map<
     string,
     Array<{ to: string; success: boolean; error?: string; blocked?: true }>
@@ -649,16 +617,16 @@ export async function emailAcknowledgmentLetters(ackIds: string[]): Promise<Emai
   for (let i = 0; i < meta.length; i++) {
     const { ackId, to } = meta[i];
     const sendResult = sendResults[i];
-    const blocked = blockedQueueIds.has(sendResult.emailQueueId);
+    const blocked = sendResult.outcome === "not_delivered";
     const list = addressesByAckId.get(ackId) ?? [];
     list.push({
       to,
-      // A blocked send reports success: true from sendEmail() (DECISION-085
-      // — deliberate, load-bearing) but nothing was delivered. Report it
-      // here as success: false so per-address detail in the API/UI never
-      // implies delivery for an address that was never attempted.
-      success: sendResult.success && !blocked,
-      ...(sendResult.error ? { error: sendResult.error } : {}),
+      // Neither `not_delivered` reason (blocked_non_production or
+      // dev_no_api_key) means anything was delivered, so both report
+      // success: false here — per-address detail in the API/UI must never
+      // imply delivery for an address that was never attempted.
+      success: sendResult.outcome === "delivered",
+      ...(sendResult.outcome === "failed" ? { error: sendResult.error } : {}),
       ...(blocked ? { blocked: true as const } : {}),
     });
     addressesByAckId.set(ackId, list);
