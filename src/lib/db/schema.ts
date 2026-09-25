@@ -319,7 +319,7 @@ export const emailQueue = pgTable("email_queue", {
   bcc: text("bcc"),
   subject: text("subject").notNull(),
   html: text("html").notNull(),
-  status: text("status").notNull().default("pending"), // 'pending' | 'sent' | 'failed'
+  status: text("status").notNull().default("pending"), // 'pending' | 'sent' | 'failed' | 'blocked_non_production' | 'dev_no_api_key' | 'retrying' (transient — see claimFailedRow() in src/app/api/admin/email-queue/retry/route.ts)
   attempts: integer("attempts").notNull().default(0),
   lastError: text("last_error"),
   // Nullable, no default — existing rows and every non-attachment caller stay
@@ -333,7 +333,15 @@ export const emailQueue = pgTable("email_queue", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   sentAt: timestamp("sent_at"),
   nextRetryAt: timestamp("next_retry_at"),
-});
+}, (t) => [
+  // Backs both the admin email-queue page's three status-filtered queries
+  // and the failed-count badge on the admin nav (getFailedEmailCount(),
+  // src/lib/email-queue-stats.ts) — the badge query runs on every admin
+  // page render, so an unindexed sequential scan here would slow the whole
+  // admin area as the table grows. See docs/work-log/
+  // 2026-09-25-email-silent-success.md Phase 6 follow-up #1.
+  index("ix_email_queue_status").on(t.status),
+]);
 
 export type EmailQueueItem = typeof emailQueue.$inferSelect;
 export type NewEmailQueueItem = typeof emailQueue.$inferInsert;

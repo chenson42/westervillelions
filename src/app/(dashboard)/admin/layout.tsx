@@ -1,7 +1,8 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { canAccessAdminArea } from "@/lib/permissions";
+import { canAccessAdminArea, FEATURES } from "@/lib/permissions";
 import AdminSidebar from "@/components/admin/admin-sidebar";
+import { getFailedEmailCount } from "@/lib/email-queue-stats";
 
 /**
  * Admin Layout
@@ -34,11 +35,26 @@ export default async function AdminLayout({
     redirect("/access-pending");
   }
 
+  // Failed-email-count badge (docs/work-log/2026-09-25-email-silent-success.md
+  // Phase 6 follow-up #1). Only queried for users who could actually open
+  // /admin/email-queue — that page gates on ADMIN_USERS specifically (a
+  // narrower check than "can access some admin area"), so this mirrors it
+  // rather than leaking the count to an admin who can't see the page. The
+  // Email Queue nav item deliberately carries no requiredFeature of its own
+  // (see permissions.ts/permissions.test.ts) — this check does not add one,
+  // it only decides whether to fetch and pass a number as a prop.
+  const canSeeEmailQueue = isAdmin || userFeatures.includes(FEATURES.ADMIN_USERS);
+  const failedEmailCount = canSeeEmailQueue ? await getFailedEmailCount() : 0;
+
   return (
     <div className="flex min-h-screen bg-gray-50 print:bg-white">
       {/* Sidebar — hidden entirely when printing (e.g. the budget worksheet) */}
       <div className="print:hidden">
-        <AdminSidebar userFeatures={userFeatures} isAdmin={isAdmin} />
+        <AdminSidebar
+          userFeatures={userFeatures}
+          isAdmin={isAdmin}
+          failedEmailCount={failedEmailCount}
+        />
       </div>
 
       {/* Main content */}

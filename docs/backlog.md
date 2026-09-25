@@ -36,6 +36,8 @@ was deleted on the strength of this review alone.
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
+- B-65 — `sendEmail()` discards the Resend SDK's returned `error` and records the send as `sent`
+- B-66 — A retry stranded at `retrying` is invisible and un-retryable
 - B-64 — Persist `replyTo` on `email_queue` so a retried send keeps it
 - B-13 — Centralize the ledger payment-method list + labels
 - B-27 — Increment 2: soft-delete/restore-until-finalize for budget lines
@@ -298,6 +300,31 @@ was deleted on the strength of this review alone.
 ---
 
 ## Soon
+
+- [ ] **B-65 — `sendEmail()` discards the Resend SDK's returned `error` and records the send as `sent`.**
+  (added 2026-09-25, from `docs/work-log/2026-09-25-email-silent-success.md`; priority: **high — this is the
+  bug that caused the 2026-08-28 → 2026-09-25 outage**) Resend's SDK v6 returns `{ data, error }` and does
+  **not throw** on API errors. `src/lib/email.ts`'s primary send path does `await resend.emails.send(...)`
+  and discards the result, then unconditionally writes `status: 'sent'`. So a revoked key (401), an
+  unverified domain, an exceeded quota, or a suppressed recipient all resolve normally, `catch` never fires,
+  and the queue records a delivery that never happened. This is exactly how ~34 real messages were lost for
+  a month with zero failed rows to show for it. The **retry** path was fixed (it now inspects `error`); the
+  primary path was deliberately left out of that scope. Fix = check `error` and treat non-null as a failure,
+  mirroring what `handleTargetedRetry()` already does.
+
+- [ ] **B-66 — A retry stranded at `retrying` is invisible and un-retryable.**
+  (added 2026-09-25, from `docs/work-log/2026-09-25-email-silent-success.md` Phase 5 re-verification;
+  priority: should-do) The duplicate-send fix claims a row atomically via
+  `UPDATE ... SET status='retrying' WHERE id=$1 AND status='failed' RETURNING id` before sending, and
+  `settleClaim()` always writes a terminal status. But a JS `try/catch` cannot survive a hard process death
+  — a Vercel function timeout, an instance kill, or a deploy landing mid-request. A row left at `retrying`
+  is then invisible to **both** retry paths (both require `status='failed'`), to all three sections of
+  `/admin/email-queue`, and to the failed-count nav badge: permanently un-retryable and silently uncounted.
+  Narrow and low-probability, and strictly better than the duplicate-send hazard it replaced, but it is the
+  same *shape* as the bug this whole work-log exists to fix. Proposed fix (from qa): add a `retrying_at`
+  timestamp column and fold a staleness reset (`retrying` older than N minutes → back to `failed`) into the
+  existing bulk sweep — no new cron infrastructure required, which matters given this project deliberately
+  has none.
 
 - [ ] **B-64 — Persist `replyTo` on `email_queue` so a retried send keeps it.**
   (added 2026-09-25, from `docs/work-log/2026-09-25-proposal-board-email.md` Phase 5;

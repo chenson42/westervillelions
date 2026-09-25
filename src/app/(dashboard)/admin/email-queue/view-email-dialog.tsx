@@ -3,13 +3,23 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 
-export type QueuedEmailStatus = "pending" | "sent" | "failed" | "blocked_non_production";
+export type QueuedEmailStatus =
+  | "pending"
+  | "sent"
+  | "failed"
+  | "blocked_non_production"
+  | "dev_no_api_key";
 
 const STATUS_LABEL: Record<QueuedEmailStatus, string> = {
   pending: "Pending",
   sent: "Sent",
   failed: "Failed",
   blocked_non_production: "Blocked (not production)",
+  // Not "Blocked" — this isn't the deny-by-default recipient guard, it's a
+  // missing local RESEND_API_KEY. Distinct label so it's never confused with
+  // the deliberate non-production block above it. See
+  // docs/work-log/2026-09-25-email-silent-success.md.
+  dev_no_api_key: "Not sent — no API key (dev)",
 };
 
 const STATUS_CLASS: Record<QueuedEmailStatus, string> = {
@@ -17,6 +27,7 @@ const STATUS_CLASS: Record<QueuedEmailStatus, string> = {
   sent: "bg-green-100 text-green-800",
   failed: "bg-amber-100 text-amber-800",
   blocked_non_production: "bg-lions-blue/10 text-lions-blue",
+  dev_no_api_key: "bg-purple-100 text-purple-800",
 };
 
 /** Small status pill shared by the queue tables and the preview dialog. */

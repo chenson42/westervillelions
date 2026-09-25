@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ADMIN_NAVIGATION as navigation } from "@/lib/permissions";
+import { ADMIN_NAVIGATION as navigation, FEATURES } from "@/lib/permissions";
 import { matchNavEntry } from "@/lib/fuzzy-match";
 import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
@@ -43,12 +43,28 @@ function renderHighlightedLabel(
 // past the layout gate can never drift apart. See
 // docs/work-log/2026-08-05-admin-area-gating.md.
 
+// Cap display at "99+" — an exact four-digit failed-email count in a 64px
+// sidebar item isn't more useful than "a lot", and it protects the pill's
+// layout from an unbounded number.
+const MAX_DISPLAYED_COUNT = 99;
+
+function formatBadgeCount(count: number): string {
+  return count > MAX_DISPLAYED_COUNT ? `${MAX_DISPLAYED_COUNT}+` : String(count);
+}
+
 export default function AdminSidebar({
   userFeatures,
   isAdmin = false,
+  failedEmailCount = 0,
 }: {
   userFeatures: string[];
   isAdmin?: boolean;
+  // Count of email_queue rows with status='failed', already gated by the
+  // caller (admin layout) on the same FEATURES.ADMIN_USERS permission the
+  // /admin/email-queue page itself requires. Re-checked below anyway
+  // (defense in depth) so a future caller passing this by mistake can never
+  // leak the count to a user who couldn't open the page.
+  failedEmailCount?: number;
 }) {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -292,6 +308,17 @@ export default function AdminSidebar({
               <div className="space-y-1">
                 {group.items.map(({ item, labelPositions }) => {
                   const isActive = item.href === activeHref;
+                  // Defense in depth: only ever show the failed-email count on
+                  // the Email Queue item, and only to a user who could
+                  // actually open that page (its own gate is ADMIN_USERS,
+                  // deliberately narrower than "can access some admin area").
+                  // The admin layout already withholds a nonzero count from
+                  // anyone lacking that permission, but a future caller
+                  // passing this prop incorrectly should still render nothing.
+                  const showFailedBadge =
+                    item.href === "/admin/email-queue" &&
+                    failedEmailCount > 0 &&
+                    (isAdmin || userFeatures.includes(FEATURES.ADMIN_USERS));
                   return (
                     <Link
                       key={item.name}
@@ -307,7 +334,19 @@ export default function AdminSidebar({
                       }}
                     >
                       <span className="text-lg">{item.icon}</span>
-                      <span>{renderHighlightedLabel(item.name, labelPositions, isActive)}</span>
+                      <span className="flex-1">
+                        {renderHighlightedLabel(item.name, labelPositions, isActive)}
+                      </span>
+                      {showFailedBadge && (
+                        <span
+                          className={`ml-auto inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full px-1.5 text-xs font-bold ${
+                            isActive ? "bg-white text-amber-700" : "bg-amber-100 text-amber-800"
+                          }`}
+                          aria-label={`${failedEmailCount} failed email${failedEmailCount === 1 ? "" : "s"}`}
+                        >
+                          {formatBadgeCount(failedEmailCount)}
+                        </span>
+                      )}
                     </Link>
                   );
                 })}

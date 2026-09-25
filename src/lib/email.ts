@@ -2,42 +2,7 @@ import { Resend } from "resend";
 import { db } from "@/lib/db";
 import { emailQueue } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { CLUB_GROUP_EMAIL, BOARD_EMAIL } from "@/lib/club-contacts";
-
-/**
- * The club's real Google Group distribution lists. Mail to these reaches the whole
- * membership or the whole board at once and cannot be recalled — see the guardrail in
- * sendEmail(). Compared case-insensitively and ignoring any display-name wrapper.
- */
-const CLUB_DISTRIBUTION_LISTS: readonly string[] = [CLUB_GROUP_EMAIL, BOARD_EMAIL];
-
-function isClubDistributionList(to: string): boolean {
-  // Accept both "a@b.org" and "Name <a@b.org>" forms.
-  const address = (to.match(/<([^>]+)>/)?.[1] ?? to).trim().toLowerCase();
-  return CLUB_DISTRIBUTION_LISTS.some((list) => list.toLowerCase() === address);
-}
-
-
-/**
- * Addresses a non-production process is permitted to mail, from
- * EMAIL_DEV_ALLOWLIST (comma-separated). Empty or unset means nothing sends,
- * which is the correct default: a developer who has not thought about it does
- * not mail the club.
- *
- * Match your own address here to receive test mail while developing. Never add
- * a club distribution list, and never add another member's address.
- */
-function isDevAllowedRecipient(to: string): boolean {
-  const raw = process.env.EMAIL_DEV_ALLOWLIST;
-  if (!raw) return false;
-  const address = (to.match(/<([^>]+)>/)?.[1] ?? to).trim().toLowerCase();
-  if (isClubDistributionList(address)) return false; // never, allowlist or not
-  return raw
-    .split(",")
-    .map((a) => (a.match(/<([^>]+)>/)?.[1] ?? a).trim().toLowerCase())
-    .filter(Boolean)
-    .includes(address);
-}
+import { shouldBlockNonProductionSend } from "@/lib/email-guard";
 
 /**
  * A MIME attachment for an outbound email. `content` is the raw text (e.g. a
@@ -154,10 +119,11 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
   // exists to make impossible. Gating on call SHAPE (bulk vs. single) rather
   // than on the recipient is the whole point: it cannot be defeated by dev data
   // the guard has never heard of.
-  if (
-    process.env.NODE_ENV !== "production" &&
-    (_bulkMemberSend || !isDevAllowedRecipient(to))
-  ) {
+  //
+  // The predicate itself lives in src/lib/email-guard.ts, shared with the
+  // admin email-queue retry route — see that file's doc comment for why a
+  // second call site needs it.
+  if (shouldBlockNonProductionSend(to, { bulk: _bulkMemberSend })) {
     console.warn(
       `[Email] BLOCKED: refusing to send to ${to} from a non-production process. ` +
         `Queued as blocked; nothing was delivered. To receive mail while developing, ` +
@@ -170,12 +136,36 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     return { success: true, emailQueueId: queued.id };
   }
 
-  // Dev mode — no API key
+  // No API key configured. This branch used to report success unconditionally —
+  // in production that turned a total mail outage into a silent success, writing
+  // `status: 'sent'` into email_queue as false evidence that delivery happened.
+  // ~34 messages were lost this way over 2026-08-28 through 2026-09-25 before
+  // Resend's own dashboard (1 send in 30 days) exposed the gap against
+  // email_queue's ~35 "sent" rows in the same window. See
+  // docs/work-log/2026-09-25-email-silent-success.md.
   if (!process.env.RESEND_API_KEY) {
-    console.log(`[Email] To: ${to} | Subject: ${subject}`);
+    if (process.env.NODE_ENV === "production") {
+      const lastError = "RESEND_API_KEY is not configured — email was not sent";
+      console.error(`[Email] ${lastError} (to: ${to}, subject: ${subject})`);
+      const nextRetryAt = new Date(Date.now() + RETRY_MINUTES * 60 * 1000);
+      await db
+        .update(emailQueue)
+        .set({ status: "failed", lastError, attempts: 1, nextRetryAt })
+        .where(eq(emailQueue.id, queued.id));
+      return { success: false, error: lastError, emailQueueId: queued.id };
+    }
+
+    // Non-production, key absent, and the recipient already cleared the
+    // deny-by-default guard above (allowlisted or NODE_ENV==='production',
+    // which can't be true here). Nothing was actually sent — a distinct
+    // status (never 'sent') keeps that honest for a developer reading
+    // /admin/email-queue or the DB directly, while still returning
+    // success: true so local/manual testing of a feature's happy path
+    // doesn't have to special-case "no Resend key in .env.local".
+    console.log(`[Email] DEV (no RESEND_API_KEY — not actually sent) To: ${to} | Subject: ${subject}`);
     await db
       .update(emailQueue)
-      .set({ status: "sent", sentAt: new Date(), attempts: 1 })
+      .set({ status: "dev_no_api_key", attempts: 1 })
       .where(eq(emailQueue.id, queued.id));
     return { success: true, emailQueueId: queued.id };
   }
