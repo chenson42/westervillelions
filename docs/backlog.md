@@ -36,6 +36,7 @@ was deleted on the strength of this review alone.
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
+- B-64 — Persist `replyTo` on `email_queue` so a retried send keeps it
 - B-13 — Centralize the ledger payment-method list + labels
 - B-27 — Increment 2: soft-delete/restore-until-finalize for budget lines
 - B-32 — Post-changes budget analysis pass
@@ -297,6 +298,19 @@ was deleted on the strength of this review alone.
 ---
 
 ## Soon
+
+- [ ] **B-64 — Persist `replyTo` on `email_queue` so a retried send keeps it.**
+  (added 2026-09-25, from `docs/work-log/2026-09-25-proposal-board-email.md` Phase 5;
+  priority: should-do) `SendEmailOptions` accepts `replyTo` and passes it to Resend on the
+  first attempt, but `email_queue` has no `reply_to` column and `sendEmail()`'s insert never
+  stores it. The retry route (`src/app/api/admin/email-queue/retry/route.ts`) re-sends the
+  persisted row directly, bypassing `sendEmail()` — so a retried message silently loses its
+  Reply-To and lands back at `noreply@`. This is the same failure shape DECISION-092 fixed for
+  attachments (persisted in `email_queue.attachments` precisely because the retry path bypasses
+  `sendEmail()`); `replyTo` was never given the same treatment. Pre-existing and shared: at least
+  6 `sendEmail()` callers set `replyTo` today, including the proposal board notification, and all
+  of them inherit the gap. Fix = add a `reply_to` column (idempotent migration + `schema.ts`),
+  persist it on insert, and forward it from the retry route.
 
 - [ ] **B-13 — Centralize the ledger payment-method list + labels.**
   (added 2026-07-22, priority: should-do) The expense/ledger payment-method set

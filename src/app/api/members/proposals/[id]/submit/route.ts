@@ -29,6 +29,7 @@ import { getOwnedProposal, submitProposal } from "@/lib/proposals-queries";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
 import { BOARD_EMAIL } from "@/lib/club-contacts";
+import { formatCalendarDate } from "@/lib/format-date";
 import type { Proposal } from "@/lib/db/schema";
 
 function moneyAnswerText(proposal: Proposal): string {
@@ -44,7 +45,10 @@ function moneyAnswerText(proposal: Proposal): string {
 
 function dateAnswerText(proposal: Proposal): string {
   if (proposal.proposedDateUnknown) return "Not sure yet";
-  if (proposal.proposedDate) return proposal.proposedDate;
+  // `proposedDate` is a Postgres `date` column, so it must go through
+  // formatCalendarDate (not formatTimestamp) to avoid the naive-timestamp
+  // shift. "long" matches the admin review page's own formatter exactly.
+  if (proposal.proposedDate) return formatCalendarDate(proposal.proposedDate, "long");
   return "Not specified";
 }
 
@@ -55,6 +59,27 @@ function typeLabel(type: string | null): string {
   return "Not specified";
 }
 
+function estimatedIncomeText(proposal: Proposal): string {
+  if (proposal.estimatedIncomeUnknown) return "Not sure yet";
+  if (proposal.estimatedIncomeCents !== null) return `$${(proposal.estimatedIncomeCents / 100).toFixed(2)}`;
+  return "Not specified";
+}
+
+function volunteersNeededText(proposal: Proposal): string {
+  if (proposal.volunteersNeededUnknown) return "Not sure yet";
+  if (proposal.volunteersNeeded !== null) return String(proposal.volunteersNeeded);
+  return "Not specified";
+}
+
+/**
+ * Field list and order intentionally mirror /admin/proposals/[id] (see
+ * DetailRow sequence there) so a board member reading the email sees the
+ * identical shape they'd see clicking through — Phase 1
+ * (docs/work-log/2026-09-25-proposal-board-email.md) "full field parity"
+ * finding. "Proposed by" and "Project/activity name" precede the admin
+ * page's own field list because that page shows them in the page header,
+ * not as DetailRows.
+ */
 function boardNotificationHtml(proposal: Proposal, appUrl: string): string {
   return `<p>A new project/activity proposal has been submitted for board review.</p>
 <ul>
@@ -64,7 +89,12 @@ function boardNotificationHtml(proposal: Proposal, appUrl: string): string {
   <li><strong>Need / impact:</strong> ${escapeHtml(proposal.needDescription ?? "")}</li>
   <li><strong>Chairperson:</strong> ${escapeHtml(proposal.chairName ?? "")}</li>
   <li><strong>Money needed from the club:</strong> ${moneyAnswerText(proposal)}</li>
+  <li><strong>Estimated income:</strong> ${estimatedIncomeText(proposal)}</li>
   <li><strong>Proposed date:</strong> ${dateAnswerText(proposal)}</li>
+  <li><strong>Volunteers needed:</strong> ${volunteersNeededText(proposal)}</li>
+  <li><strong>Needed from the club:</strong> ${escapeHtml(proposal.clubResourcesNeeded ?? "") || "—"}</li>
+  <li><strong>Publicity:</strong> ${escapeHtml(proposal.publicityPlan ?? "") || "—"}</li>
+  <li><strong>Additional notes:</strong> ${escapeHtml(proposal.additionalNotes ?? "") || "—"}</li>
 </ul>
 <p>Review this proposal at <a href="${appUrl}/admin/proposals/${proposal.id}">${appUrl}/admin/proposals/${proposal.id}</a>.</p>`;
 }
@@ -112,12 +142,17 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     const appUrl = getAppUrl();
 
     // Fire after commit, best-effort — never blocks or fails the submission.
+    // replyTo points a board member's reply at the proposer directly, not
+    // noreply@ — Phase 1 "No Reply-To on the board notification" finding.
+    // Omitted entirely (not sent as undefined-in-string form) when the
+    // snapshot is null, rather than risk a broken header.
     try {
       await sendEmail({
         to: BOARD_EMAIL,
         from: fromEmail,
         subject: `New Project/Activity Proposal: ${proposal.projectName}`,
         html: boardNotificationHtml(proposal, appUrl),
+        ...(proposal.proposerEmailSnapshot ? { replyTo: proposal.proposerEmailSnapshot } : {}),
       });
     } catch (err) {
       console.error("Error sending proposal board notification email:", err);
