@@ -28,6 +28,7 @@ export function MembershipApplicationForm() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(IS_DEV ? "dev-bypass" : null);
   const [captchaError, setCaptchaError] = useState(false);
   const turnstileRef = useRef<TurnstileInstance>(null);
+  const [renderedAt] = useState<number>(() => Date.now());
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -40,7 +41,8 @@ export function MembershipApplicationForm() {
     setIsSubmitting(true);
 
     const formData = new FormData(e.currentTarget);
-    const data = { ...Object.fromEntries(formData.entries()), captchaToken };
+    const { website, ...rest } = Object.fromEntries(formData.entries());
+    const data = { ...rest, honeypot: website, renderedAt, captchaToken };
 
     try {
       const res = await fetch("/api/membership-applications", {
@@ -377,6 +379,12 @@ export function MembershipApplicationForm() {
         in cooperation with other civic-minded persons. I understand that membership is not
         valid until approved by the club&apos;s board of directors.
       </p>
+
+      {/* Anti-bot honeypot — real visitors never see or reach this field. */}
+      <div className="sr-only" aria-hidden="true">
+        <label htmlFor="website">Leave this field blank</label>
+        <input type="text" id="website" name="website" tabIndex={-1} autoComplete="off" />
+      </div>
 
       {!IS_DEV && (
         <Turnstile

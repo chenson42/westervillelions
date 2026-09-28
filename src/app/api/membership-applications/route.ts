@@ -4,17 +4,8 @@ import { db } from "@/lib/db";
 import { membershipApplications } from "@/lib/db/schema";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml, getFromEmail } from "@/lib/email-compose";
-
-async function verifyTurnstile(token: string): Promise<boolean> {
-  const secret = process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA";
-  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret, response: token }),
-  });
-  const data = await res.json();
-  return data.success === true;
-}
+import { getRemoteIp, verifyTurnstile } from "@/lib/turnstile";
+import { checkAndRecordFormCooldown, evaluateContentGuard, evaluateStructuralGuard } from "@/lib/form-guard";
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,6 +16,8 @@ export async function POST(request: NextRequest) {
       lastName,
       email,
       captchaToken,
+      honeypot,
+      renderedAt,
       middleInitial,
       suffix,
       gender,
@@ -54,9 +47,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "CAPTCHA verification required" }, { status: 400 });
     }
 
-    const captchaValid = await verifyTurnstile(captchaToken);
-    if (!captchaValid) {
+    const captcha = await verifyTurnstile(captchaToken, { remoteip: getRemoteIp(request) });
+    if (!captcha.success) {
       return NextResponse.json({ error: "CAPTCHA verification failed. Please try again." }, { status: 400 });
+    }
+
+    // Anti-bot, per DECISION-104 (Revision 2): structural guard (honeypot +
+    // timing) → cooldown check-and-record (unconditional on content) →
+    // content guard (two-field gibberish agreement). Every rejection here is
+    // silent — same { success: true } response as a real submission, no DB
+    // row, no email. See docs/work-log/2026-09-28-public-form-spam.md.
+    const structuralVerdict = evaluateStructuralGuard({ honeypot, renderedAt });
+    if (!structuralVerdict.allow) {
+      return NextResponse.json({ success: true });
+    }
+
+    // Cooldown is recorded here — after structural passes, BEFORE content is
+    // evaluated — so a burst-leading submission whose own content the
+    // gibberish check doesn't confidently flag still protects the
+    // submissions that follow it in the same email's burst. (Membership is
+    // usually the burst LEADER in the observed incident, so this particular
+    // route benefits least from the reorder — see DECISION-104's documented
+    // residual gap — but the check still runs here for consistency and for
+    // the cases where membership isn't the leader.)
+    const cooldown = await checkAndRecordFormCooldown(email);
+    if (cooldown.withinCooldown) {
+      return NextResponse.json({ success: true });
+    }
+
+    const contentVerdict = evaluateContentGuard([firstName, lastName, city]);
+    if (!contentVerdict.allow) {
+      return NextResponse.json({ success: true });
     }
 
     await db.insert(membershipApplications).values({

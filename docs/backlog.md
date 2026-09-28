@@ -36,6 +36,7 @@ was deleted on the strength of this review alone.
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
+- B-77 — `dotenv` is an undeclared transitive dependency that breaks under `tsx` when a `@/`-aliased import shares its module graph
 - B-75 — `financial-report-send.ts`'s `not_delivered` case writes the same message for both blocked-non-production and no-API-key
 - B-74 — Generic email-queue retry has no awareness of any durable-claim table it doesn't own
 - B-73 — `dues_reminders`/`event_announcements` read raw `.success`, never migrated to the durable-claim helpers
@@ -88,6 +89,7 @@ was deleted on the strength of this review alone.
 
 **Watching / needs info**
 - B-56 — Club Files admin list shows "Uploaded {date}" with no uploader name
+- B-76 — Live public-form spam guard can't protect membership applications from a burst-leading/isolated bot submission
 
 **Likely obsolete — verify and close**
 - B-01 — Ledger user's guide built into the treasury page
@@ -308,6 +310,32 @@ was deleted on the strength of this review alone.
 ---
 
 ## Soon
+
+- [ ] **B-77 — `dotenv` is an undeclared transitive dependency that breaks under `tsx` when a
+  `@/`-aliased import shares its module graph.**
+  (added 2026-09-28, from Phase 6 of `docs/work-log/2026-09-28-public-form-spam.md`, flagged
+  independently by both qa and full-stack-developer during Phase 4/5 Revision 2; priority:
+  should-do, needs a real Phase 1) Found while building `scripts/purge-form-spam.ts`: once that
+  script's module graph included `../src/lib/form-guard` (which contains a dynamic
+  `await import("@/lib/db")`, a tsconfig-`@/`-aliased bare specifier), `tsx`'s tsconfig-paths-aware
+  resolver stopped resolving the bare specifier `"dotenv"` for that file — `Cannot find package
+  'dotenv'`, reproducibly, independent of environment variables. Root cause: `dotenv` is not a
+  declared dependency anywhere in `package.json` (only `dotenv-cli` is, a separate package used for
+  the `dev`/`test:e2e` npm scripts) — it has been resolving "by accident" as a transitive dependency
+  of something else in this pnpm-strict tree, and pulling in a `@/`-aliased import anywhere in a
+  script's module graph exposes that phantom dependency as a hard failure. This feature's own script
+  no longer depends on it (switched to Node's built-in `process.loadEnvFile()`, stable since Node
+  20.6, matching `.nvmrc`'s Node 20.x target), but roughly 19 other scripts under `scripts/` still
+  `import { config } from "dotenv"` directly against this same undeclared package — any of them could
+  hit the identical failure the day their own module graph happens to pick up a `@/`-aliased import.
+  **Shape of the fix:** either declare `dotenv` as a direct `package.json` dependency (stops it being
+  phantom, doesn't fix the underlying `tsx`-resolver interaction) or migrate the other scripts to
+  `process.loadEnvFile()` the same way this feature's script did (removes the dependency entirely,
+  the more durable fix). Not urgent — every script that hits this today has a documented workaround
+  (pre-export `DATABASE_URL`/`DB_URL` before running, which the project's own script-running
+  convention already recommends) — but worth closing before the next script picks up a `@/`-aliased
+  import and rediscovers this the hard way. See `docs/work-log/2026-09-28-public-form-spam.md`
+  (Phase 4 Revision 2, "Deviations" #2, and Phase 5 Revision 2 section 4a) for the full reproduction.
 
 - [ ] **B-75 — `financial-report-send.ts`'s `not_delivered` case writes the same message for both
   `blocked_non_production` and `dev_no_api_key`, so the panel can't tell an admin which one
@@ -1271,6 +1299,39 @@ was deleted on the strength of this review alone.
   **Priority note (2026-09-05):** this item explicitly asks for a club decision before any work
   starts ("confirm ... before spending the time — it may not be worth fixing") — filed here rather
   than in a work tier until that confirmation happens.
+
+- [ ] **B-76 — Live public-form spam guard can't protect membership applications from a
+  burst-leading/isolated bot submission.**
+  *(Raised 2026-09-28, DECISION-104 Revision 2; confirmed as an accepted, tracked residual gap by
+  analyst at Phase 6, `docs/work-log/2026-09-28-public-form-spam.md`.)*
+
+  The public-form spam defense (honeypot, timing floor, two-field content-gibberish agreement, and a
+  cross-form per-email cooldown) reaches 15 of 16 known-incident junk rows via a combination of
+  content detection and a cooldown-reorder that lets an earlier same-email submission protect a
+  later one. That reorder structurally cannot help `membership_applications`: in every observed run
+  of this bot, membership is submitted *first*, with no earlier same-email sibling in
+  `contact_submissions`/`newsletter_subscriptions` to draw cooldown protection from. Content alone
+  (the four-signal `isGibberishToken()` score, two independent fields required to agree) catches
+  only 1 of 4 known membership junk rows live; an exhaustive threshold search (tech-lead, Phase 3
+  Revision 2) could not close the gap further without reopening a real false-positive risk against
+  unusual-but-real names. The retroactive purge script *can* recover most of these after the fact
+  (cross-table timing correlation, using hindsight the live guard doesn't have), but going forward, a
+  repeat of this exact attack pattern will see roughly 3 of every 4 bot membership submissions sail
+  through the live guard uncaught, every time — not a one-time historical shortfall.
+
+  **Why this is "Watching," not "Now":** Phase 1's own harm ranking (confirmed by analyst at Phase 6)
+  makes this the least-harmful of the three forms to miss — a missed row is one junk `pending`
+  application an admin reviews and rejects by hand at `/admin/membership`, the same existing workflow
+  used for every application, real or bot. It does not email a harvested stranger (contact's harm,
+  now fully closed) and does not add an unwanted newsletter subscriber (newsletter's harm, also fully
+  closed). No safe fix exists today without reopening the false-positive risk the whole feature was
+  built to avoid.
+
+  **Revisit when:** this residual pattern (bot sends membership-only, no contact/newsletter
+  follow-up) becomes the bot's dominant remaining attack shape — e.g., IP-based rate limiting
+  (explicitly out of scope for the original feature, Vercel Pro-only) becomes worth revisiting, or a
+  new signal specific to the membership form's field shape is found that doesn't compound the
+  stress-test false-positive risk already documented in DECISION-104.
 
 ---
 

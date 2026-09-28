@@ -606,6 +606,32 @@ export const eventAnnouncements = pgTable(
 export type EventAnnouncement = typeof eventAnnouncements.$inferSelect;
 export type NewEventAnnouncement = typeof eventAnnouncements.$inferInsert;
 
+// Form submission cooldown — a short, cross-form, per-email dedup window for the
+// public contact/newsletter/membership-application forms (public form spam
+// hardening, docs/work-log/2026-09-28-public-form-spam.md). A dedicated table per
+// the 2026-09-28 architectural review, rather than a query against
+// contact_submissions / newsletter_subscriptions / membership_applications — see
+// that review's "Cooldown storage" ruling. createdAt is a genuine instant compared
+// against now() for staleness (same rationale as email_queue.retrying_at, 0106),
+// hence withTimezone: true rather than this project's older naive-timestamp idiom.
+export const formSubmissionCooldown = pgTable(
+  "form_submission_cooldown",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Always lower-cased + trimmed before insert (see checkAndRecordFormCooldown()
+    // in src/lib/form-guard.ts) — the SELECT there relies on this and does not
+    // itself call lower().
+    email: text("email").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_form_submission_cooldown_email_created").on(t.email, t.createdAt),
+  ],
+);
+
+export type FormSubmissionCooldown = typeof formSubmissionCooldown.$inferSelect;
+export type NewFormSubmissionCooldown = typeof formSubmissionCooldown.$inferInsert;
+
 // Dues settings — one row per fiscal year, two amount columns (individual + family)
 export const duesSettings = pgTable("dues_settings", {
   id: uuid("id").primaryKey().defaultRandom(),

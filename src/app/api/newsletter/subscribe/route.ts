@@ -2,29 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { newsletterSubscriptions } from "@/lib/db/schema";
 import { sql, eq } from "drizzle-orm";
-
-async function verifyTurnstile(token: string): Promise<boolean> {
-  const secret = process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA";
-  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret, response: token }),
-  });
-  const data = await res.json();
-  return data.success === true;
-}
+import { getRemoteIp, verifyTurnstile } from "@/lib/turnstile";
+import { checkAndRecordFormCooldown, evaluateContentGuard, evaluateStructuralGuard } from "@/lib/form-guard";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { email, firstName, lastName, captchaToken } = body;
+    const { email, firstName, lastName, captchaToken, honeypot, renderedAt } = body;
 
     if (!captchaToken) {
       return NextResponse.json({ error: "CAPTCHA verification required" }, { status: 400 });
     }
 
-    const captchaValid = await verifyTurnstile(captchaToken);
-    if (!captchaValid) {
+    const captcha = await verifyTurnstile(captchaToken, { remoteip: getRemoteIp(request) });
+    if (!captcha.success) {
       return NextResponse.json({ error: "CAPTCHA verification failed. Please try again." }, { status: 400 });
     }
 
@@ -35,6 +26,30 @@ export async function POST(request: NextRequest) {
     const trimmedEmail = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
       return NextResponse.json({ error: "Invalid email address" }, { status: 400 });
+    }
+
+    // Anti-bot, per DECISION-104 (Revision 2): structural guard (honeypot +
+    // timing) → cooldown check-and-record (unconditional on content) →
+    // content guard (two-field gibberish agreement). Every rejection here is
+    // silent — same { success: true } response as a real subscription, no DB
+    // row. See docs/work-log/2026-09-28-public-form-spam.md.
+    const structuralVerdict = evaluateStructuralGuard({ honeypot, renderedAt });
+    if (!structuralVerdict.allow) {
+      return NextResponse.json({ success: true });
+    }
+
+    // Cooldown is recorded here — after structural passes, BEFORE content is
+    // evaluated — so a burst-leading submission whose own content the
+    // gibberish check doesn't confidently flag still protects the
+    // submissions that follow it in the same email's burst.
+    const cooldown = await checkAndRecordFormCooldown(trimmedEmail);
+    if (cooldown.withinCooldown) {
+      return NextResponse.json({ success: true });
+    }
+
+    const contentVerdict = evaluateContentGuard([firstName, lastName]);
+    if (!contentVerdict.allow) {
+      return NextResponse.json({ success: true });
     }
 
     // Check if already exists

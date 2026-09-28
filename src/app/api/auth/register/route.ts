@@ -3,17 +3,7 @@ import { db } from "@/lib/db";
 import { users, members, userRoles, roles } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { hashPassword } from "@/lib/auth/password-reset";
-
-async function verifyTurnstile(token: string): Promise<boolean> {
-  const secret = process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA";
-  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret, response: token }),
-  });
-  const data = await res.json();
-  return data.success === true;
-}
+import { getRemoteIp, verifyTurnstile } from "@/lib/turnstile";
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,8 +20,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "CAPTCHA verification required" }, { status: 400 });
     }
 
-    const captchaValid = await verifyTurnstile(captchaToken);
-    if (!captchaValid) {
+    const captcha = await verifyTurnstile(captchaToken, { remoteip: getRemoteIp(request) });
+    if (!captcha.success) {
       return NextResponse.json({ error: "CAPTCHA verification failed. Please try again." }, { status: 400 });
     }
 

@@ -15,6 +15,7 @@ export function ContactForm() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(IS_DEV ? "dev-bypass" : null);
   const [captchaError, setCaptchaError] = useState(false);
   const turnstileRef = useRef<TurnstileInstance>(null);
+  const [renderedAt] = useState<number>(() => Date.now());
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -31,6 +32,8 @@ export function ContactForm() {
       name: formData.get("name"),
       email: formData.get("email"),
       message: formData.get("message"),
+      honeypot: formData.get("website"),
+      renderedAt,
       captchaToken,
     };
 
@@ -107,6 +110,11 @@ export function ContactForm() {
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lions-blue focus:border-transparent"
             required
           />
+        </div>
+        {/* Anti-bot honeypot — real visitors never see or reach this field. */}
+        <div className="sr-only" aria-hidden="true">
+          <label htmlFor="website">Leave this field blank</label>
+          <input type="text" id="website" name="website" tabIndex={-1} autoComplete="off" />
         </div>
         {!IS_DEV && (
           <Turnstile

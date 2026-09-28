@@ -12,11 +12,13 @@ export function NewsletterForm() {
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [website, setWebsite] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [captchaToken, setCaptchaToken] = useState<string | null>(IS_DEV ? "dev-bypass" : null);
   const [captchaError, setCaptchaError] = useState(false);
   const turnstileRef = useRef<TurnstileInstance>(null);
+  const [renderedAt] = useState<number>(() => Date.now());
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,7 +36,7 @@ export function NewsletterForm() {
       const res = await fetch("/api/newsletter/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, firstName, lastName, captchaToken }),
+        body: JSON.stringify({ email, firstName, lastName, honeypot: website, renderedAt, captchaToken }),
       });
 
       if (!res.ok) {
@@ -116,6 +118,20 @@ export function NewsletterForm() {
       {status === "error" && (
         <p className="text-sm text-red-600">{errorMsg}</p>
       )}
+
+      {/* Anti-bot honeypot — real visitors never see or reach this field. */}
+      <div className="sr-only" aria-hidden="true">
+        <label htmlFor="nl-website">Leave this field blank</label>
+        <input
+          type="text"
+          id="nl-website"
+          name="website"
+          tabIndex={-1}
+          autoComplete="off"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+        />
+      </div>
 
       {!IS_DEV && (
         <Turnstile

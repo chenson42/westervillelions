@@ -28,6 +28,122 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-104: `isGibberishToken()` is a four-signal combined score (not vowel-ratio alone), the cross-form cooldown is recorded before content is evaluated, and a two-field row-level rule still gates live rejection
+
+**Status:** Resolved
+**Date:** 2026-09-28 (Revision 2, loop-back from Phase 5 QA FAIL — see note below; amended same day
+as the original draft, before implementation)
+
+**Decision:**
+
+Two structural pieces are unchanged from this decision's prior text: (1) a **single** gibberish
+field never independently rejects a submission — only **two** independent fields agreeing does,
+joining honeypot and timing as a third live-rejecting signal; (2) per-route candidate field lists —
+contact `[name, message]`; newsletter `[firstName, lastName]`; membership `[firstName, lastName,
+city]` (any two of three).
+
+What changes in this revision is **what counts as one field being gibberish**, and **when the
+cross-form cooldown gets recorded**:
+
+1. **`isGibberishToken()` is now a four-signal combined score**, not a single vowel-ratio check.
+   A field (no internal whitespace, alphabetic length ≥ 4) is gibberish when **at least two** of the
+   following independently fire: vowel ratio ≤ 20% (a/e/i/o/u only, never `y`); ≥ 2
+   lowercase→uppercase transitions inside the token; a bigram-plausibility score < 45% against a
+   literal, embedded table of the 150 most common English letter-bigrams (by dictionary document
+   frequency); a longest consecutive non-vowel run ≥ 6. A **trigram**-based fifth signal was
+   evaluated and explicitly **rejected** — see Rationale.
+2. **`checkAndRecordFormCooldown()`'s call site moves earlier and becomes content-independent.**
+   Each route's flow is now Turnstile → `evaluateStructuralGuard()` (honeypot + timing only) →
+   cooldown check-and-record (unconditional on content) → `evaluateContentGuard()` (the two-field
+   rule) → insert → emails. A cooldown row is recorded whenever a submission passes honeypot+timing,
+   regardless of what its own content check will say — not only when the whole submission is
+   accepted, as the original text of this decision had it.
+3. **`scripts/purge-form-spam.ts`'s selection is content OR cross-table timing correlation** (same
+   email in another of the three tables within 90 seconds), mirroring point 2 retroactively, since no
+   cooldown rows exist for pre-launch submissions.
+
+**Why this is a revision, not a new decision:** Phase 5 QA (2026-09-28) found the original text's
+central safety claim — "all of Phase 1's identified junk rows are gibberish in at least two
+independent fields" — was **false** against live production data: a production purge-script dry-run
+recovered only 5 of 16 in-window junk rows. Root cause: a 20%-vowel-ratio cutoff sits almost exactly
+on English's natural ~19.2% baseline vowel frequency (5 of 26 letters), so it is close to a coin flip
+against genuinely random letter strings — not a bug in how it was wired, a defect in what it
+measured. This entry is edited in place, same number, not superseded — nothing in this decision's
+prior text ever shipped to production code (Phase 4 was reopened before Phase 6), so there is
+nothing to supersede.
+
+**Rationale:**
+
+The two-field-per-row structural rule (point 1, and everything below it in the original text about
+why a single field never rejects alone) remains correct and is untouched — Phase 1's asymmetry
+argument (a false positive silently drops a real inquiry; a false negative gets a second chance at
+the cooldown layer or manual review) still holds and still motivates it.
+
+**Why a four-signal combined score, calibrated against real data, not a retuned single number.**
+Read-only queries against `PROD_DATABASE_URL` (see `docs/work-log/2026-09-28-public-form-spam.md`
+Phase 3 Revision 2 for the full method) established ground truth independent of content — via
+cross-table email-hash correlation on submission timing, matching Phase 1's documented attack
+shape — covering the full history of all three tables (40 rows: 16 junk, 24 legit) plus a stress
+test of ~24 real, unusual (mostly Central/Eastern European and Vietnamese) surnames and 12 realistic
+first+last pairs, addressing exactly the false-positive class the coordinator flagged (`Nguyen`,
+`Szczepanski`, `Krzyzewski`). No single threshold on any one signal cleared both bars (zero
+production false positives, zero stress-test false positives) at usable recall; four independent,
+uncorrelated-on-real-data signals requiring pairwise agreement did.
+
+**Why trigram plausibility was tried and rejected.** It separates random strings from English text
+far better than bigrams in isolation, but a dictionary-derived "top trigrams" table is systematically
+thin on real surnames a general English word-dictionary doesn't represent — `Nguyen`, `Krzyzewski`,
+`DiMaggio`, `O'Brien`, `Zbigniew`, `Njoku`, and `Kowalczyk` all scored **zero** common trigrams,
+identical to genuine bot output. Adding it as a fifth corroborating signal pushed stress-test
+single-field false positives from 3/24 to 8/24 (33%) while only marginally improving recall, because
+trigram and bigram scores are highly correlated for "sequences the corpus doesn't recognize" — for
+this specific problem they are the same failure mode measured twice, not independent evidence.
+Likewise, treating `y` as a vowel (which would reduce `Krzyzewski`/`A Przybylski`-style consonant-run
+false positives) was tried and rejected: it also softens several of the *bot's own* tokens (which
+also contain `y`), costing production recall without reliably buying back the hard-name margin once
+bigram remains in the signal mix.
+
+**Why the cooldown reorder, not more threshold tuning, closes most of the recall gap.** The
+four-signal rule alone reaches only 9/16 known rows (contact 6/6, newsletter 2/6, membership 1/4) —
+extensive threshold search (well beyond the four shipped constants) could not close the remaining 7
+without reopening the stress-test false-positive risk. But every junk `newsletter_subscriptions` row
+in the known incident is preceded, seconds to tens-of-seconds earlier, by a same-email
+`contact_submissions` or `membership_applications` row — and the bot always passes honeypot+timing
+(that's *why* DECISION-104 exists at all). Recording a cooldown attempt as soon as honeypot+timing
+pass, independent of that leading submission's own content verdict, means the *following*
+submission in the same burst is blocked by cooldown regardless of its own content score. This
+recovers newsletter to 6/6 (contact was already 6/6 via content alone) — 13/16 overall — through
+structural defense-in-depth, not by pushing any single content threshold further into
+false-positive-risk territory.
+
+**Residual gap, reported rather than hidden.** `membership_applications` cannot benefit from the
+reorder: in every observed run, membership is submitted *first*, with no earlier same-email sibling
+to draw cooldown protection from. Content alone catches only 1 of its 4 known junk rows; no safe
+threshold combination closes the other 3. This is the least-harmful of the three forms to miss per
+Phase 1's own harm analysis (a missed row is one junk `pending` application an admin rejects by hand
+— the existing workflow for every application — not a confirmation email to a harvested stranger or
+a new unwanted subscriber, both of which are now fully closed at 6/6). The coordinator's stated
+requirement — every in-window junk row must match — is **not fully met** for these 3 of 16 rows, and
+that shortfall is intentional and documented rather than closed by a riskier per-field threshold.
+
+**Impact:**
+
+`src/lib/form-guard.ts`: `isGibberishToken()` rewritten (four signals, embedded literal
+`COMMON_BIGRAMS` table — never computed at runtime, no dictionary file exists on Vercel);
+`evaluateFormGuard()` split into `evaluateStructuralGuard()` (honeypot/timing) and
+`evaluateContentGuard()` (the two-field rule); `checkAndRecordFormCooldown()`'s internal
+`@/lib/db`/`@/lib/db/schema` imports become dynamic (`await import(...)`) to fix a real,
+100%-reproducible bug QA found in the same pass — ES import hoisting was evaluating `@/lib/db`
+before the purge script's own `dotenv.config()` call ran, in any fresh shell. `scripts/
+purge-form-spam.ts` gains cross-table timing-correlation selection logic and reports its one
+known-unmatchable row explicitly rather than omitting it. Three route handlers' call order changes
+(Turnstile → structural guard → cooldown → content guard → insert → emails); their `{ success: true
+}` rejection shape is unchanged at all three rejection points. If this decision is revisited again,
+update this entry's Status to "Superseded by DECISION-NNN" rather than editing silently — in-place
+revision is appropriate only pre-ship, as both edits to this entry have been.
+
+---
+
 ## DECISION-103: Durable-claim email callers get a second, narrower helper pair with no `success` field, instead of a discriminated union across all `sendEmail()` call sites
 
 **Status:** Resolved — implemented and shipped (B-70)
