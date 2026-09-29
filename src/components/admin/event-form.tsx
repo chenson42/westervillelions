@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ImageCropper } from "@/components/admin/image-cropper";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { diffFanOutFields, type EventSiblingFanOutField } from "@/lib/events";
+import { ApplyToSiblingsControl, type SiblingSummaryRow } from "@/components/admin/apply-to-siblings-control";
 
 export interface EventFormData {
   title: string;
@@ -145,13 +147,17 @@ const DAYS_OF_WEEK = [
 export default function EventForm({
   event,
   eventId,
+  siblingSummary,
 }: {
   event?: EventFormData;
   eventId?: string;
+  siblingSummary?: SiblingSummaryRow[];
 }) {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [applyToSiblings, setApplyToSiblings] = useState(false);
+  const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
   const [formData, setFormData] = useState<EventFormData>(
     event || {
       title: "",
@@ -169,8 +175,9 @@ export default function EventForm({
     }
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const hasSiblings = Boolean(siblingSummary && siblingSummary.length > 0 && event);
+
+  const save = async (fanOutFields: EventSiblingFanOutField[] | null) => {
     setIsSubmitting(true);
 
     try {
@@ -178,11 +185,16 @@ export default function EventForm({
       const method = eventId ? "PATCH" : "POST";
 
       // Normalise recurrence fields: clear them when not recurring
-      const payload: EventFormData = { ...formData };
+      const payload: EventFormData & {
+        applyToSiblings?: { fields: EventSiblingFanOutField[] };
+      } = { ...formData };
       if (!payload.isRecurring) {
         payload.recurrenceType = null;
         payload.recurrenceDays = null;
         payload.recurrenceEndDate = null;
+      }
+      if (fanOutFields && fanOutFields.length > 0) {
+        payload.applyToSiblings = { fields: fanOutFields };
       }
 
       const response = await fetch(url, {
@@ -196,13 +208,53 @@ export default function EventForm({
         throw new Error(error.error || "Failed to save event");
       }
 
-      toast.success(eventId ? "Event updated successfully" : "Event created successfully");
+      if (fanOutFields && fanOutFields.length > 0) {
+        const data: { siblings: { matched: number; updated: unknown[]; skipped: unknown[] } | null } =
+          await response.json();
+        const s = data.siblings;
+        if (!s || s.matched === 0) {
+          toast.success(`Saved. No other upcoming "${event?.title}" events still matched.`);
+        } else if (s.updated.length === s.matched) {
+          toast.success(
+            `Saved. Also updated ${s.updated.length} other "${event?.title}" event${s.updated.length === 1 ? "" : "s"}.`
+          );
+        } else {
+          toast.success(
+            `Saved. Updated ${s.updated.length} of ${s.matched} other "${event?.title}" events — ${s.matched - s.updated.length} no longer matched and ${s.matched - s.updated.length === 1 ? "was" : "were"} skipped.`
+          );
+        }
+      } else {
+        toast.success(eventId ? "Event updated successfully" : "Event created successfully");
+      }
       router.push("/admin/events");
       router.refresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "An error occurred");
+      const message = fanOutFields && fanOutFields.length > 0
+        ? "Couldn't save the other events. Try again."
+        : error instanceof Error ? error.message : "An error occurred";
+      toast.error(message);
       setIsSubmitting(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (applyToSiblings && hasSiblings) {
+      const changed = diffFanOutFields(event ?? {}, formData);
+      if (changed.length > 0) {
+        setApplyConfirmOpen(true);
+        return;
+      }
+    }
+
+    await save(null);
+  };
+
+  const handleConfirmApply = () => {
+    setApplyConfirmOpen(false);
+    const changed = diffFanOutFields(event ?? {}, formData);
+    void save(changed);
   };
 
   const handleChange = (
@@ -662,6 +714,22 @@ export default function EventForm({
           )}
         </div>
       </div>
+
+      {/* Apply to other upcoming same-titled events */}
+      {hasSiblings && siblingSummary && (
+        <ApplyToSiblingsControl
+          siblingSummary={siblingSummary}
+          loadedTitle={event!.title}
+          currentTitle={formData.title}
+          checked={applyToSiblings}
+          onCheckedChange={setApplyToSiblings}
+          confirmOpen={applyConfirmOpen}
+          onConfirmOpenChange={setApplyConfirmOpen}
+          changedFields={diffFanOutFields(event ?? {}, formData)}
+          fieldValues={formData as unknown as Record<string, unknown>}
+          onConfirm={handleConfirmApply}
+        />
+      )}
 
       {/* Actions */}
       <div className="flex justify-between">

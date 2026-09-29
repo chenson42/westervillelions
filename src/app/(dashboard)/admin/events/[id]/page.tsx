@@ -4,13 +4,14 @@ import { events, eventRsvps, users, eventOccurrenceOverrides } from "@/lib/db/sc
 import { eq, isNotNull } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { generateOccurrences, parseWallClock, dateKey, nowEastern } from "@/lib/events";
+import { generateOccurrences, parseWallClock, dateKey, nowEastern, isUpcomingWallClock } from "@/lib/events";
 import { format } from "date-fns";
 import { AdminOccurrenceRsvpSection } from "@/components/admin/occurrence-rsvp-section";
 import { AdminEventRsvpTable } from "@/components/admin/admin-event-rsvp-table";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { getSiblingCandidatesByTitle } from "@/lib/event-siblings-queries";
 
 type RsvpRow = {
   id: string;
@@ -84,6 +85,18 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
   ]);
 
   if (!event) notFound();
+
+  // Sibling fan-out summary (docs/work-log/2026-09-29-bulk-edit-same-title-events.md,
+  // Phase 3 "Display (page load)"): every OTHER upcoming event sharing this event's
+  // exact, as-loaded title. "Upcoming" is decided in application code via
+  // isUpcomingWallClock() — never a raw SQL now() predicate (DECISION-005). This list is
+  // allowed to go stale between load and save; the PATCH route recomputes it itself at
+  // save time and reports what it actually touched.
+  const siblingCandidates = await getSiblingCandidatesByTitle(db, event.title, id);
+  const siblingSummary = siblingCandidates
+    .filter((c) => isUpcomingWallClock(c.startDate))
+    .sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0))
+    .map((c) => ({ id: c.id, startDate: c.startDate, isAllDay: c.isAllDay }));
 
   // Format wall-clock strings for datetime-local input (YYYY-MM-DDTHH:mm).
   // event dates are now "YYYY-MM-DD HH:MM:SS" strings (mode:"string"). No UTC conversion.
@@ -210,6 +223,7 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
 
       <EventForm
         eventId={id}
+        siblingSummary={siblingSummary}
         event={{
           title: event.title,
           description: event.description,

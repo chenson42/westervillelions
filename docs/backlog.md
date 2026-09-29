@@ -58,6 +58,7 @@ was deleted on the strength of this review alone.
 - B-59 — Event type field + public calendar badges
 
 **Later**
+- B-78 — Time-of-day / duration fan-out for same-title sibling events (bulk-edit)
 - B-02 — No Playwright auth fixture for a signed-in member
 - B-03 — No e2e fixture for admin sub-permission variance
 - B-04 — Oversized-file error message is unreachable in practice
@@ -830,6 +831,28 @@ was deleted on the strength of this review alone.
 ---
 
 ## Later
+
+- [ ] **B-78 — Time-of-day / duration fan-out for same-title sibling events (bulk-edit).**
+  (added 2026-09-29, deferred from Phase 1 of
+  `docs/work-log/2026-09-29-bulk-edit-same-title-events.md`, carried through Phases 2–5 as an
+  explicit "must not be silently dropped" note without ever being filed here — filed now in
+  Phase 6; priority: fast-follow, only once actually needed) The shipped "apply to other
+  upcoming same-title events" fan-out (`EVENT_SIBLING_FAN_OUT_FIELDS` in `src/lib/events.ts`)
+  deliberately excludes start time-of-day and duration/end-time. `events.startDate`/`endDate`
+  are single naive wall-clock timestamp strings with no separate time-of-day column
+  (DECISION-005), so fanning out "the new start time" is not a flat `SET col = value` —
+  per sibling row it means keep that row's own calendar date and replace only its time
+  component, then reapply the edited event's new duration to derive a new end time. That is
+  real per-row decompose/recompose logic, and this project has a recorded incident of exactly
+  this class of bug (`project_naive_timestamp_tz_bug` — a naive timestamp read as UTC, meetings
+  displaying hours off). Build this only when an admin actually needs to retime a whole
+  schedule at once (e.g. "Board Meeting moves from 7:00 PM to 7:30 PM starting next month"),
+  and design the per-row date-preserving time replacement explicitly, reusing
+  `parseWallClock()`/`nowEastern()` rather than inventing new date math. Not urgent today — the
+  shipped v1 flat-field allowlist (`location`, `description`, `isPublic`, `requiresRsvp`,
+  `maxAttendees`, `allowGuestCount`, `extraQuestion`, `extraQuestionType`,
+  `extraQuestionOptions`, `extraQuestionRequired`) already covers the incident that motivated
+  this feature (an admin's "Requires RSVP" edit not propagating across the meeting schedule).
 
 - [ ] **B-02 — No Playwright auth fixture for a signed-in member (only admin).**
   (added 2026-07-21, priority: nice-to-have) `e2e/helpers/auth.ts` only has

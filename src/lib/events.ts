@@ -412,6 +412,114 @@ export function isValidOccurrence(candidate: Date, occurrences: Date[]): boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Bulk-edit same-titled upcoming events (fan-out)
+// See: docs/work-log/2026-09-29-bulk-edit-same-title-events.md (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The ONLY fields a single-event edit may fan out to other exact-title-
+ * matching upcoming events. Deliberately excludes `title`, `startDate`,
+ * `endDate`, `image`, `isFeatured`, and every `isRecurring`/`recurrence*`
+ * field — those are never fanned out, in the UI or at the server allowlist,
+ * per Phase 2's ruling. Time-of-day/duration fan-out is deferred (naive
+ * wall-clock decompose/recompose risk, DECISION-005).
+ *
+ * This constant is the single source of truth consumed by BOTH the client
+ * form (for the confirm-dialog diff) and the PATCH route (for the
+ * server-side allowlist intersection) — see events.ts's header comment on
+ * why this pure module has no `db` import and is safe for client import.
+ */
+export const EVENT_SIBLING_FAN_OUT_FIELDS = [
+  "location",
+  "description",
+  "isPublic",
+  "requiresRsvp",
+  "maxAttendees",
+  "allowGuestCount",
+  "extraQuestion",
+  "extraQuestionType",
+  "extraQuestionOptions",
+  "extraQuestionRequired",
+] as const;
+
+export type EventSiblingFanOutField = (typeof EVENT_SIBLING_FAN_OUT_FIELDS)[number];
+
+/**
+ * Returns true when `startDate` (a wall-clock DB string) has not yet
+ * occurred relative to `now` — inclusive (`>=`), matching the precedent
+ * script's semantics (a startDate exactly equal to `now` counts as
+ * upcoming, not past).
+ *
+ * MUST be used for every "is this event still upcoming" check in the
+ * sibling fan-out feature — never a raw SQL `start_date >= now()` predicate.
+ * `events.startDate` is a naive wall-clock string with no time zone
+ * (DECISION-005); comparing it directly against Postgres `now()` forces an
+ * implicit cast governed by the connection's session time zone, not
+ * Eastern, which silently reintroduces the naive-timestamp-as-UTC bug this
+ * codebase has already hit once. `now` defaults to `nowEastern()` so
+ * callers get the correct comparison for free; a caller may pass an
+ * explicit `now` for a deterministic test or to reuse one instant across
+ * several comparisons in the same request.
+ */
+export function isUpcomingWallClock(startDate: string, now: Date = nowEastern()): boolean {
+  return !isBefore(parseWallClock(startDate), now);
+}
+
+/**
+ * Structural shape of the ten fan-out-eligible fields, as already computed
+ * (normalized) for a main-row `.set()` call. `EventFormData` in
+ * event-form.tsx structurally satisfies this — no mapping step needed by
+ * the client.
+ */
+export type EventFanOutFieldValues = {
+  location?: string | null;
+  description?: string | null;
+  isPublic?: boolean;
+  requiresRsvp?: boolean;
+  maxAttendees?: number | null;
+  allowGuestCount?: boolean;
+  extraQuestion?: string | null;
+  extraQuestionType?: string | null;
+  extraQuestionOptions?: string[] | null;
+  extraQuestionRequired?: boolean;
+};
+
+/**
+ * Value-equality (never reference-equality) comparison for a single
+ * fan-out field's value. Arrays (only `extraQuestionOptions` today) are
+ * compared by length + per-index equality. `null` and `undefined` are
+ * treated as equivalent for the nullable scalar fields, since a baseline
+ * event prop and a live form-state object legitimately represent "absent"
+ * differently.
+ */
+function fanOutValuesEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => v === b[i]);
+  }
+  const normA = a === undefined ? null : a;
+  const normB = b === undefined ? null : b;
+  return normA === normB;
+}
+
+/**
+ * Pure diff over ONLY the fan-out allowlist keys — ignores every other
+ * field (title, startDate, isFeatured, recurrence*, etc.) even if it
+ * differs between `baseline` and `current`, because those can never be
+ * fanned out regardless of what changed. Returns the changed allowlisted
+ * keys, in `EVENT_SIBLING_FAN_OUT_FIELDS` order.
+ */
+export function diffFanOutFields(
+  baseline: EventFanOutFieldValues,
+  current: EventFanOutFieldValues
+): EventSiblingFanOutField[] {
+  return EVENT_SIBLING_FAN_OUT_FIELDS.filter(
+    (field) => !fanOutValuesEqual(baseline[field], current[field])
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ICS / iCalendar generator
 // RFC 5545 — https://datatracker.ietf.org/doc/html/rfc5545
 // See: docs/work-log/2026-05-20-add-to-calendar.md (Phase 3, C1–C11)

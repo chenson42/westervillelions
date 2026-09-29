@@ -17,8 +17,12 @@ import {
   icsFold,
   toIcsFilename,
   nowEastern,
+  isUpcomingWallClock,
+  diffFanOutFields,
+  EVENT_SIBLING_FAN_OUT_FIELDS,
   type RecurringEvent,
   type IcsEventInput,
+  type EventFanOutFieldValues,
 } from "./events";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -1541,5 +1545,111 @@ describe("regression — server timezone event visibility (nowEastern fixes UTC-
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// isUpcomingWallClock — docs/work-log/2026-09-29-bulk-edit-same-title-events.md
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("isUpcomingWallClock", () => {
+  const now = new Date(2026, 5, 15, 12, 0, 0); // June 15, 2026, noon (local components)
+
+  it("returns true for a startDate strictly after now", () => {
+    expect(isUpcomingWallClock("2026-06-15 13:00:00", now)).toBe(true);
+  });
+
+  it("returns false for a startDate strictly before now", () => {
+    expect(isUpcomingWallClock("2026-06-15 11:00:00", now)).toBe(false);
+  });
+
+  it("treats a startDate exactly equal to now as upcoming (inclusive >=, not strict >)", () => {
+    expect(isUpcomingWallClock("2026-06-15 12:00:00", now)).toBe(true);
+  });
+
+  it("defaults `now` to nowEastern() when not passed", () => {
+    vi.useFakeTimers();
+    // 2026-07-04T21:00:00Z = 5:00 PM EDT.
+    vi.setSystemTime(new Date("2026-07-04T21:00:00.000Z"));
+    try {
+      expect(isUpcomingWallClock("2026-07-04 18:00:00")).toBe(true); // 6 PM Eastern — still ahead
+      expect(isUpcomingWallClock("2026-07-04 16:00:00")).toBe(false); // 4 PM Eastern — already past
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// diffFanOutFields — docs/work-log/2026-09-29-bulk-edit-same-title-events.md
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("diffFanOutFields", () => {
+  const baseline: EventFanOutFieldValues = {
+    location: "Fellowship Hall",
+    description: "Monthly meeting",
+    isPublic: true,
+    requiresRsvp: true,
+    maxAttendees: 50,
+    allowGuestCount: true,
+    extraQuestion: "Dietary restrictions?",
+    extraQuestionType: "text",
+    extraQuestionOptions: [],
+    extraQuestionRequired: false,
+  };
+
+  it("returns [] when nothing in the allowlist differs, even when non-allowlisted fields differ", () => {
+    const current: EventFanOutFieldValues & { title?: string; startDate?: string; isFeatured?: boolean; recurrenceType?: string | null } = {
+      ...baseline,
+      title: "A Totally Different Title",
+      startDate: "2099-01-01 00:00:00",
+      isFeatured: true,
+      recurrenceType: "weekly",
+    };
+    expect(diffFanOutFields(baseline, current)).toEqual([]);
+  });
+
+  it("returns exactly the changed allowlisted keys when one differs", () => {
+    const current: EventFanOutFieldValues = { ...baseline, location: "Community Center" };
+    expect(diffFanOutFields(baseline, current)).toEqual(["location"]);
+  });
+
+  it("returns exactly the changed allowlisted keys when several differ, in allowlist order", () => {
+    const current: EventFanOutFieldValues = {
+      ...baseline,
+      requiresRsvp: false,
+      location: "Community Center",
+    };
+    const result = diffFanOutFields(baseline, current);
+    expect(result).toEqual(
+      EVENT_SIBLING_FAN_OUT_FIELDS.filter((f) => result.includes(f))
+    );
+    expect(result.sort()).toEqual(["location", "requiresRsvp"].sort());
+  });
+
+  it("does not report extraQuestionOptions as changed when the array is functionally equal but a distinct reference", () => {
+    const withOptions: EventFanOutFieldValues = { ...baseline, extraQuestionOptions: ["Vegetarian", "Vegan"] };
+    const current: EventFanOutFieldValues = { ...withOptions, extraQuestionOptions: ["Vegetarian", "Vegan"] };
+    expect(withOptions.extraQuestionOptions).not.toBe(current.extraQuestionOptions);
+    expect(diffFanOutFields(withOptions, current)).toEqual([]);
+  });
+
+  it("reports extraQuestionOptions as changed when its contents actually differ", () => {
+    const withOptions: EventFanOutFieldValues = { ...baseline, extraQuestionOptions: ["Vegetarian", "Vegan"] };
+    const current: EventFanOutFieldValues = { ...withOptions, extraQuestionOptions: ["Vegetarian", "Gluten-Free"] };
+    expect(diffFanOutFields(withOptions, current)).toEqual(["extraQuestionOptions"]);
+  });
+
+  it("reports extraQuestionOptions as changed when lengths differ", () => {
+    const withOptions: EventFanOutFieldValues = { ...baseline, extraQuestionOptions: ["Vegetarian"] };
+    const current: EventFanOutFieldValues = { ...withOptions, extraQuestionOptions: ["Vegetarian", "Vegan"] };
+    expect(diffFanOutFields(withOptions, current)).toEqual(["extraQuestionOptions"]);
+  });
+
+  it("does not false-positive on null-vs-undefined equivalents for nullable scalar fields", () => {
+    const withNull: EventFanOutFieldValues = { ...baseline, location: null, maxAttendees: null };
+    const withUndefined: EventFanOutFieldValues = { ...baseline, location: undefined, maxAttendees: undefined };
+    expect(diffFanOutFields(withNull, withUndefined)).toEqual([]);
+    expect(diffFanOutFields(withUndefined, withNull)).toEqual([]);
   });
 });
