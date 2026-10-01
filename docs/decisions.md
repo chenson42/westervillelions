@@ -28,6 +28,309 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-108: Discarding a reconciliation session is a hard DELETE, open sessions only, with the status pinned inside the DELETE statement
+
+**Status:** Resolved
+**Date:** 2026-10-01
+
+**Decision:**
+
+1. **Hard delete, not a soft `'discarded'` status.** `DELETE /api/admin/ledger/reconciliation/sessions/[sessionId]`
+   removes the `ledger_reconciliation_sessions` row; its `ledger_bank_lines` and `ledger_reconciliation_matches`
+   go with it through the existing `ON DELETE CASCADE` foreign keys. No schema change, no migration.
+2. **Only an open session is ever deleted, and the pin lives in the statement:**
+   `DELETE ... WHERE id = $id AND status = 'open' RETURNING *` (plus `AND reopened_at IS NULL` when the caller
+   lacks `ledger.manage`), inside `discardOpenSession()` in `src/lib/reconciliation-queries.ts`. It is never a
+   read-then-delete and never a check in the route. When the statement returns no row, a follow-up lookup in the
+   same transaction chooses 404 (no such id), 409 (exists, not open) or 403 (open, previously reopened, caller
+   lacks `ledger.manage`), and nothing is written.
+3. **Matches and transactions created from bank lines do not block a discard.** Discard removes the session, its
+   statement lines and its match links, and writes nothing to `ledger_transactions`. A transaction created from a
+   bank line stays in the books, unmatched, on the session's own bank account. The confirmation dialog warns
+   about it; it is not detected, because nothing on the transaction records where it came from.
+4. **Permissions:** `ledger.record` (the same key as create, upload, match, unmatch and close), plus
+   `ledger.manage` only for a session whose `reopened_at` is set. No new `FEATURES` key.
+5. **Audit:** one `ledger_audit_log` row in the same transaction, `action = 'reconciliation_session_discarded'`,
+   both target FKs null (the `ack_letter_template_updated` precedent), counts only, never bank-line text.
+
+**Rationale:**
+
+- **Why the pin must be inside the DELETE.** `ledger_transactions.reconciled_session_id` references the session
+  with `ON DELETE SET NULL` (migration 0059). Hard-deleting a *closed* session would leave every transaction it
+  cleared with `reconciled = true` and a nulled provenance pointer, so a later reopen could not find or revert
+  them (DECISION-036), and nothing would error. A check-then-delete leaves a window in which a concurrent `close`
+  flips the row; the predicate inside the statement closes it atomically. A closed session therefore goes
+  Reopen (`ledger.manage`, which reverts its transactions) and then Discard: two deliberate steps.
+- **Why hard delete over a soft status.** The overlap check (`getSessionPeriodsForAccount()`, which has no status
+  filter) and `UNIQUE (bank_account_id, statement_period_start, statement_period_end)` free the period
+  automatically, which is the whole point (a mistaken session blocked creating the right one). A soft status adds
+  a third state to a two-state column and a filter on every reader, and leaves raw bank descriptions in the
+  database for no purpose. The audit row is the record that the session existed.
+- **Why matches do not block (rejecting B-06's original rule).** B-06 sketched "blocked once any match exists".
+  The treasurer's real case (wrong account, found after upload, possibly after matching) is exactly when matches
+  exist; forcing an unmatch line by line recreates the problem. A match is only a link.
+- **Why `ledger.record` and not `ledger.manage`.** Discarding an open draft is strictly less destructive than the
+  posted-transaction hard delete that `ledger.record` already allows. The stricter key applies only where the
+  session once stood as a settled period.
+- **Tradeoff named:** counts in the audit row and toast are taken inside the transaction under READ COMMITTED, so a
+  match inserted in the same instant by another user can be missing from the count. Fine for now because the audit
+  row is a trail, not a ledger; take `SELECT ... FOR UPDATE` on the session row first if exactness ever matters.
+
+**Impact:** `DELETE` handler in `[sessionId]/route.ts`; `discardOpenSession()` in
+`src/lib/reconciliation-queries.ts`; `isUuid()` in `src/lib/utils.ts`; a `Discard session` button on the
+detail page header; a comment-only update to `ledgerAuditLog` in `src/lib/db/schema.ts`; a short addition to the
+Treasury User's Guide. Closes B-06 (its blocking rule deliberately not adopted); B-86 tracks a created-from-bank-line
+marker. Phase 2 was skipped for this work on the strength of exactly this decision: any move to a soft status,
+direct closed-session discard, or a new audit FK/table must go back to the architect. Work-log:
+`docs/work-log/2026-10-01-discard-reconciliation-session.md`.
+
+---
+
+## DECISION-107: `email_queue` keeps six months of history, purged lazily when an admin opens `/admin/email-queue`
+
+**Status:** Resolved
+**Date:** 2026-10-01
+
+**Decision:**
+
+1. **Retention.** `email_queue` rows older than `EMAIL_QUEUE_RETENTION_DAYS = 183` are deleted. The constant lives
+   in `src/lib/email-queue-stats.ts` beside `resetStaleRetryingEmails()`. It is a code constant, not a
+   `ledger_settings`-style setting: it is a one-time policy statement from the treasurer, not a knob anyone will
+   turn, and a setting would need a UI, a permission, a migration and validation. Days, not calendar months,
+   because JS month arithmetic misbehaves at month-end; 183 days from 2026-04-13 lands on 2026-10-13, identical
+   to the calendar answer.
+2. **Age basis: `COALESCE(sent_at, created_at) < cutoff`.** `created_at` alone would delete a message the moment
+   it is successfully retried after sitting `failed` for six months, and would drop a sent message out of
+   "Recently Sent" by creation date rather than send date. `sent_at` is null for unsent rows, so the COALESCE
+   gives every row a defined age. The cutoff is computed in JS (`emailQueueRetentionCutoff(now)`, pure and
+   injectable, mirroring `pruneCutoff()` in `src/lib/auth/failed-login.ts`) and bound as an ISO string cast to
+   `::timestamp` (DECISION-005: no `now()` arithmetic in SQL; the columns are naive `timestamp`, and a raw `Date`
+   inside a bare `sql` template would be serialized in the process's local timezone).
+3. **Which rows: every status except `retrying`.** The predicate is `status <> 'retrying'`, not an allow-list, so a
+   future status is purged by default. `sent`, `failed`, `pending`, `blocked_non_production`, `dev_no_api_key`
+   all go. `failed` goes too: a six-month-old failure is noise, retrying it would send stale content to a real
+   person, and the failure is not lost because the owning table (`dues_reminders`, `event_announcements`,
+   `financial_report_sends`) keeps its own `success = false` + `error`. `retrying` is excluded because it is a
+   live claim: purging it would let an admin's concurrent retry settle against a deleted row and send a message
+   with no record. `resetStaleRetryingEmails()` runs first on the page, so a stranded `retrying` row becomes
+   `failed` and, if old, is purged on the same visit.
+4. **Trigger: a call from the `/admin/email-queue` page load, after `auth()` + `hasFeature(ADMIN_USERS)` and
+   after `resetStaleRetryingEmails()`, wrapped in try/catch at the call site.** Not inside `sendEmail()`, not a
+   button, not a cron. `pruneEmailQueue()` itself throws on a database error; the page owns the "a purge failure
+   must never 500 the page" policy and logs with `console.error("[email-queue] retention purge failed", ...)`.
+5. **No audit row.** Auditing the deletion of a delivery log with another log is a regress: the durable "what
+   was sent" records live in their own tables, and the two existing opportunistic prunes in this codebase
+   (failed logins, form cooldown) write none. Discoverability is a static one-line policy note on the page. The
+   helper returns the deleted count so a toast or audit line is a one-line addition later.
+6. **`/privacy` is not edited.** It states no retention period and never mentions outbound-email logs, so nothing
+   it says is invalidated, and the lazy trigger cannot strictly guarantee six months, so no promise belongs there.
+
+**Rationale:**
+
+Worth doing for **data minimisation, not performance**: production holds ~25 rows a month, so size is a non-problem
+for years, but the table stores full HTML bodies (member-supplied proposal text, donor names and gift amounts,
+board financial statements), recipient/cc/bcc addresses and base64 `.ics` attachments, and nothing ever removed
+any of it. The table is a delivery log and retry buffer, not a system of record (DECISION-085).
+
+**Why page-load and not `sendEmail()`.** Piggybacking on insert is the codebase's other accepted pattern
+(DECISION-033, Architect Ruling 3) and gives the tightest guarantee, but it was rejected for this table: (a) bulk
+sends loop `sendEmail()` per recipient (event announcements, dues reminders, minutes), so every recipient would
+gain a Neon round-trip inside a request already bounded by the Hobby 10-second cap documented in
+`email-queue-stats.ts`; (b) `sendEmail()` is the most incident-prone function in the repo (DECISION-102/103), and
+an unrelated write on its hot path, plus the failure isolation it would need, is risk with no user-visible benefit,
+and its unit suites mock the `db` chain. Page-load is one idempotent, usually zero-row `DELETE` on a low-traffic
+page, after the permission gate, next to `resetStaleRetryingEmails()`, which already does a write-on-read for the
+same "no scheduler" reason (CLAUDE.md hosting-cost constraint). A button relies on a human remembering housekeeping.
+Escalation path if a hard guarantee is ever wanted: move the same helper call into the enqueue path (a one-line
+move, but it re-opens architectural review, because it puts a delete in the send helper that DECISION-102/103
+guard).
+
+**The caveat, stated plainly: rows are deleted at the next admin visit after six months, not at six months.** If
+nobody opens the page, nothing is pruned. Acceptable because the volume is trivial and the treasurer, who holds
+`admin`, opens the page routinely. This is also why the on-page note says "removed automatically when this page is
+opened" and why no external policy promises "six months". Two minor consequences: the sidebar failed-count badge
+(computed in the admin layout) can over-count by the about-to-be-purged `failed` rows for one navigation on the
+purging visit; and production's first real purge is on/after 2026-10-13 (oldest sent row 2026-04-13).
+
+**Impact:**
+
+- `src/lib/email-queue-stats.ts`: `EMAIL_QUEUE_RETENTION_DAYS`, `emailQueueRetentionCutoff()`, `pruneEmailQueue()`.
+- `src/app/(dashboard)/admin/email-queue/page.tsx`: wrapped call, policy note, "No emails sent in the last 6
+  months." empty state.
+- `src/lib/db/schema.ts`: comment-only retention notes on `email_queue` and on `event_announcements` /
+  `financial_report_sends` `emailQueueId` (matching the existing `dues_reminders` note).
+- No schema change, no migration, no new route, no new `FEATURES` key, no change to `sendEmail()`, the retry route,
+  or `/privacy`.
+- The `DELETE` is a sequential scan (the predicate cannot use `ix_email_queue_status`), and the
+  `ON DELETE SET NULL` cascade scans three unindexed `email_queue_id` columns. Fine at hundreds of rows; revisit
+  if the queue or any of the three tables grows ~10x past a few thousand rows.
+- A third opportunistic-prune call site now exists (failed logins, form cooldown, email queue). They share an
+  idiom, not logic; no generic framework is built. Recorded for the 30-day code review.
+- Follow-ups: B-81 (stranded `pending` rows are invisible on the page and badge), B-82 (`google_group_sync_log`
+  retains member email lists forever). Work-log: `docs/work-log/2026-10-01-email-queue-retention.md`.
+
+---
+
+## DECISION-106: Reimbursements no longer require board approval: the treasurer reviews and pays, the board reviews after the fact
+
+**Status:** Resolved
+**Date:** 2026-10-01
+
+**Decision:** Following a board meeting, September 2026 (minute reference to be supplied by the treasurer), the club
+no longer requires board approval for member reimbursements. They show up on reports and the board reviews them
+after payment. This supersedes, in part, the reimbursement scope in `docs/work-log/2026-06-24-ledger-controls.md`
+(the approval step, the `ledger.approve` board notification, and "locked once the board acts"). The receipt
+requirement, member-supplied cause, treasurer-assigned fund, resubmit-after-rejection, and private receipts all stand.
+
+1. **Permissions.** `reject` and `pay` both gate on `ledger.record`; `ledger.approve` no longer touches
+   reimbursements (it keeps the Approvals page, pending-disbursement approve/reject, and budget approve/unlock). No new
+   key: a narrower key would let someone post `status='posted'` expenses without holding the record key, a side door
+   around the gate. A one-statement idempotent migration corrects the stale `features.description` for `ledger.approve`.
+2. **Lifecycle.** `submitted -> paid | rejected`. `approved` is a legacy read-only status, never written again. `pay`
+   and `reject` accept `submitted` or legacy `approved` (a legacy row the treasurer decides not to pay must not be
+   stranded). `boardMinute` is no longer collected; the column is retained (DECISION-074 section 6) and shown only on
+   historical rows as "Board minute (historical)". No schema change.
+3. **Immutability stamp.** A reimbursement-derived transaction's `approvedByUserId`/`approvedAt` are stamped with the
+   paying user and time. They now mean "reviewed and paid by the treasurer" and are what locks the row against
+   edit/delete/split/receipt-waive (every one of those guards keys on `approvedAt`); `boardMinute` is null. A legacy
+   `approved` row keeps its real board approval history on the transaction. The stamp lives in one pure helper,
+   `reimbursementTransactionStamp()` in `src/lib/ledger.ts`, with a coupling comment so it is not "cleaned up" later;
+   an explicit lock guard was rejected because it would have to be added at five route sites (the Duplication rule).
+   On these rows approver equals recorder. The replacement segregation-of-duties rule is that the submitter may never pay
+   or reject their own request (matched on user id OR member id; `null` never matches), which requires at least two
+   `ledger.record` holders.
+4. **Races.** `pay` carries `expectedAmountCents` and `expectedUpdatedAt`, compared in application code (never as SQL
+   timestamp equality: `updated_at` is microsecond in Postgres and millisecond in the JS `Date`, so a SQL comparison
+   would 409 every never-edited row). The final atomic UPDATE pins `status IN ('submitted','approved')` plus the read
+   amount, description, receipt key, and cause. Admin `reject` and the member PATCH/DELETE gain status-conditioned atomic
+   updates (409 on zero rows); both were pre-existing check-then-write races that this change makes more likely.
+5. **Notification.** The submit notification goes to the Board-position Treasurer from `resolveTreasurer()`
+   (DECISION-086) only if that person holds `ledger.record` and is not the submitter; otherwise to all `ledger.record`
+   holders minus the submitter. The choice is the pure `pickReimbursementNotifyRecipients()` in `src/lib/ledger.ts`.
+   Tolerant, not a hard block (contrast DECISION-101): a failed resolution never stops a member submitting. Sent via
+   `sendBulkMemberEmail()`. **Not a durable-claim path** (no `sentAt`, no unique success row, no append-only "sent"
+   history), so `sendBulkMemberEmailForDurableClaim()` does not apply (DECISION-102/103). A failed or empty-recipient
+   send is logged (no addresses), and the admin-home card plus the Awaiting tab are the backstop.
+6. **Board awareness.** The Paid tab is the board's review log: ordered by paid date, showing payer (the linked
+   transaction's `recordedByUserId`) and fund, with paging. The admin-home "Pending Reimbursements" card narrows to
+   `ledger.record` holders. A board-visible monthly "Reimbursements paid" report is a follow-up (B-83). The
+   member-visible Monthly Statement still never lists reimbursements by name.
+7. **Accepted risk.** A reimbursement up to the $10,000 form ceiling (a typo guard, not a policy threshold; it is not a
+   ledger setting) is paid with no second approver, while a vendor expense over `disbApprovalThresholdCents` still pends
+   for the board. Compensating controls that remain: mandatory receipt, submitter-cannot-pay-own with two `ledger.record`
+   holders, the Paid-tab review log, bank reconciliation, and the monthly statements. The board is to confirm whether it
+   wants a ceiling; the cheapest version is routing over-threshold reimbursements through the existing pending-disbursement
+   path, as its own decision.
+
+**Rationale:** The board's intent is explicit and the existing approve step had a second, quieter job: it locked a paid
+reimbursement's ledger row (the lock keys on `approvedAt`, which `pay` used to copy from the board's review). Removing
+the step without replacing the stamp would have silently made paid reimbursements editable and deletable. The race
+fixes are in scope because the old `approved` step incidentally closed the member-edit window before the treasurer saw
+the pay form; with `submitted -> paid` that window is open, so the stale-token check and status-conditioned updates are
+required rather than optional. The recipient rule falls back to the other `ledger.record` holders because the old
+`ledger.approve` fan-out now reaches people who cannot act on the link, and "nothing plus a warning" leaves a member
+waiting on a request nobody was told about.
+
+**Impact:** Two API routes plus the member `[id]` route rewritten, three pure helpers added to `src/lib/ledger.ts`,
+`listReimbursementsForAdmin()` gains payer/fund and paid-date ordering, one idempotent `UPDATE features` migration,
+comment-only edits to `schema.ts` and `permissions.ts`, `approve-reimbursement-dialog.tsx` deleted, the Pay dialog,
+admin page, admin-home card, member page/form copy, and the Treasury guide updated. **Amends DECISION-086:** the
+reimbursement `approve` CC site is gone (the tolerant treasury-CC sites number four, not five), and the submit email adds
+`resolveTreasurer()` as a *recipient* consumer with fallback-not-skip tolerance. Folds in B-48's reimbursement-route half.
+Follow-ups: B-83, B-84, B-85. Full contract and test list:
+`docs/work-log/2026-10-01-reimbursements-no-board-approval.md` (Phase 3).
+
+---
+
+## DECISION-105: The aged public-fund guardrail ages the money (oldest-first), not the fund — corrects the age-of-fund rule in DECISION-027 and DECISION-028
+
+**Status:** Resolved (corrects DECISION-027 Ruling B and DECISION-028 points 1 and 3; the rest of both stands)
+**Date:** 2026-10-01
+
+**Decision:**
+
+DECISION-027 Ruling B defined the guardrail's age test as "the oldest posted income date for each public
+fund across all fiscal years, where the fund's current balance is positive", computed with
+`MIN(txn_date)` over all posted income, and DECISION-028 kept that query (its "Query A") unchanged. That test
+measures the age of the **fund**, not of the money on hand. Once any public fund has existed longer than
+`holdingPeriodWarnDays` its first income never moves, so the flag reduces to "balance > 0" and can only
+clear at exactly $0.00, which an active fund never reaches. The treasurer reported it on 2026-10-01
+(Charitable Fund, $8,973.75: "it will never go away because the funds always will flex up and down and will
+never drain to 0"). Local data agreed: balance $5,836.57 against $26,285.35 of income and $34,825.87 of
+expense posted in the trailing 365 days.
+
+The rule is replaced by a first-in-first-out reading of "age of the money, oldest spent first":
+
+1. Every expense consumes the oldest dollars on hand first. The opening balance is unconditionally the
+   oldest money (`ledger_funds` has no "as of" date for it, and `createdAt` is a seed date, not the money's
+   date).
+2. The aged part of a public fund's balance is
+   `aged = min(balance, max(0, balance - income posted in the trailing holdingPeriodWarnDays))`,
+   where `balance` is the unchanged cross-FY `fundBalanceCents()` figure (DECISION-028 point 2 stands) and
+   the window is `txn_date >= today - holdingPeriodWarnDays` with `today` a club-local (America/New_York)
+   `YYYY-MM-DD` string computed in TypeScript, never `now()` in SQL. Income exactly `holdingPeriodWarnDays`
+   days old is still fresh, as under the old rule.
+3. The flag fires for a fund only when `aged > 0`, and its detail text names each qualifying fund with its
+   aged dollars and its balance. The flag title is unchanged.
+4. One shared function, `computeAgedPublicFunds()`, returns `{ fundName, agedCents, balanceCents }[]`;
+   the count, the names and the flag text are all derived from that array, so they cannot disagree
+   (replaces `countAgedPublicFunds()` / `agedPublicFundNames()`, DECISION-028 point 3 and DECISION-032's
+   names field). `GuardrailsInput.agedPublicFunds` becomes that array.
+
+**Treasurer sign-off requested (the reading we are adopting):** the LCI Board Policy Manual Ch. VII text is not
+in this repository, so "FIFO, age of the money" is our reading of "returned to public use within a
+reasonable time", chosen on the orchestrator's authority on the treasurer's behalf, not a quoted LCI
+rule. If LCI reads it differently, the change is confined to `computeAgedPublicFunds()` and the cutoff
+helper. Object here.
+
+**Behavior changes the treasurer will see:**
+- A mature fund whose recent income covers its balance no longer flags (the reported bug).
+- A dormant public fund holding only a seeded opening balance and no income now **flags**. Under the old
+  rule it was silent (`MIN(txn_date)` was null). This is intended: seeded money that has never been spent is
+  exactly what the rule exists to catch. It needs a release-note line.
+
+**Known limitations (accepted, advisory WARN, not a control):**
+- **Transfers reset the clock.** An inter-fund transfer is two rows linked by `transferGroupId` with
+  `flow = 'income'` on the receiving side and `flow = 'expense'` on the sending side (DECISION-016/017).
+  The query counts them as ordinary income/expense, so old money swept from fund A to fund B is consumed in A
+  and arrives as fresh in B. Excluding transfer-in from "fresh" was rejected because the Treasury Guide
+  advises sweeping Activity to Foundation Charitable often, which would recreate the permanent false
+  positive in the Charitable Fund. Age-carrying needs lot tracking; filed as B-80 (Watching). A unit test
+  pins the current behavior so a later change is deliberate.
+- **Date masking.** Posting or redating income inside the window makes aged money look fresh. Reconciliation
+  locks and the audit log are the existing mitigations.
+- **Refund-style income** posted as `flow = 'income'` counts as fresh; any posted expense counts as
+  disbursement regardless of purpose.
+- **No earmark escape valve yet.** The detail text still tells the treasurer to document multi-year
+  earmarks in board minutes; the guardrail cannot see that documentation. Filed as B-79 (Later).
+
+**Rationale:**
+
+Dollars, not funds, are what the policy is about ("returned to public use"), so aging the money is the more
+faithful reading, and it is the treasurer-friendly convention: any disbursement counts toward clearing the
+oldest money. FIFO needs no per-transaction lot tracking: the old pool (opening balance plus income dated
+before the cutoff) is always older than any in-window dollar, so all expenses draw from it first, and what
+remains is `balance - income inside the window`, floored at zero. A bare count made the old flag
+unactionable, so the new text states the amount. The trailing-window sum is folded into DECISION-028's
+Query A2 as one conditional-sum column (no extra round trip) and Query A is deleted, so `getOverview()` runs
+one aggregate query for this guardrail instead of two. DECISION-027's reasoning for a read-time query over a
+denormalized column is unaffected and still holds.
+
+**Impact:**
+- `src/lib/ledger.ts` — `AgedPublicFundFact` swaps `oldestPostedIncomeDate` for `trailingWindowIncomeCents`
+  and makes `fundName` required; `countAgedPublicFunds()`, `agedPublicFundNames()` and `isAgedPublicFund()`
+  replaced by `computeAgedPublicFunds()`; new pure helpers `clubLocalDateString()` and
+  `agedPublicFundCutoffDate()`; `GuardrailsInput.agedPublicFunds` is `AgedPublicFund[]` and
+  `agedPublicFundNames` is removed; flag detail rewritten (title unchanged).
+- `src/lib/ledger-queries.ts` — `getOverview()`: Query A removed; Query A2 gains the window-income column.
+- `src/lib/ledger.test.ts` — the 34 references to the removed API are replaced (see work-log).
+- Copy: `ledger-settings-form.tsx`, `guide/settings-section.tsx`, `guide/guardrails-section.tsx`.
+- No schema change, no migration, no new permission. Release notes 1.84.1.
+- Full design: `docs/work-log/2026-10-01-aged-public-fund-fifo.md`, Phase 3. DECISION-027 and DECISION-028
+  are left as written (history is not edited); read them with this entry.
+
+---
+
 ## DECISION-104: `isGibberishToken()` is a four-signal combined score (not vowel-ratio alone), the cross-form cooldown is recorded before content is evaluated, and a two-field row-level rule still gates live rejection
 
 **Status:** Resolved
@@ -1025,6 +1328,12 @@ modified (`cc`/`bcc`, `_bulkMemberSend`, `sendBulkMemberEmail()`), `src/lib/db/s
 `0087_email_queue_cc_bcc.sql`), five existing ledger-route sends gain a CC. Full contract —
 API routes, email copy, component plan, edge cases, and the thirteen required unit tests — is in
 the Phase 3 section of the work-log linked above.
+
+**Amended 2026-10-01 by DECISION-106:** the reimbursement `approve` action no longer exists, so its CC site is gone and
+the tolerant treasury-CC sites number **four**, not five (two in the reimbursement route: rejected and paid; two in
+`src/app/api/admin/ledger/transactions/route.ts`). The reimbursement-submit notification adds `resolveTreasurer()` as a
+*recipient* consumer with a different tolerance (falls back to the other `ledger.record` holders rather than skipping).
+The "five" in the text above is the count as of 2026-08-12 and is left as written.
 
 ---
 

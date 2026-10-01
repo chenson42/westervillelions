@@ -115,7 +115,7 @@ export function ReimbursementSubmitForm({ onSuccess }: { onSuccess?: () => void 
         throw new Error(data.error || "Failed to submit reimbursement request.");
       }
 
-      toast.success("Reimbursement request submitted. The board will review it shortly.");
+      toast.success("Submitted. The treasurer will review it and you'll get an email when it's paid.");
       // Reset form
       setAmount("");
       setDescription("");

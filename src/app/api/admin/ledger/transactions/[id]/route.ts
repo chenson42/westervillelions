@@ -8,6 +8,9 @@
  * to update the paired row symmetrically (amount + date). For memo-only edits,
  * only the requested row is updated regardless.
  *
+ * Reimbursement-derived transactions are locked by this same approvedAt guard; the
+ * reimbursement pay action stamps approvedAt deliberately (DECISION-106).
+ *
  * Guard: if txn.approvedAt is set, returns 403 (inc2 immutability). Also 403
  * if txn.reconciledSessionId is set (Bank Reconciliation inc2 — the row was
  * cleared by a closed reconciliation session; reopen it first) UNLESS the

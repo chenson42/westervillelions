@@ -35,13 +35,10 @@ export default async function AdminDashboardPage() {
   const todayStr = format(today, "yyyy-MM-dd HH:mm:ss");
 
   // Pending reimbursements are Treasury-specific — only query/surface them for
-  // users who could actually act on the link (same gate as the reimbursements
-  // page itself), so the card never sends someone to /access-pending.
-  const canViewLedger =
-    userFeatures.includes(FEATURES.LEDGER_VIEW) ||
-    userFeatures.includes(FEATURES.LEDGER_RECORD) ||
-    userFeatures.includes(FEATURES.LEDGER_MANAGE) ||
-    userFeatures.includes(FEATURES.LEDGER_APPROVE);
+  // users who can act on them. Reject and pay both require ledger.record
+  // (DECISION-106); board members hold view-only access and review paid
+  // requests afterward, so the "pending" card is not theirs.
+  const canActOnReimbursements = userFeatures.includes(FEATURES.LEDGER_RECORD);
 
   // Fetch statistics
   const [
@@ -61,7 +58,7 @@ export default async function AdminDashboardPage() {
     db.select({ count: sql<number>`count(*)::int` }).from(membershipApplications).where(eq(membershipApplications.status, "pending")),
     db.select({ count: sql<number>`count(*)::int` }).from(newsletterSubscriptions).where(eq(newsletterSubscriptions.isActive, true)),
     db.select({ count: sql<number>`count(*)::int` }).from(suggestions).where(eq(suggestions.isRead, false)),
-    canViewLedger
+    canActOnReimbursements
       ? db.select({ count: sql<number>`count(*)::int` }).from(ledgerReimbursements).where(eq(ledgerReimbursements.status, "submitted"))
       : Promise.resolve([{ count: 0 }]),
   ]);

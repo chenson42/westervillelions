@@ -23,7 +23,7 @@
  *
  * Ledger Dashboard (Two-Entity Homepage, 2026-07-20 / DECISION-031/032): no new
  * guardrail checks. Aged-public-fund detail text gains an optional fund-name
- * parenthetical (agedPublicFundNames()); new daysSinceTxnDate() helper feeds
+ * parenthetical (since replaced by computeAgedPublicFunds(), DECISION-105); new daysSinceTxnDate() helper feeds
  * the uncashed-checks list's age column.
  *
  * Transaction Receipt Upload (2026-07-21 / DECISION-035): Check 11 (expenses
@@ -84,6 +84,8 @@
 // ---------------------------------------------------------------------------
 
 import { getFiscalYear } from "@/lib/fiscal-year";
+// Type-only: no runtime import, so ledger.ts stays DB-free and client-safe.
+import type { TreasurerResolution } from "@/lib/board-positions";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -864,90 +866,91 @@ export const RECONCILED_DONOR_LINK_AUDIT_ACTION =
   "donor_linked_on_reconciled_transaction" as const;
 
 // ---------------------------------------------------------------------------
-// countAgedPublicFunds — inc7 (revised 2026-07-20, Bug 2 fix / DECISION-028)
+// computeAgedPublicFunds — inc7, rewritten 2026-10-01 (DECISION-105, supersedes
+// the age-of-fund rule of DECISION-027 Ruling B / DECISION-028)
 // ---------------------------------------------------------------------------
 
 export type AgedPublicFundFact = {
   fundKind: string;
+  fundName: string;
   /** True life-to-date balance: openingBalanceCents + all-time posted income
    *  − all-time posted expense, with NO fiscal-year bound. Callers must NOT
    *  pass an FY-scoped balance here (see DECISION-028 / 2026-07-20 Bug 2). */
   crossFyBalanceCents: number;
-  /** ISO date string ('YYYY-MM-DD') of the oldest posted income transaction
-   *  for this fund across ALL fiscal years, or null if none exists. */
-  oldestPostedIncomeDate: string | null;
-  /** Optional — the fund's display name (e.g. "Charitable Fund"), used by
-   *  agedPublicFundNames() for the dashboard's entity-tagged guardrail-flag
-   *  usability fix (inc7 dashboard, DECISION-032). Optional so the 11
-   *  existing countAgedPublicFunds test literals (which don't set it) keep
-   *  compiling untouched. */
-  fundName?: string;
+  /** Posted flow='income' with txn_date >= agedPublicFundCutoffDate(): the
+   *  "fresh" money. Counts transfer-in rows exactly like any other income
+   *  (known limitation, B-80). */
+  trailingWindowIncomeCents: number;
+};
+
+export type AgedPublicFund = {
+  fundName: string;
+  agedCents: number;
+  balanceCents: number;
 };
 
 /**
- * Shared qualification predicate for the aged-public-fund check: a public
- * fund (kind ∈ 'activity' | 'charitable' | 'scholarship') with BOTH a
- * positive cross-FY balance AND an oldest posted income transaction older
- * than `thresholdDays` relative to `now`.
- *
- * Extracted so countAgedPublicFunds() and agedPublicFundNames() can never
- * disagree about which funds qualify — same reuse discipline fundBalanceCents()
- * established under DECISION-028/029.
+ * Club-local (America/New_York) calendar date of an instant, as 'YYYY-MM-DD'.
+ * A real instant in, an Eastern calendar date string out — deliberately not
+ * events.ts nowEastern(), whose fake wall-clock Date is only valid through
+ * local getters.
  */
-function isAgedPublicFund(f: AgedPublicFundFact, thresholdDays: number, now: Date): boolean {
-  if (!["activity", "charitable", "scholarship"].includes(f.fundKind)) return false;
-  if (f.crossFyBalanceCents <= 0) return false;
-  if (!f.oldestPostedIncomeDate) return false;
-  const ageDays =
-    (now.getTime() - new Date(f.oldestPostedIncomeDate).getTime()) / (1000 * 60 * 60 * 24);
-  return ageDays > thresholdDays;
+export function clubLocalDateString(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 /**
- * Counts public funds (kind ∈ 'activity' | 'charitable' | 'scholarship') that
- * have BOTH a positive cross-FY balance AND an oldest posted income
- * transaction older than `thresholdDays` relative to `now`.
- *
- * Pure function — no DB access — so the FY-scoping class of bug (DECISION-028)
- * has a real unit-test seam independent of getOverview()'s FY-windowed fetch.
- * Callers filter or don't filter to public-fund-kind facts before calling this;
- * the kind check here is defensive, not load-bearing, for whichever they choose.
- *
- * @param funds         Cross-FY per-fund facts (see AgedPublicFundFact).
- * @param thresholdDays settings.holdingPeriodWarnDays.
- * @param now           Injectable "now" for deterministic tests; defaults to `new Date()`.
+ * The single definition of the aged-public-fund window boundary: club-local
+ * today minus `thresholdDays` calendar days, as 'YYYY-MM-DD'. Income dated on
+ * or after this date is "fresh" (exactly `thresholdDays` old is still fresh,
+ * preserving the old "aged iff age > threshold" rule). Pure UTC date math, so
+ * no DST drift. Used by getOverview()'s query and by the tests.
  */
-export function countAgedPublicFunds(
-  funds: Array<AgedPublicFundFact>,
-  thresholdDays: number,
-  now: Date = new Date(),
-): number {
-  return funds.filter((f) => isAgedPublicFund(f, thresholdDays, now)).length;
+export function agedPublicFundCutoffDate(thresholdDays: number, now: Date = new Date()): string {
+  const [y, m, d] = clubLocalDateString(now).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - thresholdDays)).toISOString().slice(0, 10);
 }
 
 /**
- * Returns the display names of the public funds that qualify as "aged" under
- * the same rule as countAgedPublicFunds() (shared via isAgedPublicFund() so
- * the count and this name list can never disagree). Names preserve the input
- * array's order. A fund with no `fundName` set falls back to "Unnamed fund".
+ * Which public funds (kind ∈ 'activity' | 'charitable' | 'scholarship') hold
+ * money older than the holding period, and how much.
  *
- * Feeds the Ledger Dashboard's merged, entity-tagged guardrail-flag list
- * (inc7 dashboard usability fix, DECISION-032) — without fund names, two
- * near-identical "public fund holding undisbursed balance" WARNs from
- * different entities are visually indistinguishable.
+ * Dollar-FIFO closed form: the "old pool" is the opening balance plus all
+ * income dated before the cutoff. Every expense, whenever it happened, draws
+ * the oldest dollars first, and the old pool is always older than any
+ * in-window dollar, so all expenses come out of the old pool first. What
+ * remains is `oldPool − allExpense = balance − freshIncome`, floored at 0
+ * once expenses reach into fresh money, and capped at the balance.
  *
- * @param funds         Cross-FY per-fund facts (see AgedPublicFundFact).
- * @param thresholdDays settings.holdingPeriodWarnDays.
- * @param now           Injectable "now" for deterministic tests; defaults to `new Date()`.
+ * Pure — the window has already been applied by the query
+ * (`trailingWindowIncomeCents`). Count, names and flag text all derive from
+ * this one array so they cannot disagree. Preserves input order.
  */
-export function agedPublicFundNames(
-  funds: Array<AgedPublicFundFact>,
-  thresholdDays: number,
-  now: Date = new Date(),
-): string[] {
-  return funds
-    .filter((f) => isAgedPublicFund(f, thresholdDays, now))
-    .map((f) => f.fundName ?? "Unnamed fund");
+export function computeAgedPublicFunds(funds: AgedPublicFundFact[]): AgedPublicFund[] {
+  const result: AgedPublicFund[] = [];
+  for (const f of funds) {
+    if (!["activity", "charitable", "scholarship"].includes(f.fundKind)) continue;
+    if (f.crossFyBalanceCents <= 0) continue;
+    const agedCents = Math.min(
+      f.crossFyBalanceCents,
+      Math.max(0, f.crossFyBalanceCents - f.trailingWindowIncomeCents),
+    );
+    if (agedCents === 0) continue;
+    result.push({ fundName: f.fundName, agedCents, balanceCents: f.crossFyBalanceCents });
+  }
+  return result;
+}
+
+/** "$8,973.75" — thousands separators; used only by the aged-fund flag text. */
+function formatUsdCents(cents: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
 /**
@@ -1043,23 +1046,13 @@ export type GuardrailsInput = {
   // ---------------------------------------------------------------------------
 
   /**
-   * Count of public funds (kind ∈ 'activity' | 'charitable' | 'scholarship')
-   * where (a) the fund's endingCents > 0 AND (b) the oldest posted income
-   * transaction across ALL fiscal years for that fund is more than
-   * settings.holdingPeriodWarnDays days old relative to today.
-   *
-   * Must be a non-negative integer. Computed in getOverview() via a dedicated
-   * cross-FY MIN(txn_date) aggregate query (DECISION-027).
+   * Public funds holding money older than settings.holdingPeriodWarnDays,
+   * with the aged and total balance of each (DECISION-105: FIFO — the aged
+   * part is balance − income posted inside the trailing window). Empty array =
+   * no flag. Computed in getOverview() via computeAgedPublicFunds(); the flag
+   * count is `agedPublicFunds.length`.
    */
-  agedPublicFunds: number;
-
-  /**
-   * Optional — display names of the funds counted in agedPublicFunds, in the
-   * same order agedPublicFundNames() would return them (Ledger Dashboard
-   * usability fix, DECISION-032). Omitted/undefined callers get the original
-   * detail text with no fund-name parenthetical — fully backward compatible.
-   */
-  agedPublicFundNames?: string[];
+  agedPublicFunds: AgedPublicFund[];
 
   /**
    * Count of posted income transactions belonging to a fund of kind='administrative'
@@ -1254,22 +1247,27 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
   //      (Art. VII §3(g) firewall bypass via direct income, not transfer)
   // ---------------------------------------------------------------------------
 
-  // Check: aged public-fund balances — undisbursed public money held past the threshold (WARN) — inc7
-  // Detail text gains a fund-name parenthetical when agedPublicFundNames is
-  // available (Ledger Dashboard usability fix, DECISION-032) — omitted/empty
-  // stays fully backward compatible with pre-dashboard callers.
-  if (state.agedPublicFunds > 0) {
-    const n = state.agedPublicFunds;
-    const names = state.agedPublicFundNames;
-    const namesSuffix = names && names.length > 0 ? ` (${names.join(", ")})` : "";
+  // Check: aged public-fund balances — public money held past the threshold (WARN) — inc7
+  // DECISION-105: FIFO. Each clause names a fund and how much of its balance is
+  // past the holding period; the title is unchanged (guide row + tests key on it).
+  if (state.agedPublicFunds.length > 0) {
+    const n = state.agedPublicFunds.length;
+    const days = state.settings.holdingPeriodWarnDays;
+    const clauses = state.agedPublicFunds
+      .map(
+        (f) =>
+          `${f.fundName}: ${formatUsdCents(f.agedCents)} of its ${formatUsdCents(f.balanceCents)} balance ` +
+          `has been on hand more than ${days} days.`,
+      )
+      .join(" ");
     flags.push({
       severity: "warn",
-      title: `Public fund${n === 1 ? "" : "s"} holding undisbursed balance past ${state.settings.holdingPeriodWarnDays}-day threshold`,
+      title: `Public fund${n === 1 ? "" : "s"} holding undisbursed balance past ${days}-day threshold`,
       detail:
-        `${n} public fund${n === 1 ? "" : "s"} ${n === 1 ? "has" : "have"} a positive balance and ` +
-        `the oldest posted income is more than ${state.settings.holdingPeriodWarnDays} days old${namesSuffix}. ` +
+        `${clauses} ` +
+        `Money is counted oldest-first, so any disbursement from the fund reduces the aged amount. ` +
         `LCI guidance requires public funds to be returned to public use within a reasonable time — ` +
-        `usually one year. If any of these funds are earmarked for a specific multi-year project, ` +
+        `usually one year. If any of this is earmarked for a specific multi-year project, ` +
         `document the project name and expected disbursement date in the board meeting minutes.`,
       policyCite: "LCI Board Policy Manual Ch. VII — Public Fund Disbursement",
     });
@@ -2337,4 +2335,123 @@ export function matchBudgetLineForTransaction(
     return { status: "unmatched", reason: "ambiguous", candidateIds: matches.map((m) => m.id) };
   }
   return { status: "matched", budgetLineId: matches[0].id };
+}
+
+// ---------------------------------------------------------------------------
+// Reimbursements (DECISION-106)
+// ---------------------------------------------------------------------------
+
+/**
+ * Statuses from which a reimbursement may still be paid or rejected.
+ * "approved" is legacy (read-only, never written again — DECISION-106).
+ */
+export const REIMBURSEMENT_ACTIONABLE_STATUSES = ["submitted", "approved"] as const;
+
+/**
+ * True when the acting user is the request's submitter. Matches on user id OR
+ * member id (a session without a memberId must still be caught by user id). A
+ * null/undefined side never matches: null === null must NOT count.
+ */
+export function isOwnReimbursementRequest(
+  actor: { id: string; memberId?: string | null },
+  reimb: { submittedByUserId: string | null; submittedByMemberId: string | null },
+): boolean {
+  if (actor.id && reimb.submittedByUserId && actor.id === reimb.submittedByUserId) {
+    return true;
+  }
+  if (
+    actor.memberId &&
+    reimb.submittedByMemberId &&
+    actor.memberId === reimb.submittedByMemberId
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export type ReimbursementNotifyReason =
+  | "treasurer"
+  | "fallback_resolver_none"
+  | "fallback_resolver_multiple"
+  | "fallback_resolver_no_board_group"
+  | "fallback_submitter_is_treasurer"
+  | "fallback_treasurer_lacks_record";
+
+function normalizeEmail(e: string): string {
+  return e.trim().toLowerCase();
+}
+
+/**
+ * Who is told that a new reimbursement request is waiting (DECISION-106).
+ * Primary: the Board-position Treasurer, when they hold ledger.record (matched
+ * by email) and are not the submitter. Fallback: every ledger.record holder
+ * minus the submitter. An empty recipient list is a valid return; the route
+ * handles it. Comparisons are trimmed + case-insensitive; output keeps the
+ * holder list's own casing and is de-duplicated.
+ */
+export function pickReimbursementNotifyRecipients(input: {
+  treasurer: TreasurerResolution;
+  recordHolderEmails: string[];
+  submitterEmail: string;
+  submitterMemberId: string;
+}): { recipients: string[]; reason: ReimbursementNotifyReason } {
+  const submitter = normalizeEmail(input.submitterEmail ?? "");
+  const seen = new Set<string>();
+  const holders: string[] = [];
+  for (const raw of input.recordHolderEmails) {
+    const key = normalizeEmail(raw ?? "");
+    if (!key || key === submitter || seen.has(key)) continue;
+    seen.add(key);
+    holders.push(raw.trim());
+  }
+
+  const { treasurer } = input;
+  if (!treasurer.ok) {
+    return { recipients: holders, reason: `fallback_resolver_${treasurer.reason}` };
+  }
+  // By member id, not email: resolveTreasurer() returns members.email while the
+  // holder list is users.email.
+  if (treasurer.memberId === input.submitterMemberId) {
+    return { recipients: holders, reason: "fallback_submitter_is_treasurer" };
+  }
+  const treasurerKey = normalizeEmail(treasurer.email ?? "");
+  const match = holders.find((h) => normalizeEmail(h) === treasurerKey);
+  if (!match) {
+    return { recipients: holders, reason: "fallback_treasurer_lacks_record" };
+  }
+  return { recipients: [match], reason: "treasurer" };
+}
+
+/**
+ * approvedBy/approvedAt/boardMinute to write on the transaction a reimbursement
+ * payment posts.
+ *
+ * On a reimbursement-derived transaction, approvedBy/approvedAt mean "reviewed
+ * and paid by the treasurer". They are the lock: every PATCH/DELETE/split/
+ * receipt-waive guard in the transactions routes, and the edit/delete buttons
+ * in transaction-actions.tsx, key on `approvedAt`. Clearing or omitting it
+ * silently unlocks a paid reimbursement's ledger row. Board approval does not
+ * apply (DECISION-106).
+ *
+ * Legacy "approved" rows keep their real board-approval provenance (the `??`
+ * fallbacks guarantee approvedAt is never null).
+ */
+export function reimbursementTransactionStamp(
+  reimb: {
+    status: string;
+    reviewedByUserId: string | null;
+    reviewedAt: Date | null;
+    boardMinute: string | null;
+  },
+  actingUserId: string,
+  now: Date,
+): { approvedByUserId: string; approvedAt: Date; boardMinute: string | null } {
+  if (reimb.status === "approved") {
+    return {
+      approvedByUserId: reimb.reviewedByUserId ?? actingUserId,
+      approvedAt: reimb.reviewedAt ?? now,
+      boardMinute: reimb.boardMinute,
+    };
+  }
+  return { approvedByUserId: actingUserId, approvedAt: now, boardMinute: null };
 }

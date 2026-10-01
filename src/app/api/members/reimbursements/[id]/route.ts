@@ -10,7 +10,7 @@
  *
  * PATCH /api/members/reimbursements/[id]
  *
- * Edit a submitted-status reimbursement. Locked once any board action occurs.
+ * Edit a submitted-status reimbursement. Locked once the treasurer pays or rejects it.
  *
  * Gate: ownership + status='submitted'
  *
@@ -23,7 +23,9 @@
  * }
  *
  * Response 200: { id }
- * Response 403: not owned or not in submitted status
+ * Response 404: not found / not owned
+ * Response 409: already processed (status no longer 'submitted'); the write is
+ *   status-conditioned so it cannot race a pay (DECISION-106)
  *
  * ─────────────────────────────────────────────────────────────────────────────
  *
@@ -35,7 +37,8 @@
  * Gate: ownership + status='submitted'
  *
  * Response 200: { deleted: 1 }
- * Response 403: not owned or not in submitted status
+ * Response 404: not found / not owned
+ * Response 409: already processed
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -117,8 +120,8 @@ export async function PATCH(
     }
     if (reimb.status !== "submitted") {
       return NextResponse.json(
-        { error: "This request can no longer be edited — it has already been reviewed" },
-        { status: 403 },
+        { error: "This request was already processed and can no longer be changed" },
+        { status: 409 },
       );
     }
 
@@ -165,10 +168,22 @@ export async function PATCH(
         raw === null ? null : typeof raw === "string" ? raw.trim().slice(0, CAUSE_MAX_LEN) || null : null;
     }
 
-    await db
+    // Status-conditioned: a member edit that interleaves with a pay must not
+    // rewrite the amount on a row that is already paid (DECISION-106).
+    const updated = await db
       .update(ledgerReimbursements)
       .set(update)
-      .where(eq(ledgerReimbursements.id, id));
+      .where(
+        and(eq(ledgerReimbursements.id, id), eq(ledgerReimbursements.status, "submitted")),
+      )
+      .returning({ id: ledgerReimbursements.id });
+
+    if (updated.length === 0) {
+      return NextResponse.json(
+        { error: "This request was already processed and can no longer be changed" },
+        { status: 409 },
+      );
+    }
 
     return NextResponse.json({ id });
   } catch (error) {
@@ -201,12 +216,12 @@ export async function DELETE(
     }
     if (reimb.status !== "submitted") {
       return NextResponse.json(
-        { error: "This request can no longer be withdrawn — it has already been reviewed" },
-        { status: 403 },
+        { error: "This request was already processed and can no longer be withdrawn" },
+        { status: 409 },
       );
     }
 
-    // Atomically delete — WHERE status='submitted' guards against concurrent approval
+    // Atomically delete — WHERE status='submitted' guards against a concurrent pay or reject
     const deleted = await db
       .delete(ledgerReimbursements)
       .where(
@@ -219,8 +234,8 @@ export async function DELETE(
 
     if (deleted.length === 0) {
       return NextResponse.json(
-        { error: "This request can no longer be withdrawn" },
-        { status: 403 },
+        { error: "This request was already processed and can no longer be withdrawn" },
+        { status: 409 },
       );
     }
 

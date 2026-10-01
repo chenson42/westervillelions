@@ -27,7 +27,7 @@ function formatDate(d: Date | string): string {
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     submitted: {
-      label: "Awaiting Review",
+      label: "Awaiting Treasurer",
       cls: "bg-yellow-50 text-yellow-700 border border-yellow-200",
     },
     approved: {
@@ -111,9 +111,8 @@ async function MemberReimbursementsContent({ memberId }: { memberId: string }) {
         <div className="px-6 py-4 border-b border-gray-100">
           <h2 className="text-lg font-semibold text-gray-900">Request a Reimbursement</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            Attach your receipt and describe the expense. The board will review and authorize it. The
-            treasurer assigns the fund and processes payment. You will receive an email when the
-            status changes.
+            Attach your receipt and describe the expense. The treasurer reviews your request, assigns
+            the fund, and pays it. You will receive an email when the status changes.
           </p>
         </div>
         <div className="px-6 py-5">
@@ -174,10 +173,10 @@ async function MemberReimbursementsContent({ memberId }: { memberId: string }) {
                       </div>
                     )}
 
-                    {/* Board minute (approved/paid — informational) */}
-                    {(r.status === "approved" || r.status === "paid") && r.boardMinute && (
+                    {/* Board minute — legacy rows only; no longer collected (DECISION-106) */}
+                    {r.boardMinute && (
                       <div className="mt-1.5 text-xs text-gray-400">
-                        Authorized: {r.boardMinute}
+                        Board minute (historical): {r.boardMinute}
                       </div>
                     )}
                   </div>

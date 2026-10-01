@@ -14,7 +14,8 @@
  *
  * Response 200:
  * {
- *   reimbursements: ReimbursementWithMember[];  // no receiptStorageKey
+ *   reimbursements: ReimbursementAdminRow[];  // ReimbursementWithMember + paidByName, fundName; no receiptStorageKey
+ *                                             // status=paid is ordered by paidAt desc (board review log, DECISION-106)
  *   total: number;
  * }
  */

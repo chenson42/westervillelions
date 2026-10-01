@@ -16,8 +16,9 @@ import {
   grossReceiptsCents,
   budgetVariance,
   guardrails,
-  countAgedPublicFunds,
-  agedPublicFundNames,
+  computeAgedPublicFunds,
+  agedPublicFundCutoffDate,
+  clubLocalDateString,
   daysSinceTxnDate,
   computeDueDate,
   isFilingOverdue,
@@ -62,6 +63,7 @@ import {
   isWithinReconciledLockCarveout,
   type GuardrailsInput,
   type AgedPublicFundFact,
+  type AgedPublicFund,
   type SeedSourceLine,
   type GivingFoldRow,
   type CauseSeedSourceRow,
@@ -259,277 +261,152 @@ describe("entityBalanceCents", () => {
 });
 
 // ---------------------------------------------------------------------------
-// countAgedPublicFunds — inc7 (revised 2026-07-20, Bug 2 fix / DECISION-028)
+// computeAgedPublicFunds — inc7, rewritten 2026-10-01 (DECISION-105)
 //
-// Pure-function seam for the aged-public-fund gate. Fixed at DECISION-028:
-// the gate must use each fund's TRUE cross-FY life-to-date balance, never an
-// FY-scoped figure like fundSummaries[].endingCents (that was QA's Bug 2 —
-// see 2026-07-20 Phase 5 report and the regression test below).
+// FIFO: aged = min(balance, max(0, balance − income posted inside the trailing
+// window)). The facts carry the window sum (the query applies the window), so
+// these tests are NOW-independent. Still guards DECISION-028: the balance is the
+// TRUE cross-FY balance, never an FY-scoped figure.
 // ---------------------------------------------------------------------------
 
-describe("countAgedPublicFunds", () => {
-  const NOW = new Date("2026-07-20T00:00:00Z");
-
-  function daysBefore(now: Date, days: number): string {
-    const d = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-    return d.toISOString().slice(0, 10);
+describe("computeAgedPublicFunds", () => {
+  function fact(over: Partial<AgedPublicFundFact> = {}): AgedPublicFundFact {
+    return {
+      fundKind: "charitable",
+      fundName: "Charitable Fund",
+      crossFyBalanceCents: 100000,
+      trailingWindowIncomeCents: 0,
+      ...over,
+    };
   }
 
-  it("returns 0 for an empty funds array", () => {
-    expect(countAgedPublicFunds([], 365, NOW)).toBe(0);
+  it("returns [] for empty input", () => {
+    expect(computeAgedPublicFunds([])).toEqual([]);
   });
 
-  it("excludes a public fund with no oldestPostedIncomeDate (null) even when crossFyBalanceCents is positive", () => {
-    const funds: AgedPublicFundFact[] = [
-      { fundKind: "activity", crossFyBalanceCents: 50_000, oldestPostedIncomeDate: null },
-    ];
-    expect(countAgedPublicFunds(funds, 365, NOW)).toBe(0);
+  it("REGRESSION 2026-10-01: a mature fund whose trailing-window income exceeds its balance is not aged", () => {
+    // Local-DB figures: balance 5,836.57, trailing-year income 26,285.35.
+    expect(
+      computeAgedPublicFunds([fact({ crossFyBalanceCents: 583657, trailingWindowIncomeCents: 2628535 })]),
+    ).toEqual([]);
+    // Production figure from the treasurer's report: balance 8,973.75.
+    expect(
+      computeAgedPublicFunds([fact({ crossFyBalanceCents: 897375, trailingWindowIncomeCents: 2628535 })]),
+    ).toEqual([]);
   });
 
-  it("excludes a public fund whose oldestPostedIncomeDate is younger than thresholdDays", () => {
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "charitable",
-        crossFyBalanceCents: 50_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 10),
-      },
-    ];
-    expect(countAgedPublicFunds(funds, 365, NOW)).toBe(0);
+  it("partial aging: balance 897375 with 683375 fresh income reports agedCents 214000", () => {
+    expect(
+      computeAgedPublicFunds([fact({ crossFyBalanceCents: 897375, trailingWindowIncomeCents: 683375 })]),
+    ).toEqual([{ fundName: "Charitable Fund", agedCents: 214000, balanceCents: 897375 }]);
   });
 
-  it("excludes a public fund whose crossFyBalanceCents is <= 0 even though its oldestPostedIncomeDate is old", () => {
-    // Legitimate spent-down-fund case (G-3's original intent), now correctly
-    // gated on the cross-FY figure instead of the FY-scoped one.
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "activity",
-        crossFyBalanceCents: 0,
-        oldestPostedIncomeDate: daysBefore(NOW, 800),
-      },
-    ];
-    expect(countAgedPublicFunds(funds, 365, NOW)).toBe(0);
+  it("window income exactly equal to balance is not aged", () => {
+    expect(
+      computeAgedPublicFunds([fact({ crossFyBalanceCents: 500000, trailingWindowIncomeCents: 500000 })]),
+    ).toEqual([]);
   });
 
-  it("counts a public fund whose crossFyBalanceCents is positive AND oldestPostedIncomeDate is older than thresholdDays", () => {
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "scholarship",
-        crossFyBalanceCents: 10_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 400),
-      },
-    ];
-    expect(countAgedPublicFunds(funds, 365, NOW)).toBe(1);
+  it("window income greater than balance clamps to 0, never negative", () => {
+    // An expense larger than the old pool reached into fresh money.
+    const result = computeAgedPublicFunds([
+      fact({ crossFyBalanceCents: 100000, trailingWindowIncomeCents: 900000 }),
+    ]);
+    expect(result).toEqual([]);
   });
 
-  it("excludes an administrative-kind fund even when balance/date conditions are met", () => {
-    // The kind filter is load-bearing — administrative funds hold member dues,
-    // not public money, and must never contribute to this count.
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "administrative",
-        crossFyBalanceCents: 50_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 800),
-      },
-    ];
-    expect(countAgedPublicFunds(funds, 365, NOW)).toBe(0);
+  it("opening-balance-only fund (no income at all) is flagged with aged = full balance", () => {
+    // DECISION-105 behavior change: a dormant seeded fund now flags.
+    expect(
+      computeAgedPublicFunds([fact({ crossFyBalanceCents: 500000, trailingWindowIncomeCents: 0 })]),
+    ).toEqual([{ fundName: "Charitable Fund", agedCents: 500000, balanceCents: 500000 }]);
   });
 
-  it("counts a fund as aged using its cross-FY balance even when that balance would read $0 under an FY-scoped view (regression: QA Bug 2, 2026-07-20)", () => {
-    // Reproduces QA's exact live repro: Foundation entity, Charitable Fund,
-    // $500 (50,000 cents) posted income dated 49+ days before "now", a
-    // 30-day threshold, and a fund whose FY-scoped fundSummaries[].endingCents
-    // would have read $0 because all its transactions fall in a prior fiscal
-    // year outside the currently-selected FY window. countAgedPublicFunds()
-    // has no way to receive or be fooled by that FY-scoped figure — its input
-    // contract only accepts a cross-FY fact (crossFyBalanceCents), which here
-    // correctly reflects the fund's real $500 life-to-date balance.
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "charitable",
-        crossFyBalanceCents: 50_000, // $500.00 — the fund's TRUE cross-FY balance
-        oldestPostedIncomeDate: daysBefore(NOW, 49), // 49+ days aged
-      },
-    ];
-    expect(countAgedPublicFunds(funds, 30, NOW)).toBe(1);
+  it("transfer-in counts as fresh money (known limitation, B-80)", () => {
+    // getOverview() deliberately counts transfer-in rows as ordinary income (no
+    // transfer_group_id filter), so a balance that arrived wholly by transfer-in inside
+    // the window is fresh even if the money is old elsewhere. Pinned so changing it is
+    // a deliberate decision. See B-80.
+    expect(
+      computeAgedPublicFunds([fact({ crossFyBalanceCents: 1000000, trailingWindowIncomeCents: 1000000 })]),
+    ).toEqual([]);
   });
 
-  it("counts multiple qualifying funds and returns their total as an integer", () => {
-    const funds: AgedPublicFundFact[] = [
-      // Qualifies: activity, positive balance, aged past threshold.
-      {
-        fundKind: "activity",
-        crossFyBalanceCents: 20_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 400),
-      },
-      // Qualifies: charitable, positive balance, aged past threshold.
-      {
-        fundKind: "charitable",
-        crossFyBalanceCents: 5_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 500),
-      },
-      // Excluded: wrong kind (administrative).
-      {
-        fundKind: "administrative",
-        crossFyBalanceCents: 100_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 900),
-      },
-      // Excluded: balance not positive.
-      {
-        fundKind: "scholarship",
-        crossFyBalanceCents: 0,
-        oldestPostedIncomeDate: daysBefore(NOW, 900),
-      },
-    ];
-    expect(countAgedPublicFunds(funds, 365, NOW)).toBe(2);
+  it("transfer-out consumes the oldest money first", () => {
+    // Balance 600000 after a 400000 transfer-out (an expense-flow row); 100000 fresh
+    // income: the old pool absorbed the whole outflow, 500000 of it remains.
+    expect(
+      computeAgedPublicFunds([fact({ crossFyBalanceCents: 600000, trailingWindowIncomeCents: 100000 })]),
+    ).toEqual([{ fundName: "Charitable Fund", agedCents: 500000, balanceCents: 600000 }]);
   });
 
-  it("boundary: ageDays exactly equal to thresholdDays does not fire; one day over does", () => {
-    const exactlyAtThreshold: AgedPublicFundFact[] = [
-      {
-        fundKind: "activity",
-        crossFyBalanceCents: 10_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 30),
-      },
-    ];
-    expect(countAgedPublicFunds(exactlyAtThreshold, 30, NOW)).toBe(0);
+  it("non-public kinds (administrative) are ignored even with an old positive balance", () => {
+    expect(
+      computeAgedPublicFunds([
+        fact({ fundKind: "administrative", fundName: "Administrative Fund", crossFyBalanceCents: 900000 }),
+      ]),
+    ).toEqual([]);
+  });
 
-    const oneDayOver: AgedPublicFundFact[] = [
-      {
-        fundKind: "activity",
-        crossFyBalanceCents: 10_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 31),
-      },
-    ];
-    expect(countAgedPublicFunds(oneDayOver, 30, NOW)).toBe(1);
+  it("non-positive balances (0 and negative) are never flagged", () => {
+    expect(
+      computeAgedPublicFunds([
+        fact({ crossFyBalanceCents: 0 }),
+        fact({ crossFyBalanceCents: -5000 }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("multi-fund input: preserves input order, drops the non-qualifying, and every entry satisfies 0 < agedCents <= balanceCents", () => {
+    const result = computeAgedPublicFunds([
+      fact({ fundKind: "scholarship", fundName: "Scholarship Fund", crossFyBalanceCents: 300000, trailingWindowIncomeCents: 100000 }),
+      fact({ fundKind: "activity", fundName: "Fresh Fund", crossFyBalanceCents: 200000, trailingWindowIncomeCents: 500000 }),
+      fact({ fundKind: "administrative", fundName: "Administrative Fund", crossFyBalanceCents: 900000 }),
+      fact({ fundKind: "charitable", fundName: "Charitable Fund", crossFyBalanceCents: 800000, trailingWindowIncomeCents: 0 }),
+    ]);
+    expect(result.map((r) => r.fundName)).toEqual(["Scholarship Fund", "Charitable Fund"]);
+    for (const r of result) {
+      expect(r.agedCents).toBeGreaterThan(0);
+      expect(r.agedCents).toBeLessThanOrEqual(r.balanceCents);
+    }
   });
 });
 
 // ---------------------------------------------------------------------------
-// agedPublicFundNames — Ledger Dashboard (Two-Entity Homepage, DECISION-032)
+// agedPublicFundCutoffDate / clubLocalDateString — the window boundary and the
+// club time zone live here (DECISION-105). New tests avoid T00:00:00Z, which is
+// 8 PM the prior day in EDT.
 // ---------------------------------------------------------------------------
 
-describe("agedPublicFundNames", () => {
-  const NOW = new Date("2026-07-20T00:00:00Z");
-
-  function daysBefore(now: Date, days: number): string {
-    const d = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-    return d.toISOString().slice(0, 10);
-  }
-
-  it("returns [] for an empty funds array", () => {
-    expect(agedPublicFundNames([], 365, NOW)).toEqual([]);
+describe("agedPublicFundCutoffDate / clubLocalDateString", () => {
+  it("exact boundary: threshold 365 at 2026-07-20T16:00:00Z gives cutoff 2025-07-20; income dated exactly the cutoff is fresh, the day before is aged", () => {
+    const cutoff = agedPublicFundCutoffDate(365, new Date("2026-07-20T16:00:00Z"));
+    expect(cutoff).toBe("2025-07-20");
+    // The query uses txn_date >= cutoff; ISO date strings compare lexicographically.
+    expect("2025-07-20" >= cutoff).toBe(true);
+    expect("2025-07-19" >= cutoff).toBe(false);
   });
 
-  it("returns [] when no fund qualifies (mirrors countAgedPublicFunds exclusion cases)", () => {
-    const funds: AgedPublicFundFact[] = [
-      // Excluded: no oldestPostedIncomeDate.
-      { fundKind: "activity", crossFyBalanceCents: 50_000, oldestPostedIncomeDate: null, fundName: "Activity Fund" },
-      // Excluded: too young.
-      { fundKind: "charitable", crossFyBalanceCents: 50_000, oldestPostedIncomeDate: daysBefore(NOW, 10), fundName: "Charitable Fund" },
-      // Excluded: balance not positive.
-      { fundKind: "scholarship", crossFyBalanceCents: 0, oldestPostedIncomeDate: daysBefore(NOW, 800), fundName: "Scholarship Fund" },
-      // Excluded: wrong kind.
-      { fundKind: "administrative", crossFyBalanceCents: 50_000, oldestPostedIncomeDate: daysBefore(NOW, 800), fundName: "Administrative Fund" },
-    ];
-    expect(agedPublicFundNames(funds, 365, NOW)).toEqual([]);
+  it("threshold 30 boundary", () => {
+    const cutoff = agedPublicFundCutoffDate(30, new Date("2026-07-20T16:00:00Z"));
+    expect(cutoff).toBe("2026-06-20");
+    expect("2026-06-20" >= cutoff).toBe(true);
+    expect("2026-06-19" >= cutoff).toBe(false);
   });
 
-  it("returns the qualifying fund's name when exactly one fund qualifies", () => {
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "charitable",
-        crossFyBalanceCents: 50_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 400),
-        fundName: "Charitable Fund",
-      },
-    ];
-    expect(agedPublicFundNames(funds, 365, NOW)).toEqual(["Charitable Fund"]);
+  it("club-local date, not UTC: 2026-07-21T02:00:00Z (10 PM EDT Jul 20) is Jul 20; 2026-07-20T03:59:59Z (11:59 PM EDT Jul 19) is Jul 19", () => {
+    expect(clubLocalDateString(new Date("2026-07-21T02:00:00Z"))).toBe("2026-07-20");
+    expect(clubLocalDateString(new Date("2026-07-20T03:59:59Z"))).toBe("2026-07-19");
+    expect(agedPublicFundCutoffDate(30, new Date("2026-07-21T02:00:00Z"))).toBe("2026-06-20");
+    expect(agedPublicFundCutoffDate(30, new Date("2026-07-20T03:59:59Z"))).toBe("2026-06-19");
   });
 
-  it("returns names in the same order as the input array for multiple qualifying funds", () => {
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "scholarship",
-        crossFyBalanceCents: 5_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 500),
-        fundName: "Scholarship Fund",
-      },
-      {
-        fundKind: "activity",
-        crossFyBalanceCents: 20_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 400),
-        fundName: "Activity Fund",
-      },
-      {
-        fundKind: "charitable",
-        crossFyBalanceCents: 10_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 900),
-        fundName: "Charitable Fund",
-      },
-    ];
-    expect(agedPublicFundNames(funds, 365, NOW)).toEqual([
-      "Scholarship Fund",
-      "Activity Fund",
-      "Charitable Fund",
-    ]);
-  });
-
-  it("falls back to 'Unnamed fund' when fundName is omitted", () => {
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "activity",
-        crossFyBalanceCents: 10_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 400),
-        // fundName omitted
-      },
-    ];
-    expect(agedPublicFundNames(funds, 365, NOW)).toEqual(["Unnamed fund"]);
-  });
-
-  it("excludes a fund's name when it fails the kind filter even if balance/date otherwise qualify", () => {
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "administrative",
-        crossFyBalanceCents: 100_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 900),
-        fundName: "Administrative Fund",
-      },
-    ];
-    expect(agedPublicFundNames(funds, 365, NOW)).toEqual([]);
-  });
-
-  it("count from countAgedPublicFunds and length from agedPublicFundNames never disagree, given the same input", () => {
-    const funds: AgedPublicFundFact[] = [
-      {
-        fundKind: "activity",
-        crossFyBalanceCents: 20_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 400),
-        fundName: "Activity Fund",
-      },
-      {
-        fundKind: "charitable",
-        crossFyBalanceCents: 5_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 500),
-        fundName: "Charitable Fund",
-      },
-      // Non-qualifying: wrong kind.
-      {
-        fundKind: "administrative",
-        crossFyBalanceCents: 100_000,
-        oldestPostedIncomeDate: daysBefore(NOW, 900),
-        fundName: "Administrative Fund",
-      },
-      // Non-qualifying: balance not positive.
-      {
-        fundKind: "scholarship",
-        crossFyBalanceCents: 0,
-        oldestPostedIncomeDate: daysBefore(NOW, 900),
-        fundName: "Scholarship Fund",
-      },
-    ];
-    const count = countAgedPublicFunds(funds, 365, NOW);
-    const names = agedPublicFundNames(funds, 365, NOW);
-    expect(count).toBe(names.length);
+  it("leap-year window: 2028-03-01 minus 365 = 2027-03-02, and no DST drift across a spring-forward / fall-back", () => {
+    expect(agedPublicFundCutoffDate(365, new Date("2028-03-01T17:00:00Z"))).toBe("2027-03-02");
+    // After the 2026-03-08 spring-forward: 30 calendar days back from Mar 9.
+    expect(agedPublicFundCutoffDate(30, new Date("2026-03-09T16:00:00Z"))).toBe("2026-02-07");
+    // After the 2026-11-01 fall-back: 7 calendar days back from Nov 2.
+    expect(agedPublicFundCutoffDate(7, new Date("2026-11-02T17:00:00Z"))).toBe("2026-10-26");
   });
 });
 
@@ -640,7 +517,7 @@ const cleanState: GuardrailsInput = {
   // inc6a fields — zero = no dues sync mismatch
   syncStaleTxns: 0,
   // inc7 fields — zero = no compliance guardrail flags
-  agedPublicFunds: 0,
+  agedPublicFunds: [],
   adminPublicIncomeCount: 0,
 };
 
@@ -1116,7 +993,7 @@ const cleanStateInc3: GuardrailsInput = {
   // inc6a fields
   syncStaleTxns: 0,
   // inc7 fields
-  agedPublicFunds: 0,
+  agedPublicFunds: [],
   adminPublicIncomeCount: 0,
 };
 
@@ -1528,90 +1405,72 @@ describe("guardrails — syncStaleTxns (inc6a)", () => {
 // guardrails — inc7: aged public-fund balances (Enhancement 1)
 // ---------------------------------------------------------------------------
 
-describe("guardrails — aged public-fund balances (inc7)", () => {
-  it("does NOT fire aged-funds warn when agedPublicFunds is 0", () => {
-    const flags = guardrails({ ...cleanState, agedPublicFunds: 0 });
-    const aged = flags.find((f) => /aged|holding/i.test(f.title));
-    expect(aged).toBeUndefined();
+describe("guardrails — aged public-fund balances (inc7, DECISION-105)", () => {
+  const findAged = (flags: ReturnType<typeof guardrails>) =>
+    flags.find((f) => /holding.*threshold/i.test(f.title));
+
+  const charitable: AgedPublicFund = {
+    fundName: "Charitable Fund",
+    agedCents: 214000,
+    balanceCents: 897375,
+  };
+
+  it("does NOT fire when agedPublicFunds is []", () => {
+    const flags = guardrails({ ...cleanState, agedPublicFunds: [] });
+    expect(flags.find((f) => /aged|holding/i.test(f.title))).toBeUndefined();
   });
 
-  it("fires WARN when agedPublicFunds is 1", () => {
-    const flags = guardrails({ ...cleanState, agedPublicFunds: 1 });
-    const aged = flags.find((f) => /holding.*threshold/i.test(f.title));
+  it('fires WARN for one fund; title unchanged; detail names the fund and "$2,140.00 of its $8,973.75 balance has been on hand more than 365 days"', () => {
+    const aged = findAged(guardrails({ ...cleanState, agedPublicFunds: [charitable] }));
     expect(aged).toBeDefined();
     expect(aged?.severity).toBe("warn");
+    expect(aged?.title).toBe("Public fund holding undisbursed balance past 365-day threshold");
+    expect(aged?.detail).toContain(
+      "Charitable Fund: $2,140.00 of its $8,973.75 balance has been on hand more than 365 days.",
+    );
+    expect(aged?.policyCite).toBe("LCI Board Policy Manual Ch. VII — Public Fund Disbursement");
+  });
+
+  it('two funds: plural title ("Public funds"), two clauses in input order', () => {
+    const aged = findAged(
+      guardrails({
+        ...cleanState,
+        agedPublicFunds: [
+          { fundName: "Scholarship Fund", agedCents: 100000, balanceCents: 250000 },
+          charitable,
+        ],
+      }),
+    );
+    expect(aged?.title).toMatch(/^Public funds holding/);
+    const detail = aged?.detail ?? "";
+    const first = detail.indexOf("Scholarship Fund: $1,000.00 of its $2,500.00 balance");
+    const second = detail.indexOf("Charitable Fund: $2,140.00 of its $8,973.75 balance");
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(second).toBeGreaterThan(first);
+  });
+
+  it('detail contains the configured holdingPeriodWarnDays (180) and the words "minutes" and "oldest-first"', () => {
+    const aged = findAged(
+      guardrails({
+        ...cleanState,
+        agedPublicFunds: [charitable],
+        settings: { ...cleanState.settings, holdingPeriodWarnDays: 180 },
+      }),
+    );
+    expect(aged?.title).toContain("180-day");
+    expect(aged?.detail).toContain("more than 180 days");
     expect(aged?.detail).toContain("minutes");
+    expect(aged?.detail).toContain("oldest-first");
   });
 
-  it("fires WARN when agedPublicFunds is greater than 1 (plural noun)", () => {
-    const flags = guardrails({ ...cleanState, agedPublicFunds: 3 });
-    const aged = flags.find((f) => /holding.*threshold/i.test(f.title));
-    expect(aged).toBeDefined();
-    expect(aged?.title).toContain("funds");
-  });
-
-  it("aged-funds detail text includes the configured holdingPeriodWarnDays value", () => {
-    const flags = guardrails({
-      ...cleanState,
-      agedPublicFunds: 1,
-      settings: { ...cleanState.settings, holdingPeriodWarnDays: 180 },
-    });
-    const aged = flags.find((f) => /holding.*threshold/i.test(f.title));
-    expect(aged).toBeDefined();
-    expect(aged?.detail).toContain("180");
-  });
-
-  it("does NOT fire aged-funds warn when agedPublicFunds is 0 even if holdingPeriodWarnDays is very small", () => {
-    const flags = guardrails({
-      ...cleanState,
-      agedPublicFunds: 0,
-      settings: { ...cleanState.settings, holdingPeriodWarnDays: 1 },
-    });
-    const aged = flags.find((f) => /aged|holding/i.test(f.title));
-    expect(aged).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// guardrails — aged-funds detail text includes fund names
-// (inc7 dashboard usability fix, DECISION-032)
-// ---------------------------------------------------------------------------
-
-describe("guardrails — aged-funds detail text includes fund names (inc7 dashboard usability fix)", () => {
-  it("omits the parenthetical when agedPublicFundNames is undefined (backward compatibility)", () => {
-    const flags = guardrails({ ...cleanState, agedPublicFunds: 1 });
-    const aged = flags.find((f) => /holding.*threshold/i.test(f.title));
-    expect(aged).toBeDefined();
-    expect(aged?.detail).not.toContain("(");
-  });
-
-  it("omits the parenthetical when agedPublicFundNames is an empty array", () => {
-    const flags = guardrails({ ...cleanState, agedPublicFunds: 1, agedPublicFundNames: [] });
-    const aged = flags.find((f) => /holding.*threshold/i.test(f.title));
-    expect(aged).toBeDefined();
-    expect(aged?.detail).not.toContain("(");
-  });
-
-  it("includes a single fund name in parentheses when agedPublicFundNames has one entry", () => {
-    const flags = guardrails({
-      ...cleanState,
-      agedPublicFunds: 1,
-      agedPublicFundNames: ["Charitable Fund"],
-    });
-    const aged = flags.find((f) => /holding.*threshold/i.test(f.title));
-    expect(aged).toBeDefined();
-    expect(aged?.detail).toContain("(Charitable Fund)");
-  });
-
-  it("includes comma-joined fund names in parentheses when agedPublicFundNames has multiple entries", () => {
-    const flags = guardrails({
-      ...cleanState,
-      agedPublicFunds: 3,
-      agedPublicFundNames: ["Activity Fund", "Charitable Fund", "Scholarship Fund"],
-    });
-    const aged = flags.find((f) => /holding.*threshold/i.test(f.title));
-    expect(aged).toBeDefined();
-    expect(aged?.detail).toContain("(Activity Fund, Charitable Fund, Scholarship Fund)");
+  it("small amounts render with cents ($0.05)", () => {
+    const aged = findAged(
+      guardrails({
+        ...cleanState,
+        agedPublicFunds: [{ fundName: "Activity Fund", agedCents: 5, balanceCents: 8452 }],
+      }),
+    );
+    expect(aged?.detail).toContain("Activity Fund: $0.05 of its $84.52 balance");
   });
 });
 

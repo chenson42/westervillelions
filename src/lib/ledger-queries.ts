@@ -54,8 +54,8 @@ import {
   grossReceiptsCents,
   budgetVariance,
   guardrails,
-  countAgedPublicFunds,
-  agedPublicFundNames,
+  computeAgedPublicFunds,
+  agedPublicFundCutoffDate,
   daysSinceTxnDate,
   determine990,
   computeDueDate,
@@ -3173,50 +3173,36 @@ export async function getOverview(
   // inc7 guardrail inputs — Lions Fund-Compliance Guardrails
   // (DECISION-027 for the original query approach; DECISION-028 corrects the
   // balance-positive gate below to use a true cross-FY balance instead of the
-  // FY-scoped fundSummaries[].endingCents — see Query A2 and countAgedPublicFunds().)
+  // FY-scoped fundSummaries[].endingCents — see Query A2 and computeAgedPublicFunds().)
   // --------------------------------------------------------------------------
 
-  // Query A: Cross-FY oldest posted income date per public fund (no FY bound).
-  // Paired with Query A2 below (cross-FY balance) and passed into
-  // countAgedPublicFunds() to determine which funds are "aged".
+  // DECISION-105 (supersedes DECISION-027 Query A): the aged-fund rule is now FIFO,
+  // so the old MIN(txn_date) query is gone; Query A2 below carries the trailing-window
+  // income sum instead.
   const publicFundIds = funds
     .filter((f) => ["activity", "charitable", "scholarship"].includes(f.kind))
     .map((f) => f.id);
 
-  const oldestIncomeRows = publicFundIds.length > 0
-    ? await db
-        .select({
-          fundId: ledgerTransactions.fundId,
-          oldestDate: sql<string>`MIN(${ledgerTransactions.txnDate})`,
-        })
-        .from(ledgerTransactions)
-        .where(
-          and(
-            inArray(ledgerTransactions.fundId, publicFundIds),
-            eq(ledgerTransactions.flow, "income"),
-            eq(ledgerTransactions.status, "posted"),
-          ),
-        )
-        .groupBy(ledgerTransactions.fundId)
-    : [];
-
-  const oldestDateByFundId = new Map<string, string>(
-    oldestIncomeRows.map((r) => [r.fundId, r.oldestDate]),
-  );
-
   // inc7 (revised 2026-07-20, Bug 2 fix) — Query A2: cross-FY posted income/expense
-  // totals per public fund, no FY bound. Companion to Query A. Together they let us
+  // totals per public fund, no FY bound. It lets us
   // compute each public fund's TRUE life-to-date balance — NOT fs.endingCents, which
   // is scoped to the currently-selected FY and was the root cause of QA's Bug 2
   // (2026-07-20): a fund whose only transactions fall outside the selected FY window
   // read as endingCents = 0 and was silently excluded from the aged-funds count even
   // though it held a real, positive, aged balance. See DECISION-028.
+  //
+  // DECISION-105: also sums the income dated on/after the window cutoff (club-local date
+  // computed in TS, never now() in SQL — DECISION-005 spirit). Only the income group's
+  // windowCents is read. No transfer_group_id filter: transfer-in rows are ordinary fresh
+  // income here by design (known limitation, B-80).
+  const agedCutoff = agedPublicFundCutoffDate(settings.holdingPeriodWarnDays);
   const crossFyTotalsRows = publicFundIds.length > 0
     ? await db
         .select({
           fundId: ledgerTransactions.fundId,
           flow: ledgerTransactions.flow,
           totalCents: sql<string>`COALESCE(SUM(${ledgerTransactions.amountCents}), 0)`,
+          windowCents: sql<string>`COALESCE(SUM(CASE WHEN ${ledgerTransactions.txnDate} >= ${agedCutoff}::date THEN ${ledgerTransactions.amountCents} ELSE 0 END), 0)`,
         })
         .from(ledgerTransactions)
         .where(
@@ -3231,9 +3217,13 @@ export async function getOverview(
 
   const incomeTotalByFundId = new Map<string, number>();
   const expenseTotalByFundId = new Map<string, number>();
+  const windowIncomeByFundId = new Map<string, number>();
   for (const row of crossFyTotalsRows) {
     const cents = Number(row.totalCents);
-    if (row.flow === "income") incomeTotalByFundId.set(row.fundId, cents);
+    if (row.flow === "income") {
+      incomeTotalByFundId.set(row.fundId, cents);
+      windowIncomeByFundId.set(row.fundId, Number(row.windowCents));
+    }
     else if (row.flow === "expense") expenseTotalByFundId.set(row.fundId, cents);
   }
 
@@ -3249,21 +3239,10 @@ export async function getOverview(
         { flow: "income", amountCents: incomeTotalByFundId.get(f.id) ?? 0 },
         { flow: "expense", amountCents: expenseTotalByFundId.get(f.id) ?? 0 },
       ]),
-      oldestPostedIncomeDate: oldestDateByFundId.get(f.id) ?? null,
+      trailingWindowIncomeCents: windowIncomeByFundId.get(f.id) ?? 0,
     }));
 
-  const agedPublicFundsRaw = countAgedPublicFunds(
-    agedPublicFundFacts,
-    settings.holdingPeriodWarnDays,
-  );
-
-  // Ledger Dashboard usability fix (DECISION-032): fund names for the aged
-  // funds, sharing isAgedPublicFund()'s qualification rule with the count
-  // above via agedPublicFundNames() — can never disagree.
-  const agedPublicFundNamesRaw = agedPublicFundNames(
-    agedPublicFundFacts,
-    settings.holdingPeriodWarnDays,
-  );
+  const agedPublicFunds = computeAgedPublicFunds(agedPublicFundFacts);
 
   // Query B: Batch-fetch categories for admin-fund income rows (DECISION-027).
   // Collect distinct categoryIds on posted income rows in admin funds (exclude null per G-4).
@@ -3305,7 +3284,6 @@ export async function getOverview(
   }).length;
 
   // Defensive non-negative guards
-  const agedPublicFunds = Math.max(0, agedPublicFundsRaw);
   const adminPublicIncomeCount = Math.max(0, adminPublicIncomeCountRaw);
 
   const guardrailFlags = guardrails({
@@ -3337,7 +3315,6 @@ export async function getOverview(
     syncStaleTxns,
     // inc7: compliance guardrail inputs
     agedPublicFunds,
-    agedPublicFundNames: agedPublicFundNamesRaw,
     adminPublicIncomeCount,
   });
 
@@ -3771,6 +3748,16 @@ export type ReimbursementWithMember = LedgerReimbursement & {
 };
 
 /**
+ * Admin list row (DECISION-106). "Paid by" is defined once: the linked
+ * transaction's recordedByUserId (always the payer, legacy and new rows alike),
+ * never reviewedByUserId (which for legacy rows is the board approver).
+ */
+export type ReimbursementAdminRow = ReimbursementWithMember & {
+  paidByName: string | null;
+  fundName: string | null;
+};
+
+/**
  * Returns all reimbursements for a specific member, ordered newest first.
  * Ownership enforcement: caller must verify session.user.memberId === memberId.
  */
@@ -3806,7 +3793,7 @@ export async function listReimbursementsForAdmin(opts: {
   memberId?: string;
   limit?: number;
   offset?: number;
-} = {}): Promise<{ reimbursements: ReimbursementWithMember[]; total: number }> {
+} = {}): Promise<{ reimbursements: ReimbursementAdminRow[]; total: number }> {
   const { status, memberId, limit = 50, offset = 0 } = opts;
 
   const conditions = [];
@@ -3823,7 +3810,16 @@ export async function listReimbursementsForAdmin(opts: {
   );
   const total = parseInt(countRows[0]?.count ?? "0", 10);
 
-  // Fetch with member join
+  const payer = alias(users, "reimbursement_payer");
+
+  // Paid is the board's review log: newest payment first. Every other status
+  // keeps submitted-date order (DECISION-106).
+  const orderBy =
+    status === "paid"
+      ? [sql`${ledgerReimbursements.paidAt} DESC NULLS LAST`, desc(ledgerReimbursements.submittedAt)]
+      : [desc(ledgerReimbursements.submittedAt)];
+
+  // Fetch with member, payer and fund joins
   const rows = await db
     .select({
       id: ledgerReimbursements.id,
@@ -3847,15 +3843,20 @@ export async function listReimbursementsForAdmin(opts: {
       memberFirstName: members.firstName,
       memberLastName: members.lastName,
       memberEmail: members.email,
+      paidByName: sql<string | null>`coalesce(${payer.name}, ${payer.email})`,
+      fundName: ledgerFunds.name,
     })
     .from(ledgerReimbursements)
     .innerJoin(members, eq(ledgerReimbursements.submittedByMemberId, members.id))
+    .leftJoin(ledgerTransactions, eq(ledgerTransactions.id, ledgerReimbursements.ledgerTransactionId))
+    .leftJoin(payer, eq(payer.id, ledgerTransactions.recordedByUserId))
+    .leftJoin(ledgerFunds, eq(ledgerFunds.id, ledgerReimbursements.fundId))
     .where(whereClause)
-    .orderBy(desc(ledgerReimbursements.submittedAt))
+    .orderBy(...orderBy)
     .limit(limit)
     .offset(offset);
 
-  return { reimbursements: rows as ReimbursementWithMember[], total };
+  return { reimbursements: rows as ReimbursementAdminRow[], total };
 }
 
 /**

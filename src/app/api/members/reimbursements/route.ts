@@ -15,6 +15,11 @@
  *
  * Gate: session.user.memberId (not null)
  *
+ * Notification (DECISION-106): the Board-position Treasurer is emailed when
+ * they hold ledger.record; otherwise (resolver miss, treasurer is the
+ * submitter, treasurer lacks ledger.record) every ledger.record holder except
+ * the submitter. Tolerant, never fails the 201. Not a durable-claim path.
+ *
  * Body:
  * {
  *   amountCents: number;        // > 0 and <= 1_000_000 ($10,000 ceiling)
@@ -35,7 +40,10 @@ import { eq, and, gte } from "drizzle-orm";
 import {
   listReimbursementsForMember,
   getEmailsForFeature,
+  getReimbursementWithMember,
 } from "@/lib/ledger-queries";
+import { pickReimbursementNotifyRecipients } from "@/lib/ledger";
+import { resolveTreasurer } from "@/lib/board-positions";
 import { sendBulkMemberEmail } from "@/lib/email";
 import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
 import { FEATURES } from "@/lib/permissions";
@@ -164,43 +172,84 @@ export async function POST(request: NextRequest) {
       })
       .returning({ id: ledgerReimbursements.id });
 
-    // E-2: Notify LEDGER_APPROVE holders of new submission
+    // E-2: Notify the treasurer (fallback: other ledger.record holders) that a
+    // request is waiting (DECISION-106). Isolated from the DB write: nothing in
+    // here may fail the 201. Not a durable-claim path (no sentAt / unique
+    // success row), so sendBulkMemberEmail() is correct. No addresses in logs;
+    // they are visible at /admin/email-queue.
     try {
-      const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
-      const fromEmail = getFromEmail();
-      const amountDollars = (amountCents / 100).toFixed(2);
-      const appUrl = getAppUrl();
+      const row = await getReimbursementWithMember(newReimb.id);
+      const [treasurer, recordHolderEmails] = await Promise.all([
+        resolveTreasurer(),
+        getEmailsForFeature(FEATURES.LEDGER_RECORD),
+      ]);
+      const pick = pickReimbursementNotifyRecipients({
+        treasurer,
+        recordHolderEmails,
+        submitterEmail: session.user.email ?? "",
+        submitterMemberId: session.user.memberId,
+      });
 
-      // escapeHtml() on the member-supplied fields. `description` arrives
-      // straight from the submitting member (trimmed and length-capped, never
-      // escaped) and this body goes to every LEDGER_APPROVE holder — i.e. the
-      // board. Interpolating it raw is precisely the omitted-escaper failure
-      // CLAUDE.md records under "Duplication Is a Review Finding": one copy of
-      // the escaper was simply left out, sending member-supplied text unescaped
-      // into a board-wide email. This was another such copy.
-      //
-      // amountDollars and appUrl are codebase-derived (a toFixed(2) and an env
-      // var), so they are deliberately NOT escaped — escaping them would
-      // double-encode legitimate punctuation, per html-escape.ts's own note.
-      const reimbursementHtml = `<p>A new reimbursement request has been submitted and requires board review.</p>
+      if (pick.reason !== "treasurer") {
+        console.warn("[Reimbursement notify] fallback recipients", {
+          reimbursementId: newReimb.id,
+          reason: pick.reason,
+        });
+      }
+
+      if (pick.recipients.length === 0) {
+        console.error("[Reimbursement notify] no recipients", {
+          reimbursementId: newReimb.id,
+          reason: pick.reason,
+        });
+      } else {
+        const fromEmail = getFromEmail();
+        const amountDollars = (amountCents / 100).toFixed(2);
+        const appUrl = getAppUrl();
+        const submitterName = row
+          ? `${row.memberFirstName} ${row.memberLastName}`.trim()
+          : "A member";
+
+        // escapeHtml() on every member-supplied field (submitter name,
+        // description, cause) — an omitted escaper copy once sent member text
+        // unescaped into a board-wide email (CLAUDE.md, Duplication Is a Review
+        // Finding). amountDollars and appUrl are codebase-derived (toFixed(2)
+        // and an env var), so they are deliberately NOT escaped: escaping would
+        // double-encode legitimate punctuation, per html-escape.ts's own note.
+        const reimbursementHtml = `<p>${escapeHtml(submitterName)} has submitted a reimbursement request that is waiting for your review.</p>
 <ul>
+  <li><strong>Submitted by:</strong> ${escapeHtml(submitterName)}</li>
   <li><strong>Amount:</strong> $${amountDollars}</li>
   <li><strong>Description:</strong> ${escapeHtml(description)}</li>
   ${beneficiaryCause ? `<li><strong>Cause:</strong> ${escapeHtml(beneficiaryCause)}</li>` : ""}
 </ul>
-<p>Review the request at <a href="${appUrl}/admin/ledger/reimbursements">${appUrl}/admin/ledger/reimbursements</a>.</p>`;
+<p>Review the request, then mark it paid or reject it, at <a href="${appUrl}/admin/ledger/reimbursements">${appUrl}/admin/ledger/reimbursements</a>.</p>`;
 
-      // sendBulkMemberEmail(), not a hand-rolled loop — approverEmails is every
-      // LEDGER_APPROVE holder. Same invariant as the ledger transactions route.
-      // (The 2026-09-10 code review found 2 such loops; this is a third it
-      // missed, in a different file.)
-      await sendBulkMemberEmail({
-        from: fromEmail,
-        subject: `New reimbursement request — $${amountDollars}`,
-        recipients: approverEmails.map((email) => ({ to: email, html: reimbursementHtml })),
+        // sendBulkMemberEmail() for one or many recipients: one code path, one
+        // email per recipient, never a hand-rolled loop.
+        const { results } = await sendBulkMemberEmail({
+          from: fromEmail,
+          subject: `New reimbursement request — $${amountDollars}`,
+          recipients: pick.recipients.map((email) => ({ to: email, html: reimbursementHtml })),
+        });
+        // sendBulkMemberEmail() does not throw on provider failure: it returns
+        // results[] with success:false. Blocked non-production sends return
+        // success:true and are correctly not warnings.
+        const failed = results.filter((r) => !r.success).length;
+        if (failed > 0) {
+          console.warn("[Reimbursement notify] send failed", {
+            reimbursementId: newReimb.id,
+            reason: pick.reason,
+            failed,
+            total: results.length,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[Reimbursement notify] threw", {
+        reimbursementId: newReimb.id,
+        message: e instanceof Error ? e.message : String(e),
       });
-    } catch {
-      // Best-effort — email failure does not block the submission
     }
 
     return NextResponse.json({ id: newReimb.id }, { status: 201 });

@@ -312,6 +312,9 @@ export type Testimonial = typeof testimonials.$inferSelect;
 export type NewTestimonial = typeof testimonials.$inferInsert;
 
 // Email queue for persistent delivery with retry support
+// Delivery log and retry buffer, not a system of record: rows are deleted once older than
+// EMAIL_QUEUE_RETENTION_DAYS (about six months, measured by COALESCE(sent_at, created_at));
+// see pruneEmailQueue() in src/lib/email-queue-stats.ts and DECISION-107.
 export const emailQueue = pgTable("email_queue", {
   id: uuid("id").primaryKey().defaultRandom(),
   to: text("to").notNull(),
@@ -588,6 +591,9 @@ export const eventAnnouncements = pgTable(
     sentByUserId: uuid("sent_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    // Nullable, onDelete set null: email_queue rows are pruned after EMAIL_QUEUE_RETENTION_DAYS
+    // (src/lib/email-queue-stats.ts, DECISION-107), so this goes null on purge. success/error/note
+    // keep this row self-describing; nothing may dereference this id.
     emailQueueId: uuid("email_queue_id").references(() => emailQueue.id, {
       onDelete: "set null",
     }),
@@ -813,7 +819,9 @@ export const ledgerAuditLog = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
     // 'category_renamed' | 'category_merged' | 'category_deactivated' |
-    // 'category_reactivated' | 'category_flags_updated'
+    // 'category_reactivated' | 'category_flags_updated' |
+    // 'reconciliation_session_discarded' (both targets null; counts-only
+    // `before`, see discardOpenSession() in reconciliation-queries.ts)
     // ('category_created' is a reserved future value — category creation is
     // NOT audited in v1, per DECISION-066 item 5.)
     action: text("action").notNull(),
@@ -831,8 +839,9 @@ export const ledgerAuditLog = pgTable(
     // targetCategoryId's behavior on category deletion — an audit trail that
     // vanishes when its subject is deleted would defeat its purpose).
     // App-layer invariant: exactly one of targetCategoryId /
-    // targetTransactionId is non-null per row (or, for the one pre-existing
-    // case, 'ack_letter_template_updated', both are null).
+    // targetTransactionId is non-null per row (or, for the pre-existing cases
+    // 'ack_letter_template_updated' and 'reconciliation_session_discarded',
+    // both are null).
     targetTransactionId: uuid("target_transaction_id").references(() => ledgerTransactions.id, { onDelete: "set null" }),
     before: text("before"),
     after: text("after"),
@@ -1343,6 +1352,9 @@ export const financialReportSends = pgTable(
     signedAsMemberId: uuid("signed_as_member_id").references(() => members.id, {
       onDelete: "set null",
     }),
+    // Nullable, onDelete set null: email_queue rows are pruned after EMAIL_QUEUE_RETENTION_DAYS
+    // (src/lib/email-queue-stats.ts, DECISION-107), so this goes null on purge. success/error and
+    // the stored fingerprint keep this row self-describing; nothing may dereference this id.
     emailQueueId: uuid("email_queue_id").references(() => emailQueue.id, { onDelete: "set null" }),
     success: boolean("success").notNull(),
     error: text("error"),
@@ -1488,8 +1500,9 @@ export const ledgerReconciliationMatches = pgTable(
 export type LedgerReconciliationMatch = typeof ledgerReconciliationMatches.$inferSelect;
 export type NewLedgerReconciliationMatch = typeof ledgerReconciliationMatches.$inferInsert;
 
-// Reimbursement requests — member self-service submission; requires board approval before payment.
-// Lifecycle: submitted → approved | rejected → paid.
+// Reimbursement requests — member self-service submission, reviewed and paid by the treasurer.
+// Lifecycle: submitted → paid | rejected. 'approved' is a legacy read-only status from the
+// board-approval era, never written again (DECISION-106).
 // Marking paid creates a linked ledger_transactions row (flow='expense', status='posted').
 // No CHECK constraint on status — consistent with ledger_transactions.status pattern (inc1 precedent).
 // DECISION-020: receipt_storage_key stores an opaque provider-neutral key, never a URL.
@@ -1513,13 +1526,13 @@ export const ledgerReimbursements = pgTable(
     // Treasurer assigns the fund at pay time (R-3); null until then
     fundId: uuid("fund_id")
       .references(() => ledgerFunds.id, { onDelete: "set null" }),
-    // App-layer valid values: 'submitted' | 'approved' | 'rejected' | 'paid'
+    // App-layer valid values: 'submitted' | 'rejected' | 'paid' (+ legacy 'approved', never written, DECISION-106)
     // No DB CHECK constraint — consistent with ledger_transactions.status (inc1 precedent)
     status: text("status").notNull().default("submitted"),
     reviewedByUserId: uuid("reviewed_by_user_id")
       .references(() => users.id, { onDelete: "set null" }),
     reviewedAt: timestamp("reviewed_at"),
-    boardMinute: text("board_minute"),                       // required when approving
+    boardMinute: text("board_minute"),                       // legacy: collected only before DECISION-106
     rejectionReason: text("rejection_reason"),               // required when rejecting
     paidAt: timestamp("paid_at"),
     // FK to the expense transaction created when treasurer marks paid; null until paid

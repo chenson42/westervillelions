@@ -166,7 +166,15 @@ export function RejectReimbursementDialog({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to reject reimbursement.");
+        const message = data.error || "Failed to reject reimbursement.";
+        if (res.status === 409) {
+          // Already processed by someone else — show why and reload the list.
+          toast.error(message);
+          setOpen(false);
+          router.refresh();
+          return;
+        }
+        throw new Error(message);
       }
 
       toast.success("Reimbursement rejected.");

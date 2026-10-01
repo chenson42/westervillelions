@@ -39,9 +39,9 @@ export default function SettingsSection({ settings }: SettingsSectionProps) {
           Minimum guardrail fires when an entity&rsquo;s balance drops below this amount.
         </li>
         <li>
-          <span className="font-semibold">Public-fund holding-period (days)</span> — how long a
-          public/activity fund can hold an undisbursed balance before the aged-public-fund
-          guardrail warns.
+          <span className="font-semibold">Public-fund holding-period (days)</span> — how long
+          public money can sit in a public (Activity, Charitable or Scholarship) fund, counted
+          oldest-first, before the aged-public-fund guardrail warns.
         </li>
         <li>
           <span className="font-semibold">Treasurer bonded</span> — a checkbox confirming the

@@ -31,12 +31,13 @@ import {
   ledgerBankAccounts,
   ledgerEntities,
   ledgerTransactions,
+  ledgerAuditLog,
   type LedgerReconciliationSession,
   type NewLedgerBankLine,
   type LedgerBankLine,
   type LedgerReconciliationMatch,
 } from "@/lib/db/schema";
-import { eq, and, isNull, inArray, desc, asc } from "drizzle-orm";
+import { eq, and, isNull, inArray, desc, asc, sql } from "drizzle-orm";
 import type { ExistingSessionPeriod } from "@/lib/reconciliation";
 
 // ---------------------------------------------------------------------------
@@ -646,4 +647,100 @@ export async function getLaterClosedSessionForAccount(
   // case (few sessions per account).
   const blocking = rows.find((r) => r.statementPeriodEnd > statementPeriodEnd);
   return blocking ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Discard an open session
+// ---------------------------------------------------------------------------
+
+export type DiscardSessionResult =
+  | { outcome: "discarded"; sessionId: string; bankLineCount: number; matchCount: number }
+  | { outcome: "not_found" }
+  | { outcome: "not_open" }
+  | { outcome: "requires_manage" };
+
+/**
+ * Hard-delete an OPEN reconciliation session, its bank lines and its match
+ * links (FK cascades), and write one `ledger_audit_log` row, all in one
+ * transaction (docs/work-log/2026-10-01-discard-reconciliation-session.md).
+ *
+ * THE INVARIANT: the `status = 'open'` predicate lives INSIDE the DELETE
+ * statement, never in a read-then-delete. `ledger_transactions.reconciled_session_id`
+ * is `ON DELETE SET NULL` (DECISION-036); hard-deleting a CLOSED session would
+ * leave every transaction it cleared with `reconciled = true` and a nulled
+ * provenance pointer, so a later reopen could never find or revert them, and
+ * nothing would error. Do not "simplify" this into a check in the caller.
+ * The `reopened_at IS NULL` clause for non-managers gets the same atomicity
+ * for the two-key rule.
+ *
+ * Never writes `ledger_transactions`. Audit row carries counts only, never
+ * bank-line descriptions.
+ */
+export async function discardOpenSession(input: {
+  sessionId: string;
+  actorUserId: string;
+  canManage: boolean;
+}): Promise<DiscardSessionResult> {
+  const { sessionId, actorUserId, canManage } = input;
+  const S = ledgerReconciliationSessions;
+
+  return db.transaction(async (tx) => {
+    const [lineRow] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(ledgerBankLines)
+      .where(eq(ledgerBankLines.sessionId, sessionId));
+    const [matchRow] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(ledgerReconciliationMatches)
+      .where(eq(ledgerReconciliationMatches.sessionId, sessionId));
+    const bankLineCount = lineRow?.n ?? 0;
+    const matchCount = matchRow?.n ?? 0;
+
+    const conds = [eq(S.id, sessionId), eq(S.status, "open")];
+    if (!canManage) conds.push(isNull(S.reopenedAt));
+    const deletedRows = await tx.delete(S).where(and(...conds)).returning();
+
+    if (deletedRows.length === 0) {
+      const [existing] = await tx
+        .select({ status: S.status, reopenedAt: S.reopenedAt })
+        .from(S)
+        .where(eq(S.id, sessionId))
+        .limit(1);
+      if (!existing) return { outcome: "not_found" as const };
+      if (existing.status !== "open") return { outcome: "not_open" as const };
+      return { outcome: "requires_manage" as const };
+    }
+
+    const deleted = deletedRows[0];
+    const [account] = await tx
+      .select({ name: ledgerBankAccounts.name })
+      .from(ledgerBankAccounts)
+      .where(eq(ledgerBankAccounts.id, deleted.bankAccountId))
+      .limit(1);
+    const accountName = account?.name ?? "unknown account";
+
+    await tx.insert(ledgerAuditLog).values({
+      actorUserId,
+      action: "reconciliation_session_discarded",
+      targetCategoryId: null,
+      targetTransactionId: null,
+      before: JSON.stringify({
+        bankAccountId: deleted.bankAccountId,
+        statementPeriodStart: deleted.statementPeriodStart,
+        statementPeriodEnd: deleted.statementPeriodEnd,
+        openingBalanceCents: deleted.openingBalanceCents,
+        closingBalanceCents: deleted.closingBalanceCents,
+        status: "open",
+        csvFilename: deleted.csvFilename,
+        csvRowCount: deleted.csvRowCount,
+        bankLineCount,
+        matchCount,
+        reopened: deleted.reopenedAt !== null,
+      }),
+      after: null,
+      details: `Discarded open session for ${accountName} ${deleted.statementPeriodStart} to ${deleted.statementPeriodEnd}: ${bankLineCount} statement lines, ${matchCount} matches removed`,
+    });
+
+    return { outcome: "discarded" as const, sessionId, bankLineCount, matchCount };
+  });
 }

@@ -8,7 +8,7 @@ import { desc, eq, inArray } from "drizzle-orm";
 import RetryButton from "./retry-button";
 import RowRetryButton from "./row-retry-button";
 import { ViewEmailDialog, StatusPill } from "./view-email-dialog";
-import { resetStaleRetryingEmails } from "@/lib/email-queue-stats";
+import { pruneEmailQueue, resetStaleRetryingEmails } from "@/lib/email-queue-stats";
 
 export default async function AdminEmailQueuePage() {
   const session = await auth();
@@ -25,6 +25,15 @@ export default async function AdminEmailQueuePage() {
   // indefinitely. Awaited before the section queries below so a row reset
   // here shows up correctly in "Failed Emails" on this same render.
   await resetStaleRetryingEmails(new Date());
+
+  // Retention: drop email_queue rows older than EMAIL_QUEUE_RETENTION_DAYS (DECISION-107).
+  // Lazy and best-effort by design — this project has no scheduler — so a failure here
+  // must never be the reason the page doesn't render. The next visit retries.
+  try {
+    await pruneEmailQueue(new Date());
+  } catch (error) {
+    console.error("[email-queue] retention purge failed", error);
+  }
 
   const [failed, blocked, recentSent] = await Promise.all([
     db
@@ -74,6 +83,9 @@ export default async function AdminEmailQueuePage() {
           <h1 className="text-3xl font-bold text-gray-900">Email Queue</h1>
           <p className="mt-2 text-gray-600">
             Monitor outbound email delivery and retry failed messages
+          </p>
+          <p className="mt-1 text-sm text-gray-500">
+            Email history is kept for 6 months. Older messages are removed automatically when this page is opened.
           </p>
         </div>
         <RetryButton />
@@ -274,7 +286,7 @@ export default async function AdminEmailQueuePage() {
 
         {recentSent.length === 0 ? (
           <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500">
-            No emails sent yet.
+            No emails sent in the last 6 months.
           </div>
         ) : (
           <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow">

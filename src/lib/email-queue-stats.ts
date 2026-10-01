@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { emailQueue } from "@/lib/db/schema";
-import { and, eq, lt, or, sql } from "drizzle-orm";
+import { and, eq, lt, ne, or, sql } from "drizzle-orm";
 
 /**
  * How long a row may sit at the transient `retrying` status before it's
@@ -72,6 +72,75 @@ export async function resetStaleRetryingEmails(now: Date): Promise<number> {
     .where(and(eq(emailQueue.status, "retrying"), lt(emailQueue.retryingAt, cutoff)))
     .returning({ id: emailQueue.id });
   return reset.length;
+}
+
+/**
+ * How long `email_queue` rows are kept, in days (~6 months). Days rather than
+ * calendar months because JS month arithmetic misbehaves at month-end.
+ * Changing this means updating the two "6 months" strings in
+ * src/app/(dashboard)/admin/email-queue/page.tsx and DECISION-107.
+ */
+export const EMAIL_QUEUE_RETENTION_DAYS = 183;
+
+/**
+ * Pure. Rows whose age basis is strictly before this instant are purged.
+ * UTC millisecond arithmetic, so no DST drift; mirrors `pruneCutoff()` in
+ * src/lib/auth/failed-login.ts.
+ */
+export function emailQueueRetentionCutoff(now: Date = new Date()): Date {
+  return new Date(now.getTime() - EMAIL_QUEUE_RETENTION_DAYS * 86_400_000);
+}
+
+/**
+ * Deletes `email_queue` rows older than `EMAIL_QUEUE_RETENTION_DAYS` and
+ * returns how many were deleted. THROWS on a database error — the caller
+ * decides whether that matters (the admin page swallows and logs it).
+ *
+ * Why page-load and not inside `sendEmail()`: this project has no scheduler,
+ * and putting a delete on the send hot path would add a round-trip per
+ * recipient of every bulk send and widen the blast radius of the most
+ * incident-prone function in the repo (DECISION-102/103). So this runs lazily
+ * from `/admin/email-queue`, right after `resetStaleRetryingEmails()`.
+ * Honest limit: rows are removed at the next admin visit after six months,
+ * not at six months.
+ *
+ * Age basis is `COALESCE(sent_at, created_at)`: `created_at` alone would
+ * delete a long-stranded failure the instant it is successfully retried, and
+ * a sent row would vanish from "Recently Sent" by creation date. `sent_at` is
+ * null for unsent rows, so every row has a defined age.
+ *
+ * Every status is purged EXCEPT `retrying` (a live claim). Excluding it closes
+ * the race where an admin retries a six-month-old failed row at the instant
+ * the purge fires, which would settle against a deleted row and send with no
+ * record. A stranded `retrying` row is reset to `failed` first by the page,
+ * so if it is also old it is purged on that same visit.
+ *
+ * The cutoff is computed in JS and bound as an ISO (UTC) string with an
+ * explicit `::timestamp` cast: `created_at`/`sent_at` are naive timestamps
+ * the project reads as UTC, and a raw `Date` bound into an `sql` fragment
+ * would be serialized in the process's local timezone.
+ *
+ * Scale assumptions (revisit if the table reaches tens of thousands of rows):
+ * the table holds a few hundred rows a year, so a single un-batched DELETE is
+ * trivially cheap. The predicate cannot use ix_email_queue_status, so it is a
+ * sequential scan; likewise the ON DELETE SET NULL cascade scans the
+ * unindexed `email_queue_id` column of dues_reminders, event_announcements
+ * and financial_report_sends once per deleted row. Deliberately no indexes.
+ *
+ * Not a durable-claim path: it writes no "sent" claim and never sends mail.
+ */
+export async function pruneEmailQueue(now: Date = new Date()): Promise<number> {
+  const cutoff = emailQueueRetentionCutoff(now);
+  const deleted = await db
+    .delete(emailQueue)
+    .where(
+      and(
+        ne(emailQueue.status, "retrying"),
+        sql`COALESCE(${emailQueue.sentAt}, ${emailQueue.createdAt}) < ${cutoff.toISOString()}::timestamp`
+      )
+    )
+    .returning({ id: emailQueue.id });
+  return deleted.length;
 }
 
 /**

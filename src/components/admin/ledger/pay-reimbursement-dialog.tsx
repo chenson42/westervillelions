@@ -13,6 +13,11 @@ interface PayReimbursementDialogProps {
   reimbursementId: string;
   memberName: string;
   amount: string;
+  /** Amount in cents exactly as the page rendered it. Echoed back so the
+   *  server can detect a member edit made while this dialog was open. */
+  amountCents: number;
+  /** The row's updatedAt (ISO string) as the page rendered it. Same purpose. */
+  updatedAt: string;
   funds: LedgerFund[];
   /** Expense-flow categories across every entity — filtered client-side to
    *  the selected fund's (entityId, kind) pair. */
@@ -33,12 +38,17 @@ const METHOD_LABELS: Record<string, string> = {
  * payment method, then sends the pay action to
  * PATCH /api/admin/ledger/reimbursements/[id] with action='pay'.
  *
+ * Carries the amount and updatedAt the page rendered (DECISION-106): the
+ * server returns 409 if the member edited the request after this page loaded.
+ *
  * The server creates the expense transaction from this data.
  */
 export default function PayReimbursementDialog({
   reimbursementId,
   memberName,
   amount,
+  amountCents,
+  updatedAt,
   funds,
   categories,
   budgetLines,
@@ -117,12 +127,23 @@ export default function PayReimbursementDialog({
           paymentDate,
           paymentMethod,
           note: note.trim() || undefined,
+          expectedAmountCents: amountCents,
+          expectedUpdatedAt: updatedAt,
         }),
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to mark reimbursement paid.");
+        const message = data.error || "Failed to mark reimbursement paid.";
+        if (res.status === 409) {
+          // Stale or already-processed: the server message says why. Close
+          // and refresh so the treasurer sees the current numbers.
+          toast.error(message);
+          setOpen(false);
+          router.refresh();
+          return;
+        }
+        throw new Error(message);
       }
 
       toast.success("Reimbursement marked paid. Expense transaction posted to ledger.");
@@ -147,7 +168,8 @@ export default function PayReimbursementDialog({
             Mark Reimbursement Paid
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-gray-500">
-            {memberName} — {amount}. Assign a fund and confirm payment to post the expense.
+            {memberName} — {amount}. Choose the fund and category and confirm payment. This posts
+            the expense to the ledger right away; there is no further approval step.
           </Dialog.Description>
 
           <div className="mt-4 space-y-4">
@@ -263,14 +285,14 @@ export default function PayReimbursementDialog({
           </div>
 
           <div className="mt-6 flex justify-end gap-3">
-            <Dialog.Close className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+            <Dialog.Close className="rounded-lg border border-gray-300 px-4 py-2 min-h-[44px] text-sm font-medium text-gray-700 hover:bg-gray-50 transition focus:outline-none focus:ring-2 focus:ring-lions-blue">
               Cancel
             </Dialog.Close>
             <button
               type="button"
               onClick={handlePay}
               disabled={submitting || !fundId || !categoryId}
-              className="bg-lions-blue text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+              className="bg-lions-blue text-white px-4 py-2 min-h-[44px] rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
             >
               {submitting ? "Posting…" : "Mark Paid"}
             </button>

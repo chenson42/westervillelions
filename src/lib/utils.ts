@@ -34,3 +34,14 @@ export function formatFileSize(bytes: number): string {
   const mb = kb / 1024;
   return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
 }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * True when `value` is a well-formed UUID string. Use before passing a
+ * path/query id to a `uuid` column so a malformed id becomes a clean 404
+ * instead of a Postgres `22P02` 500.
+ */
+export function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
+}

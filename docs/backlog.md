@@ -36,6 +36,8 @@ was deleted on the strength of this review alone.
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
+- B-83 — Board-visible monthly list of reimbursements paid
+- B-82 — `google_group_sync_log` keeps member email lists forever, with no retention
 - B-77 — `dotenv` is an undeclared transitive dependency that breaks under `tsx` when a `@/`-aliased import shares its module graph
 - B-75 — `financial-report-send.ts`'s `not_delivered` case writes the same message for both blocked-non-production and no-API-key
 - B-74 — Generic email-queue retry has no awareness of any durable-claim table it doesn't own
@@ -56,8 +58,18 @@ was deleted on the strength of this review alone.
 - B-53 — Six-to-nine e2e specs red on `main` outside the feature that surfaced them
 - B-57 — Receipt-proxy download routes carry the same buffered-response exposure
 - B-59 — Event type field + public calendar badges
+- B-87 — Email Queue tables clip their right-hand columns on a phone
+- B-89 — Reimbursements admin table: Mark Paid and Reject are off-screen at 360px
+- B-91 — Reconciliation session detail page scrolls sideways on a phone
 
 **Later**
+- B-84 — Consolidate the reimbursement $10,000 ceiling into one constant
+- B-85 — Ledger transactions created by a reimbursement carry no marker back to it
+- B-86 — Transactions created from a reconciliation bank line carry no marker back to it
+- B-88 — Reimbursements admin page does not clamp an out-of-range `?page=`
+- B-90 — The UUID-shape check is defined three times
+- B-81 — Stranded `pending` email-queue rows are invisible on the Email Queue page and the nav badge
+- B-79 — Let the treasurer record an earmark on a public fund so a deliberate multi-year hold stops tripping the aged-fund warning
 - B-78 — Time-of-day / duration fan-out for same-title sibling events (bulk-edit)
 - B-02 — No Playwright auth fixture for a signed-in member
 - B-03 — No e2e fixture for admin sub-permission variance
@@ -91,6 +103,7 @@ was deleted on the strength of this review alone.
 **Watching / needs info**
 - B-56 — Club Files admin list shows "Uploaded {date}" with no uploader name
 - B-76 — Live public-form spam guard can't protect membership applications from a burst-leading/isolated bot submission
+- B-80 — Aged-fund guardrail resets the clock on inter-fund transfers
 
 **Likely obsolete — verify and close**
 - B-01 — Ledger user's guide built into the treasury page
@@ -311,6 +324,60 @@ was deleted on the strength of this review alone.
 ---
 
 ## Soon
+
+- [ ] **B-89 — Reimbursements admin table: Mark Paid and Reject are off-screen at 360px.**
+  (added 2026-10-01, Phase 6 of `docs/work-log/2026-10-01-reimbursements-no-board-approval.md`; DECISION-106; found by qa)
+  The table scrolls horizontally inside its card, so a treasurer who opens the new-request email on a phone must
+  scroll sideways to find the action buttons. Fix shape: below `sm`, stack each row as a card (member, amount,
+  description, then the actions), or move the actions under the description. Related to B-87 (Email Queue tables
+  clip on a phone) and B-91 (reconciliation detail page); consider fixing the Ledger tables together.
+  Priority: should-do.
+
+- [ ] **B-91 — The reconciliation session detail page scrolls sideways on a phone.**
+  (added 2026-10-01 from Phase 5/6 of `docs/work-log/2026-10-01-discard-reconciliation-session.md`; pre-existing, found by qa)
+  At a 360px viewport `/admin/ledger/reconciliation/[sessionId]` has a document width of 848px. The cause is the
+  bank-lines `<table class="min-w-full">` (839px) in the matching grid (`reconciliation-matching-grid.tsx`), which
+  sits in no horizontally scrolling container, so the whole page scrolls instead of just the table. Idea: wrap the
+  table in `overflow-x-auto` (or a stacked card layout per row on small screens), then re-measure at 360px with an
+  open session that has bank lines; check the unmatched-transactions list on the same page while there.
+  Priority: low-to-medium (the treasurer reconciles on whatever device is nearest). Related: B-87, B-89.
+
+- [ ] **B-87 — Email Queue tables clip their right-hand columns on a phone.**
+  (added 2026-10-01, from Phase 6 of `docs/work-log/2026-10-01-email-queue-retention.md`; pre-existing, found by qa at 360px)
+  At 360px the "Not Sent" table on `/admin/email-queue` is about 874px wide inside an `overflow-hidden`
+  wrapper, so every column after "To" is cut off and cannot be scrolled to. That hides the status,
+  error and the per-row Retry control on a phone. `/admin/sync-log` has no overflow at 360px, so the
+  problem is this page's table markup, not the shared layout. The "Failed" and "Recently Sent" tables
+  use the same wrapper and almost certainly share it; check all three. Fix shape: wrap each table in
+  `overflow-x-auto` (or stack to cards below `sm`), keeping the `rounded-2xl` / existing card styling.
+  Separate observation, not part of this item: at 360px the mobile admin top bar sits over the page's
+  h1 (same coordinates as `/admin/sync-log`), which is shared layout and would be its own item if
+  anyone cares. Priority: should-do (small; CLAUDE.md "Mobile-first" gotcha).
+
+- [ ] **B-83 — Board-visible monthly list of reimbursements paid.**
+  (added 2026-10-01, from Phase 2 of `docs/work-log/2026-10-01-reimbursements-no-board-approval.md`; DECISION-106)
+  The board's decision to drop reimbursement approval is premised on seeing them afterward, but today the
+  Monthly Statement shows category totals only (by design: it is member-visible and never carries `party`/`memo`)
+  and the only named view is the Paid tab of `/admin/ledger/reimbursements`. Add a `ledger.view`-gated
+  "Reimbursements paid" section to the admin Reports page, scoped to a month (names allowed: admin-only), and
+  optionally the same list in the "Send to Board" email. The email half touches the DECISION-100/101 durable-claim
+  send path and needs its own pipeline pass (it must use the durable-claim helpers, DECISION-102/103); do not let
+  it ride along with the Reports section. The member-visible Monthly Statement must still never list
+  reimbursements by name. Priority: normal-next, not "someday": it is the prerequisite for the board's
+  after-the-fact review being more than a tab.
+
+- [ ] **B-82 — `google_group_sync_log` keeps member email lists forever, with no retention.**
+  (added 2026-10-01, from Phase 1 of `docs/work-log/2026-10-01-email-queue-retention.md`; DECISION-107)
+  Every Google Group sync writes a row to `google_group_sync_log` carrying `added`, `removed` and `failed`
+  jsonb arrays of member **email addresses** (plus `groupEmail`, the trigger source, and the error text), and
+  nothing ever deletes one. It feeds `/admin/sync-log`. This is the same data-minimisation gap DECISION-107 closes
+  for `email_queue`, in a different table with a different page and a different retention question: an
+  audit-trail value (who was added/removed from which group, and when) that the board may want to keep far
+  longer than six months, versus the addresses inside the arrays that do not need to outlive the event. Needs a
+  Phase 1 of its own to decide: purge whole rows after N months vs scrub the address arrays but keep the row
+  (count + timestamp + actor + outcome), what window, and whether the trigger is the same lazy page-load idiom
+  (`/admin/sync-log`) or the sync path itself. Do not copy DECISION-107's 183 days without making that call.
+  Priority: should-do; also a candidate for the 30-day security review's PII sweep.
 
 - [ ] **B-77 — `dotenv` is an undeclared transitive dependency that breaks under `tsx` when a
   `@/`-aliased import shares its module graph.**
@@ -746,6 +813,13 @@ was deleted on the strength of this review alone.
   `reimbursements/[id]/route.ts`. Treasurer-facing email correctness during 990 filing season is
   a reasonable nudge to do this one sooner rather than later.
 
+  **Update 2026-10-01 (DECISION-106):** the reimbursement-route half is folded into
+  `docs/work-log/2026-10-01-reimbursements-no-board-approval.md` Phase 3 (a new `route.test.ts` for the admin
+  reimbursement `[id]` route asserts the CC on rejected/paid and the tolerant no-CC path, and the submit route gets
+  its own test). The reimbursement `approve` CC site no longer exists, so the existing-site count is **four**, not
+  five: two in the reimbursement route (rejected/paid) and the two `LEDGER_APPROVE`-approver-loop notifications in
+  `src/app/api/admin/ledger/transactions/route.ts`. The two transactions-route sites remain open under this item.
+
 - [ ] **B-53 — Six e2e specs are red on `main` outside the feature that surfaced them (dev-DB
   fixture/date drift, not a code regression).**
   *(Raised 2026-09-03, Phase 6 of Social Media Post Requests; QA's Phase 5 full
@@ -832,6 +906,73 @@ was deleted on the strength of this review alone.
 
 ## Later
 
+- [ ] **B-88 — Reimbursements admin page does not clamp an out-of-range `?page=`.**
+  (added 2026-10-01, Phase 6 of `docs/work-log/2026-10-01-reimbursements-no-board-approval.md`; DECISION-106)
+  `/admin/ledger/reimbursements?tab=paid&page=99` shows "No paid reimbursements yet." and "Showing 4901–56 of 56
+  requests." with a Previous link to page 98. Fix: when `total > 0` and `offset >= total`, redirect to the last page
+  (`ceil(total / 50)`). Reachable only by editing the URL, or by paying the last row of a second page on an Awaiting
+  queue larger than 50. Priority: low.
+
+- [ ] **B-90 — The UUID-shape check is defined three times.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-discard-reconciliation-session.md`; duplication rule)
+  `isUuid()` in `src/lib/utils.ts` (added for the discard route) duplicates `UUID_RE` in `src/lib/ledger-queries.ts`
+  and in `src/app/api/admin/ledger/budget-context/route.ts`. Migrate the two older copies to `isUuid()` and delete
+  them; then grep `src/` for any other inline `[0-9a-f]{8}-[0-9a-f]{4}` pattern. Pure refactor, no behaviour change.
+  Priority: low; take it with the next Ledger touch.
+
+- [ ] **B-84 — Consolidate the reimbursement $10,000 ceiling into one exported constant.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-reimbursements-no-board-approval.md`; DECISION-106)
+  `AMOUNT_MAX = 1_000_000` (cents) is copied in `src/app/api/members/reimbursements/route.ts`,
+  `src/app/api/members/reimbursements/[id]/route.ts`, and the client form (`max="10000"` plus two copy strings).
+  Three copies of one rule; export a single `REIMBURSEMENT_MAX_CENTS` (client-safe home, e.g. `src/lib/ledger.ts`)
+  and derive the form copy from it. Priority: low. Note it is a typo guard, not a policy threshold; whether the
+  board wants a real ceiling is a separate decision (DECISION-106, accepted risk).
+
+- [ ] **B-85 — Ledger transactions created by a reimbursement carry no marker back to it.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-reimbursements-no-board-approval.md`; DECISION-106)
+  The link only runs reimbursement -> transaction (`ledger_reimbursements.ledger_transaction_id`); a reimbursement's
+  posted expense is indistinguishable in the register from any other expense. If the board wants to filter or
+  flag reimbursements in the register, add a reverse marker (column or derived join). Priority: low; revisit
+  after B-83 ships and the board says whether the Paid tab and report are enough.
+
+- [ ] **B-86 — Transactions created from a reconciliation bank line carry no marker back to it.**
+  (added 2026-10-01, Phase 1 and 3 of `docs/work-log/2026-10-01-discard-reconciliation-session.md`; DECISION-108;
+  same family as B-85) `create-from-bank-line` inserts a real `status = 'posted'` row into `ledger_transactions`
+  plus a match link, and nothing on the transaction records that it came from a bank line. When a reconciliation
+  session is discarded the match link is deleted with it, so such a transaction becomes indistinguishable from any
+  other posted row, and the discard dialog can only warn generically ("any transaction you created from a bank
+  line stays in your books") rather than say "3 transactions you created will stay" and link them. In the
+  treasurer's own scenario (a session opened against the wrong account) those rows are on the **wrong** bank
+  account and must be found and deleted by hand, because a transaction's bank account is not editable after
+  creation. Idea: a nullable marker on `ledger_transactions` (for example `created_from_bank_line_id`, or a
+  `source` value) set by that route, so the dialog can count and list them and the register can filter them.
+  Priority: low; revisit if a discard on a session with created transactions is ever done by mistake, and decide
+  alongside B-85 so the two transaction-provenance markers share one shape.
+
+- [ ] **B-81 — Stranded `pending` email-queue rows are invisible on the Email Queue page and the nav badge.**
+  (added 2026-10-01, from Phase 1 of `docs/work-log/2026-10-01-email-queue-retention.md`; DECISION-107)
+  `sendEmail()` inserts a row at `status = 'pending'` and later writes a terminal status; if the process dies
+  between the two (a Vercel timeout, an instance kill, a deploy landing mid-request) the row stays `pending`
+  forever. `/admin/email-queue` shows only `failed`, `blocked_non_production` / `dev_no_api_key` and `sent`;
+  the sidebar badge (`getFailedEmailCount()`) counts only `failed` and stale `retrying`; both retry paths
+  require `status = 'failed'`. A stranded `pending` row is therefore invisible and un-retryable, the same shape
+  as the `retrying` stranding fixed under B-66 (`resetStaleRetryingEmails()`). DECISION-107's purge cleans such
+  rows at six months, but one stranded for an hour is as invisible as one stranded for a year. Fix shape to
+  decide in a Phase 1: a "Stuck pending" section and/or fold stale `pending` (older than a threshold, comfortably
+  longer than a request can live, cf. `RETRY_STALE_MINUTES`) into the badge count; and whether such a row should
+  be recoverable (reset to `failed` so the existing retry paths can pick it up) or merely surfaced, which matters
+  because a `pending` row may in fact have been sent (the process may have died after the Resend call), so a
+  blind retry could duplicate a delivery. Same family as B-66 and B-74.
+
+- [ ] **B-79 — Let the treasurer record an earmark on a public fund so a deliberate multi-year hold stops tripping the aged-fund warning.**
+  (added 2026-10-01, Phase 1 of `docs/work-log/2026-10-01-aged-public-fund-fifo.md`; DECISION-105)
+  The aged public-fund guardrail (after the FIFO fix) only ever tells the treasurer to "document the
+  project and expected disbursement date in the board minutes", and that documentation lives nowhere the
+  guardrail can see. Add a per-fund (or per-amount) earmark: project name, earmarked amount, expected
+  disbursement date, optional minutes citation. The guardrail would then subtract the earmarked amount from
+  the aged portion, and show earmarked-but-overdue holds distinctly. Needs a Phase 1 of its own: who may
+  create one (board action vs treasurer), whether it expires, and how it interacts with the audit log.
+
 - [ ] **B-78 — Time-of-day / duration fan-out for same-title sibling events (bulk-edit).**
   (added 2026-09-29, deferred from Phase 1 of
   `docs/work-log/2026-09-29-bulk-edit-same-title-events.md`, carried through Phases 2–5 as an
@@ -914,8 +1055,19 @@ was deleted on the strength of this review alone.
   rejected with the intended message before multipart parsing begins. Same
   fix should apply to both upload routes since they share the pattern.
 
-- [ ] **B-06 — No repair path for a mis-uploaded reconciliation-session
-  CSV.** (added 2026-07-21, priority: nice-to-have) Surfaced during Phase 6 of
+- [x] **B-06 — No repair path for a mis-uploaded reconciliation-session
+  CSV.** (added 2026-07-21, priority: nice-to-have; **picked up 2026-10-01** →
+  `docs/work-log/2026-10-01-discard-reconciliation-session.md`, DECISION-108: the real-world pain arrived
+  when the treasurer opened a session against the wrong bank account. **Closed out by a "Discard session"
+  action, which is a hard delete of an open session. The blocking rule below ("blocked once any match
+  exists") was deliberately NOT adopted:** the treasurer's actual case, a mistake found after upload and
+  possibly after matching, is exactly when matches exist, and a match is only a link, so forcing a
+  line-by-line unmatch first would recreate the pain this removes. What replaces it is a pin on
+  `status = 'open'` inside the DELETE, because `ledger_transactions.reconciled_session_id` is
+  `ON DELETE SET NULL` and deleting a closed session would silently orphan the provenance of every
+  transaction it cleared. The other half of this item, a "replace statement" / re-upload action, was not
+  built; discard-and-recreate covers the pain, so it stays unbuilt unless someone asks.) Original text
+  follows. Surfaced during Phase 6 of
   `2026-07-21-ledger-reconciliation-sessions.md` (bank-reconciliation inc2),
   named in that increment's own Phase 3 design doc as a real, if narrow, gap
   rather than an oversight. inc2 enforces one CSV upload per session
@@ -1355,6 +1507,11 @@ was deleted on the strength of this review alone.
   (explicitly out of scope for the original feature, Vercel Pro-only) becomes worth revisiting, or a
   new signal specific to the membership form's field shape is found that doesn't compound the
   stress-test false-positive risk already documented in DECISION-104.
+
+- [ ] **B-80 — Aged-fund guardrail resets the clock on inter-fund transfers.** (added 2026-10-01,
+  DECISION-105) Old money swept from one fund to another is consumed in the sender and arrives as fresh
+  income in the receiver, so the aged-fund warning never sees it; true age-carrying needs lot tracking
+  across transfers. Pinned by a unit test; revisit only if the treasurer reports a missed hold.
 
 ---
 

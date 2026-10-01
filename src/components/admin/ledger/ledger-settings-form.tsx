@@ -154,8 +154,9 @@ export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps
         </label>
         <p className="text-xs text-gray-500 mb-2">
           Controls the aged public-fund guardrail. A warning fires when an Activity, Charitable, or
-          Scholarship fund still has a positive balance and its oldest posted income is older than
-          this many days. LCI guidance calls for public funds to return to public use within a
+          Scholarship fund is holding money that has been on hand longer than this many days. Money
+          is counted oldest-first: the opening balance and older income are treated as spent before
+          newer income. LCI guidance calls for public funds to return to public use within a
           reasonable time — usually one year (365 days).
         </p>
         <input

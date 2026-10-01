@@ -70,6 +70,16 @@ export default function ReconciliationSection() {
           something needs correcting, but only by someone who can manage the Ledger (a stricter
           permission than viewing or recording).
         </li>
+        <li>
+          <span className="font-semibold">Discard</span> — opened a session for the wrong account
+          or period? Use <span className="font-semibold">Discard session</span> on its page to
+          permanently remove it along with its uploaded statement lines and matches and start a
+          fresh one right away; no ledger transaction is changed, though any transaction you
+          created from a bank line stays in your books and has to be deleted from the transaction
+          list if it landed on the wrong account. Only an open session can be discarded: a closed
+          one must be reopened first, and a session that has ever been reopened can be discarded
+          only by someone who can manage the Ledger.
+        </li>
       </ol>
 
       <div className="mt-4 rounded-2xl bg-blue-50 border border-blue-100 p-4">

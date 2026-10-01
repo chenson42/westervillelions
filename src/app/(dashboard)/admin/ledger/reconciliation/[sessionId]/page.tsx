@@ -16,6 +16,7 @@ import ReconciliationCsvUpload from "@/components/admin/ledger/reconciliation-cs
 import ReconciliationTieOutSummary from "@/components/admin/ledger/reconciliation-tie-out-summary";
 import ReconciliationMatchingGrid from "@/components/admin/ledger/reconciliation-matching-grid";
 import ReconciliationReopenButton from "@/components/admin/ledger/reconciliation-reopen-button";
+import ReconciliationDiscardButton from "@/components/admin/ledger/reconciliation-discard-button";
 
 export const dynamic = "force-dynamic";
 
@@ -114,6 +115,15 @@ export default async function ReconciliationSessionDetailPage({
           )}
           {!isOpen && canManage && (
             <ReconciliationReopenButton sessionId={sessionId} periodLabel={periodLabel} />
+          )}
+          {isOpen && canRecord && (!reconSession.reopenedAt || canManage) && (
+            <ReconciliationDiscardButton
+              sessionId={sessionId}
+              periodLabel={periodLabel}
+              accountName={reconSession.bankAccountName}
+              bankLineCount={bankLines.length}
+              matchCount={matchedTransactions.length}
+            />
           )}
         </div>
       </div>

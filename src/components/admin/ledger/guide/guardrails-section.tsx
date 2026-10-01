@@ -81,7 +81,7 @@ const GUARDRAILS: GuardrailRow[] = [
   {
     title: "Public fund(s) holding undisbursed balance past threshold",
     severity: "warn",
-    whatToDo: "Disburse or sweep the balance, or — if earmarked for a specific multi-year project — document that in board minutes.",
+    whatToDo: "The flag names each fund and how much of its balance is past the holding period. Money is counted oldest-first, so disbursing or sweeping from the fund reduces the aged amount; if the money is earmarked for a specific multi-year project, document that in board minutes.",
   },
   {
     title: "Public-category income posted directly to Administrative fund",
