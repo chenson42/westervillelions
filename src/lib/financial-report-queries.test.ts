@@ -178,6 +178,27 @@ describe("isMonthGatedForEntity", () => {
     expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
   });
 
+  // T20 (DECISION-109 / architect R6): moving an unreconciled row out of a
+  // member-exposed fund can un-gate a month. Documented property, not a
+  // surprise. Note the v1 move only handles INCOME rows, and an unreconciled
+  // income row is an uncleared deposit that never gated in the first place
+  // (isUnclearedDepositRow, DECISION-059), so for v1 the move changes nothing
+  // here; the expense case is what B-96 would exercise.
+  it("T20: an unreconciled Administrative expense row gates the month; the same row in Activity does not (a fund move can un-gate a month)", async () => {
+    const row = { txnDate: "2026-06-15", paymentMethod: "debit_card", flow: "expense" };
+    mockDbState.queue.push([{ ...row, fundKind: "administrative" }]);
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(true);
+    mockDbState.queue.push([{ ...row, fundKind: "activity" }]);
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
+  });
+
+  it("T20: an unreconciled Administrative INCOME row never gated (uncleared deposit), so moving one out changes nothing here", async () => {
+    mockDbState.queue.push([
+      { txnDate: "2026-06-15", paymentMethod: "check", flow: "income", fundKind: "administrative" },
+    ]);
+    expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);
+  });
+
   it("does NOT gate when the same transaction sits in a Scholarship fund (member-exposed funds only)", async () => {
     mockDbState.queue.push([{ txnDate: "2026-06-15", fundKind: "scholarship" }]);
     expect(await isMonthGatedForEntity("entity-1", "2026-06-30")).toBe(false);

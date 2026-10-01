@@ -72,7 +72,15 @@
  * txn.reconciledSessionId is set (Bank Reconciliation inc2 — reopen the
  * closed session first).
  *
- * Response 200: { deleted: number }  (1 for single row, 2 for transfer pair)
+ * Hardened (DECISION-110): the JSON body `{ reason }` is REQUIRED (10-500
+ * chars, 400 otherwise), the target is locked FOR UPDATE, one audit row
+ * (action `transaction_deleted`) holding a snapshot of every deleted row is
+ * written in the same transaction, and the delete is refused with 409
+ * `receipt_sent` when an acknowledgment with `sent_at` set exists (the cascade
+ * would destroy the IRS substantiation record). An unsent acknowledgment is
+ * removed with the row.
+ *
+ * Response 200: { deleted: 1 | 2; acknowledgmentRemoved: boolean }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -85,13 +93,26 @@ import {
   ledgerDonors,
   ledgerAcknowledgments,
   ledgerAuditLog,
+  ledgerBankAccounts,
 } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { RECEIPT_KEY_REGEX, getReceiptStorage } from "@/lib/receipt-storage";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
+import { getMatchForTransaction } from "@/lib/reconciliation-queries";
+import { validateBankAccountForEntity } from "@/lib/ledger-transaction-validation";
+import { isUuid } from "@/lib/utils";
+import { recordLedgerAudit } from "@/lib/ledger-audit";
+import { findSentStatementMonth } from "@/lib/ledger-fund-move-queries";
+import {
+  RECEIPT_SENT_MESSAGE,
+  TRANSACTION_DELETED_AUDIT_ACTION,
+  parseDeleteBody,
+  type TransactionSnapshot,
+} from "@/lib/ledger-correction";
+import { currentFiscalYear } from "@/lib/fiscal-year";
 import {
   shouldClearBudgetLineLink,
   isWithinReconciledLockCarveout,
@@ -185,7 +206,7 @@ export async function PATCH(
     // inc2 guard: approved transactions are immutable
     if (existing.approvedAt) {
       return NextResponse.json(
-        { error: "Approved transactions cannot be edited" },
+        { error: "Approved transactions cannot be edited. Record a refund entry to correct one." },
         { status: 403 },
       );
     }
@@ -199,6 +220,15 @@ export async function PATCH(
     }
 
     const body = await request.json();
+
+    // DECISION-109: fund is never editable through PATCH. A move is a
+    // dedicated, audited action (POST .../move). Evaluated BEFORE the
+    // reconciled-lock check so it fires on a reconciled row and on
+    // `{ donorId, fundId }` too (never the 200 carve-out), and an explicit 400
+    // replaces what used to be a silent no-op.
+    if (body && typeof body === "object" && "fundId" in body) {
+      return NextResponse.json({ error: "Use Move to another fund." }, { status: 400 });
+    }
 
     // Bank Reconciliation inc2 guard: a row cleared by a closed reconciliation
     // session is a FULL lock — consistent with this feature's hard-tie-out-
@@ -387,6 +417,33 @@ export async function PATCH(
           { error: "Select a bank account before saving this transaction." },
           { status: 400 },
         );
+      }
+      if (!isUuid(body.bankAccountId)) {
+        return NextResponse.json({ error: "Select a valid bank account." }, { status: 400 });
+      }
+      // Validate ONLY a genuinely new pick (DECISION-111 item 4): the edit form
+      // resends the unchanged value on every save, and validating it would
+      // block unrelated edits on a row whose account was later deactivated.
+      if (body.bankAccountId !== existing.bankAccountId) {
+        const fit = await validateBankAccountForEntity(db, body.bankAccountId, existing.entityId, {
+          requireActive: true,
+        });
+        if (!fit.ok) {
+          return NextResponse.json({ error: fit.error }, { status: fit.status });
+        }
+        // A match link points at a bank line on the OLD account; changing the
+        // account out from under it would leave the link pointing at another
+        // account's statement (same guard /split has).
+        const existingMatch = await getMatchForTransaction(id);
+        if (existingMatch) {
+          return NextResponse.json(
+            {
+              error:
+                "This transaction is matched to a bank line in an open reconciliation session. Unmatch it before changing its bank account.",
+            },
+            { status: 403 },
+          );
+        }
       }
       update.bankAccountId = body.bankAccountId;
     }
@@ -733,8 +790,12 @@ export async function PATCH(
 // DELETE /api/admin/ledger/transactions/[id]
 // ---------------------------------------------------------------------------
 
+type DeleteOutcome =
+  | { ok: true; deleted: 1 | 2; acknowledgmentRemoved: boolean }
+  | { ok: false; status: 403 | 404 | 409; error: string; code?: string };
+
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -745,96 +806,197 @@ export async function DELETE(
     if (!(await hasFeature(session.user.id, FEATURES.LEDGER_RECORD))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    const actorUserId = session.user.id;
 
     const { id } = await params;
-
-    // Fetch the target row
-    const existing = await db.query.ledgerTransactions.findFirst({
-      where: eq(ledgerTransactions.id, id),
-      columns: {
-        id: true,
-        approvedAt: true,
-        transferGroupId: true,
-        status: true,
-        reconciledSessionId: true,
-      },
-    });
-    if (!existing) {
+    if (!isUuid(id)) {
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     }
 
-    // inc2 guard: approved transactions are immutable
-    if (existing.approvedAt) {
-      return NextResponse.json(
-        { error: "Approved transactions cannot be deleted" },
-        { status: 403 },
-      );
+    // A reason is required (JSON body, never a query parameter: URLs are
+    // logged and the reason is free text). Checked before any DB read; a stale
+    // tab that sends no body gets a clear refresh message.
+    const rawBody: unknown = await request.json().catch(() => null);
+    const parsed = parseDeleteBody(rawBody);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error, code: "reason_required" }, { status: 400 });
     }
+    const { reason } = parsed.value;
 
-    // inc2 guard: rejected transactions are immutable (preserves audit trail)
-    if (existing.status === "rejected") {
-      return NextResponse.json(
-        { error: "Rejected transactions cannot be deleted" },
-        { status: 403 },
-      );
-    }
+    const outcome: DeleteOutcome = await db.transaction(async (tx): Promise<DeleteOutcome> => {
+      // 1. Lock the target row.
+      const target = (
+        await tx
+          .select()
+          .from(ledgerTransactions)
+          .where(eq(ledgerTransactions.id, id))
+          .for("update")
+      )[0];
+      if (!target) return { ok: false, status: 404, error: "Transaction not found" };
 
-    // Bank Reconciliation inc2 guard: a row cleared by a closed reconciliation
-    // session is a FULL lock — see the matching guard in PATCH above.
-    if (existing.reconciledSessionId) {
-      return NextResponse.json(
-        {
+      // 2. Guards (unchanged codes and order). Legacy-reconciled rows stay
+      // deletable (accepted residual, B-92): the snapshot records the mark.
+      if (target.approvedAt) {
+        return { ok: false, status: 403, error: "Approved transactions cannot be deleted" };
+      }
+      if (target.status === "rejected") {
+        return { ok: false, status: 403, error: "Rejected transactions cannot be deleted" };
+      }
+      if (target.reconciledSessionId) {
+        return {
+          ok: false,
+          status: 403,
           error:
             "This transaction was cleared by a closed reconciliation session — reopen it to edit or delete this row",
-        },
-        { status: 403 },
-      );
-    }
-
-    // If part of a transfer pair, delete both rows atomically
-    if (existing.transferGroupId) {
-      // Find all rows in the transfer group
-      const pairRows = await db
-        .select({
-          id: ledgerTransactions.id,
-          approvedAt: ledgerTransactions.approvedAt,
-          reconciledSessionId: ledgerTransactions.reconciledSessionId,
-        })
-        .from(ledgerTransactions)
-        .where(eq(ledgerTransactions.transferGroupId, existing.transferGroupId));
-
-      // If any row in the pair is approved, reject the delete
-      if (pairRows.some((r) => r.approvedAt)) {
-        return NextResponse.json(
-          { error: "Cannot delete a transfer where one or both rows are approved" },
-          { status: 403 },
-        );
+        };
       }
-      // If any row in the pair was cleared by a closed reconciliation session,
-      // reject the delete — same full-lock rule as the single-row guard above.
-      if (pairRows.some((r) => r.reconciledSessionId)) {
-        return NextResponse.json(
-          {
+
+      // 3. A transfer pair deletes both rows; lock every row of the group.
+      let rows = [target];
+      if (target.transferGroupId) {
+        rows = await tx
+          .select()
+          .from(ledgerTransactions)
+          .where(eq(ledgerTransactions.transferGroupId, target.transferGroupId))
+          .orderBy(asc(ledgerTransactions.id))
+          .for("update");
+        if (rows.some((r) => r.approvedAt)) {
+          return {
+            ok: false,
+            status: 403,
+            error: "Cannot delete a transfer where one or both rows are approved",
+          };
+        }
+        if (rows.some((r) => r.reconciledSessionId)) {
+          return {
+            ok: false,
+            status: 403,
             error:
               "Cannot delete a transfer where one or both rows were cleared by a closed reconciliation session — reopen it first",
-          },
-          { status: 403 },
-        );
+          };
+        }
+      }
+      const ids = rows.map((r) => r.id);
+
+      // 4. A sent acknowledgment is the IRS substantiation record and would be
+      // destroyed by the ON DELETE CASCADE: refuse. An unsent one is removed
+      // with the row and reported.
+      const acks = await tx
+        .select({
+          id: ledgerAcknowledgments.id,
+          donationTxnId: ledgerAcknowledgments.donationTxnId,
+          sentAt: ledgerAcknowledgments.sentAt,
+        })
+        .from(ledgerAcknowledgments)
+        .where(inArray(ledgerAcknowledgments.donationTxnId, ids));
+      if (acks.some((a) => a.sentAt)) {
+        return { ok: false, status: 409, error: RECEIPT_SENT_MESSAGE, code: "receipt_sent" };
       }
 
-      await db.transaction(async (tx) => {
-        for (const row of pairRows) {
-          await tx.delete(ledgerTransactions).where(eq(ledgerTransactions.id, row.id));
-        }
+      // 5. Snapshot (one audit row per request), then delete.
+      const fundIds = [...new Set(rows.map((r) => r.fundId))];
+      const fundRows = await tx.select().from(ledgerFunds).where(inArray(ledgerFunds.id, fundIds));
+      const bankIds = [...new Set(rows.map((r) => r.bankAccountId).filter((b): b is string => !!b))];
+      const bankRows = bankIds.length
+        ? await tx
+            .select({ id: ledgerBankAccounts.id, name: ledgerBankAccounts.name })
+            .from(ledgerBankAccounts)
+            .where(inArray(ledgerBankAccounts.id, bankIds))
+        : [];
+      const categoryIds = [...new Set(rows.map((r) => r.categoryId).filter((c): c is string => !!c))];
+      const categoryRows = categoryIds.length
+        ? await tx
+            .select({ id: ledgerCategories.id, name: ledgerCategories.name })
+            .from(ledgerCategories)
+            .where(inArray(ledgerCategories.id, categoryIds))
+        : [];
+
+      const snapshots: TransactionSnapshot[] = rows.map((r) => {
+        const fund = fundRows.find((f) => f.id === r.fundId);
+        const bank = bankRows.find((b) => b.id === r.bankAccountId);
+        const category = categoryRows.find((c) => c.id === r.categoryId);
+        const ack = acks.filter((a) => a.donationTxnId === r.id);
+        return {
+          id: r.id,
+          entityId: r.entityId,
+          fund: {
+            id: r.fundId,
+            name: fund?.name ?? "",
+            slug: fund?.slug ?? "",
+            kind: fund?.kind ?? "",
+          },
+          bankAccount: bank ? { id: bank.id, name: bank.name } : null,
+          category: category ? { id: category.id, name: category.name } : null,
+          txnDate: r.txnDate,
+          flow: r.flow,
+          amountCents: r.amountCents,
+          party: r.party,
+          memo: r.memo,
+          donorId: r.donorId,
+          checkNumber: r.checkNumber,
+          paymentMethod: r.paymentMethod,
+          status: r.status,
+          reconciled: r.reconciled,
+          reconciledSessionId: r.reconciledSessionId,
+          duesPaymentId: r.duesPaymentId,
+          transferGroupId: r.transferGroupId,
+          budgetLineId: r.budgetLineId,
+          acknowledgment: { existed: ack.length > 0, sent: false },
+        };
       });
 
-      return NextResponse.json({ deleted: pairRows.length });
+      const targetFund = fundRows.find((f) => f.id === target.fundId);
+      const sentStatementMonth = await findSentStatementMonth(tx, {
+        entityId: target.entityId,
+        txnDate: target.txnDate,
+        fundKind: targetFund?.kind ?? "",
+      });
+      const fiscalYear = getFiscalYear(new Date(target.txnDate + "T00:00:00"));
+      const acknowledgmentRemoved = acks.length > 0;
+
+      await recordLedgerAudit(tx, {
+        actorUserId,
+        action: TRANSACTION_DELETED_AUDIT_ACTION,
+        targetTransactionId: null,
+        before: { v: 1, rows: snapshots },
+        after: null,
+        details: {
+          v: 1,
+          reason,
+          entityId: target.entityId,
+          txnDate: target.txnDate,
+          flow: target.flow,
+          amountCents: target.amountCents,
+          fiscalYear,
+          rowCount: rows.length === 2 ? 2 : 1,
+          reconciled: rows.some((r) => r.reconciled),
+          reconciledSessionId: target.reconciledSessionId,
+          priorFiscalYear: fiscalYear < currentFiscalYear(new Date()),
+          sentStatementMonth,
+          acknowledgmentRemoved,
+        },
+      });
+
+      for (const rowId of ids) {
+        await tx.delete(ledgerTransactions).where(eq(ledgerTransactions.id, rowId));
+      }
+      return {
+        ok: true,
+        deleted: rows.length === 2 ? 2 : 1,
+        acknowledgmentRemoved,
+      };
+    });
+
+    if (!outcome.ok) {
+      return NextResponse.json(
+        outcome.code ? { error: outcome.error, code: outcome.code } : { error: outcome.error },
+        { status: outcome.status },
+      );
     }
-
-    // Single row — hard delete
-    await db.delete(ledgerTransactions).where(eq(ledgerTransactions.id, id));
-
-    return NextResponse.json({ deleted: 1 });
+    return NextResponse.json({
+      deleted: outcome.deleted,
+      acknowledgmentRemoved: outcome.acknowledgmentRemoved,
+    });
   } catch (error) {
     console.error("Error deleting ledger transaction:", error);
     return NextResponse.json({ error: "Failed to delete transaction" }, { status: 500 });

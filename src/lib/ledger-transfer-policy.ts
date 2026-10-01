@@ -20,6 +20,13 @@
  * operator (or a client bypassing the UI) gets a self-correcting message,
  * not a generic "not allowed."
  *
+ * CROSS-REFERENCE (DECISION-109): ./ledger-fund-move-policy.ts decides a
+ * different question — may an EXISTING row be reclassified into another fund?
+ * The two policies must NOT be merged. This file blocks Administrative ->
+ * Activity as a MOVEMENT OF VALUE; checkFundMove(income, administrative ->
+ * activity) allows it as a RECLASSIFICATION OF PROVENANCE. They intentionally
+ * differ on exactly that pair (pinned by a unit test).
+ *
  * Decided off fund `kind` + entity identity, NEVER hard-coded UUIDs — stable
  * across environments and fully unit-testable.
  */

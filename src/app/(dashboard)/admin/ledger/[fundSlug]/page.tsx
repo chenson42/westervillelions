@@ -23,6 +23,8 @@ import ReconcileToggle, { ReconcileAllButton } from "@/components/admin/ledger/r
 import TxnDonorActions from "@/components/admin/ledger/txn-donor-actions";
 import ReceiptWaiverControl from "@/components/admin/ledger/receipt-waiver-control";
 import RowHighlighter from "@/components/admin/ledger/row-highlighter";
+import SweepPrefillLauncher from "@/components/admin/ledger/sweep-prefill-launcher";
+import { isUuid } from "@/lib/utils";
 import type { LedgerTransaction, LedgerFund, LedgerBankAccount, LedgerCategory } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -67,7 +69,13 @@ export default async function AdminLedgerFundPage({
   searchParams,
 }: {
   params: Promise<{ fundSlug: string }>;
-  searchParams: Promise<{ entity?: string; fy?: string; receipt?: string; highlight?: string }>;
+  searchParams: Promise<{
+    entity?: string;
+    fy?: string;
+    receipt?: string;
+    highlight?: string;
+    sweepFrom?: string;
+  }>;
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
@@ -88,6 +96,7 @@ export default async function AdminLedgerFundPage({
     fy: fyParam,
     receipt: receiptParam,
     highlight: highlightParam,
+    sweepFrom: sweepFromParam,
   } = await searchParams;
 
   // Validate entity
@@ -213,6 +222,38 @@ export default async function AdminLedgerFundPage({
 
   const basePath = `/admin/ledger/${fundSlug}`;
 
+  // "Record sweep now" deep link (DECISION-111 D2): ?sweepFrom=<txnId> opens the
+  // existing sweep form prefilled from a gift just moved into the Activity Fund.
+  // Validated here, server-side; anything that does not check out is ignored
+  // silently (a stale or hand-edited link just shows the register).
+  const nowIso = new Date().toISOString();
+  let sweepPrefill:
+    | { bankAccountId: string | null; amountCents: number; memo: string }
+    | undefined;
+  if (
+    sweepFromParam &&
+    isUuid(sweepFromParam) &&
+    canRecord &&
+    !isFoundationEntity &&
+    crossEntityContext &&
+    fund?.kind === "activity"
+  ) {
+    const activityRows = await listTransactions(entity.id, {
+      fundId: fund.id,
+      status: "posted",
+    });
+    const source = activityRows.find(
+      (t) => t.id === sweepFromParam && t.flow === "income" && !t.transferGroupId,
+    );
+    if (source) {
+      sweepPrefill = {
+        bankAccountId: source.bankAccountId ?? null,
+        amountCents: source.amountCents,
+        memo: `Sweep of ${source.party?.trim() ? `${source.party.trim()} gift` : "a gift"} moved from Administrative on ${nowIso.slice(0, 10)}`,
+      };
+    }
+  }
+
   const pageTitle = fund
     ? fund.name
     : missingReceiptFilter
@@ -236,6 +277,19 @@ export default async function AdminLedgerFundPage({
           DECISION-062/063) — scrolls-to and flashes the matching row, no
           auto-open. Renders nothing. */}
       <RowHighlighter targetId={highlightParam} idPrefix="txn-" />
+
+      {sweepPrefill && fund && crossEntityContext && (
+        <SweepPrefillLauncher
+          entityId={entity.id}
+          funds={allFunds}
+          categories={categories}
+          bankAccounts={bankAccounts}
+          budgetLines={budgetLines}
+          defaultFundId={fund.id}
+          crossEntityContext={crossEntityContext}
+          sweepPrefill={sweepPrefill}
+        />
+      )}
 
       {/* Breadcrumb */}
       <div>
@@ -511,6 +565,7 @@ export default async function AdminLedgerFundPage({
                             <ReconcileToggle
                               transactionId={txn.id}
                               reconciled={txn.reconciled}
+                              locked={txn.reconciledSessionId != null}
                             />
                           ) : (
                             <span className="text-gray-300 text-xs">—</span>
@@ -527,6 +582,10 @@ export default async function AdminLedgerFundPage({
                             categories={categories}
                             bankAccounts={bankAccounts}
                             budgetLines={budgetLines}
+                            canManage={canManage}
+                            ackStatus={ackStatusByTxnId.get(txn.id) ?? null}
+                            nowIso={nowIso}
+                            entitySlug={resolvedEntitySlug}
                           />
                         </td>
                       )}

@@ -2455,3 +2455,10 @@ export function reimbursementTransactionStamp(
   }
   return { approvedByUserId: actingUserId, approvedAt: now, boardMinute: null };
 }
+
+/**
+ * The seeded income category the sweep's Foundation leg and the fund-move
+ * dialog both default to (DECISION-109). The transactions route keeps its own
+ * private copy until B-94 consolidates it.
+ */
+export const PUBLIC_DONATIONS_CATEGORY_NAME = "Public donations";

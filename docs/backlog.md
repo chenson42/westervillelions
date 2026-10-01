@@ -36,6 +36,9 @@ was deleted on the strength of this review alone.
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
 
 **Soon**
+- B-96 — Deferred fund-move shapes (expense moves first)
+- B-93 — Detector for public money entered in the Administrative fund
+- B-92 — Retire or govern the legacy per-row reconcile toggle
 - B-83 — Board-visible monthly list of reimbursements paid
 - B-82 — `google_group_sync_log` keeps member email lists forever, with no retention
 - B-77 — `dotenv` is an undeclared transitive dependency that breaks under `tsx` when a `@/`-aliased import shares its module graph
@@ -61,13 +64,22 @@ was deleted on the strength of this review alone.
 - B-87 — Email Queue tables clip their right-hand columns on a phone
 - B-89 — Reimbursements admin table: Mark Paid and Reject are off-screen at 360px
 - B-91 — Reconciliation session detail page scrolls sideways on a phone
+- B-98 — Guide and register pointer for "recorded on the Foundation's books, cash in the Club's account."
+- B-99 — Make lock next steps visible on phones, and add the bank-account help text.
 
 **Later**
+- B-97 — Dues-synced row deletion and the fiscal-year delete gate
+- B-95 — Migrate the seven existing `insert(ledgerAuditLog)` sites to `recordLedgerAudit()`
+- B-94 — Consolidate duplicated ledger transaction guards
 - B-84 — Consolidate the reimbursement $10,000 ceiling into one constant
 - B-85 — Ledger transactions created by a reimbursement carry no marker back to it
 - B-86 — Transactions created from a reconciliation bank line carry no marker back to it
 - B-88 — Reimbursements admin page does not clamp an out-of-range `?page=`
 - B-90 — The UUID-shape check is defined three times
+- B-100 — "Moved from Administrative" marker (and optional History) in the register.
+- B-101 — Sent-statement warning covers only the row's own month.
+- B-102 — Sweep prefill memo date.
+- B-103 — DOM component-test harness.
 - B-81 — Stranded `pending` email-queue rows are invisible on the Email Queue page and the nav badge
 - B-79 — Let the treasurer record an earmark on a public fund so a deliberate multi-year hold stops tripping the aged-fund warning
 - B-78 — Time-of-day / duration fan-out for same-title sibling events (bulk-edit)
@@ -324,6 +336,45 @@ was deleted on the strength of this review alone.
 ---
 
 ## Soon
+
+- [ ] **B-98 — Guide and register pointer for "recorded on the Foundation's books, cash in the Club's account."**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
+  Add the Foundation-case paragraph above to the Treasury guide ("Moving an entry to another fund" and "Deleting an entry"), and consider a one-line pointer in the Delete dialog on Foundation income rows ("If this gift's money is in the Club's bank account, delete it here, re-enter it as Activity Fund income on the Club's account, and record the sweep"). Also add a sentence to B-96's cross-entity item: the unsafe case is cash in the *Foundation's* account; cash in the *Club's* account has a documented delete, re-enter, sweep path. Why: it is the requester's own case and the Foundation register offers no explanation (Phase 3 D1). Small.
+
+- [ ] **B-99 — Make lock next steps visible on phones, and add the bank-account help text.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
+  (a) Show `LOCK_COPY[kind].nextStep` as wrapped visible text at every width, not `hidden sm:inline` plus a `title` on a disabled button (touch devices do not reliably surface it); the Move-disabled message already does this. (b) Add the Phase 1 Flow 3 help text to the edit form's bank-account field: "Pick the account the money actually went into. If it went into one account and was later moved to another, record a Transfer instead of editing this." Copy only.
+
+- [ ] **B-96 — Deferred fund-move shapes (expense moves first).**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109)
+  v1 allows exactly one move: same entity, income, Administrative to Activity. Still denied: **expense moves**
+  (Activity to Administrative first, because it cures Activity money spent on Club operations and is the more
+  compliance-valuable cell; it needs the budget-line clear of DECISION-061, handling of `publicNote` and
+  `beneficiaryCause` which render on `/members/impact`, and a decision on receipt and approval semantics),
+  **away-from-public income moves** (a member's dues paid through the club Zeffy form and booked as an Activity
+  donation is the realistic case; v1 answer is delete and re-enter as dues), and any **cross-entity correction**
+  (needs a board decision, not a ledger feature; a Foundation-to-Club re-entry would put a Club row on a bank
+  account the cash never touched). Enabling an expense cell is a one-branch flip in `checkFundMove()`, which already
+  has the branch and a unit-test slot. Priority: first follow-up if the treasurer hits an expense mis-booking.
+  **Amendment (2026-10-01, Phase 6 of the move-or-cancel work-log):** two properties the expense cell will bring. (1) Enabling Activity to Administrative expense moves can un-gate a month (an unreconciled Administrative expense row gates; the same row in Activity does not, per T20), so the dialog and release note must say so then; v1 income moves cannot (uncleared deposits never gate, DECISION-059). (2) When the cross-entity item is designed, run the direction policy before the bank-account assertion so a cross-entity request returns 403 `cross_entity` with the policy reason instead of 409 `bank_account_entity_mismatch`.
+
+- [ ] **B-93 — Detector for public money entered in the Administrative fund.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109)
+  `adminPublicIncomeCount` is blind (category fund kind is forced equal to fund kind) and `firewallViolations`
+  counts only transfer groups, so a single public donation entered in Administrative trips nothing; the treasurer
+  found the original mistake by eye. Candidate tell: non-dues income in an Administrative fund with
+  `paymentMethod = 'zeffy'`. This is how the mistake could be caught at entry rather than after the fact.
+  Priority: medium; ship the move's release note first so the treasurer knows why no flag fired.
+
+- [ ] **B-92 — Retire or govern the legacy per-row reconcile toggle.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109)
+  The toggle is a second reconciliation mechanism that the session workbench supersedes. PATCH and DELETE do not
+  lock a `reconciled = true` row that has no session pointer; rows matched in an open session remain editable
+  (non-bank fields). DECISION-109 closes only the worst half (the toggle can no longer clear a closed session's
+  pointer). Decide whether to retire the toggle, lock legacy-reconciled rows, and how existing legacy rows (likely
+  including the Quicken-seeded ones, which predate sessions) get released. **Do not just add a guard:** it would
+  strand rows whose only unlock is the toggle. Priority: medium.
+  **Amendment (2026-10-01, Phase 6 of the move-or-cancel work-log):** the legacy reconcile toggle writes no audit row. The un-toggle-then-move sequence (a record-only user clears a legacy mark, then moves at the `record` tier) leaves a move audit row showing `reconciled: false` and `tier: record`, so the bypass is invisible in Recent corrections. B-92's decision (retire the toggle, lock legacy-reconciled rows, or at least audit the toggle) should cover this explicitly; the lock-or-retire choice stays B-92's.
 
 - [ ] **B-89 — Reimbursements admin table: Mark Paid and Reject are off-screen at 360px.**
   (added 2026-10-01, Phase 6 of `docs/work-log/2026-10-01-reimbursements-no-board-approval.md`; DECISION-106; found by qa)
@@ -905,6 +956,45 @@ was deleted on the strength of this review alone.
 ---
 
 ## Later
+
+- [ ] **B-100 — "Moved from Administrative" marker (and optional History) in the register.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
+  Phase 1 Flow 1 step 8 promised the Activity register would show the moved gift with a note; only the compliance page shows it today. Needs a batched lookup on `ix_ledger_audit_log_transaction` for the rows on the page; a moved row later deleted detaches (FK is `ON DELETE SET NULL`), which is acceptable. Suggestion-grade, not a defect.
+
+- [ ] **B-101 — Sent-statement warning covers only the row's own month.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
+  The One-Month column buckets reconciled rows by bank-cleared date and the Twelve-Month column by `txnDate`, so a move or delete can change a sent statement for a different month (the bank-clear month, or any later month whose twelve-month window includes the entry). The "Resend Corrected Statement" panel is read-side and still flips correctly, so nothing drifts silently; only the up-front warning under-reports. Either widen `findSentStatementMonth()` to "any successful send whose window includes this entry" or soften the sentence to "statements already sent that include this entry will read as changed." Low.
+
+- [ ] **B-102 — Sweep prefill memo date.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
+  The prefilled memo says "moved from Administrative on <date>" using the UTC date of the page load (`nowIso.slice(0, 10)`), which can read as tomorrow after about 8 pm Eastern, and it says "moved" even if a hand-built `sweepFrom` link names a row that was never moved. Use the move's audit date (or drop the date). Very low; the treasurer edits the memo anyway.
+
+- [ ] **B-103 — DOM component-test harness.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
+  The dialogs' state machines (stay open on a failed delete, refresh only on Done) are asserted through pure helpers and source checks. A jsdom plus testing-library setup would be a dependency decision; only worth it if more dialog-heavy features follow.
+
+- [ ] **B-97 — Dues-synced row deletion and the fiscal-year delete gate.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-110)
+  Deleting a dues-synced ledger row through the register orphans the dues payment's ledger link, `syncDuesDelete`
+  hard-deletes with no audit row, and a prior-fiscal-year DELETE is gated at `LEDGER_RECORD` (the move requires
+  `LEDGER_MANAGE` for the same row). The new delete snapshot at least records `duesPaymentId`. Priority: low.
+
+- [ ] **B-95 — Migrate the seven existing `insert(ledgerAuditLog)` sites to `recordLedgerAudit()`.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-110)
+  Two in the transaction PATCH route, and one each in the acknowledge route, `reconciliation-queries.ts`,
+  `ledger-category-queries.ts` (two) and `ledger-acknowledgment-letter-queries.ts`. DECISION-110 introduces the
+  helper for the new move and delete writers only; widening its typed action map to cover the existing actions
+  removes the last hand-rolled inserts. Pure refactor. Priority: low.
+
+- [ ] **B-94 — Consolidate duplicated ledger transaction guards.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; duplication rule)
+  (a) Category-versus-fund-kind-and-flow validation has three inline copies (`transactions/route.ts` regular POST and
+  `handleTransfer`, and `[id]/route.ts` PATCH); the move uses the shared helper in
+  `src/lib/ledger-transaction-validation.ts`, and these three should migrate onto it (the helper already carries
+  each copy's exact message and status). (b) The approved / rejected / reconciled / transfer guard set, repeated in
+  PATCH, DELETE, split and move, should sit on the classifier in `src/lib/ledger-transaction-lock.ts`, preserving
+  DECISION-099 item 4's ordering for the donor-link carve-out. (c) The Radix Dialog chrome in
+  `split-transaction-dialog.tsx` and `transaction-form-dialog.tsx` should move onto `LedgerDialogShell`. Priority: low.
 
 - [ ] **B-88 — Reimbursements admin page does not clamp an out-of-range `?page=`.**
   (added 2026-10-01, Phase 6 of `docs/work-log/2026-10-01-reimbursements-no-board-approval.md`; DECISION-106)

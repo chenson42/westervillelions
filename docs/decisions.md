@@ -28,6 +28,153 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-111: Move/delete implementation shape: one evaluator for preview and execute, validate-on-change, pinned reconcile UPDATE, client-safe vocabulary split from the server-only audit module
+
+**Status:** Resolved
+**Date:** 2026-10-01
+
+**Decision:** Implementation choices under DECISION-109 and DECISION-110 (design in
+`docs/work-log/2026-10-01-move-or-cancel-transaction.md` Phase 3):
+
+1. **Preview and execute share one evaluator.** `ledger-fund-move-queries.ts` has a single
+   `evaluateFundMove()`; `GET` calls it on an unlocked read, `POST` calls it on the `SELECT ... FOR UPDATE` row
+   inside `db.transaction`. `GET` returns the same status and `code` `POST` would return for any state-based refusal
+   (a parity test enforces it), so the dialog can never show a green preview the server then refuses.
+2. **The tier is computed server-side on the locked row.** `POST` does no pre-read: the first statement in the
+   transaction is the lock, and `needsManage` is derived from that row. `LEDGER_MANAGE` is resolved once up front
+   as a boolean (`hasFeature`), never trusted from the client.
+3. **The reconcile toggle's refusal is pinned inside the UPDATE**, not read-then-write:
+   `UPDATE ... WHERE id = $id AND reconciled_session_id IS NULL RETURNING id`, with a follow-up lookup to choose
+   404 or 403 only when no row returns (the DECISION-108 pattern). No `FOR UPDATE` is needed for a single statement.
+4. **Bank-account validation (PATCH) runs only when the submitted `bankAccountId` differs from the stored one.**
+   The edit form resends the unchanged value on every save; validating it unconditionally would block unrelated
+   edits on a row whose account was later deactivated or that predates the check (the DECISION-061 "genuinely new
+   pick" rule). POST validates always. Non-UUID ids are 400 before any query (`isUuid()`), never a Postgres 500.
+5. **Two modules, split on the client/server line.** `src/lib/ledger-correction.ts` is pure and client-safe
+   (reason limits and normalizer, audit action constants, typed `before`/`after`/`details` payloads with builders and
+   a never-throwing parser, the move/delete API response types, and the user-facing warning copy), so the dialogs can
+   import it. `src/lib/ledger-audit.ts` imports `@/lib/db` (`recordLedgerAudit()`, `getRecentLedgerCorrections()`)
+   and is the file the member-surface import guard protects. A client component importing one module for the reason
+   limits would otherwise drag the database into the browser bundle.
+6. **The delete audit row is one row per request**, `before` holding `{ v: 1, rows: Snapshot[] }` (one entry, or two
+   for a transfer pair), `targetTransactionId = null` (the FK would be nulled by the delete anyway). The reader
+   filters by entity in JavaScript after a bounded, action-and-date-filtered query; it never casts the `details`
+   text column to jsonb in SQL, because Postgres may evaluate that cast on rows of other actions whose `details`
+   is plain prose and fail the whole query.
+7. **A new `LedgerDialogShell`** (admin/ledger) backs the two new dialogs so they do not become the third and fourth
+   copy of the Radix Dialog chrome; `split-transaction-dialog.tsx` and `transaction-form-dialog.tsx` migrate later.
+8. **"Record sweep now" is a deep link, not component state.** The moved row leaves the register that rendered the
+   dialog, so the dialog's success step links to `/admin/ledger/activity?entity=<slug>&sweepFrom=<txnId>`; that page
+   validates the row server-side and opens the existing sweep form prefilled. Nothing is prefilled that the
+   treasurer must decide (the board-minute reference is never prefilled).
+
+**Rationale:** Each item removes a way for two code paths to disagree (1, 2, 3), a way for a harmless edit to start
+failing (4), or a build or privacy hazard (5, 6). The cost is two more small modules than the minimum; both are
+pure or single-purpose and each has two or more real consumers.
+
+**Impact:** No schema change. Files and order are in the Phase 3 design. The existing `split-transaction-dialog.tsx`
+and `transaction-form-dialog.tsx` shells are left alone (follow-up noted under item 7).
+
+---
+
+## DECISION-110: Ledger audit trail generalized for transaction corrections; DELETE hardened; no `voided` status in v1
+
+**Status:** Resolved
+**Date:** 2026-10-01
+
+**Decision:**
+
+1. **`ledger_audit_log` is the single audit sink.** Two new `action` values, `transaction_fund_moved` and
+   `transaction_deleted`, with self-describing JSON in `before`/`after` (fund and category names and slugs as well as
+   ids, so a record stays readable after a rename or deactivation) and a typed JSON `details` payload (`v: 1`,
+   reason, fiscal year, tier used, reconciliation session id, whether a successful financial-statement send existed
+   for the month). No new column, no migration; `schema.ts` gets a comment-only update listing the new values.
+2. **A shared `recordLedgerAudit(tx, ...)` writer** is introduced in `src/lib/ledger-audit.ts` (the DECISION-066
+   "second real caller" threshold was passed long ago; there are seven hand-rolled `insert(ledgerAuditLog)` sites).
+   New writers use it; migrating the seven existing sites is B-95.
+3. **A minimal reader is part of this feature.** `getRecentLedgerCorrections()` feeds a read-only "Recent
+   corrections" section on `/admin/ledger/compliance` (moves and deletes only, bounded window and row cap, no wider
+   than that page's existing gate). A required reason nobody can read back is a ritual, not a control. Because a
+   delete nulls its own audit row's `target_transaction_id`, delete rows are selected by action and date, and the
+   snapshot JSON carries the original row id. `ledger-audit.ts` must never be imported from a member-facing surface:
+   the reason is free text and may name a person.
+4. **DELETE is hardened** (it was a silent data-loss path): a reason is required, in the JSON body (never a query
+   string); a full row snapshot (for both rows of a transfer pair) is written in the same transaction; the row is
+   locked `FOR UPDATE` and every guard is re-checked inside the transaction; and a delete is refused with 409 when a
+   `ledger_acknowledgments` row for the transaction has `sent_at` set, because that foreign key is
+   `ON DELETE CASCADE` and would destroy the donor's tax-substantiation record. An unsent acknowledgment is warned
+   about and removed with the row.
+5. **No `voided` status and no reversal pairs in v1.** A `voided` status could only ever apply to unreconciled,
+   unapproved, posted rows, which is exactly what DELETE already handles; reconciled rows are real bank lines and
+   approved rows are board-visible finality. Its only added value is retaining the row, which the audit snapshot
+   delivers. Reversal pairs double every income and expense sum (990 revenue, impact giving, aged-fund trailing
+   income, member statements). Revisit only if voiding approved disbursements is commissioned.
+
+**Rationale:** Retention without a status column, readable by the people who need to read it, written atomically with
+the change. The cost is a JSON-in-text convention (already the table's convention) and one reader query.
+
+**Impact:** `src/lib/ledger-audit.ts` and `src/lib/ledger-correction.ts` (see DECISION-111 for why two), the DELETE
+handler, the compliance page section, a comment block in `schema.ts`. Follow-ups: B-95, B-97.
+
+---
+
+## DECISION-109: Same-entity fund reclassification of an income row via a dedicated `POST .../transactions/[id]/move` endpoint; second narrow carve-out of the reconciled lock (amends DECISION-036 item 4, extends DECISION-099)
+
+**Status:** Resolved
+**Date:** 2026-10-01
+
+**Decision:**
+
+1. **Fund immutability is relaxed for exactly one operation.** No earlier decision recorded that a row's fund could
+   not change (it was an increment-1 default that became load-bearing). It now can change by moving an income row
+   from an entity's Administrative fund to that entity's Activity fund, and by nothing else.
+2. **It is a dedicated endpoint.** `GET /api/admin/ledger/transactions/[id]/move` returns a server-computed preview;
+   `POST` executes with body exactly `{ destFundId, categoryId | null, reason, expectedFundId }` (any other key is
+   400). `PATCH` does not accept `fundId` (400, "Use Move to another fund."), and its `donorId`-only carve-out
+   (`RECONCILED_LOCK_CARVEOUT_FIELDS`, DECISION-099) is unchanged.
+3. **The direction decision is `checkFundMove()`** in `src/lib/ledger-fund-move-policy.ts`, a pure sibling of
+   `ledger-transfer-policy.ts`: a deny-by-default allow-list of one cell (same entity, `flow = income`,
+   `administrative` to `activity`). The expense cell (`activity` to `administrative`) is its own denied branch with
+   its own reason ("Moving expenses between funds is not supported yet", B-96); away-from-public income, any
+   cross-entity pair, any unknown fund kind and a same-fund request are denied. **The two policies intentionally
+   differ for Administrative to Activity** (a transfer is a movement of value and stays blocked; a move is a
+   reclassification of a row's provenance and is allowed), so they must not be merged into one function. Each file
+   carries a cross-reference comment and a unit test asserts the sets of allowed cells are disjoint.
+4. **The reconciled lock is narrowed a second time.** A same-entity fund reclassification is permitted on a
+   reconciled row because reconciliation is keyed on `bankAccountId` and bank-line matches: no session's opening,
+   closing or tie-out arithmetic, no match link, no bank-account balance and no entity total can change. The lock
+   keeps its full meaning for amount, date, flow, bank account, check number, DELETE and split. Approved, rejected,
+   pending, transfer-leg and dues-synced rows get no carve-out.
+5. **Tiering without a new key:** `LEDGER_RECORD` for an unreconciled current-fiscal-year row; `LEDGER_MANAGE` for a
+   row that is reconciled (either the closed-session mark or the legacy `reconciled` flag) or dated in a prior
+   fiscal year. The tier is computed server-side on the `FOR UPDATE`-locked row. Do not describe the tier as a
+   second approver: `ledger.manage` is bound to `admin` only and the treasurer is one of the two admins.
+6. **Required precondition:** `POST .../[id]/reconcile` refuses a row whose `reconciledSessionId` is set (403). Before
+   this, the lowest-privilege ledger role could strip a closed session's lock in one click, making the tier decorative.
+   The legacy per-row mark remains toggleable; closing the PATCH/DELETE legacy-reconciled gap is B-92.
+7. **Audit and visibility** are DECISION-110: required reason, same-transaction audit row, board-visible reader.
+
+**Rationale:** The treasurer's need is real and recurring (a donation deposited under the wrong fund). The
+alternatives are worse: delete and re-enter destroys history and is impossible once reconciled, a contra pair
+distorts every total, and a general editable fund field would reopen the Constitution Art. VII section 3(g) firewall.
+A dedicated endpoint keeps the allow-list-by-shape discipline of DECISION-099 (the route has no field it could be
+tricked into editing) while giving a move what PATCH cannot express: a direction policy, a reason, a preview,
+`FOR UPDATE`, a state-dependent tier and a stale-write check.
+
+**Residual risk, stated plainly:** provenance is not machine-verifiable, so a genuinely Administrative income row can
+be moved into Activity. The move is a one-way ratchet (the reverse move is refused and Activity to Administrative
+transfers are blocked), which fails toward restriction: money in Activity can only leave through a minuted sweep.
+Compensating controls are the refusal of dues-synced rows, the required reason, the attributed audit row, the
+board-visible reader, and the dialog saying the move cannot be undone.
+
+**Impact:** New: `ledger-fund-move-policy.ts`, `ledger-transaction-lock.ts`, `ledger-fund-move-queries.ts`,
+`ledger-transaction-validation.ts`, the `move/` route, `MoveTransactionDialog`. Changed: PATCH (400 on `fundId`),
+reconcile route (guard), DELETE (DECISION-110). No schema change, no new `FEATURES` key, no role-binding migration,
+no dependency, no email. Cross-entity moves are out (a cross-entity move would change `bankAccountId`, the one column
+reconciliation is keyed on). Follow-ups: B-92, B-93, B-94, B-96.
+
+---
+
 ## DECISION-108: Discarding a reconciliation session is a hard DELETE, open sessions only, with the status pinned inside the DELETE statement
 
 **Status:** Resolved

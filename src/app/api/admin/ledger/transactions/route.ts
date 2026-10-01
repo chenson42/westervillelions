@@ -65,6 +65,7 @@ import { sendBulkMemberEmail } from "@/lib/email";
 import { getFromEmail, getAppUrl } from "@/lib/email-compose";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
+import { validateBankAccountForEntity } from "@/lib/ledger-transaction-validation";
 import { resolveTreasurer } from "@/lib/board-positions";
 
 const BOARD_MINUTE_MAX_LEN = 500;
@@ -280,6 +281,16 @@ export async function POST(request: NextRequest) {
         { error: "Fund does not belong to the specified entity" },
         { status: 400 },
       );
+    }
+
+    // Validate the bank account (DECISION-109): it must exist, belong to the
+    // body's entity, and be active. Before this, a cross-entity id was saved
+    // silently and a nonexistent one was a foreign-key 500.
+    const bankFit = await validateBankAccountForEntity(db, bankAccountId, entityId, {
+      requireActive: true,
+    });
+    if (!bankFit.ok) {
+      return NextResponse.json({ error: bankFit.error }, { status: bankFit.status });
     }
 
     // Validate category if provided

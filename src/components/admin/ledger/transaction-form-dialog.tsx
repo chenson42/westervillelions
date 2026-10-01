@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import TransactionForm from "./transaction-form";
+import TransactionForm, { type SweepPrefill } from "./transaction-form";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
 import type { BudgetLineOption } from "@/lib/ledger-queries";
 
@@ -62,6 +62,8 @@ interface TransactionFormDialogProps {
   /** Foundation entity's funds/bank accounts/categories — Club pages only.
    *  Enables the "Sweep to Foundation" mode (DECISION-058). */
   crossEntityContext?: CrossEntityContext;
+  /** Opens the new-transaction form already in Sweep mode (see TransactionForm). */
+  sweepPrefill?: SweepPrefill;
   /** Whether the dialog is controlled externally */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -84,6 +86,7 @@ export default function TransactionFormDialog({
   transferPartnerId,
   defaultFundId,
   crossEntityContext,
+  sweepPrefill,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
 }: TransactionFormDialogProps) {
@@ -145,6 +148,7 @@ export default function TransactionFormDialog({
             transferPartnerId={transferPartnerId}
             defaultFundId={defaultFundId}
             crossEntityContext={crossEntityContext}
+            sweepPrefill={sweepPrefill}
           />
         </Dialog.Content>
       </Dialog.Portal>

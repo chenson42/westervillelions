@@ -71,6 +71,17 @@ interface TransactionFormProps {
    *  pages. Enables the "Sweep to Foundation" mode. Undefined on Foundation
    *  pages, where Sweep simply never renders as an option. */
   crossEntityContext?: CrossEntityContext;
+  /** Opens a NEW form already in Sweep mode with these values (the "Record
+   *  sweep now" deep link after a move). Never carries the board-minute
+   *  reference: the treasurer enters that. Ignored in edit mode and when a
+   *  Sweep is not possible on this page. */
+  sweepPrefill?: SweepPrefill;
+}
+
+export interface SweepPrefill {
+  bankAccountId: string | null;
+  amountCents: number;
+  memo: string;
 }
 
 type FlowMode = "income" | "expense" | "transfer" | "sweep" | "income_refund" | "expense_refund";
@@ -139,6 +150,7 @@ export default function TransactionForm({
   initialValues,
   defaultFundId,
   crossEntityContext,
+  sweepPrefill,
 }: TransactionFormProps) {
   const router = useRouter();
   const isEdit = Boolean(initialValues);
@@ -150,7 +162,7 @@ export default function TransactionForm({
   // isEditingTransfer regardless (amount/date/memo are the only editable
   // fields on a pair; see the PATCH bank-account-immutability fix, DECISION-058).
   function initFlowMode(): FlowMode {
-    if (!initialValues) return "income";
+    if (!initialValues) return sweepPrefill && canSweep ? "sweep" : "income";
     if (initialValues.transferGroupId) return "transfer";
     return initialValues.flow as "income" | "expense";
   }
@@ -165,8 +177,13 @@ export default function TransactionForm({
   const canTransfer = bankAccounts.length >= 2;
 
   const [flowMode, setFlowMode] = useState<FlowMode>(initFlowMode);
+  const activePrefill = !initialValues && canSweep ? sweepPrefill : undefined;
   const [amount, setAmount] = useState(
-    initialValues ? centsToDisplay(initialValues.amountCents) : ""
+    initialValues
+      ? centsToDisplay(initialValues.amountCents)
+      : activePrefill
+        ? centsToDisplay(activePrefill.amountCents)
+        : ""
   );
   const [txnDate, setTxnDate] = useState(
     initialValues?.txnDate ?? new Date().toISOString().slice(0, 10)
@@ -176,7 +193,7 @@ export default function TransactionForm({
   );
   const [categoryId, setCategoryId] = useState(initialValues?.categoryId ?? "");
   const [party, setParty] = useState(initialValues?.party ?? "");
-  const [memo, setMemo] = useState(initialValues?.memo ?? "");
+  const [memo, setMemo] = useState(initialValues?.memo ?? activePrefill?.memo ?? "");
   const [paymentMethod, setPaymentMethod] = useState(initialValues?.paymentMethod ?? "check");
   const [checkNumber, setCheckNumber] = useState(initialValues?.checkNumber ?? "");
   // Default/operating account (default-bank-account bug fix): every
@@ -187,8 +204,12 @@ export default function TransactionForm({
   // those rows is itself a one-click fix. Also doubles as the SOURCE account
   // for a new Transfer/Sweep (e.g. Admin Checking, where the cash sits).
   const defaultBankAccountId = bankAccounts.find((a) => a.isDefault)?.id ?? "";
+  const prefillAccountId =
+    activePrefill?.bankAccountId && bankAccounts.some((a) => a.id === activePrefill.bankAccountId)
+      ? activePrefill.bankAccountId
+      : null;
   const [bankAccountId, setBankAccountId] = useState(
-    initialValues?.bankAccountId ?? defaultBankAccountId
+    initialValues?.bankAccountId ?? prefillAccountId ?? defaultBankAccountId
   );
   // Destination account — Transfer: the current entity's other account
   // (e.g. Petty Cash). Sweep: the Foundation's account (e.g. Foundation

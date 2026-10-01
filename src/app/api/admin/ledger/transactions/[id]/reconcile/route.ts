@@ -7,6 +7,9 @@
  * Only posted transactions may be reconciled — pending or rejected rows
  * have not cleared the bank and cannot appear on a bank statement.
  *
+ * A row owned by a closed reconciliation session (reconciledSessionId set) is
+ * REFUSED with 403 in either direction (DECISION-109 R3b): reopen the session.
+ *
  * Bank Reconciliation inc2: every write here clears `reconciledSessionId` —
  * this route is always an out-of-band correction, never a session close, so
  * it must never leave a stale session-provenance pointer behind (DECISION-036).
@@ -30,7 +33,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ledgerTransactions } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
+import { CLOSED_SESSION_LOCK_MESSAGE } from "@/lib/ledger-transaction-lock";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 
@@ -54,6 +58,7 @@ export async function POST(
       .select({
         id: ledgerTransactions.id,
         status: ledgerTransactions.status,
+        reconciledSessionId: ledgerTransactions.reconciledSessionId,
       })
       .from(ledgerTransactions)
       .where(eq(ledgerTransactions.id, id))
@@ -61,6 +66,15 @@ export async function POST(
     const txn = rows[0];
     if (!txn) {
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+    }
+
+    // DECISION-109 (architect R3b): a row cleared by a CLOSED reconciliation
+    // session is owned by that session. This toggle clears the session pointer
+    // on every write, so without this refusal the lowest-privilege ledger role
+    // could strip a closed session's lock (and silently break its tie-out) in
+    // one click. Either direction. Rows with only the legacy mark still toggle.
+    if (txn.reconciledSessionId) {
+      return NextResponse.json({ error: CLOSED_SESSION_LOCK_MESSAGE }, { status: 403 });
     }
 
     // Only posted transactions can be reconciled — pending rows have not cleared the bank
@@ -85,7 +99,12 @@ export async function POST(
     // Bank Reconciliation inc2: this is an out-of-band correction — always
     // sever any session provenance so a later reopen never mistakes this row
     // for one its close touched (DECISION-036).
-    await db
+    //
+    // The session refusal is ALSO pinned inside the UPDATE (DECISION-111 item
+    // 3): a session could close this row between the read above and this
+    // write. Zero rows returned means the row is gone (404) or became
+    // session-owned (403), chosen by a follow-up lookup.
+    const updated = await db
       .update(ledgerTransactions)
       .set({
         reconciled,
@@ -93,7 +112,20 @@ export async function POST(
         reconciledSessionId: null,
         updatedAt: new Date(),
       })
-      .where(eq(ledgerTransactions.id, id));
+      .where(and(eq(ledgerTransactions.id, id), isNull(ledgerTransactions.reconciledSessionId)))
+      .returning({ id: ledgerTransactions.id });
+
+    if (updated.length === 0) {
+      const again = await db
+        .select({ reconciledSessionId: ledgerTransactions.reconciledSessionId })
+        .from(ledgerTransactions)
+        .where(eq(ledgerTransactions.id, id))
+        .limit(1);
+      if (!again[0]) {
+        return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+      }
+      return NextResponse.json({ error: CLOSED_SESSION_LOCK_MESSAGE }, { status: 403 });
+    }
 
     return NextResponse.json({ id, reconciled });
   } catch (error) {

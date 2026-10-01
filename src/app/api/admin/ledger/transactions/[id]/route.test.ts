@@ -36,6 +36,7 @@ import type { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
+vi.mock("@/lib/reconciliation-queries", () => ({ getMatchForTransaction: vi.fn() }));
 vi.mock("@/lib/receipt-storage", () => ({
   RECEIPT_KEY_REGEX: /^receipts\/.+$/,
   getReceiptStorage: vi.fn(() => ({ delete: vi.fn(() => Promise.resolve()) })),
@@ -48,6 +49,8 @@ const { mockDbState } = vi.hoisted(() => ({
     partnerRows: [] as Record<string, unknown>[],
     /** Answers the donor-existence select (`db.select(...).from(ledgerDonors)...`) specifically. */
     donorRows: [] as Record<string, unknown>[],
+    /** Answers the bank-account lookup (`from(ledgerBankAccounts)`) used to validate a changed bankAccountId. */
+    bankRows: [] as Record<string, unknown>[],
     updates: [] as { set: Record<string, unknown> }[],
     inserts: [] as { table: unknown; values: Record<string, unknown> }[],
   },
@@ -69,7 +72,12 @@ vi.mock("@/lib/db", () => ({
         // actually invokes PATCH(), by which point every module in the
         // graph (including this file's own `ledgerDonors` import below) is
         // fully resolved.
-        const rows = table === ledgerDonors ? mockDbState.donorRows : mockDbState.partnerRows;
+        const rows =
+          table === ledgerDonors
+            ? mockDbState.donorRows
+            : table === ledgerBankAccounts
+              ? mockDbState.bankRows
+              : mockDbState.partnerRows;
         const thenable = Promise.resolve(rows) as Promise<unknown[]> & {
           limit: () => Promise<unknown[]>;
         };
@@ -112,7 +120,9 @@ vi.mock("@/lib/db", () => ({
 import { PATCH } from "./route";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
-import { ledgerAuditLog, ledgerDonors } from "@/lib/db/schema";
+import { ledgerAuditLog, ledgerDonors, ledgerBankAccounts } from "@/lib/db/schema";
+import { getMatchForTransaction } from "@/lib/reconciliation-queries";
+import { RECONCILED_LOCK_CARVEOUT_FIELDS } from "@/lib/ledger";
 
 function makeRequest(body: unknown, url: string): NextRequest {
   return { json: async () => body, url } as unknown as NextRequest;
@@ -120,6 +130,9 @@ function makeRequest(body: unknown, url: string): NextRequest {
 function makeParams(id = "txn-source") {
   return { params: Promise.resolve({ id }) };
 }
+
+const BANK_OLD = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const BANK_NEW = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 const BASE_URL = "http://localhost/api/admin/ledger/transactions/txn-source";
 
@@ -173,6 +186,9 @@ beforeEach(() => {
   mockDbState.existing = null;
   mockDbState.partnerRows = [];
   mockDbState.donorRows = [];
+  mockDbState.bankRows = [];
+  vi.mocked(getMatchForTransaction).mockReset();
+  vi.mocked(getMatchForTransaction).mockResolvedValue(null);
   mockDbState.updates = [];
   mockDbState.inserts = [];
 });
@@ -227,16 +243,17 @@ describe("PATCH .../[id] — bank-account immutability for Transfer/Sweep pairs 
   });
 
   it("regression: an ordinary (non-pair) transaction's bankAccountId can still be changed normally", async () => {
-    mockDbState.existing = { ...ORDINARY_TXN };
+    mockDbState.existing = { ...ORDINARY_TXN, bankAccountId: BANK_OLD };
+    mockDbState.bankRows = [{ id: BANK_NEW, entityId: "entity-club", isActive: true }];
 
     const res = await PATCH(
-      makeRequest({ bankAccountId: "bank-new" }, BASE_URL),
+      makeRequest({ bankAccountId: BANK_NEW }, BASE_URL),
       makeParams("txn-ordinary"),
     );
 
     expect(res.status).toBe(200);
     expect(mockDbState.updates).toHaveLength(1);
-    expect(mockDbState.updates[0].set.bankAccountId).toBe("bank-new");
+    expect(mockDbState.updates[0].set.bankAccountId).toBe(BANK_NEW);
   });
 
   it("regression: a blank/missing bankAccountId on a non-pair transaction still 400s", async () => {
@@ -342,7 +359,9 @@ describe("PATCH .../[id] — reconciled-lock donor-link carve-out (DECISION-099)
     const data = await res.json();
 
     expect(res.status).toBe(403);
-    expect(data.error).toBe("Approved transactions cannot be edited");
+    expect(data.error).toBe(
+      "Approved transactions cannot be edited. Record a refund entry to correct one.",
+    );
     expect(mockDbState.updates).toHaveLength(0);
   });
 
@@ -460,5 +479,117 @@ describe("PATCH .../[id] — reconciled-lock donor-link carve-out (DECISION-099)
     expect(legUpdates).toHaveLength(2);
     expect(legUpdates[0].set.amountCents).toBe(6000);
     expect(legUpdates[1].set.amountCents).toBe(6000);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// DECISION-109 — T23 (fundId is never editable here) and T24 (bank-account
+// validation + open-session-match guard).
+// ---------------------------------------------------------------------------
+
+describe("PATCH .../[id] — fundId is rejected (T23)", () => {
+  it("400 'Use Move to another fund.' on an ordinary row, writing nothing", async () => {
+    mockDbState.existing = { ...ORDINARY_TXN };
+    const res = await PATCH(makeRequest({ fundId: "fund-activity", memo: "x" }, BASE_URL), makeParams("txn-ordinary"));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Use Move to another fund.");
+    expect(mockDbState.updates).toHaveLength(0);
+  });
+
+  it("400 on a reconciled row (the fundId check precedes the reconciled lock)", async () => {
+    mockDbState.existing = { ...RECONCILED_TXN };
+    const res = await PATCH(makeRequest({ fundId: "fund-activity" }, BASE_URL), makeParams("txn-reconciled"));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Use Move to another fund.");
+  });
+
+  it("{ donorId, fundId } is 400, never the donorId-only 200 carve-out", async () => {
+    mockDbState.existing = { ...RECONCILED_TXN };
+    mockDbState.donorRows = [{ id: "donor-1" }];
+    const res = await PATCH(
+      makeRequest({ donorId: "donor-1", fundId: "fund-activity" }, BASE_URL),
+      makeParams("txn-reconciled"),
+    );
+    expect(res.status).toBe(400);
+    expect(mockDbState.updates).toHaveLength(0);
+    expect(mockDbState.inserts).toHaveLength(0);
+  });
+
+  it("RECONCILED_LOCK_CARVEOUT_FIELDS is still exactly ['donorId']", () => {
+    expect([...RECONCILED_LOCK_CARVEOUT_FIELDS]).toEqual(["donorId"]);
+  });
+});
+
+describe("PATCH .../[id] — bankAccountId validation (T24)", () => {
+  const ROW = { ...ORDINARY_TXN, bankAccountId: BANK_OLD };
+
+  it("malformed id is 400, with no bank-account lookup and no write", async () => {
+    mockDbState.existing = { ...ROW };
+    const res = await PATCH(makeRequest({ bankAccountId: "bank-new" }, BASE_URL), makeParams("txn-ordinary"));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Select a valid bank account.");
+    expect(mockDbState.updates).toHaveLength(0);
+  });
+
+  it("nonexistent id is 400 (not an FK 500)", async () => {
+    mockDbState.existing = { ...ROW };
+    mockDbState.bankRows = [];
+    const res = await PATCH(makeRequest({ bankAccountId: BANK_NEW }, BASE_URL), makeParams("txn-ordinary"));
+    expect(res.status).toBe(400);
+    expect(mockDbState.updates).toHaveLength(0);
+  });
+
+  it("cross-entity account is 400", async () => {
+    mockDbState.existing = { ...ROW };
+    mockDbState.bankRows = [{ id: BANK_NEW, entityId: "entity-foundation", isActive: true }];
+    const res = await PATCH(makeRequest({ bankAccountId: BANK_NEW }, BASE_URL), makeParams("txn-ordinary"));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Bank account does not belong to this entity.");
+  });
+
+  it("inactive account is 400 when the value is changed", async () => {
+    mockDbState.existing = { ...ROW };
+    mockDbState.bankRows = [{ id: BANK_NEW, entityId: "entity-club", isActive: false }];
+    const res = await PATCH(makeRequest({ bankAccountId: BANK_NEW }, BASE_URL), makeParams("txn-ordinary"));
+    expect(res.status).toBe(400);
+  });
+
+  it("an UNCHANGED value skips validation: an inactive current account does not block an unrelated edit", async () => {
+    mockDbState.existing = { ...ROW };
+    mockDbState.bankRows = [{ id: BANK_OLD, entityId: "entity-club", isActive: false }];
+    vi.mocked(getMatchForTransaction).mockResolvedValue({ id: "match-1" } as never);
+    const res = await PATCH(
+      makeRequest({ bankAccountId: BANK_OLD, memo: "fix typo" }, BASE_URL),
+      makeParams("txn-ordinary"),
+    );
+    expect(res.status).toBe(200);
+    expect(getMatchForTransaction).not.toHaveBeenCalled();
+    expect(mockDbState.updates[0].set.memo).toBe("fix typo");
+  });
+
+  it("a row matched in an open session is 403 when the account CHANGES", async () => {
+    mockDbState.existing = { ...ROW };
+    mockDbState.bankRows = [{ id: BANK_NEW, entityId: "entity-club", isActive: true }];
+    vi.mocked(getMatchForTransaction).mockResolvedValue({ id: "match-1" } as never);
+    const res = await PATCH(makeRequest({ bankAccountId: BANK_NEW }, BASE_URL), makeParams("txn-ordinary"));
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.error).toContain("Unmatch it before changing its bank account");
+    expect(mockDbState.updates).toHaveLength(0);
+  });
+
+  it("a transfer leg still ignores bankAccountId (DECISION-058), even a malformed one", async () => {
+    mockDbState.existing = { ...SWEEP_SOURCE_LEG };
+    const res = await PATCH(
+      makeRequest({ memo: "m", bankAccountId: "garbage" }, BASE_URL),
+      makeParams("txn-source"),
+    );
+    expect(res.status).toBe(200);
+    expect("bankAccountId" in mockDbState.updates[0].set).toBe(false);
   });
 });

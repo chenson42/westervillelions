@@ -822,6 +822,10 @@ export const ledgerAuditLog = pgTable(
     // 'category_reactivated' | 'category_flags_updated' |
     // 'reconciliation_session_discarded' (both targets null; counts-only
     // `before`, see discardOpenSession() in reconciliation-queries.ts)
+    // 'transaction_fund_moved' | 'transaction_deleted' (DECISION-109/110: these
+    // two carry versioned JSON in before/after/details, written by
+    // recordLedgerAudit() in ledger-audit.ts; a delete's target is null and its
+    // before holds the row snapshot(s) — see ledger-correction.ts)
     // ('category_created' is a reserved future value — category creation is
     // NOT audited in v1, per DECISION-066 item 5.)
     action: text("action").notNull(),

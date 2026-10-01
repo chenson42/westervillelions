@@ -29,13 +29,15 @@
  */
 import { db } from "../../src/lib/db";
 import {
+  ledgerAuditLog,
   ledgerBudgets,
   ledgerBudgetApprovals,
   ledgerBudgetNotes,
   ledgerCategories,
+  ledgerReconciliationSessions,
   ledgerTransactions,
 } from "../../src/lib/db/schema";
-import { and, eq, ilike, inArray } from "drizzle-orm";
+import { and, eq, ilike, inArray, or } from "drizzle-orm";
 
 export interface BudgetFixtureCleanupParams {
   /** Entity these fixtures belong to (Club or Foundation ledger_entities.id). */
@@ -114,4 +116,47 @@ export async function cleanupBudgetFixture(params: BudgetFixtureCleanupParams): 
       .delete(ledgerCategories)
       .where(and(eq(ledgerCategories.entityId, entityId), ilike(ledgerCategories.name, `${prefix}%`)));
   }
+}
+
+/**
+ * Every row, session and audit entry created by
+ * e2e/ledger-move-transaction.spec.ts carries this tag: transaction parties
+ * start with it, and every correction reason typed into the Move/Delete
+ * dialogs (or sent to the API) contains it.
+ */
+export const MOVE_FIXTURE_TAG = "E2E QA Move";
+
+/** csv_filename stamped on the fixture closed reconciliation session. */
+export const MOVE_FIXTURE_SESSION_CSV = "E2E-QA-Move-fixture.csv";
+
+/**
+ * Cleanup for the move/delete-correction suite (DECISION-109/110). Safe from
+ * both `beforeAll` and `afterAll` (every delete is a no-op when nothing
+ * matches).
+ *
+ * Audit rows MUST be removed explicitly: `ledger_audit_log.target_transaction_id`
+ * is ON DELETE SET NULL, so deleting a transaction never removes its audit row,
+ * and a `transaction_deleted` row has no target at all. They are matched by the
+ * tag in the reason text (`details`) — never by actor or time — so this can
+ * only ever remove rows this suite wrote.
+ *
+ * Acknowledgments cascade with their transaction (ON DELETE CASCADE).
+ * Order: audit rows, then transactions, then the fixture session.
+ */
+export async function cleanupMoveTransactionFixtures(): Promise<void> {
+  await db
+    .delete(ledgerAuditLog)
+    .where(
+      and(
+        inArray(ledgerAuditLog.action, ["transaction_fund_moved", "transaction_deleted"]),
+        or(
+          ilike(ledgerAuditLog.details, `%${MOVE_FIXTURE_TAG}%`),
+          ilike(ledgerAuditLog.before, `%${MOVE_FIXTURE_TAG}%`),
+        ),
+      ),
+    );
+  await db.delete(ledgerTransactions).where(ilike(ledgerTransactions.party, `${MOVE_FIXTURE_TAG}%`));
+  await db
+    .delete(ledgerReconciliationSessions)
+    .where(eq(ledgerReconciliationSessions.csvFilename, MOVE_FIXTURE_SESSION_CSV));
 }

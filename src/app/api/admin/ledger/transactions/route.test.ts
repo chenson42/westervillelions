@@ -90,6 +90,7 @@ import { POST } from "./route";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { getSettings } from "@/lib/ledger-queries";
+import { db } from "@/lib/db";
 
 function makeRequest(body: unknown): NextRequest {
   return { json: async () => body } as unknown as NextRequest;
@@ -103,7 +104,7 @@ const VALID_NORMAL_BODY = {
   txnDate: "2026-07-29",
   flow: "expense" as const,
   amountCents: 1000,
-  bankAccountId: "bank-account-1",
+  bankAccountId: "11111111-1111-4111-8111-111111111111",
 };
 
 // ---------------------------------------------------------------------------
@@ -162,6 +163,7 @@ beforeEach(() => {
   vi.mocked(getSettings).mockResolvedValue({
     disbApprovalThresholdCents: DISB_THRESHOLD_CENTS,
   } as never);
+  vi.mocked(db.insert).mockClear();
   mockDbState.selectQueue = [];
   mockDbState.insertReturning = [{ id: "txn-1" }];
   mockDbState.lastTransactionInsertValues = null;
@@ -194,9 +196,59 @@ describe("POST /api/admin/ledger/transactions — bank account required (default
   });
 
   it("accepts a normal transaction with a valid bankAccountId (201)", async () => {
-    mockDbState.selectQueue.push([{ id: "fund-1", kind: "administrative", entityId: "entity-1" }]);
+    mockDbState.selectQueue.push(
+      [{ id: "fund-1", kind: "administrative", entityId: "entity-1" }],
+      [{ id: VALID_NORMAL_BODY.bankAccountId, entityId: "entity-1", isActive: true }],
+    );
     const res = await POST(makeRequest(VALID_NORMAL_BODY));
     expect(res.status).toBe(201);
+  });
+
+  // T25 — bankAccountId is validated server-side on the regular path.
+  describe("bankAccountId validation (DECISION-109, T25)", () => {
+    const FUND = { id: "fund-1", kind: "administrative", entityId: "entity-1" };
+
+    it("400s a malformed bankAccountId with no insert and no bank-account query", async () => {
+      mockDbState.selectQueue.push([FUND]);
+      const res = await POST(makeRequest({ ...VALID_NORMAL_BODY, bankAccountId: "not-a-uuid" }));
+      const data = await res.json();
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("Select a valid bank account.");
+      expect(vi.mocked(db.insert)).not.toHaveBeenCalled();
+    });
+
+    it("400s a nonexistent bank account (not a foreign-key 500)", async () => {
+      mockDbState.selectQueue.push([FUND], []);
+      const res = await POST(makeRequest(VALID_NORMAL_BODY));
+      const data = await res.json();
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("Bank account not found.");
+      expect(vi.mocked(db.insert)).not.toHaveBeenCalled();
+    });
+
+    it("400s a bank account that belongs to another entity", async () => {
+      mockDbState.selectQueue.push(
+        [FUND],
+        [{ id: VALID_NORMAL_BODY.bankAccountId, entityId: "entity-other", isActive: true }],
+      );
+      const res = await POST(makeRequest(VALID_NORMAL_BODY));
+      const data = await res.json();
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("Bank account does not belong to this entity.");
+      expect(vi.mocked(db.insert)).not.toHaveBeenCalled();
+    });
+
+    it("400s an inactive bank account", async () => {
+      mockDbState.selectQueue.push(
+        [FUND],
+        [{ id: VALID_NORMAL_BODY.bankAccountId, entityId: "entity-1", isActive: false }],
+      );
+      const res = await POST(makeRequest(VALID_NORMAL_BODY));
+      const data = await res.json();
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("Bank account is inactive. Select an active account.");
+      expect(vi.mocked(db.insert)).not.toHaveBeenCalled();
+    });
   });
 
   it("400s a transfer with a missing sourceBankAccountId", async () => {

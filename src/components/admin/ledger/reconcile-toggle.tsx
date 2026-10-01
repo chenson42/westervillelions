@@ -7,6 +7,12 @@ import { useRouter } from "next/navigation";
 interface ReconcileToggleProps {
   transactionId: string;
   reconciled: boolean;
+  /**
+   * True when a closed reconciliation session owns the row's reconciled mark
+   * (`reconciledSessionId != null`). The server refuses the toggle in that
+   * case, so the control is disabled up front with the next step.
+   */
+  locked?: boolean;
 }
 
 /**
@@ -15,12 +21,17 @@ interface ReconcileToggleProps {
  * Gating: only rendered when the viewer has LEDGER_RECORD (checked in parent).
  * Pending and rejected rows never receive this toggle.
  */
-export default function ReconcileToggle({ transactionId, reconciled }: ReconcileToggleProps) {
+export default function ReconcileToggle({
+  transactionId,
+  reconciled,
+  locked = false,
+}: ReconcileToggleProps) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [localReconciled, setLocalReconciled] = useState(reconciled);
 
   async function handleToggle() {
+    if (locked) return;
     const newValue = !localReconciled;
     setPending(true);
     // Optimistic update
@@ -53,10 +64,24 @@ export default function ReconcileToggle({ transactionId, reconciled }: Reconcile
     <button
       type="button"
       onClick={handleToggle}
-      disabled={pending}
-      title={localReconciled ? "Mark unreconciled" : "Mark reconciled"}
-      aria-label={localReconciled ? "Mark as unreconciled" : "Mark as reconciled"}
+      disabled={pending || locked}
+      title={
+        locked
+          ? "Cleared by a closed reconciliation session. Reopen the session to change this."
+          : localReconciled
+            ? "Mark unreconciled"
+            : "Mark reconciled"
+      }
+      aria-label={
+        locked
+          ? "Reconciled by a closed session; reopen the session to change"
+          : localReconciled
+            ? "Mark as unreconciled"
+            : "Mark as reconciled"
+      }
       className={`inline-flex items-center justify-center w-6 h-6 rounded border transition focus:outline-none focus:ring-2 focus:ring-lions-blue disabled:opacity-50 ${
+        locked ? "cursor-not-allowed " : ""
+      }${
         localReconciled
           ? "bg-green-100 border-green-400 text-green-700 hover:bg-green-50"
           : "bg-white border-gray-300 text-gray-300 hover:border-gray-400"

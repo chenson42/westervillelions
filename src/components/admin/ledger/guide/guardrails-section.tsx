@@ -86,7 +86,7 @@ const GUARDRAILS: GuardrailRow[] = [
   {
     title: "Public-category income posted directly to Administrative fund",
     severity: "warn",
-    whatToDo: "Reclassify to an Activity/Charitable fund — public money can't post directly to Administrative.",
+    whatToDo: "Reclassify to an Activity/Charitable fund — public money can't post directly to Administrative. This flag only fires for a public category; a donation entered under an Administrative category (the usual mistake) is not detected, so check donations against where the money was deposited. Use Move on the entry to correct it.",
   },
 ];
 

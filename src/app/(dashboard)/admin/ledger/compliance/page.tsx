@@ -17,6 +17,8 @@ import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
 import FilingsCalendar from "@/components/admin/ledger/filings-calendar";
 import Panel990 from "@/components/admin/ledger/panel-990";
 import StandingReminders from "@/components/admin/ledger/standing-reminders";
+import RecentCorrections from "@/components/admin/ledger/recent-corrections";
+import { getRecentLedgerCorrections } from "@/lib/ledger-audit";
 import type { GuardrailFlag } from "@/lib/ledger";
 
 export const dynamic = "force-dynamic";
@@ -99,6 +101,16 @@ export default async function AdminLedgerCompliancePage({
   ]);
 
   const isFoundation = entity.slug === "foundation";
+
+  // Recent corrections (DECISION-110): moves and deletes from the last 90 days.
+  // Its own try/catch: an unreadable audit log must not take the compliance
+  // page down with it.
+  let corrections: Awaited<ReturnType<typeof getRecentLedgerCorrections>> | null = null;
+  try {
+    corrections = await getRecentLedgerCorrections({ entityId: entity.id });
+  } catch {
+    corrections = null;
+  }
 
   return (
     <div className="space-y-6">
@@ -254,6 +266,20 @@ export default async function AdminLedgerCompliancePage({
             <p className="font-medium">990 determination unavailable.</p>
           </div>
         )}
+      </section>
+
+      {/* Recent corrections — ledger-only; never surfaced to members */}
+      <section>
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Recent corrections</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Entries moved to another fund or deleted in the last 90 days, with who made the
+          change and why.
+        </p>
+        <RecentCorrections
+          rows={corrections?.rows ?? []}
+          totalInWindow={corrections?.totalInWindow ?? 0}
+          loadFailed={corrections === null}
+        />
       </section>
 
       {/* Standing reminders */}

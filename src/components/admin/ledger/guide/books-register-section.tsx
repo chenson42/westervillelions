@@ -67,6 +67,62 @@ export default function BooksRegisterSection() {
         separate from the internal memo.
       </p>
 
+      <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">
+        Moving an entry to another fund
+      </h3>
+      <p className="mt-2 text-sm text-gray-700">
+        If a gift was recorded under the wrong fund, use <span className="font-semibold">Move</span> on
+        its row instead of deleting and re-entering it. Today this moves{" "}
+        <span className="font-semibold">income from the Administrative Fund to the Activity Fund</span>{" "}
+        only. The entry keeps its date, party, amount and bank account; only the fund and category
+        change, and the change is logged with your reason on the Compliance page.
+      </p>
+      <ul className="mt-2 space-y-2 text-sm text-gray-700 list-disc pl-5">
+        <li>
+          Pick a category in the new fund (Public donations is preselected). The old category belongs
+          to the old fund, so a new one is needed.
+        </li>
+        <li>
+          The bank account balance does not change, because the cash did not move. A reconciled entry
+          stays reconciled.
+        </li>
+        <li>
+          <span className="font-semibold">A move cannot be undone.</span> Money in the Activity Fund
+          leaves only through a minuted sweep. If you move the wrong entry, delete and re-enter it (or
+          reopen its reconciliation session first if it was reconciled).
+        </li>
+        <li>
+          Moving an entry that is already reconciled, or dated in an earlier fiscal year, needs the
+          Manage Ledger permission. It is a permission, not a second approver.
+        </li>
+        <li>
+          If the month&rsquo;s Administrative statement was already sent to the board, it will read as
+          changed and you will be offered a corrected resend. Nothing is sent automatically.
+        </li>
+        <li>
+          <span className="font-semibold">Moving does not sweep anything.</span> Once the money has
+          actually been moved, choose <span className="font-semibold">Record sweep now</span> to open
+          the Sweep to Foundation form with the amount and account filled in. You still enter the
+          board-minute reference yourself. The Foundation side of a sweep is a transfer with no donor
+          attached, so it does not generate an acknowledgment letter.
+        </li>
+        <li>
+          Approved, rejected, pending, transfer and dues-posted entries cannot be moved. Expense
+          entries cannot be moved yet.
+        </li>
+      </ul>
+
+      <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">
+        Deleting an entry
+      </h3>
+      <p className="mt-2 text-sm text-gray-700">
+        Deleting asks for a reason, and a record of the deleted entry is kept for the board on the
+        Compliance page. A gift whose receipt was already sent to the donor cannot be deleted; record a
+        refund entry instead. Approved, rejected and reconciled entries show why Edit and Delete are
+        unavailable and what to do instead: approved and rejected entries are corrected with a refund
+        entry, and a reconciled entry needs its reconciliation session reopened first.
+      </p>
+
       <p className="mt-5 text-sm">
         <Link href="/admin/ledger" className={linkClass}>
           Open the Ledger Overview to record a transaction &rarr;
