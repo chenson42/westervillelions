@@ -18,6 +18,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { ledgerEntities } from "@/lib/db/schema";
 
 vi.mock("@/lib/email-durable-claim", () => ({ sendBulkMemberEmailForDurableClaim: vi.fn() }));
 vi.mock("@/lib/board-positions", () => ({ resolveTreasurer: vi.fn() }));
@@ -26,6 +28,7 @@ const { mockDbState } = vi.hoisted(() => ({
   mockDbState: {
     selectQueue: [] as unknown[][],
     wheres: [] as unknown[],
+    joins: [] as { table: unknown; on: unknown }[],
     updateCalls: [] as { table: unknown; values: Record<string, unknown> }[],
     updateReturningQueue: [] as unknown[][],
     insertCalls: [] as { table: unknown; values: Record<string, unknown> }[],
@@ -36,7 +39,11 @@ vi.mock("@/lib/db", () => {
   function selectChain(): unknown {
     const obj: Record<string, unknown> = {
       from: () => obj,
-      innerJoin: () => obj,
+      // Recorded so the receipt-issuer join (DECISION-112) can be asserted by rendering its ON clause.
+      innerJoin: (table: unknown, on: unknown) => {
+        mockDbState.joins.push({ table, on });
+        return obj;
+      },
       leftJoin: () => obj,
       where: (cond: unknown) => {
         mockDbState.wheres.push(cond);
@@ -97,6 +104,7 @@ import { resolveTreasurer } from "@/lib/board-positions";
 function resetMockDb() {
   mockDbState.selectQueue = [];
   mockDbState.wheres = [];
+  mockDbState.joins = [];
   mockDbState.updateCalls = [];
   mockDbState.updateReturningQueue = [];
   mockDbState.insertCalls = [];
@@ -1148,5 +1156,50 @@ describe("gift purpose — column to letter", () => {
 
     expect(results[0].letterText).toContain("in support of the 2026 Rudolph Run.");
     expect(results[1].letterText).toContain("in support of the scholarship fund.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Receipt issuer (DECISION-112): C17 join wiring and C19 write-set pins.
+// ---------------------------------------------------------------------------
+
+describe("receipt issuer: letter composition follows the receipt (C17)", () => {
+  it("listGeneratableAcknowledgments joins ledger_entities on the issuer fragment, not on the transaction's entity", async () => {
+    mockDbState.selectQueue.push([]);
+    await listGeneratableAcknowledgments();
+    const entityJoin = mockDbState.joins.find((j) => j.table === ledgerEntities)!;
+    expect(entityJoin).toBeDefined();
+    const sql = new PgDialect().sqlToQuery(entityJoin.on as never).sql;
+    expect(sql).toBe(
+      '"ledger_entities"."id" = coalesce("ledger_acknowledgments"."donee_entity_id", "ledger_transactions"."entity_id")',
+    );
+  });
+});
+
+describe("receipt issuer is write-once: no other writer sets donee_entity_id (C19)", () => {
+  const DONEE = "doneeEntityId";
+
+  it("letter generation's UPDATE does not set the issuer", async () => {
+    mockDbState.selectQueue.push([joinedRow()]);
+    mockDbState.selectQueue.push([templateRow()]);
+    await generateAcknowledgmentLetters(["ack-1"]);
+    expect(mockDbState.updateCalls.length).toBeGreaterThan(0);
+    for (const c of mockDbState.updateCalls) expect(Object.keys(c.values)).not.toContain(DONEE);
+  });
+
+  it("the email claim and its revert do not set the issuer", async () => {
+    const row = joinedRow({
+      ack: ackRow({ id: "ack-1", letterText: "Composed letter text." }),
+      donor: donorRow({ id: "donor-1", emails: ["donor@example.com"] }),
+    });
+    mockDbState.selectQueue.push([row]);
+    mockDbState.updateReturningQueue.push([{ id: "ack-1" }]);
+    vi.mocked(sendBulkMemberEmailForDurableClaim).mockResolvedValueOnce({
+      results: [{ to: "donor@example.com", outcome: "failed", error: "Resend rejected", emailQueueId: "q-1" }],
+    });
+    await emailAcknowledgmentLetters(["ack-1"]);
+    // The claim, then the compensating revert.
+    expect(mockDbState.updateCalls).toHaveLength(2);
+    for (const c of mockDbState.updateCalls) expect(Object.keys(c.values)).not.toContain(DONEE);
   });
 });

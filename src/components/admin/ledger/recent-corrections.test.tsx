@@ -20,6 +20,12 @@ function row(over: Partial<LedgerCorrectionRow> = {}): LedgerCorrectionRow {
     settledPeriod: false,
     rowCount: 1,
     sentStatementMonth: null,
+    crossEntity: false,
+    fromEntityName: null,
+    toEntityName: null,
+    fromBankAccount: null,
+    toBankAccount: null,
+    receiptSent: false,
     ...over,
   };
 }
@@ -75,5 +81,47 @@ describe("RecentCorrections", () => {
   it("truncated lists say how many of the total are shown", () => {
     const html = renderToStaticMarkup(<RecentCorrections rows={[row()]} totalInWindow={40} />);
     expect(html).toContain("Showing the 1 most recent of 40 in the last 90 days.");
+  });
+
+  it("C41: a cross-entity move reads 'Foundation to Club' with both accounts and 'Receipt already sent'", () => {
+    const html = renderToStaticMarkup(
+      <RecentCorrections
+        rows={[
+          row({
+            from: "Charitable Fund",
+            to: "Activity Fund",
+            crossEntity: true,
+            fromEntityName: "Foundation",
+            toEntityName: "Club",
+            fromBankAccount: "Foundation Checking",
+            toBankAccount: "Administrative Checking",
+            receiptSent: true,
+          }),
+        ]}
+        totalInWindow={1}
+      />,
+    );
+    expect(html).toContain("Foundation to Club");
+    expect(html).toContain("Foundation Checking to Administrative Checking");
+    expect(html).toContain("Receipt already sent");
+    expect(html).toContain("from Charitable Fund to Activity Fund");
+  });
+
+  it("C41: a same-entity (v1) card is unchanged: no entity badge, no bank line, no receipt badge", () => {
+    const html = renderToStaticMarkup(<RecentCorrections rows={[row()]} totalInWindow={1} />);
+    expect(html).not.toContain(" to Club");
+    expect(html).not.toContain("Bank account:");
+    expect(html).not.toContain("Receipt already sent");
+  });
+
+  it("C41: a cross-entity move without a sent receipt has no receipt badge", () => {
+    const html = renderToStaticMarkup(
+      <RecentCorrections
+        rows={[row({ crossEntity: true, fromEntityName: "Foundation", toEntityName: "Club" })]}
+        totalInWindow={1}
+      />,
+    );
+    expect(html).toContain("Foundation to Club");
+    expect(html).not.toContain("Receipt already sent");
   });
 });

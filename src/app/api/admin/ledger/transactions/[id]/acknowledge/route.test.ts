@@ -144,6 +144,7 @@ function makeParams(id = "txn-1") {
 const FOUNDATION_INCOME_TXN = {
   txn: {
     id: "txn-1",
+    entityId: "entity-foundation",
     flow: "income",
     status: "posted",
     amountCents: 100000, // $1,000 — meets the $250 written-ack threshold
@@ -205,6 +206,34 @@ describe("POST .../[id]/acknowledge — donor_id sync (2026-08-08 bug)", () => {
 
     expect(mockDbState.txnUpdates).toHaveLength(1);
     expect(mockDbState.txnUpdates[0].set.donorId).toBe("donor-1");
+  });
+});
+
+describe("POST .../[id]/acknowledge — receipt issuer, write-once (DECISION-112, C19)", () => {
+  it("creating an acknowledgment stamps donee_entity_id with the TRANSACTION's entity", async () => {
+    const res = await POST(makeRequest({ donorId: "donor-1" }), makeParams("txn-1"));
+    expect(res.status).toBe(201);
+    expect(mockDbState.ackInsertValues[0].doneeEntityId).toBe("entity-foundation");
+  });
+
+  it("the stamp is the row's entity, not a client-supplied value", async () => {
+    mockDbState.txnRows = [
+      { ...FOUNDATION_INCOME_TXN, txn: { ...FOUNDATION_INCOME_TXN.txn, entityId: "entity-other" } },
+    ];
+    const res = await POST(
+      makeRequest({ donorId: "donor-1", doneeEntityId: "entity-attacker" }),
+      makeParams("txn-1"),
+    );
+    expect(res.status).toBe(201);
+    expect(mockDbState.ackInsertValues[0].doneeEntityId).toBe("entity-other");
+  });
+
+  it("PATCH purpose and mark-sent never set donee_entity_id", async () => {
+    mockDbState.existingAck = { id: "ack-1", sentAt: null, purpose: null, letterText: null };
+    await PATCH(makeRequest({ mode: "purpose", purpose: "Scholarship fund" }), makeParams("txn-1"));
+    await PATCH(makeRequest({ sentAt: "2026-08-12" }), makeParams("txn-1"));
+    expect(mockDbState.ackUpdates.length).toBeGreaterThanOrEqual(2);
+    for (const u of mockDbState.ackUpdates) expect(Object.keys(u.set)).not.toContain("doneeEntityId");
   });
 });
 

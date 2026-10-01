@@ -1027,6 +1027,13 @@ export const ledgerAcknowledgments = pgTable(
     // Donor who made the gift — nullable in case the donor record is deleted
     donorId: uuid("donor_id")
       .references(() => ledgerDonors.id, { onDelete: "set null" }),
+    // WHO ISSUED this receipt (the donee named on the letter). Nullable FK, no cascade (an entity with receipts
+    // must not be deletable), no index (table is tiny; readers join per row). WRITE-ONCE: set by exactly three
+    // writers (acknowledge POST at creation = the transaction's entity; the 0109 backfill, NULL rows only; the
+    // cross-entity move, COALESCE(existing, source entity) before the row's entity changes). Readers that DESCRIBE
+    // the receipt follow this column via COALESCE(donee_entity_id, ledger_transactions.entity_id) from
+    // src/lib/ledger-ack-donee.ts; readers that SUM MONEY follow the transaction. DECISION-112.
+    doneeEntityId: uuid("donee_entity_id").references(() => ledgerEntities.id),
     // Immutable copy of the transaction's amountCents at ack creation time (DECISION-026)
     amountCents: integer("amount_cents").notNull(),
     // Immutable copy of the transaction's txnDate at ack creation time

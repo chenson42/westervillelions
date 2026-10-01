@@ -31,6 +31,7 @@ import { db } from "../../src/lib/db";
 import {
   ledgerAuditLog,
   ledgerBudgets,
+  ledgerDonors,
   ledgerBudgetApprovals,
   ledgerBudgetNotes,
   ledgerCategories,
@@ -156,7 +157,17 @@ export async function cleanupMoveTransactionFixtures(): Promise<void> {
       ),
     );
   await db.delete(ledgerTransactions).where(ilike(ledgerTransactions.party, `${MOVE_FIXTURE_TAG}%`));
+  // A sweep recorded from a moved fixture gift (the "Record sweep now" flow) has
+  // no party; its two legs carry the prefilled memo, which names the fixture
+  // party ("Sweep of E2E QA Move ... gift moved from the Foundation on ...").
+  await db
+    .delete(ledgerTransactions)
+    .where(ilike(ledgerTransactions.memo, `Sweep of ${MOVE_FIXTURE_TAG}%`));
   await db
     .delete(ledgerReconciliationSessions)
     .where(eq(ledgerReconciliationSessions.csvFilename, MOVE_FIXTURE_SESSION_CSV));
+  // Donors are not cascade-deleted with a transaction (the link is SET NULL), so
+  // the cross-entity fixtures' donors (example.com addresses only) are removed
+  // by their tagged name, after the transactions that referenced them.
+  await db.delete(ledgerDonors).where(ilike(ledgerDonors.name, `${MOVE_FIXTURE_TAG}%`));
 }

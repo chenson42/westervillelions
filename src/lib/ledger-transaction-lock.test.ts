@@ -1,4 +1,4 @@
-/** T4-T7: the pure lock classifier and the move tier (DECISION-109). */
+/** T4-T7 and C7-C8: the pure lock classifier and the move tier (DECISION-109/112). */
 import { describe, it, expect } from "vitest";
 import {
   CLOSED_SESSION_LOCK_MESSAGE,
@@ -8,6 +8,7 @@ import {
   isTransactionReconciled,
   moveBlockKind,
   requiredMoveTier,
+  crossEntityBlockKind,
   transactionLockKinds,
   type LockableRow,
   type TransactionLockKind,
@@ -131,6 +132,69 @@ describe("requiredMoveTier (T6)", () => {
 
   it("now = 2026-06-30 makes 2026-06-30 current", () => {
     expect(requiredMoveTier(row({ txnDate: "2026-06-30" }), new Date(2026, 5, 30)).tier).toBe("record");
+  });
+});
+
+describe("requiredMoveTier with a cross-entity destination (C7)", () => {
+  const NOW = new Date(2026, 9, 1); // 2026-10-01, FY2026
+  const CROSS = { crossEntity: true };
+
+  it("a clean current-year row is manage with exactly cross_entity", () => {
+    expect(requiredMoveTier(row(), NOW, CROSS)).toEqual({ tier: "manage", reasons: ["cross_entity"] });
+  });
+
+  it("cross_entity is listed first and accumulates reconciled and prior_fiscal_year", () => {
+    expect(requiredMoveTier(row({ ...SESSION, txnDate: "2025-12-01" }), NOW, CROSS)).toEqual({
+      tier: "manage",
+      reasons: ["cross_entity", "reconciled", "prior_fiscal_year"],
+    });
+    expect(requiredMoveTier(row(LEGACY), NOW, CROSS).reasons).toEqual(["cross_entity", "reconciled"]);
+  });
+
+  it("same-entity tiering is unchanged (absent, undefined and false all behave the same)", () => {
+    for (const opts of [undefined, {}, { crossEntity: false }]) {
+      expect(requiredMoveTier(row(), NOW, opts)).toEqual({ tier: "record", reasons: [] });
+      expect(requiredMoveTier(row(SESSION), NOW, opts)).toEqual({ tier: "manage", reasons: ["reconciled"] });
+    }
+  });
+
+  it("fiscal-year edges behave as for the same-entity tier", () => {
+    expect(requiredMoveTier(row({ txnDate: "2026-06-30" }), NOW, CROSS).reasons).toEqual([
+      "cross_entity",
+      "prior_fiscal_year",
+    ]);
+    expect(requiredMoveTier(row({ txnDate: "2026-07-01" }), NOW, CROSS).reasons).toEqual(["cross_entity"]);
+    expect(
+      requiredMoveTier(row({ txnDate: "2026-06-30" }), new Date(2026, 5, 30), CROSS).reasons,
+    ).toEqual(["cross_entity"]);
+  });
+});
+
+describe("crossEntityBlockKind (C8)", () => {
+  const NOW = new Date(2026, 9, 1);
+
+  it("a clean current-year row has no pure block", () => {
+    expect(crossEntityBlockKind(row(), NOW)).toBeNull();
+  });
+
+  it("a prior-year row is refused before reconciliation is considered (X2)", () => {
+    expect(crossEntityBlockKind(row({ txnDate: "2025-12-01" }), NOW)).toBe("prior_fiscal_year_cross_entity");
+    expect(crossEntityBlockKind(row({ ...SESSION, txnDate: "2025-12-01" }), NOW)).toBe(
+      "prior_fiscal_year_cross_entity",
+    );
+  });
+
+  it("a closed session beats the legacy mark; the legacy mark alone is reconciled_legacy", () => {
+    expect(crossEntityBlockKind(row(SESSION), NOW)).toBe("reconciled_session");
+    expect(crossEntityBlockKind(row(LEGACY), NOW)).toBe("reconciled_legacy");
+    // reconciled = false but a session pointer present still counts as a session.
+    expect(crossEntityBlockKind(row({ reconciledSessionId: "s1" }), NOW)).toBe("reconciled_session");
+  });
+
+  it("edge dates for now = 2026-10-01 and 2026-06-30", () => {
+    expect(crossEntityBlockKind(row({ txnDate: "2026-06-30" }), NOW)).toBe("prior_fiscal_year_cross_entity");
+    expect(crossEntityBlockKind(row({ txnDate: "2026-07-01" }), NOW)).toBeNull();
+    expect(crossEntityBlockKind(row({ txnDate: "2026-06-30" }), new Date(2026, 5, 30))).toBeNull();
   });
 });
 

@@ -24,6 +24,10 @@ import TxnDonorActions from "@/components/admin/ledger/txn-donor-actions";
 import ReceiptWaiverControl from "@/components/admin/ledger/receipt-waiver-control";
 import RowHighlighter from "@/components/admin/ledger/row-highlighter";
 import SweepPrefillLauncher from "@/components/admin/ledger/sweep-prefill-launcher";
+import ReceiptIssuerNote from "@/components/admin/ledger/receipt-issuer-note";
+import { listMoveRegisterContext } from "@/lib/ledger-fund-move-preview";
+import { getLatestFundMove } from "@/lib/ledger-audit";
+import { buildSweepMemo } from "@/lib/ledger-correction";
 import { isUuid } from "@/lib/utils";
 import type { LedgerTransaction, LedgerFund, LedgerBankAccount, LedgerCategory } from "@/lib/db/schema";
 
@@ -158,7 +162,8 @@ export default async function AdminLedgerFundPage({
     }
   }
 
-  const [bankAccounts, categories, transactions, fiscalYears, ackSummary, budgetLines] = await Promise.all([
+  const [bankAccounts, categories, transactions, fiscalYears, ackSummary, budgetLines, moveContext] =
+    await Promise.all([
     getBankAccounts(entity.id),
     getCategories(entity.id),
     listTransactions(entity.id, {
@@ -167,19 +172,31 @@ export default async function AdminLedgerFundPage({
       missingReceipt: missingReceiptFilter || undefined,
     }),
     listLedgerFiscalYears(entity.id),
-    // Only fetch ack statuses for Foundation entities (donationsDeductible=true)
-    isFoundationEntity && canRecord
+    // Fetch ack statuses for EVERY entity's register (DECISION-112): a receipt
+    // follows its issuer, so a gift moved from the Foundation to the Club keeps
+    // its receipt, and the Club row's Delete dialog must know it is "sent". The
+    // table is tiny and the map below is keyed by transaction id, so rows of
+    // other entities are unaffected. The ack CONTROLS stay Foundation-only.
+    canRecord
       ? listAcknowledgmentsSummary({ pendingOnly: false, includePii: false })
       : Promise.resolve([]),
     // Explicit budget-line link (B-30, DECISION-061) — every expense-flow
     // budget line for this entity, threaded to the picker in both the
     // transaction form and per-row edit actions.
     getBudgetLineOptions(entity.id),
+    // Every entity's funds and which entities can receive money: the Move
+    // button's eligibility is decided over ALL funds (a gift can move across
+    // entities), not just this register's.
+    canRecord
+      ? listMoveRegisterContext()
+      : Promise.resolve({ funds: [], entityIdsWithActiveBank: [] as string[] }),
   ]);
 
   // Build txnId → ack status map for Foundation income rows
   const ackStatusByTxnId = new Map<string, "pending" | "sent">();
+  const ackByTxnId = new Map<string, (typeof ackSummary)[number]>();
   for (const ack of ackSummary) {
+    ackByTxnId.set(ack.donationTxnId, ack);
     ackStatusByTxnId.set(
       ack.donationTxnId,
       ack.sentAt !== null ? "sent" : "pending",
@@ -246,10 +263,14 @@ export default async function AdminLedgerFundPage({
       (t) => t.id === sweepFromParam && t.flow === "income" && !t.transferGroupId,
     );
     if (source) {
+      // The memo's "moved from ... on <date>" comes from the move's own audit
+      // row (its New York date), never the page-load clock; a row that was
+      // never moved gets no "moved" wording at all.
+      const latestMove = await getLatestFundMove(source.id).catch(() => null);
       sweepPrefill = {
         bankAccountId: source.bankAccountId ?? null,
         amountCents: source.amountCents,
-        memo: `Sweep of ${source.party?.trim() ? `${source.party.trim()} gift` : "a gift"} moved from Administrative on ${nowIso.slice(0, 10)}`,
+        memo: buildSweepMemo({ party: source.party, move: latestMove }),
       };
     }
   }
@@ -541,6 +562,22 @@ export default async function AdminLedgerFundPage({
                             ackStatus={ackStatusByTxnId.get(txn.id) ?? null}
                           />
                         )}
+                        {/* Read-only: a receipt issued by the OTHER entity (a gift moved over
+                            from the Foundation keeps the Foundation's receipt). */}
+                        {canRecord && !isTransfer && txn.flow === "income" && (() => {
+                          const ack = ackByTxnId.get(txn.id);
+                          return ack ? (
+                            <ReceiptIssuerNote
+                              doneeEntityId={ack.doneeEntityId}
+                              rowEntityId={entity.id}
+                              issuerName={
+                                entities.find((e) => e.id === ack.doneeEntityId)?.shortName ??
+                                ack.entityName
+                              }
+                              sentAt={ack.sentAt}
+                            />
+                          ) : null;
+                        })()}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums">
                         <span
@@ -579,6 +616,9 @@ export default async function AdminLedgerFundPage({
                             transferPartner={partner ?? null}
                             entityId={entity.id}
                             funds={allFunds}
+                            moveFunds={moveContext.funds}
+                            entityIdsWithActiveBank={moveContext.entityIdsWithActiveBank}
+                            foundationPointer={!isFoundationEntity && txn.flow === "income" && !isTransfer}
                             categories={categories}
                             bankAccounts={bankAccounts}
                             budgetLines={budgetLines}

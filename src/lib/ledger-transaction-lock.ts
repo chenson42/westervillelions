@@ -84,24 +84,59 @@ export function moveBlockKind(
   return null;
 }
 
-export type MoveTierReason = "reconciled" | "prior_fiscal_year";
+export type MoveTierReason = "reconciled" | "prior_fiscal_year" | "cross_entity";
 
 /**
  * Permission tier for a move. `manage` (LEDGER_MANAGE) when the row is
- * reconciled by either mark or dated before the current fiscal year;
- * otherwise `record` (LEDGER_RECORD). Computed from the row, never from the
- * client.
+ * reconciled by either mark, dated before the current fiscal year, or the
+ * move crosses entities (DECISION-112: every cross-entity move changes two
+ * entities' totals and two bank accounts' book balances); otherwise `record`
+ * (LEDGER_RECORD). Computed from the row and the destination, never from the
+ * client. `cross_entity` is listed first when present.
  */
 export function requiredMoveTier(
   row: Pick<LockableRow, "reconciled" | "reconciledSessionId" | "txnDate">,
   now: Date,
+  opts: { crossEntity?: boolean } = {},
 ): { tier: "record" | "manage"; reasons: MoveTierReason[] } {
   const reasons: MoveTierReason[] = [];
+  if (opts.crossEntity) reasons.push("cross_entity");
   if (isTransactionReconciled(row)) reasons.push("reconciled");
   if (getFiscalYear(new Date(row.txnDate + "T00:00:00")) < currentFiscalYear(now)) {
     reasons.push("prior_fiscal_year");
   }
   return { tier: reasons.length > 0 ? "manage" : "record", reasons };
+}
+
+/**
+ * Why a CROSS-ENTITY move is refused on row state (DECISION-112: no reconciled
+ * carve-out, because a cross-entity move changes `bank_account_id`, the column
+ * reconciliation is keyed on). The code names reuse the lock kind names so the
+ * classifier, LOCK_COPY and the codes cannot diverge.
+ */
+export type CrossEntityStateBlock =
+  | "prior_fiscal_year_cross_entity"
+  | "reconciled_session"
+  | "reconciled_legacy"
+  | "matched_open_session";
+
+/**
+ * The PURE part of the cross-entity state block, in the X2 order: refuse the
+ * impossible first (a prior-year row can never succeed, so listing "reconciled"
+ * first would send the treasurer through a reopen and an unmatch only to hit a
+ * dead end), then a closed session, then the legacy mark. `matched_open_session`
+ * needs the database and is evaluated by the query layer after this.
+ */
+export function crossEntityBlockKind(
+  row: Pick<LockableRow, "reconciled" | "reconciledSessionId" | "txnDate">,
+  now: Date,
+): Exclude<CrossEntityStateBlock, "matched_open_session"> | null {
+  if (getFiscalYear(new Date(row.txnDate + "T00:00:00")) < currentFiscalYear(now)) {
+    return "prior_fiscal_year_cross_entity";
+  }
+  if (row.reconciledSessionId) return "reconciled_session";
+  if (row.reconciled) return "reconciled_legacy";
+  return null;
 }
 
 /** The one string the reconcile route and the register share. */

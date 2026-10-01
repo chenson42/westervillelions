@@ -649,6 +649,36 @@ export async function getLaterClosedSessionForAccount(
   return blocking ?? null;
 }
 
+/**
+ * EVERY closed session on the account with a later statement period end,
+ * NEWEST FIRST (DECISION-113 X8). `getLaterClosedSessionForAccount` returns the
+ * EARLIEST such session, but a reopen is refused while ANY later session is
+ * closed, so that first name is itself not reopenable; the move dialog's
+ * checklist needs the whole list, newest first ("reopen this one first").
+ * `getLaterClosedSessionForAccount` is deliberately left alone.
+ */
+export async function listLaterClosedSessionsForAccount(
+  bankAccountId: string,
+  statementPeriodEnd: string,
+): Promise<BlockingSession[]> {
+  const rows = await db
+    .select({
+      id: ledgerReconciliationSessions.id,
+      statementPeriodStart: ledgerReconciliationSessions.statementPeriodStart,
+      statementPeriodEnd: ledgerReconciliationSessions.statementPeriodEnd,
+    })
+    .from(ledgerReconciliationSessions)
+    .where(
+      and(
+        eq(ledgerReconciliationSessions.bankAccountId, bankAccountId),
+        eq(ledgerReconciliationSessions.status, "closed"),
+      ),
+    )
+    .orderBy(desc(ledgerReconciliationSessions.statementPeriodEnd));
+  // Date-string comparison in JS, consistent with getLaterClosedSessionForAccount.
+  return rows.filter((r) => r.statementPeriodEnd > statementPeriodEnd);
+}
+
 // ---------------------------------------------------------------------------
 // Discard an open session
 // ---------------------------------------------------------------------------

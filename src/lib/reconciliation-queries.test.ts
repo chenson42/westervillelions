@@ -47,6 +47,7 @@ import {
   getTieOutAssembly,
   getBankLinesForSession,
   getMatchedTransactionsForSession,
+  listLaterClosedSessionsForAccount,
   type BankLineWithMatch,
 } from "./reconciliation-queries";
 import type { LedgerBankLine } from "./db/schema";
@@ -225,5 +226,25 @@ describe("getMatchedTransactionsForSession", () => {
       byLine.set(r.bankLineId, arr);
     }
     expect(byLine.get("line-1")).toEqual(["match-1", "match-2"]);
+  });
+});
+
+describe("listLaterClosedSessionsForAccount (DECISION-113 X8)", () => {
+  it("returns only sessions ending after the given period, in the order the query returned them (newest first)", async () => {
+    mockDbState.queue.push([
+      { id: "s-oct", statementPeriodStart: "2026-10-01", statementPeriodEnd: "2026-10-31" },
+      { id: "s-sep", statementPeriodStart: "2026-09-01", statementPeriodEnd: "2026-09-30" },
+      { id: "s-aug", statementPeriodStart: "2026-08-01", statementPeriodEnd: "2026-08-31" },
+      { id: "s-jul", statementPeriodStart: "2026-07-01", statementPeriodEnd: "2026-07-31" },
+    ]);
+    const later = await listLaterClosedSessionsForAccount("acct-1", "2026-08-31");
+    expect(later.map((s) => s.id)).toEqual(["s-oct", "s-sep"]);
+  });
+
+  it("is empty when nothing later is closed", async () => {
+    mockDbState.queue.push([
+      { id: "s-jul", statementPeriodStart: "2026-07-01", statementPeriodEnd: "2026-07-31" },
+    ]);
+    expect(await listLaterClosedSessionsForAccount("acct-1", "2026-07-31")).toEqual([]);
   });
 });

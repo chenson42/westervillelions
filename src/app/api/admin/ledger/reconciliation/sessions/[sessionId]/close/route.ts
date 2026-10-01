@@ -17,7 +17,9 @@
  *
  * Response 200: { sessionId, status: 'closed', clearedCount }
  * 400 — unmatched in-period lines remain, a matched transaction is no longer
- *       posted, or the tie-out doesn't balance (delta included in the body)
+ *       posted, a matched transaction belongs to a different bank account than
+ *       the session (`transaction_account_mismatch`, ids listed; B-105 belt),
+ *       or the tie-out doesn't balance (delta included in the body)
  * 404 — session not found
  * 409 — session is not open
  */
@@ -74,17 +76,44 @@ export async function POST(
 
     // 3. Defensive re-check: every matched transaction is still posted
     const matchedTransactionIds = await getMatchedTransactionIdsForSession(sessionId);
+    let matchedRows: { id: string; status: string; bankAccountId: string | null }[] = [];
     if (matchedTransactionIds.length > 0) {
       const statusRows = await db
-        .select({ id: ledgerTransactions.id, status: ledgerTransactions.status })
+        .select({
+          id: ledgerTransactions.id,
+          status: ledgerTransactions.status,
+          bankAccountId: ledgerTransactions.bankAccountId,
+        })
         .from(ledgerTransactions)
         .where(inArray(ledgerTransactions.id, matchedTransactionIds));
 
+      matchedRows = statusRows;
       const notPosted = statusRows.find((r) => r.status !== "posted");
       if (notPosted) {
         return NextResponse.json(
           {
             error: `Transaction ${notPosted.id} is no longer posted (status: ${notPosted.status}) — unmatch it before closing`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    // 3b. Every matched transaction must sit on THIS session's bank account.
+    // The match route enforces it, but a concurrent cross-entity move or a
+    // bank-account edit can leave an orphan; closing would stamp that row
+    // reconciled against the wrong account's statement (B-105 / F1).
+    if (matchedTransactionIds.length > 0) {
+      const wrongAccountIds = matchedRows
+        .filter((r) => r.bankAccountId !== reconSession.bankAccountId)
+        .map((r) => r.id);
+      if (wrongAccountIds.length > 0) {
+        return NextResponse.json(
+          {
+            error:
+              "One or more matched transactions belong to a different bank account than this session — unmatch them before closing",
+            code: "transaction_account_mismatch",
+            invalidTransactionIds: wrongAccountIds,
           },
           { status: 400 },
         );

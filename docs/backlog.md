@@ -34,8 +34,19 @@ was deleted on the strength of this review alone.
 - B-60 — Trust-content follow-ups from the site review
 - B-62 — Add www.westervillelions.org in the Vercel dashboard
 - B-63 — `ackNotRequired`-category acknowledgments never generate a letter, even by request
+- B-108 — Paid reimbursements must be reconcilable and correctable.
+- B-111 — Treasurer permission baseline: bind or split `ledger.manage`, fix two gating mismatches.
 
 **Soon**
+- B-110 — Officer-handover screen.
+- B-109 — Ledger structure admin: bank accounts, opening balances, funds, entity.
+- B-112 — Treasury Guide refresh and handover/close checklists.
+- B-113 — Start-a-new-fiscal-year flow.
+- B-115 — Complete audit coverage and one audit page.
+- B-122 — Email operations for the treasurer role.
+- B-120 — Zeffy donation import.
+- B-125 — `sync-roster.ts` and `import-roster.ts` write a `members.userId` column that does not exist.
+- B-126 — Prior-fiscal-year cross-entity move has no web path
 - B-96 — Deferred fund-move shapes (expense moves first)
 - B-93 — Detector for public money entered in the Administrative fund
 - B-92 — Retire or govern the legacy per-row reconcile toggle
@@ -64,10 +75,20 @@ was deleted on the strength of this review alone.
 - B-87 — Email Queue tables clip their right-hand columns on a phone
 - B-89 — Reimbursements admin table: Mark Paid and Reject are off-screen at 360px
 - B-91 — Reconciliation session detail page scrolls sideways on a phone
-- B-98 — Guide and register pointer for "recorded on the Foundation's books, cash in the Club's account."
+- B-98 — Mirror-direction pointer: a Club entry whose money is in the Foundation's bank account (delete here, enter on the Foundation's register)
 - B-99 — Make lock next steps visible on phones, and add the bank-account help text.
+- B-105 — The reconciliation match route re-verifies the transaction under a lock
 
 **Later**
+- B-114 — Fiscal-year close.
+- B-123 — Complete read-only year export.
+- B-118 — Donor merge.
+- B-119 — Undo "Mark sent" on an acknowledgment letter.
+- B-121 — Roster import UI.
+- B-116 — Reconciliation input flexibility.
+- B-124 — Compliance filing editing.
+- B-127 — Bank-account PATCH re-verifies "not matched" under a lock
+- B-117 — Dues "Mark Paid" should ask the payment method.
 - B-97 — Dues-synced row deletion and the fiscal-year delete gate
 - B-95 — Migrate the seven existing `insert(ledgerAuditLog)` sites to `recordLedgerAudit()`
 - B-94 — Consolidate duplicated ledger transaction guards
@@ -80,6 +101,9 @@ was deleted on the strength of this review alone.
 - B-101 — Sent-statement warning covers only the row's own month.
 - B-102 — Sweep prefill memo date.
 - B-103 — DOM component-test harness.
+- B-104 — Club-to-Foundation move (the mirror direction as a move)
+- B-106 — Tighten the acknowledgment issuer column
+- B-107 — Duplicate-candidate warning cannot see a bundled deposit
 - B-81 — Stranded `pending` email-queue rows are invisible on the Email Queue page and the nav badge
 - B-79 — Let the treasurer record an earmark on a public fund so a deliberate multi-year hold stops tripping the aged-fund warning
 - B-78 — Time-of-day / duration fan-out for same-title sibling events (bulk-edit)
@@ -333,17 +357,79 @@ was deleted on the strength of this review alone.
   should be told directly that acknowledgments he records against these categories won't show up in
   Generate Letters.
 
+- [ ] **B-108 — Paid reimbursements must be reconcilable and correctable.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-1; audit priority P0; audit top-10 rank 1)
+  **Verify first (code reading only; no live DB was queried).** The pay route inserts the ledger row with no `bankAccountId` and no `checkNumber` and stamps it approved-and-locked. `getCandidateTransactionsForMatching()` requires `bankAccountId = session account`, so the row can never appear as a match candidate, cannot be edited to add the account, and the bank's check line is left unmatched. The likely workaround, "create from bank line", would record the expense twice. Before scheduling, run a read-only query for `ledger_transactions` rows with a linked `ledger_reimbursements.ledger_transaction_id` and a NULL `bank_account_id`, and for expense rows created from a bank line that duplicate a reimbursement's amount and date. If no reimbursement check has cleared yet, the fix is preventive rather than corrective.
+  **Fix shape:** (a) the pay dialog collects the bank account (default pre-selected, as the transaction form does) and check number, and the route writes both; (b) a narrow, allowlisted, audited carve-out in the approved-row lock (modelled on DECISION-099's `donorId` carve-out) lets a `ledger.record` holder set `bankAccountId`/`checkNumber` on a reimbursement-derived row that has none, so existing rows can be repaired without a script; (c) decide whether a paid reimbursement may be corrected (category, date, method) through an audited edit instead of an offsetting entry. None of this may change a closed session's arithmetic.
+  **Related:** B-85 (the missing reverse marker; only notes the symptom). Repair today is the `backfill-bank-account.ts` script or SQL. Audit rows M10, M17, R3, R4. Needs Phase 1.
+
+- [ ] **B-111 — Treasurer permission baseline: bind or split `ledger.manage`, fix two gating mismatches.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-4; audit priority P0, mostly a role-binding decision; audit top-10 rank 2)
+  `ledger.manage` is bound to `admin` only, so a non-admin `treasurer` cannot reopen a reconciliation, edit a fund, manage categories, change settings, add a compliance filing, waive a receipt, move a reconciled or prior-year entry, or delete a donor. (Today's treasurer is presumably an admin, which hides all of this; audit open question 1 is whether the successor will be one. If yes, this item shrinks to the two gating fixes below.) Decide which of those abilities the `treasurer` role should hold by default and either bind `ledger.manage` to `treasurer` in a migration or split it into narrower keys (for example a corrections key versus a destructive-admin key). In the same change fix two mismatches: (1) the budget page "+ Add category" button is shown to `budget.edit` holders but `POST /categories` requires `ledger.manage`, so the treasurer and budget_committee get a 403; (2) the Email Queue nav entry carries no `requiredFeature` while its page requires `admin.users` (the access fix is B-122). Add a test that every control rendered for a permission is accepted by the server for the same permission. Widening a nav permission widens proxy access (CLAUDE.md, Admin-Area Protection): confirm every page under a widened segment gates independently. **Related:** B-97 (inconsistent record-versus-manage gate for prior-year deletes), B-16 (standalone category management, listed in the obsolete tier). Audit rows Y7, Y9, M5, H5. Needs a Phase 1 role-binding decision from the treasurer.
+  **Amendment (2026-10-01, Phase 6 of the cross-entity work-log):** Add: cross-entity Move, and the Reopen step its checklist depends on, both need `ledger.manage`, so a successor on the `treasurer` role alone can read the checklist but cannot act on it. Someone with production access should confirm the current treasurer's account also holds `admin` (QA only read the dev role table).
+
 ---
 
 ## Soon
 
-- [ ] **B-98 — Guide and register pointer for "recorded on the Foundation's books, cash in the Club's account."**
-  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
-  Add the Foundation-case paragraph above to the Treasury guide ("Moving an entry to another fund" and "Deleting an entry"), and consider a one-line pointer in the Delete dialog on Foundation income rows ("If this gift's money is in the Club's bank account, delete it here, re-enter it as Activity Fund income on the Club's account, and record the sweep"). Also add a sentence to B-96's cross-entity item: the unsafe case is cash in the *Foundation's* account; cash in the *Club's* account has a documented delete, re-enter, sweep path. Why: it is the requester's own case and the Foundation register offers no explanation (Phase 3 D1). Small.
+- [ ] **B-126 — Prior-fiscal-year cross-entity move has no web path.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md`; DECISION-112)
+  The cell is refused with `prior_fiscal_year_cross_entity` and the Move button is omitted on prior-year Foundation rows
+  (X10), so a June gift found at the July reconciliation — exactly the shape that prompted the feature — has nothing to do
+  in the UI, and a receipted gift cannot be deleted (409 `receipt_sent`), so the fallback today is SQL. (a) **Now, cheap:**
+  show Move disabled with the reason ("Gifts from an earlier fiscal year cannot be moved to the Club yet; ask the board")
+  instead of omitting it, and add one guide sentence naming the interim path. (b) **After the treasurer answers whether
+  prior-year moves should be allowed:** either allow it under `ledger.manage` with a stronger warning (it restates two
+  entities' totals for a closed year, which feeds each entity's filed return) or specify the supported correction (e.g. a
+  dated refund entry plus re-entry) so it is a documented web procedure. Priority: Soon — the real risk to the
+  "next treasurer never needs SQL" goal.
+
+- [ ] **B-110 — Officer-handover screen.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-3; audit priority P1; audit top-10 rank 3)
+  One page (visible to the treasurer, president, secretary and admin) showing: who `resolveTreasurer()` resolves to and, if it fails, why (`none`, `multiple`, `no_board_group`); who holds the `treasurer` role; every `ledger.record` holder (so "a submitter cannot pay their own reimbursement" stays satisfiable); and the letter-signature name versus the resolved Treasurer. A guided "Hand over to [member]" action sets the Board position and grants or revokes the `treasurer` role in the safe order, and offers to clear a stale hand-typed signature. Today this is three order-sensitive pages (role in Users, position in Groups, signature in Letter Template); if the outgoing Treasurer's Board position is not cleared first, Send to Board and dues reminders hard-block with "multiple treasurers". **Needs a Phase 1 on who may perform it:** the role change is `admin.users` (admin only) today, and an outgoing non-admin treasurer cannot do it. Audit rows Y15, M16, H2, H3, H4, H6. The written (guide) half is B-112.
+
+- [ ] **B-109 — Ledger structure admin: bank accounts, opening balances, funds, entity.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-2; audit priority P1; audit top-10 rank 4)
+  A `ledger.manage` page under Settings to add, rename, deactivate and set-default **bank accounts** (institution, type and **opening balance**, which has no writer anywhere: `ledger_bank_accounts.opening_balance_cents`, DECISION-091, is touched only by import scripts), create and deactivate **funds**, and edit **entity** details (name, EIN, fiscal-year end; the schema comment says "editable via ledger.manage" but no route exists). Audited. Include "why can't I delete this" explanations (an account with transactions can only be deactivated). Replaces the guide's "adding an account needs a developer script." Fund edit (name, opening balance) today is also unaudited and unlocked against reconciled periods and sent statements, so editing it after a statement went out silently rewrites history; this item should lock or warn on that (see B-115 for the audit half). Audit rows Y3 to Y6. Priority note: moves from "rare" to "next" if the club changes banks or adds an account soon (audit open question 3). Needs Phase 1.
+
+- [ ] **B-112 — Treasury Guide refresh and handover/close checklists.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-5; audit priority P1; audit top-10 rank 5)
+  The guide is the successor's only documentation. **Fix four stale statements:** (1) `budgeting-section.tsx:63-71` still tells the treasurer to click "Seed from last year", which no longer exists in any UI (`budget-fund-editor.tsx:152-154`; removed on purpose, B-28); (2) `settings-section.tsx:34-35` and the copy in `ledger-settings-form.tsx:105-106` say "at or above" the approval threshold, but `transactions/route.ts:361` approves only strictly above; (3) the v1.86 changes are undocumented: the register's reconcile checkbox is locked for session-cleared rows, a changed bank account on an entry matched in an open session is refused, and the Delete section omits the 10-to-500-character reason rule and the 90-day "Recent corrections" list on Compliance; (4) the `page.tsx` comment says "twelve section files" and there are thirteen.
+  **Add:** a monthly close checklist (record, reconcile, statement, acknowledgments, dues); start-a-fiscal-year and year-end checklists; officer handover, app side; the Send to Board panel and corrected resend; Settings sub-pages (Categories, Acknowledgment Letter), that Settings needs manage, and category merge/deactivate; dues season setup and `/admin/dues/reminders`; donors, acknowledgments and emailing letters (**reverses the 2026-07-21 decision to exclude them**; see B-45, B-51, B-63); budget approve, lock and unlock; the email queue and retry; the Chase CSV format, 2 MB cap and one-upload rule; compliance filing status; B-98's Foundation-case paragraph; and a named developer contact for deploy, keys and backups (audit open question 5). Extend the release-notes skill so it requires a guide update for any new treasurer surface. Cheap, and unlocks B-110 and B-113. Related: B-07 (guide print). Audit rows Y2, Y7, Y10, Y11, Y13, Y15, M16, D2, H7, X8.
+
+- [ ] **B-113 — Start-a-new-fiscal-year flow.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-6; audit priority P1; audit top-10 rank 6)
+  One page, in order: confirm the prior year is closed (B-114); create next FY's budget from last year as an **editable starting point, including cause lines** (B-37); bulk-retire categories unused this FY (replaces `deactivate-unused-categories.ts --fy=YYYY --apply`); configure the dues season; confirm compliance filings; review settings. Delete the dead `POST /budgets/seed` route and its seed-computation code (B-28) as part of it. **Phase 1 must ask the treasurer why the old "Seed from last year" button was removed (B-28) before reviving it.** Today year-start is re-typing every budget line by hand, a script for bulk retirement, and a stale guide pointing at the removed button. Audit rows Y1, Y8, Y10, Y14. Open question 4: should closing the prior year be mandatory or advisory before a new budget is approved?
+
+- [ ] **B-115 — Complete audit coverage and one audit page.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-8; audit priority P1; audit top-10 rank 7)
+  A successor must be able to answer "what did my predecessor change, and why." Record ordinary transaction edits (field-level before/after), fund and opening-balance edits, settings, dues edits, donor edits and deletes, filings, and session close/reopen in `ledger_audit_log` via `recordLedgerAudit()` (**absorbs B-95**; also covers the legacy reconcile toggle that writes no audit row, B-92), and add `/admin/ledger/audit` with filters by actor, record, action and date range beyond 90 days. Today the only reader is "Recent corrections" on Compliance (moves and deletes only, 90 days, 25 rows); no page lists category, discard, template or donor-link rows. Must keep reasons and names off any member-facing surface (the existing `ledger-audit.ts` import-guard rule). **Related defect, not otherwise filed:** `PATCH /transactions/[id]` never reads the approval-threshold setting (the check runs only at creation), so a small posted expense can be edited upward without approval; decide in Phase 1 whether that belongs here or as its own fix. Audit rows A1, M3, Y3.
+
+- [ ] **B-122 — Email operations for the treasurer role.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-14; audit priority P1; audit top-10 rank 8)
+  A narrow permission (view and retry failed emails) bindable to `treasurer`, instead of overloading `admin.users`; hide the Email Queue nav entry from those who lack it (today it is visible to every admin-area user, who is then redirected away; see B-111); a manual "dismiss with reason" for stuck rows (today SQL). **When scheduled, fold in B-81 (stranded `pending` rows invisible) and B-72 (permanent versus transient failure in the retry UI); those stay open until then.** Statements, receipts and reminders all depend on mail, and a non-admin treasurer today cannot see or retry a failed send. A bounce is still invisible (B-47). Related: B-66, B-74. Audit rows X1, X2, X3.
+
+- [ ] **B-120 — Zeffy donation import.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-12; audit priority P1; audit top-10 rank 10)
+  Upload Zeffy's donation export; propose Activity-fund income rows (payment method `zeffy`), match donors by email, de-duplicate on the Zeffy transaction id, and never post public money to Administrative (this also delivers B-93's detector at the point of entry). Today every donation is hand-keyed, one entry each, the biggest recurring data-entry job and the likeliest source of wrong-fund entries. Related: B-34 (Zeffy pass-through Activity to Foundation), B-93, B-23 (batch-match on the Monday lump payout). Zeffy 403s server-side fetches, so this is an upload, never a scrape (CLAUDE.md, Zeffy). Audit rows M2, M19.
+
+- [ ] **B-125 — `sync-roster.ts` and `import-roster.ts` write a `members.userId` column that does not exist.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, roster-script finding, Y12 and "Incidental defects" 6; **verified 2026-10-01 against `src/lib/db/schema.ts` and both scripts**; priority: Soon, small)
+  The analyst was right on the main point and **understated it**. Verified: (1) `members` has no `userId` column. The link runs the other way, `users.memberId` (schema.ts line 13, FK to `members.id`). `sync-roster.ts` does `eq(members.userId, existingUser.id)` (line 88) and inserts `userId` into `members` (lines 110, 131); `import-roster.ts` inserts `userId` into `members` (line 121). (2) Neither script supplies `email` when inserting a member, and `members.email` is `NOT NULL` (schema.ts line 26), so the insert would fail even with the `userId` fixed. (3) Both scripts create the `users` row first and the `members` row second, the reverse of the FK direction, and never set `users.memberId`, so even a successful run would leave no linked account, which CLAUDE.md treats as a defect ("members must always have user accounts"). (4) **The hard-coded personal path default is in both scripts, not only `import-roster.ts`:** `/Users/<name>/Downloads/Roster as of 2-3-2026...` at `import-roster.ts:147` and `sync-roster.ts:160`. It names a home directory, which sits against the No Personal Data invariant. These went unnoticed because `tsconfig.json` excludes `scripts/` from `pnpm exec tsc --noEmit`. A successor who finds them will assume they work.
+  **Fix shape:** either delete both scripts (if B-121 will replace them soon) or rewrite them to insert the `members` row first (with `email`), then upsert the `users` row with `memberId`, take the file path as a required CLI argument with no default, and have `sync-roster.ts` match existing members by email or `memberNumber` rather than the nonexistent column; reuse the `isActive`/`membershipStatus` rule from `src/lib/members.ts`. Optionally add the `scripts/` directory to a typecheck pass so schema drift is caught. Dry-run by default, `--apply` to write, like the other scripts. Related: B-121 (the UI that supersedes them).
+
+- [ ] **B-98 — Mirror-direction pointer: a Club entry whose money is in the Foundation's bank account.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; **re-aimed 2026-10-01** in Phase 3 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md`; DECISION-109/110/111/112)
+  The original item proposed a Delete-dialog pointer on Foundation income rows ("delete it here, re-enter it as Activity Fund income, then sweep"). That path is blocked once a receipt was sent (the hardened DELETE returns 409 `receipt_sent`), and the Foundation-to-Club direction is now served by Move (DECISION-112), so the item is re-aimed at the **mirror**: a Club entry whose money is actually in the Foundation's bank account. The supported path is delete the Club entry (a Club row cannot carry a receipt, so nothing blocks it) and enter the gift on the Foundation's register in the bank account the money landed in, which is bank-consistent on both sides. Deliverables: (a) a **static** one-line pointer in the Delete dialog on any Club income row ("If this gift's money is actually in the Foundation's bank account, delete this entry here and enter the gift on the Foundation's register, in the bank account the money landed in."), with no server field and no free-text heuristic (that is B-93's territory); (b) the same paragraph in the Treasury guide under "Deleting an entry"; (c) the same sentence as the denial reason when a Club Administrative income row lists the Foundation's Charitable fund as a denied Move destination (`club_to_foundation_not_supported`). **Ships in the cross-entity increment's UI** (Phase 3 design); keep open until it ships. Small.
 
 - [ ] **B-99 — Make lock next steps visible on phones, and add the bank-account help text.**
   (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
   (a) Show `LOCK_COPY[kind].nextStep` as wrapped visible text at every width, not `hidden sm:inline` plus a `title` on a disabled button (touch devices do not reliably surface it); the Move-disabled message already does this. (b) Add the Phase 1 Flow 3 help text to the edit form's bank-account field: "Pick the account the money actually went into. If it went into one account and was later moved to another, record a Transfer instead of editing this." Copy only.
+
+- [x] **B-105 — The reconciliation match route re-verifies the transaction under a lock.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md` as B-next-C; priority raised to Soon by the Phase 3 design, ruling X4; DECISION-112)
+  `reconciliation/sessions/[sessionId]/match/route.ts` reads each submitted transaction's `bank_account_id` and `reconciled` flag with a plain unlocked SELECT and inserts the match afterwards. A plain SELECT is not blocked by the cross-entity move's `FOR UPDATE`, and the match insert's key-share lock on the referenced row simply waits for the move to commit and then succeeds, so a match request whose read lands anywhere **inside the move transaction** (roughly the length of its round trips, not sub-millisecond as first written) can leave a Club row matched to a Foundation reconciliation session's bank line. The same read-then-write shape exists against the bank-account PATCH. Needs two admins acting on one row at once, and, contrary to this item's first draft, the close-time tie-out did not surface it (fixed in v1.87.0, see below), but it breaks the one invariant a cross-entity move relies on. Fix shape: run the insert in one transaction, re-select the submitted rows `FOR SHARE` (which waits for any in-flight `FOR UPDATE`), and re-check status, account and `reconciled = false` before inserting; return the existing 400/409 shapes. Live check 2c of the cross-entity work-log records whether the orphan is reproducible. Medium; pull it into the next ledger increment.
+  **Picked up 2026-10-01 (v1.87.0):** qa reproduced the race live 4/4 (F1 in the cross-entity work-log) and found close never checked a matched row's bank account. Fix shipped in the same release: the match route re-verifies account + posted status under FOR UPDATE and 409s; the close route refuses (400) when any matched row's bank account differs from the session's.
 
 - [ ] **B-96 — Deferred fund-move shapes (expense moves first).**
   (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109)
@@ -357,6 +443,7 @@ was deleted on the strength of this review alone.
   account the cash never touched). Enabling an expense cell is a one-branch flip in `checkFundMove()`, which already
   has the branch and a unit-test slot. Priority: first follow-up if the treasurer hits an expense mis-booking.
   **Amendment (2026-10-01, Phase 6 of the move-or-cancel work-log):** two properties the expense cell will bring. (1) Enabling Activity to Administrative expense moves can un-gate a month (an unreconciled Administrative expense row gates; the same row in Activity does not, per T20), so the dialog and release note must say so then; v1 income moves cannot (uncleared deposits never gate, DECISION-059). (2) When the cross-entity item is designed, run the direction policy before the bank-account assertion so a cross-entity request returns 403 `cross_entity` with the policy reason instead of 409 `bank_account_entity_mismatch`.
+  **Amendment (2026-10-01, Phase 3 of the cross-entity work-log):** the cross-entity item above is now partly decided. One cell, income Foundation Charitable to Club Activity, shipped as DECISION-112 (the unsafe case named earlier is cash in the *Foundation's* account; cash in the *Club's* account is exactly what that cell serves). The mirror direction is B-104; cross-entity **expense** moves and Foundation-to-Administrative stay denied. The direction-policy-before-bank-assertion reordering this item asked for is done in DECISION-113.
 
 - [ ] **B-93 — Detector for public money entered in the Administrative fund.**
   (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109)
@@ -957,6 +1044,45 @@ was deleted on the strength of this review alone.
 
 ## Later
 
+- [ ] **B-127 — Bank-account PATCH re-verifies "not matched" under a lock.**
+  (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md`; DECISION-112)
+  The match route (v1.87.0, B-105) re-verifies under `FOR UPDATE`, but the bank-account PATCH still has a read-then-write
+  against reconciliation; the close-time refusal is the only backstop. Re-select the row `FOR UPDATE` inside the PATCH
+  transaction and re-check "not matched in an open session" before writing. Optional with it: make the close-refusal toast
+  list the offending entries, not only the message. Priority: low.
+
+- [ ] **B-114 — Fiscal-year close.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-7; audit priority P2; audit top-10 rank 9)
+  An explicit "close FY" that soft-locks prior-year transactions (edits and deletes then need `ledger.manage` plus a reason, audited), gated on a checklist (all months reconciled, all statements sent, acknowledgments sent). Reversible by a manager with a reason. Today there is no concept of "FY2026 is done": prior-year rows stay editable by `ledger.record`, and the only lock is the budget approve-and-lock. Resolves B-97's inconsistent record-versus-manage gate for prior-year deletes. Pairs with B-123 (the archive export) and B-113 (the start-of-year flow checks it). Audit rows E2, C4.
+
+- [ ] **B-123 — Complete read-only year export.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-15; audit priority P2)
+  A CSV or ZIP per fiscal year with every ledger column (check number, bank account, donor, budget line, receipt reference, reconciliation session), the donor and acknowledgment list, receipts, and sent letters, for the audit committee and the successor. Fixes the current transactions CSV's omissions (no donor, check number or bank-account columns; no donor-level export for Schedule B). Pairs with B-114. Audit rows D6, E3, C4.
+
+- [ ] **B-118 — Donor merge.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-11a; audit priority P2)
+  Pick a survivor, re-point transactions and acknowledgments, union emails, audit it; refuse if both donors have sent letters unless the treasurer confirms. Today merging is impossible: the only option is hard delete (manage), which sets transaction and acknowledgment FKs to NULL, and re-linking is manual. Audit row D3.
+
+- [ ] **B-119 — Undo "Mark sent" on an acknowledgment letter.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-11b; audit priority P2)
+  With a reason, audited, using the durable-claim helpers (DECISION-102/103); **never a bare `sentAt = null`**. Today there is no unmark action and regenerate is refused after `sentAt`, so a wrongly marked letter is fixed in SQL. Because it reverses a durable "this was sent" claim, it falls under the Bug-Fix Variant's durable-claim exception: no Phase 2 skip and no abbreviated Phase 3, and it must not ride along with an unrelated change. Related: B-70, B-73, B-47 (no bounce visibility; the UI must keep saying "Emailed", never "Delivered"). Audit row D4.
+
+- [ ] **B-121 — Roster import UI.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-13; audit priority P2; the broken-scripts half is filed separately as B-125)
+  Upload the LCI roster CSV, show a dry-run diff (add, update, deactivate), then apply; replaces `sync-roster.ts` and `import-roster.ts`. Dues cohorts depend on an accurate roster, and today the annual refresh is a script run by a developer. Do not build this on the existing scripts' linkage logic (see B-125). Must route through the same `isActive`/`membershipStatus` derivation as the rest of `src/lib/members.ts`, and must not write personal data into the repo. Audit row Y12.
+
+- [ ] **B-116 — Reconciliation input flexibility.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-9; audit priority P2)
+  Edit an open session's period and balances (no PATCH exists; today a typo means Discard and recreate, and a closed session needs Reopen then Discard under manage); replace the CSV in an open session (one upload per session today); make the bank-statement parser pluggable. Chase format is the only parser, so a bank change is a developer task: this moves from "fine" to "blocker" if the club changes banks (audit open question 3). Related: B-22 (batch-match correction), B-23 (auto-suggest a batch match). Audit rows M11, M13.
+
+- [ ] **B-124 — Compliance filing editing.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-16; audit priority P3)
+  A UI for the existing filing-metadata PATCH (agency, title, due date; the API exists with no UI caller) and the `N/A` status, which cannot be set today. Audit row C2.
+
+- [ ] **B-117 — Dues "Mark Paid" should ask the payment method.**
+  (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-10; audit priority P3)
+  The Mark Paid button hard-codes method `zeffy` even for a check. Ask the method, or default from the member's last payment. Small. Related: B-97 (deleting through the register orphans the dues link). Audit row M18.
+
 - [ ] **B-100 — "Moved from Administrative" marker (and optional History) in the register.**
   (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
   Phase 1 Flow 1 step 8 promised the Activity register would show the moved gift with a note; only the compliance page shows it today. Needs a batched lookup on `ix_ledger_audit_log_transaction` for the rows on the page; a moved row later deleted detaches (FK is `ON DELETE SET NULL`), which is acceptable. Suggestion-grade, not a defect.
@@ -968,10 +1094,24 @@ was deleted on the strength of this review alone.
 - [ ] **B-102 — Sweep prefill memo date.**
   (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
   The prefilled memo says "moved from Administrative on <date>" using the UTC date of the page load (`nowIso.slice(0, 10)`), which can read as tomorrow after about 8 pm Eastern, and it says "moved" even if a hand-built `sweepFrom` link names a row that was never moved. Use the move's audit date (or drop the date). Very low; the treasurer edits the memo anyway.
+  **Update (2026-10-01, Phase 3 of the cross-entity work-log):** addressed by the cross-entity increment (DECISION-113 item 7): the memo takes its source label and date from the move's audit row and makes no "moved" claim when there is none. Close this item when that increment ships.
 
 - [ ] **B-103 — DOM component-test harness.**
   (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109/110/111)
   The dialogs' state machines (stay open on a failed delete, refresh only on Done) are asserted through pure helpers and source checks. A jsdom plus testing-library setup would be a dependency decision; only worth it if more dialog-heavy features follow.
+
+- [ ] **B-104 — Club-to-Foundation move (the mirror direction as a move).**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md` as B-next-B; DECISION-112)
+  Deferred. The cell is denied as its own branch (`club_to_foundation_not_supported`). Today's answer is delete the Club entry and enter the gift on the Foundation's register (B-98). Revisit only if the treasurer hits a case delete-and-re-enter cannot serve. Conditions if it is ever enabled: it lands in the Foundation's Charitable fund on a **picked Foundation account**; `LEDGER_MANAGE`; a **board-minute reference required** (otherwise it bypasses the sweep's gate); a new Foundation acknowledgment becomes available on the moved row; and the mutual-exclusion test needs one named, tested exemption for that single cell (it would put one pair in both policies). Extends B-96.
+
+- [ ] **B-106 — Tighten the acknowledgment issuer column.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md` as B-next-D; DECISION-112)
+  After one release (the migration and the move have stamped every row), set `ledger_acknowledgments.donee_entity_id NOT NULL` and drop the COALESCE fallback in `ackDoneeEntityId`; assert in a test that every acknowledgment writer sets it. Optional: show "Receipt issued by <issuer>" in the donor giving history (`getDonor()`).
+  **Amendment (2026-10-01, Phase 6 of the cross-entity work-log):** Enumerate every writer of `ledger_acknowledgments`, including `scripts/*.ts` and raw SQL (today `scripts/close-out-historical-acknowledgments.ts` inserts without `donee_entity_id`), and either stamp it or delete the script, before setting `NOT NULL`.
+
+- [ ] **B-107 — Duplicate-candidate warning cannot see a bundled deposit.**
+  (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md` as B-next-E; reworded by the Phase 3 design, ruling X12; DECISION-112)
+  The cross-entity move's advisory (same amount, income, posted, within 30 days in the destination entity, cap 5) ships in the first increment. What remains is the case it cannot detect: a Foundation gift that was deposited **together with other money** in one Club deposit, or recorded on the Club side as a lump, has no single row of the same amount. Revisit if the treasurer reports a double count; options are a matched-deposit lookup through the Club's reconciliation bank lines or a manual "this was already recorded" acknowledgment in the dialog. If the advisory is cut from the first increment for size, this item becomes the whole feature.
 
 - [ ] **B-97 — Dues-synced row deletion and the fiscal-year delete gate.**
   (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-110)

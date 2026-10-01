@@ -3,11 +3,14 @@
  * (DECISION-109, docs/work-log/2026-10-01-move-or-cancel-transaction.md).
  *
  * Pure, dependency-free, DB-free: takes primitive fund descriptors and returns
- * an allow/deny decision. Deny-by-default; the allow-list has exactly ONE cell
- * in v1: same entity, income, Administrative -> Activity. Every other cell is
- * its own `if` with its own reason, keyed on fund `kind` and entity identity
- * (never a UUID), so enabling another cell later (B-96) is a one-branch flip
- * with an existing unit-test slot.
+ * an allow/deny decision. Deny-by-default; the allow-list has exactly TWO cells
+ * (DECISION-112):
+ *   1. same entity, income, Administrative -> Activity (DECISION-109);
+ *   2. DIFFERENT entity, income, Charitable -> Activity (the Foundation gift
+ *      whose cash landed in the Club's account).
+ * Every other cell is its own `if` with its own reason, keyed on fund `kind`
+ * and entity identity (never a UUID), so enabling another cell later (B-96,
+ * B-104) is a one-branch flip with an existing unit-test slot.
  *
  * CROSS-REFERENCE (REQUIRED, DECISION-109 / architect R2c): this policy and
  * `checkTransferDirection()` in ./ledger-transfer-policy.ts answer DIFFERENT
@@ -20,6 +23,15 @@
  * They intentionally differ on exactly that pair, and a unit test pins it.
  * A shared function would have to either open the transfer (wrong) or close
  * the move (defeats the feature).
+ *
+ * DECISION-112 adds the second divergence: charitable -> activity across
+ * entities is ALLOWED here (a reclassification of provenance: the cash was
+ * never in the Foundation's account) but DENIED by checkTransferDirection()
+ * (the one-way valve: a movement of value). The cell the sweep owns
+ * (activity -> charitable, cross-entity) is DENIED here as
+ * `club_to_foundation_not_supported`: the sweep's board-minute is what gates
+ * Club money reaching the Foundation, and a move must not be a way around it.
+ * The mutual-exclusion test (no pair allowed by both policies) must stay green.
  */
 
 import type { FundRef } from "@/lib/ledger-transfer-policy";
@@ -27,6 +39,7 @@ import type { FundRef } from "@/lib/ledger-transfer-policy";
 export type FundMoveDenialCode =
   | "same_fund"
   | "cross_entity"
+  | "club_to_foundation_not_supported"
   | "expense_not_supported"
   | "away_from_public"
   | "not_permitted";
@@ -55,6 +68,33 @@ export function checkFundMove(input: {
   }
 
   if (from.entityId !== to.entityId) {
+    // Cross-entity decision tree (DECISION-112). Only income may cross.
+    if (flow !== "income") {
+      return deny(
+        "cross_entity",
+        "An entry can only be moved between funds of the same entity.",
+      );
+    }
+    if (from.kind === "charitable" && to.kind === "activity") {
+      return { allowed: true };
+    }
+    if (from.kind === "charitable" && to.kind === "administrative") {
+      return deny(
+        "away_from_public",
+        "Public money cannot be moved into the Administrative Fund.",
+      );
+    }
+    if (
+      (from.kind === "activity" || from.kind === "administrative") &&
+      to.kind === "charitable"
+    ) {
+      // Its own branch: the sweep is the only crossing of Club money into the
+      // Foundation (B-104 tracks a move for this direction).
+      return deny(
+        "club_to_foundation_not_supported",
+        "A Club entry cannot be moved onto the Foundation's books. If the money is in the Foundation's bank account, delete this entry and enter the gift on the Foundation's register.",
+      );
+    }
     return deny(
       "cross_entity",
       "An entry can only be moved between funds of the same entity.",

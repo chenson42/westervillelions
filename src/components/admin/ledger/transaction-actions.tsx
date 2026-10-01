@@ -17,6 +17,15 @@ interface TransactionActionsProps {
   transferPartner?: LedgerTransaction | null;
   entityId: string;
   funds: LedgerFund[];
+  /**
+   * EVERY entity's active funds and the entities that have an active bank
+   * account: what the Move button's eligibility is decided from (`funds` above
+   * is only this entity's, for the edit form).
+   */
+  moveFunds: Pick<LedgerFund, "id" | "entityId" | "kind">[];
+  entityIdsWithActiveBank: string[];
+  /** Club income rows: the Delete dialog points to the Foundation's register. */
+  foundationPointer: boolean;
   categories: LedgerCategory[];
   bankAccounts: LedgerBankAccount[];
   /** Threaded to the edit dialog's TransactionForm (B-30, DECISION-061). */
@@ -49,6 +58,9 @@ export default function TransactionActions({
   transferPartner,
   entityId,
   funds,
+  moveFunds,
+  entityIdsWithActiveBank,
+  foundationPointer,
   categories,
   bankAccounts,
   budgetLines,
@@ -79,7 +91,8 @@ export default function TransactionActions({
   const hardLock = editLockKind(transaction);
   const moveState = moveButtonState({
     transaction,
-    funds,
+    funds: moveFunds,
+    entityIdsWithActiveBank,
     canManage,
     now: new Date(nowIso),
   });
@@ -188,6 +201,13 @@ export default function TransactionActions({
           )}
         </p>
       )}
+      {hardLock === "reconciled_session" &&
+        moveState.kind !== "omit" &&
+        moveState.crossEntityOnly && (
+          <p className="mt-1 ml-auto max-w-[14rem] whitespace-normal text-right text-xs text-gray-500">
+            If the money is in the Club&rsquo;s account, see Move to the Club.
+          </p>
+        )}
       {moveState.kind === "disabled" && (
         <p className="mt-1 max-w-[14rem] whitespace-normal text-right text-xs text-gray-500 ml-auto">
           {moveState.reason}
@@ -199,6 +219,7 @@ export default function TransactionActions({
         isTransfer={isTransfer}
         ackStatus={ackStatus}
         summary={deleteSummary}
+        foundationPointer={foundationPointer}
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
       />

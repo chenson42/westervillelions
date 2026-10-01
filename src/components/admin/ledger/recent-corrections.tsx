@@ -84,6 +84,16 @@ export default function RecentCorrections({ rows, totalInWindow, loadFailed }: R
                 </Badge>
               )}
               {row.rowCount === 2 && <Badge tone="gray">2 entries</Badge>}
+              {row.kind === "moved" && row.crossEntity && (
+                <Badge tone="blue">
+                  {row.fromEntityName && row.toEntityName
+                    ? `${row.fromEntityName} to ${row.toEntityName}`
+                    : "Between entities"}
+                </Badge>
+              )}
+              {row.kind === "moved" && row.crossEntity && row.receiptSent && (
+                <Badge tone="gold">Receipt already sent</Badge>
+              )}
             </div>
 
             <p className="mt-2 text-sm font-semibold text-gray-900 break-words">
@@ -97,6 +107,13 @@ export default function RecentCorrections({ rows, totalInWindow, loadFailed }: R
                 </span>
               ) : null}
             </p>
+
+            {row.kind === "moved" && row.crossEntity && (row.fromBankAccount || row.toBankAccount) && (
+              <p className="mt-1 text-sm text-gray-700 break-words">
+                <span className="font-medium text-gray-900">Bank account:</span>{" "}
+                {row.fromBankAccount ?? "none"} to {row.toBankAccount ?? "none"}
+              </p>
+            )}
 
             <p className="mt-1 text-sm text-gray-700 break-words whitespace-pre-line">
               <span className="font-medium text-gray-900">Reason:</span>{" "}

@@ -300,6 +300,10 @@ export async function POST(
         .values({
           donationTxnId: txnId,
           donorId: donorId ?? null,
+          // WHO ISSUED this receipt (DECISION-112): the transaction's entity at
+          // creation. Write-once; only this insert and the cross-entity move
+          // ever write the column.
+          doneeEntityId: txn.entityId,
           amountCents: txn.amountCents, // immutable copy from transaction
           txnDate: txn.txnDate,         // immutable copy from transaction
           type: ackType,

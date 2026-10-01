@@ -38,6 +38,7 @@ import {
 import { sendBulkMemberEmailForDurableClaim } from "@/lib/email-durable-claim";
 import { getAppUrl } from "@/lib/email-compose";
 import { resolveTreasurer } from "@/lib/board-positions";
+import { ackDoneeEntityId } from "@/lib/ledger-ack-donee";
 
 // ---------------------------------------------------------------------------
 // listGeneratableAcknowledgments
@@ -122,7 +123,9 @@ export async function listGeneratableAcknowledgments(
     })
     .from(ledgerAcknowledgments)
     .innerJoin(ledgerTransactions, eq(ledgerAcknowledgments.donationTxnId, ledgerTransactions.id))
-    .innerJoin(ledgerEntities, eq(ledgerTransactions.entityId, ledgerEntities.id))
+    // A receipt follows its issuer (DECISION-112): any acknowledgment composes
+    // as the entity that issued it, even after its transaction moved.
+    .innerJoin(ledgerEntities, eq(ledgerEntities.id, ackDoneeEntityId))
     .leftJoin(ledgerDonors, eq(ledgerAcknowledgments.donorId, ledgerDonors.id))
     .leftJoin(ledgerCategories, eq(ledgerTransactions.categoryId, ledgerCategories.id))
     .where(and(...conditions))

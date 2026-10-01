@@ -26,6 +26,13 @@
  * Activity as a MOVEMENT OF VALUE; checkFundMove(income, administrative ->
  * activity) allows it as a RECLASSIFICATION OF PROVENANCE. They intentionally
  * differ on exactly that pair (pinned by a unit test).
+ * DECISION-112 adds a second divergence: checkFundMove(income, charitable ->
+ * activity, DIFFERENT entities) is allowed there as a reclassification of
+ * provenance (a Foundation gift whose cash landed in the Club's account),
+ * while this policy keeps denying charitable -> anything in the Club as the
+ * one-way valve (a movement of value). The sweep's own cell (activity ->
+ * charitable) is denied by the move policy as
+ * `club_to_foundation_not_supported`. Do not merge the two.
  *
  * Decided off fund `kind` + entity identity, NEVER hard-coded UUIDs — stable
  * across environments and fully unit-testable.

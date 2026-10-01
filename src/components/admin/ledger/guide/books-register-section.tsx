@@ -72,10 +72,12 @@ export default function BooksRegisterSection() {
       </h3>
       <p className="mt-2 text-sm text-gray-700">
         If a gift was recorded under the wrong fund, use <span className="font-semibold">Move</span> on
-        its row instead of deleting and re-entering it. Today this moves{" "}
+        its row instead of deleting and re-entering it. Move handles two cases:{" "}
         <span className="font-semibold">income from the Administrative Fund to the Activity Fund</span>{" "}
-        only. The entry keeps its date, party, amount and bank account; only the fund and category
-        change, and the change is logged with your reason on the Compliance page.
+        within the Club, and{" "}
+        <span className="font-semibold">income from the Foundation&rsquo;s Charitable Fund to the Club&rsquo;s Activity Fund</span>{" "}
+        (described below). Either way the entry keeps its date, party and amount, and the change is
+        logged with your reason on the Compliance page.
       </p>
       <ul className="mt-2 space-y-2 text-sm text-gray-700 list-disc pl-5">
         <li>
@@ -83,17 +85,24 @@ export default function BooksRegisterSection() {
           to the old fund, so a new one is needed.
         </li>
         <li>
-          The bank account balance does not change, because the cash did not move. A reconciled entry
-          stays reconciled.
+          <span className="font-semibold">Within the Club,</span> the bank account does not change,
+          because the cash did not move. A reconciled entry stays reconciled.
+        </li>
+        <li>
+          <span className="font-semibold">Across entities,</span> the bank account{" "}
+          <span className="font-semibold">does</span> change: the entry leaves the Foundation&rsquo;s
+          account and joins the Club account you pick. The dialog shows both accounts&rsquo; balances
+          before and after.
         </li>
         <li>
           <span className="font-semibold">A move cannot be undone.</span> Money in the Activity Fund
-          leaves only through a minuted sweep. If you move the wrong entry, delete and re-enter it (or
-          reopen its reconciliation session first if it was reconciled).
+          leaves only through a minuted sweep. If you move the wrong entry within the Club, delete and
+          re-enter it (or reopen its reconciliation session first if it was reconciled).
         </li>
         <li>
           Moving an entry that is already reconciled, or dated in an earlier fiscal year, needs the
-          Manage Ledger permission. It is a permission, not a second approver.
+          Manage Ledger permission, and so does every move to the other entity. It is a permission,
+          not a second approver.
         </li>
         <li>
           If the month&rsquo;s Administrative statement was already sent to the board, it will read as
@@ -113,6 +122,59 @@ export default function BooksRegisterSection() {
       </ul>
 
       <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">
+        Moving a gift from the Foundation to the Club
+      </h3>
+      <p className="mt-2 text-sm text-gray-700">
+        Use this when a gift was recorded on the Foundation&rsquo;s books but the money actually landed
+        in a Club bank account. Choose <span className="font-semibold">Move</span> on the
+        Foundation&rsquo;s income entry, pick the Activity Fund, pick the Club bank account the money
+        landed in (the dialog never guesses unless the Club has only one active account), and choose a
+        category.
+      </p>
+      <ul className="mt-2 space-y-2 text-sm text-gray-700 list-disc pl-5">
+        <li>
+          <span className="font-semibold">The donor and the receipt stay.</span> A receipt letter that
+          was already sent stays attached to the gift and still names the Foundation. The Club&rsquo;s
+          register shows &ldquo;Receipt on file, issued by the Foundation.&rdquo; Because a sent
+          receipt cannot be taken back, the moved entry can no longer be deleted; correct it later with
+          a refund entry. A receipt record that was never sent is removed with the move, and the
+          dialog says so.
+        </li>
+        <li>
+          The ledger does not decide whether the Foundation&rsquo;s receipt is still the right
+          document for a gift the Foundation&rsquo;s books no longer carry. Confirm that with whoever
+          advises the club on tax matters, and mention the move at the next board meeting.
+        </li>
+        <li>
+          <span className="font-semibold">If the gift was already reconciled,</span> the dialog shows
+          a checklist instead of the form. It names the reconciliation session, and any later closed
+          sessions to reopen first (newest first). Reopening a session can hide the Foundation&rsquo;s
+          monthly statements from members until you close the session again. Then unmatch the gift
+          from its bank line, come back and move it. Nothing happens automatically.
+        </li>
+        <li>
+          After the move, reconcile the Club deposit: match the Club bank account&rsquo;s deposit line
+          to this entry in the Club&rsquo;s reconciliation session, and give the Foundation bank line
+          that was freed its right entry before you close that session again.
+        </li>
+        <li>
+          The dialog warns if the Club already has an entry of the same amount within 30 days, in case
+          the deposit was recorded on the Club side too. It cannot see a deposit bundled with other
+          money, so check the deposit slip.
+        </li>
+        <li>
+          The Foundation&rsquo;s income totals fall by the gift now. When you record the sweep, the
+          Foundation&rsquo;s totals count the transfer-in as income, as they do for every sweep, and
+          the Foundation side of a sweep gets no acknowledgment letter.
+        </li>
+        <li>
+          Only current-fiscal-year entries can move to the other entity, and the Move button is not
+          shown on earlier-year Foundation entries. This is one-way: a Club entry cannot be moved onto
+          the Foundation&rsquo;s books.
+        </li>
+      </ul>
+
+      <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">
         Deleting an entry
       </h3>
       <p className="mt-2 text-sm text-gray-700">
@@ -121,6 +183,12 @@ export default function BooksRegisterSection() {
         refund entry instead. Approved, rejected and reconciled entries show why Edit and Delete are
         unavailable and what to do instead: approved and rejected entries are corrected with a refund
         entry, and a reconciled entry needs its reconciliation session reopened first.
+      </p>
+      <p className="mt-2 text-sm text-gray-700">
+        If a Club income entry&rsquo;s money is actually in the Foundation&rsquo;s bank account, it
+        cannot be moved onto the Foundation&rsquo;s books. Delete the Club entry (the Delete dialog
+        says so) and enter the gift on the Foundation&rsquo;s register, in the bank account the money
+        landed in.
       </p>
 
       <p className="mt-5 text-sm">

@@ -6,11 +6,17 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import LedgerDialogShell from "./ledger-dialog-shell";
 import CorrectionReasonField from "./correction-reason-field";
+import MoveImpactCard from "./move-impact-card";
+import MoveCrossEntityPanel from "./move-cross-entity-panel";
+import MoveUnlockChecklist from "./move-unlock-checklist";
 import {
   buildMoveBody,
   formatMoneyCents,
+  initialBankAccountId,
   isMoveSubmittable,
+  moveConfirmLabel,
   moveFailureAction,
+  noDestinationHeading,
   resolveMoveClose,
   sweepDeepLink,
 } from "./correction-dialog-logic";
@@ -26,7 +32,12 @@ export type MoveDialogPhase =
   | { phase: "load_error"; message: string }
   | { phase: "blocked"; message: string }
   | { phase: "form"; preview: MovePreview }
-  | { phase: "success"; result: MoveResponse };
+  | {
+      phase: "success";
+      result: MoveResponse;
+      /** Display name of the destination entity, for a cross-entity move. */
+      destEntityName?: string | null;
+    };
 
 type Destination = MovePreview["destinations"][number];
 
@@ -47,11 +58,16 @@ export interface MoveDialogBodyProps {
   entitySlug: string;
   destFundId: string;
   categoryId: string;
+  /** The picked destination bank account ("" when none); cross-entity moves only. */
+  bankAccountId: string;
   reason: string;
   submitting: boolean;
   inlineError: string | null;
   onDestChange: (fundId: string) => void;
   onCategoryChange: (categoryId: string) => void;
+  onBankAccountChange: (bankAccountId: string) => void;
+  /** Re-runs the preview (the checklist's "Check again"). */
+  onCheckAgain: () => void;
   onReasonChange: (reason: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
@@ -64,28 +80,6 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col sm:flex-row sm:gap-3">
       <dt className="text-gray-500 sm:w-28 sm:shrink-0">{label}</dt>
       <dd className="text-gray-900 break-words">{value}</dd>
-    </div>
-  );
-}
-
-function FundImpactCard({
-  heading,
-  fund,
-}: {
-  heading: string;
-  fund: { name: string; beforeCents: number; afterCents: number };
-}) {
-  return (
-    <div className="rounded-2xl bg-gray-50 p-3">
-      <p className="text-xs uppercase tracking-wide text-gray-500">{heading}</p>
-      <p className="text-sm font-semibold text-gray-900">{fund.name}</p>
-      <p className="mt-1 text-sm text-gray-700 tabular-nums">
-        {formatMoneyCents(fund.beforeCents)}{" "}
-        <span aria-hidden="true">&rarr;</span>
-        <span className="sr-only"> becomes </span>{" "}
-        <span className="font-semibold">{formatMoneyCents(fund.afterCents)}</span>
-      </p>
-      <p className="text-xs text-gray-500">all-time balance</p>
     </div>
   );
 }
@@ -142,14 +136,26 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
 
   if (state.phase === "success") {
     const { result } = state;
+    const where =
+      result.crossEntity && state.destEntityName
+        ? `${result.fundName} (${state.destEntityName})`
+        : result.fundName;
     return (
       <div>
         <div role="status" className="rounded-2xl bg-green-50 p-4 text-green-900">
-          <p className="font-semibold">Moved to {result.fundName}.</p>
+          <p className="font-semibold">Moved to {where}.</p>
           <p className="mt-1 text-sm">
             Category: {result.categoryName ?? "No category"}. The change is logged with your reason
             on the Compliance page.
           </p>
+          {result.acknowledgment === "kept" && (
+            <p className="mt-1 text-sm">
+              The receipt letter stays attached to the gift and still names the Foundation.
+            </p>
+          )}
+          {result.acknowledgment === "removed" && (
+            <p className="mt-1 text-sm">The unsent receipt record was removed.</p>
+          )}
         </div>
         {result.sweepSuggested && (
           <p className="mt-3 text-sm text-gray-600">
@@ -165,7 +171,8 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
             <Link
               href={sweepDeepLink({
                 fundSlug: result.fundSlug,
-                entitySlug: props.entitySlug,
+                // The DESTINATION entity's slug (X7), not the register's.
+                entitySlug: result.entitySlug,
                 transactionId: result.id,
               })}
               className={primaryButton}
@@ -183,10 +190,33 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
   const tx = preview.transaction;
   const allowed = preview.destinations.filter((d) => d.allowed);
   const denied = preview.destinations.filter((d) => !d.allowed);
+  const unlockDenied = denied.filter((d) => d.denial?.unlock);
+  const plainDenied = denied.filter((d) => !d.denial?.unlock);
   const dest: Destination | undefined = allowed.find((d) => d.fundId === props.destFundId);
-  const submittable = isMoveSubmittable({ destFundId: props.destFundId, reason: props.reason });
-  const ratchet = preview.warnings.filter((w) => w.code === "ratchet");
-  const otherWarnings = preview.warnings.filter((w) => w.code !== "ratchet");
+  const crossEntity = dest?.crossEntity === true;
+  const submittable = isMoveSubmittable({
+    destFundId: props.destFundId,
+    reason: props.reason,
+    crossEntity,
+    destBankAccountId: props.bankAccountId,
+  });
+  const destWarnings = dest?.warnings ?? [];
+  const ratchet = destWarnings.filter((w) => w.code === "ratchet");
+  // The unsent-receipt sentence is shown as the panel's receipt line, not twice.
+  const otherWarnings = destWarnings.filter(
+    (w) => w.code !== "ratchet" && !(crossEntity && w.code === "unsent_receipt_removed"),
+  );
+  const agedNote = crossEntity && destWarnings.some((w) => w.code === "aged_public_fund");
+  // Group the select by entity as soon as a destination is on the other entity.
+  const grouped = allowed.some((d) => d.crossEntity);
+  const entityGroups = grouped
+    ? allowed.reduce<Array<{ entityId: string; name: string; items: Destination[] }>>((acc, d) => {
+        const g = acc.find((x) => x.entityId === d.entity.id);
+        if (g) g.items.push(d);
+        else acc.push({ entityId: d.entity.id, name: d.entity.name, items: [d] });
+        return acc;
+      }, [])
+    : [];
 
   return (
     <form
@@ -203,6 +233,7 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
           label="Amount"
           value={`${tx.flow === "income" ? "+" : "-"}${formatMoneyCents(tx.amountCents)}`}
         />
+        <SummaryRow label="Entity" value={tx.entity.name} />
         <SummaryRow label="Current fund" value={tx.fundName} />
         <SummaryRow label="Bank account" value={tx.bankAccountName ?? "None"} />
         <SummaryRow label="Category" value={tx.categoryName ?? "No category"} />
@@ -210,7 +241,7 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
 
       {allowed.length === 0 ? (
         <div className="rounded-2xl bg-gray-50 p-4 text-sm text-gray-600" role="alert">
-          <p className="font-semibold text-gray-700">No other fund can hold this entry.</p>
+          <p className="font-semibold text-gray-700">{noDestinationHeading(preview.destinations)}</p>
         </div>
       ) : (
         <>
@@ -225,17 +256,27 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
               disabled={props.submitting}
               className={fieldClass}
             >
-              {allowed.map((d) => (
-                <option key={d.fundId} value={d.fundId}>
-                  {d.name}
-                </option>
-              ))}
+              {grouped
+                ? entityGroups.map((g) => (
+                    <optgroup key={g.entityId} label={g.name}>
+                      {g.items.map((d) => (
+                        <option key={d.fundId} value={d.fundId}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))
+                : allowed.map((d) => (
+                    <option key={d.fundId} value={d.fundId}>
+                      {d.name}
+                    </option>
+                  ))}
             </select>
           </div>
 
           <div>
             <label htmlFor="move-category" className="block text-sm font-medium text-gray-700 mb-1">
-              Category in {dest?.name ?? "the new fund"}
+              Category in {dest ? (crossEntity ? `${dest.name} (${dest.entity.name})` : dest.name) : "the new fund"}
             </label>
             <select
               id="move-category"
@@ -252,36 +293,96 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
               ))}
             </select>
             <p className="mt-1 text-xs text-gray-500">
-              The old category belongs to {tx.fundName}, so a new one is needed here.
+              {crossEntity
+                ? `Categories come from the ${dest?.entity.name}\u2019s books, so the old one cannot carry over.`
+                : `The old category belongs to ${tx.fundName}, so a new one is needed here.`}
             </p>
           </div>
         </>
       )}
 
-      {denied.length > 0 && (
+      {unlockDenied.map((d) => (
+        <MoveUnlockChecklist
+          key={d.fundId}
+          destination={d}
+          sourceEntityName={tx.entity.name}
+          callerCanManage={preview.callerCanManage}
+          onCheckAgain={props.onCheckAgain}
+        />
+      ))}
+
+      {plainDenied.length > 0 && (
         <ul className="space-y-1 text-xs text-gray-500">
-          {denied.map((d) => (
+          {plainDenied.map((d) => (
             <li key={d.fundId}>
-              <span className="font-medium">{d.name}:</span> {d.denial?.reason ?? "Not available."}
+              <span className="font-medium">
+                {d.crossEntity ? `${d.name} (${d.entity.name})` : d.name}:
+              </span>{" "}
+              {d.denial?.reason ?? "Not available."}
             </li>
           ))}
         </ul>
       )}
 
-      {dest?.impact && (
+      {dest?.impact && dest.impact.crossEntity === false && (
         <section aria-labelledby="move-impact-heading">
           <h3 id="move-impact-heading" className="text-sm font-semibold text-gray-900 mb-2">
             What will change
           </h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <FundImpactCard heading="Leaves" fund={dest.impact.sourceFund} />
-            <FundImpactCard heading="Arrives" fund={dest.impact.destFund} />
+            <MoveImpactCard
+              heading="Leaves"
+              name={dest.impact.sourceFund.name}
+              beforeCents={dest.impact.sourceFund.beforeCents}
+              afterCents={dest.impact.sourceFund.afterCents}
+              caption="all-time balance"
+            />
+            <MoveImpactCard
+              heading="Arrives"
+              name={dest.impact.destFund.name}
+              beforeCents={dest.impact.destFund.beforeCents}
+              afterCents={dest.impact.destFund.afterCents}
+              caption="all-time balance"
+            />
           </div>
           <p className="mt-2 text-sm text-gray-700">
             {dest.impact.bankAccount.name ?? "Bank account"} balance:{" "}
             <span className="font-semibold">unchanged</span>
           </p>
         </section>
+      )}
+
+      {dest && dest.impact && dest.impact.crossEntity && (
+        <>
+          <section aria-labelledby="move-impact-heading">
+            <h3 id="move-impact-heading" className="text-sm font-semibold text-gray-900 mb-2">
+              What will change
+            </h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <MoveImpactCard
+                heading={`Leaves ${tx.entity.name}`}
+                name={dest.impact.sourceFund.name}
+                beforeCents={dest.impact.sourceFund.beforeCents}
+                afterCents={dest.impact.sourceFund.afterCents}
+                caption="all-time balance"
+              />
+              <MoveImpactCard
+                heading={`Arrives in ${dest.entity.name}`}
+                name={dest.impact.destFund.name}
+                beforeCents={dest.impact.destFund.beforeCents}
+                afterCents={dest.impact.destFund.afterCents}
+                caption="all-time balance"
+              />
+            </div>
+          </section>
+          <MoveCrossEntityPanel
+            destination={dest}
+            transaction={tx}
+            bankAccountId={props.bankAccountId}
+            disabled={props.submitting}
+            onBankAccountChange={props.onBankAccountChange}
+          />
+        </>
       )}
 
       {ratchet.map((w) => (
@@ -301,16 +402,29 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
           ))}
         </ul>
       )}
+      {agedNote && (
+        <p className="text-sm text-gray-600">
+          The moved entry keeps its original date, so it arrives already past the holding period.
+          That is expected: the money has been in the club&rsquo;s hands that long, and recording the
+          sweep clears the warning.
+        </p>
+      )}
 
-      <CorrectionReasonField
-        id="move-reason"
-        value={props.reason}
-        onChange={props.onReasonChange}
-        min={preview.reasonLimits.min}
-        max={preview.reasonLimits.max}
-        disabled={props.submitting}
-        helpText="For example: the fall drive gift was booked to the Administrative Fund by mistake."
-      />
+      {allowed.length > 0 && (
+        <CorrectionReasonField
+          id="move-reason"
+          value={props.reason}
+          onChange={props.onReasonChange}
+          min={preview.reasonLimits.min}
+          max={preview.reasonLimits.max}
+          disabled={props.submitting}
+          helpText={
+            crossEntity
+              ? "For example: the gift was deposited to the Club's account, so it was booked to the Foundation by mistake."
+              : "For example: the fall drive gift was booked to the Administrative Fund by mistake."
+          }
+        />
+      )}
 
       {props.inlineError && (
         <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
@@ -325,11 +439,17 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
           disabled={props.submitting}
           className={secondaryButton}
         >
-          Cancel
+          {allowed.length === 0 ? "Close" : "Cancel"}
         </button>
-        <button type="submit" disabled={!submittable || props.submitting} className={primaryButton}>
-          {props.submitting ? "Moving…" : `Move to ${dest?.name ?? "fund"}`}
-        </button>
+        {allowed.length > 0 && (
+          <button
+            type="submit"
+            disabled={!submittable || props.submitting}
+            className={primaryButton}
+          >
+            {props.submitting ? "Moving\u2026" : moveConfirmLabel(dest)}
+          </button>
+        )}
       </div>
     </form>
   );
@@ -356,6 +476,7 @@ export default function MoveTransactionDialog({
   const [state, setState] = useState<MoveDialogPhase>({ phase: "loading" });
   const [destFundId, setDestFundId] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
@@ -391,6 +512,7 @@ export default function MoveTransactionDialog({
         const first = preview.destinations.find((d) => d.allowed);
         setDestFundId(first?.fundId ?? "");
         setCategoryId(first?.defaultCategoryId ?? "");
+        setBankAccountId(initialBankAccountId(first));
         setState({ phase: "form", preview });
       } catch (err) {
         if ((err as { name?: string }).name === "AbortError") return;
@@ -415,11 +537,15 @@ export default function MoveTransactionDialog({
     if (state.phase === "form") {
       const d = state.preview.destinations.find((x) => x.fundId === fundId);
       setCategoryId(d?.defaultCategoryId ?? "");
+      // Never carry a pick from one destination's accounts to another's.
+      setBankAccountId(initialBankAccountId(d));
     }
   }
 
   async function handleConfirm() {
     if (state.phase !== "form") return;
+    const selected = state.preview.destinations.find((d) => d.allowed && d.fundId === destFundId);
+    const crossEntity = selected?.crossEntity === true;
     setSubmitting(true);
     setInlineError(null);
     try {
@@ -432,12 +558,17 @@ export default function MoveTransactionDialog({
             categoryId,
             reason,
             expectedFundId: state.preview.transaction.fundId,
+            destBankAccountId: crossEntity ? bankAccountId : undefined,
           }),
         ),
       });
       const data = await res.json().catch(() => null);
       if (res.ok) {
-        setState({ phase: "success", result: data as MoveResponse });
+        setState({
+          phase: "success",
+          result: data as MoveResponse,
+          destEntityName: crossEntity ? selected?.entity.name : null,
+        });
         return;
       }
       const action = moveFailureAction(res.status, data as Partial<CorrectionErrorBody> | null);
@@ -462,18 +593,21 @@ export default function MoveTransactionDialog({
       open={open}
       onOpenChange={handleOpenChange}
       title="Move to another fund"
-      description="Move this ledger entry to a different fund in the same entity, with a reason that is logged."
+      description="Move this ledger entry to another fund, with a reason that is logged."
     >
       <MoveDialogBody
         state={state}
         entitySlug={entitySlug}
         destFundId={destFundId}
         categoryId={categoryId}
+        bankAccountId={bankAccountId}
         reason={reason}
         submitting={submitting}
         inlineError={inlineError}
         onDestChange={handleDestChange}
         onCategoryChange={setCategoryId}
+        onBankAccountChange={setBankAccountId}
+        onCheckAgain={() => setLoadAttempt((n) => n + 1)}
         onReasonChange={setReason}
         onConfirm={handleConfirm}
         onCancel={() => handleOpenChange(false)}

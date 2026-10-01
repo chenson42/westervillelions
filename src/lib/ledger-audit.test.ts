@@ -38,12 +38,13 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { ledgerAuditLog } from "@/lib/db/schema";
-import { getRecentLedgerCorrections, recordLedgerAudit } from "./ledger-audit";
+import { getLatestFundMove, getRecentLedgerCorrections, recordLedgerAudit } from "./ledger-audit";
 import {
   TRANSACTION_DELETED_AUDIT_ACTION,
   TRANSACTION_FUND_MOVED_AUDIT_ACTION,
   serializeAuditPayload,
   type FundMoveAuditPayload,
+  type FundMoveAuditPayloadV2,
   type TransactionDeletedAuditPayload,
 } from "./ledger-correction";
 
@@ -279,6 +280,151 @@ describe("getRecentLedgerCorrections (T32)", () => {
     const r = await getRecentLedgerCorrections({ entityId: "club", now: NOW });
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0]).toMatchObject({ id: "x", reason: null, from: null, to: null, actorName: null });
+  });
+});
+
+const MOVE_V2: FundMoveAuditPayloadV2 = {
+  before: {
+    v: 2,
+    entity: { id: "foundation", name: "Foundation", slug: "foundation" },
+    fund: { id: "f1", name: "Charitable Fund", slug: "charitable", kind: "charitable" },
+    bankAccount: { id: "b1", name: "Foundation Checking" },
+    category: null,
+    budgetLineId: null,
+  },
+  after: {
+    v: 2,
+    entity: { id: "club", name: "Club", slug: "club" },
+    fund: { id: "f2", name: "Activity Fund", slug: "activity", kind: "activity" },
+    bankAccount: { id: "b2", name: "Administrative Checking" },
+    category: null,
+    budgetLineId: null,
+  },
+  details: {
+    v: 2,
+    reason: "Deposited into the Club account",
+    entityId: "foundation",
+    destEntityId: "club",
+    crossEntity: true,
+    txnDate: "2026-09-15",
+    flow: "income",
+    amountCents: 25000,
+    fiscalYear: 2026,
+    tier: "manage",
+    reconciled: false,
+    reconciledSessionId: null,
+    priorFiscalYear: false,
+    sentStatementMonth: "2026-09",
+    destSentStatementMonth: null,
+    donorId: "donor-1",
+    acknowledgment: { id: "ack-1", sent: true, sentAt: "2026-09-20T12:00:00.000Z", outcome: "kept", doneeEntityId: "foundation" },
+  },
+};
+
+describe("getRecentLedgerCorrections: cross-entity (v2) moves (C14)", () => {
+  const NOW = new Date("2026-10-01T12:00:00Z");
+
+  it("a v2 move is returned for the source AND the destination entity, and not for a third", async () => {
+    state.fetched = [fetchedRow("m", "transaction_fund_moved", MOVE_V2, new Date("2026-09-30"))];
+    const source = await getRecentLedgerCorrections({ entityId: "foundation", now: NOW });
+    const dest = await getRecentLedgerCorrections({ entityId: "club", now: NOW });
+    const third = await getRecentLedgerCorrections({ entityId: "other", now: NOW });
+    expect(source.rows).toHaveLength(1);
+    expect(dest.rows).toHaveLength(1);
+    expect(third.rows).toHaveLength(0);
+    expect(third.totalInWindow).toBe(0);
+  });
+
+  it("carries direction, both entity names, both accounts and receiptSent", async () => {
+    state.fetched = [fetchedRow("m", "transaction_fund_moved", MOVE_V2, new Date("2026-09-30"))];
+    const r = await getRecentLedgerCorrections({ entityId: "club", now: NOW });
+    expect(r.rows[0]).toMatchObject({
+      kind: "moved",
+      crossEntity: true,
+      fromEntityName: "Foundation",
+      toEntityName: "Club",
+      fromBankAccount: "Foundation Checking",
+      toBankAccount: "Administrative Checking",
+      receiptSent: true,
+      from: "Charitable Fund",
+      to: "Activity Fund",
+      amountCents: 25000,
+      sentStatementMonth: "2026-09",
+      reason: "Deposited into the Club account",
+    });
+  });
+
+  it("receiptSent is false for a removed or absent receipt", async () => {
+    const removed: FundMoveAuditPayloadV2 = {
+      ...MOVE_V2,
+      details: {
+        ...MOVE_V2.details,
+        acknowledgment: { id: "ack-1", sent: false, sentAt: null, outcome: "removed", doneeEntityId: null },
+      },
+    };
+    state.fetched = [fetchedRow("m", "transaction_fund_moved", removed, new Date("2026-09-30"))];
+    expect((await getRecentLedgerCorrections({ entityId: "club", now: NOW })).rows[0].receiptSent).toBe(false);
+  });
+
+  it("a v1 move is unchanged: not cross-entity, null names", async () => {
+    state.fetched = [fetchedRow("a", "transaction_fund_moved", MOVE, new Date("2026-09-30"))];
+    const r = await getRecentLedgerCorrections({ entityId: "club", now: NOW });
+    expect(r.rows[0]).toMatchObject({
+      crossEntity: false,
+      fromEntityName: null,
+      toEntityName: null,
+      fromBankAccount: null,
+      toBankAccount: null,
+      receiptSent: false,
+    });
+  });
+
+  it("a malformed v2 row (no destEntityId) is listed raw, never hidden, and never throws", async () => {
+    const broken = {
+      id: "z",
+      action: "transaction_fund_moved",
+      createdAt: new Date("2026-09-30"),
+      actorName: null,
+      before: JSON.stringify({ v: 2, fund: { name: "x" } }),
+      after: null,
+      details: JSON.stringify({ v: 2, reason: "r", entityId: "club" }),
+    };
+    state.fetched = [broken];
+    const r = await getRecentLedgerCorrections({ entityId: "club", now: NOW });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ reason: null, from: null, to: null, crossEntity: false });
+  });
+});
+
+describe("getLatestFundMove (C15)", () => {
+  it("returns the newest move, parses v2 as 'the <entity>' and v1 as the fund name minus ' Fund'", async () => {
+    const t = serializeAuditPayload(MOVE_V2);
+    state.fetched = [{ createdAt: new Date("2026-09-30T20:00:00Z"), before: t.before }];
+    expect(await getLatestFundMove("txn-1")).toEqual({
+      createdAt: new Date("2026-09-30T20:00:00Z"),
+      sourceLabel: "the Foundation",
+    });
+
+    const v1 = serializeAuditPayload(MOVE);
+    state.fetched = [{ createdAt: new Date("2026-09-30T20:00:00Z"), before: v1.before }];
+    expect((await getLatestFundMove("txn-1"))?.sourceLabel).toBe("Administrative");
+  });
+
+  it("is null when there is no audit row or the payload is raw", async () => {
+    state.fetched = [];
+    expect(await getLatestFundMove("txn-1")).toBeNull();
+    state.fetched = [{ createdAt: new Date(), before: "garbage" }];
+    expect(await getLatestFundMove("txn-1")).toBeNull();
+  });
+
+  it("the where clause is plain equality on action and target_transaction_id, newest first, one row, no jsonb cast", async () => {
+    state.fetched = [];
+    await getLatestFundMove("txn-1");
+    const q = new PgDialect().sqlToQuery(state.where as SQL);
+    expect(q.sql).toBe('("ledger_audit_log"."action" = $1 and "ledger_audit_log"."target_transaction_id" = $2)');
+    expect(q.params).toEqual(["transaction_fund_moved", "txn-1"]);
+    expect(q.sql.toLowerCase()).not.toContain("jsonb");
+    expect(state.limit).toBe(1);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   MOVE_FAILED_MESSAGE,
   normalizeCorrectionReason,
   type CorrectionErrorBody,
+  type MoveDestination,
   type MoveInput,
 } from "@/lib/ledger-correction";
 
@@ -19,24 +20,84 @@ export function formatMoneyCents(cents: number): string {
   })}`;
 }
 
-/** Exactly the four keys the move route accepts; "" means "No category". */
+/**
+ * The keys the move route accepts; "" means "No category". `destBankAccountId`
+ * is null for a same-entity move (the server refuses any value there).
+ */
 export function buildMoveBody(input: {
   destFundId: string;
   categoryId: string;
   reason: string;
   expectedFundId: string;
+  destBankAccountId?: string;
 }): MoveInput {
   return {
     destFundId: input.destFundId,
     categoryId: input.categoryId === "" ? null : input.categoryId,
     reason: input.reason,
     expectedFundId: input.expectedFundId,
+    destBankAccountId: input.destBankAccountId ? input.destBankAccountId : null,
   };
 }
 
-/** Confirm is enabled only with a destination and a valid reason. */
-export function isMoveSubmittable(input: { destFundId: string; reason: string }): boolean {
-  return input.destFundId !== "" && normalizeCorrectionReason(input.reason).ok;
+/**
+ * Confirm is enabled only with a destination and a valid reason, and, when the
+ * money crosses entities, an explicit destination bank account.
+ */
+export function isMoveSubmittable(input: {
+  destFundId: string;
+  reason: string;
+  crossEntity?: boolean;
+  destBankAccountId?: string;
+}): boolean {
+  if (input.destFundId === "") return false;
+  if (input.crossEntity && !input.destBankAccountId) return false;
+  return normalizeCorrectionReason(input.reason).ok;
+}
+
+/** The bank account to preselect: only when the server marked exactly one. */
+export function initialBankAccountId(dest: MoveDestination | undefined): string {
+  return dest?.crossEntity ? (dest.defaultBankAccountId ?? "") : "";
+}
+
+/** Label on the Confirm button. Same-entity wording is unchanged. */
+export function moveConfirmLabel(dest: MoveDestination | undefined): string {
+  if (!dest) return "Move to fund";
+  return dest.crossEntity ? `Move to ${dest.name} (${dest.entity.name})` : `Move to ${dest.name}`;
+}
+
+/**
+ * The heading over the "nothing can take this entry" notice. A permission or a
+ * row-state problem the treasurer can clear is "yet"; a pure policy answer keeps
+ * the old sentence.
+ */
+export function noDestinationHeading(destinations: MoveDestination[]): string {
+  const transient = destinations.some(
+    (d) =>
+      d.denial &&
+      (d.denial.code === "manage_required" ||
+        d.denial.code === "prior_fiscal_year_cross_entity" ||
+        d.denial.code === "reconciled_session" ||
+        d.denial.code === "reconciled_legacy" ||
+        d.denial.code === "matched_open_session" ||
+        d.denial.code === "dest_no_active_bank_account"),
+  );
+  return transient ? "This entry can\u2019t be moved yet" : "No other fund can hold this entry.";
+}
+
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function shortDate(ymd: string, withYear: boolean): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return ymd;
+  const month = MONTHS_SHORT[Number(m[2]) - 1] ?? m[2];
+  return `${month} ${Number(m[3])}${withYear ? `, ${m[1]}` : ""}`;
+}
+
+/** "Sep 1 to Sep 30, 2026"; a period that spans two years names both. */
+export function formatSessionPeriod(start: string, end: string): string {
+  const sameYear = start.slice(0, 4) === end.slice(0, 4);
+  return `${shortDate(start, !sameYear)} to ${shortDate(end, true)}`;
 }
 
 export function isDeleteSubmittable(input: { reason: string }): boolean {

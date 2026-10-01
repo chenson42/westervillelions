@@ -108,6 +108,7 @@ export interface BankAccountFitRow {
   id: string;
   entityId: string;
   isActive: boolean;
+  name?: string;
 }
 
 export function checkBankAccountFit(
@@ -146,7 +147,7 @@ export async function validateBankAccountForEntity(
   bankAccountId: string,
   entityId: string,
   opts: { requireActive?: boolean } = {},
-): Promise<{ ok: true } | FitFailure> {
+): Promise<{ ok: true; account: { id: string; name: string } } | FitFailure> {
   if (typeof bankAccountId !== "string" || !isUuid(bankAccountId)) {
     return {
       ok: false,
@@ -160,9 +161,13 @@ export async function validateBankAccountForEntity(
       id: ledgerBankAccounts.id,
       entityId: ledgerBankAccounts.entityId,
       isActive: ledgerBankAccounts.isActive,
+      name: ledgerBankAccounts.name,
     })
     .from(ledgerBankAccounts)
     .where(eq(ledgerBankAccounts.id, bankAccountId))
     .limit(1);
-  return checkBankAccountFit(rows[0], entityId, opts);
+  const fit = checkBankAccountFit(rows[0], entityId, opts);
+  if (!fit.ok) return fit;
+  // The account's display name goes into the move's audit payload (DECISION-112).
+  return { ok: true, account: { id: rows[0].id, name: rows[0].name ?? "" } };
 }

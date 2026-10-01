@@ -45,6 +45,10 @@ const { mockTxState } = vi.hoisted(() => ({
     insertValues: undefined as unknown,
     insertReturning: [] as { id: string; transactionId: string }[],
     transactionCallCount: 0,
+    // Rows the locked re-select returns. null = mirror what the unlocked
+    // read returned (the no-race happy path).
+    lockedRows: null as { id: string; status: string; bankAccountId: string }[] | null,
+    selectCalls: [] as { where?: unknown; forUpdate: boolean }[],
   },
 }));
 
@@ -53,6 +57,37 @@ vi.mock("@/lib/db", () => ({
     transaction: vi.fn(async (cb: (tx: unknown) => unknown) => {
       mockTxState.transactionCallCount++;
       const tx = {
+        select: () => {
+          const call: { where?: unknown; forUpdate: boolean } = { forUpdate: false };
+          mockTxState.selectCalls.push(call);
+          const chain: Record<string, unknown> = {
+            from: () => chain,
+            where: (w: unknown) => {
+              call.where = w;
+              return chain;
+            },
+            orderBy: () => chain,
+            for: (mode: string) => {
+              call.forUpdate = mode === "update";
+              return chain;
+            },
+            then: async (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
+              try {
+                if (mockTxState.lockedRows) return res(mockTxState.lockedRows);
+                const results = vi.mocked(getTransactionsByIds).mock.results;
+                const fetched = (await results[results.length - 1].value) as {
+                  id: string;
+                  status: string;
+                  bankAccountId: string;
+                }[];
+                return res(fetched);
+              } catch (e) {
+                return rej ? rej(e) : Promise.reject(e);
+              }
+            },
+          };
+          return chain;
+        },
         insert: () => ({
           values: (v: unknown) => {
             mockTxState.insertValues = v;
@@ -101,6 +136,8 @@ beforeEach(() => {
   mockTxState.insertValues = undefined;
   mockTxState.insertReturning = [];
   mockTxState.transactionCallCount = 0;
+  mockTxState.lockedRows = null;
+  mockTxState.selectCalls = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -287,5 +324,75 @@ describe("POST .../match — request body validation", () => {
     const res = await callRoute({ bankLineId: "line-1", transactionIds: ["txn-a"] });
     expect(res.status).toBe(409);
     expect(mockTxState.transactionCallCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-105 — re-verify under a row lock inside the write transaction
+// ---------------------------------------------------------------------------
+
+describe("POST .../match — locked re-verification (B-105)", () => {
+  function stageHappy() {
+    vi.mocked(getBankLineById).mockResolvedValue({ id: "line-1", amountCents: 5_000 } as never);
+    vi.mocked(getTransactionsByIds).mockResolvedValue([
+      { id: "txn-a", status: "posted", bankAccountId: "account-1", reconciled: false, flow: "income", amountCents: 5_000 },
+    ] as never);
+    mockTxState.insertReturning = [{ id: "match-1", transactionId: "txn-a" }];
+  }
+
+  it("locks the submitted rows FOR UPDATE with an id-IN WHERE before inserting", async () => {
+    stageHappy();
+    const res = await callRoute({ bankLineId: "line-1", transactionIds: ["txn-a"] });
+    expect(res.status).toBe(201);
+    expect(mockTxState.selectCalls).toHaveLength(1);
+    expect(mockTxState.selectCalls[0].forUpdate).toBe(true);
+    const { PgDialect } = await import("drizzle-orm/pg-core");
+    const q = new PgDialect().sqlToQuery(mockTxState.selectCalls[0].where as never);
+    expect(q.sql).toMatch(/"id" in \(/i);
+    expect(q.params).toEqual(["txn-a"]);
+  });
+
+  it("409 transaction_account_mismatch and NO insert when the locked row moved to another account — regression for F1 (match-route race lands a cross-entity row in a Foundation session)", async () => {
+    stageHappy();
+    mockTxState.lockedRows = [{ id: "txn-a", status: "posted", bankAccountId: "foundation-account" }];
+    const res = await callRoute({ bankLineId: "line-1", transactionIds: ["txn-a"] });
+    const body = await res.json();
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("transaction_account_mismatch");
+    expect(body.invalidTransactionIds).toEqual(["txn-a"]);
+    expect(mockTxState.insertValues).toBeUndefined();
+  });
+
+  it("one mismatching row rejects the whole batch with nothing inserted — regression for F1 (match-route race lands a cross-entity row in a Foundation session)", async () => {
+    vi.mocked(getBankLineById).mockResolvedValue({ id: "line-1", amountCents: 3_000 } as never);
+    vi.mocked(getTransactionsByIds).mockResolvedValue([
+      { id: "txn-a", status: "posted", bankAccountId: "account-1", reconciled: false, flow: "income", amountCents: 1_000 },
+      { id: "txn-b", status: "posted", bankAccountId: "account-1", reconciled: false, flow: "income", amountCents: 2_000 },
+    ] as never);
+    mockTxState.lockedRows = [
+      { id: "txn-a", status: "posted", bankAccountId: "account-1" },
+      { id: "txn-b", status: "posted", bankAccountId: "other" },
+    ];
+    const res = await callRoute({ bankLineId: "line-1", transactionIds: ["txn-a", "txn-b"] });
+    expect(res.status).toBe(409);
+    expect((await res.json()).invalidTransactionIds).toEqual(["txn-b"]);
+    expect(mockTxState.insertValues).toBeUndefined();
+  });
+
+  it("409 transaction_not_posted and NO insert when the locked row is no longer posted — regression for F1 (match-route race lands a cross-entity row in a Foundation session)", async () => {
+    stageHappy();
+    mockTxState.lockedRows = [{ id: "txn-a", status: "voided", bankAccountId: "account-1" }];
+    const res = await callRoute({ bankLineId: "line-1", transactionIds: ["txn-a"] });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("transaction_not_posted");
+    expect(mockTxState.insertValues).toBeUndefined();
+  });
+
+  it("409 transaction_not_posted when the locked re-select no longer finds the row", async () => {
+    stageHappy();
+    mockTxState.lockedRows = [];
+    const res = await callRoute({ bankLineId: "line-1", transactionIds: ["txn-a"] });
+    expect(res.status).toBe(409);
+    expect(mockTxState.insertValues).toBeUndefined();
   });
 });

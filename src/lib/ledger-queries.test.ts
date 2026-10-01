@@ -61,7 +61,11 @@ import path from "path";
 //     bound itself can be asserted (via PgDialect().sqlToQuery()), not just
 //     downstream arithmetic.
 const { mockDbState } = vi.hoisted(() => ({
-  mockDbState: { queue: [] as unknown[][], wheres: [] as unknown[] },
+  mockDbState: {
+    queue: [] as unknown[][],
+    wheres: [] as unknown[],
+    joins: [] as Array<{ table: unknown; on: unknown }>,
+  },
 }));
 
 vi.mock("@/lib/db", () => {
@@ -75,7 +79,11 @@ vi.mock("@/lib/db", () => {
       orderBy: () => obj,
       groupBy: () => obj,
       limit: () => obj,
-      innerJoin: () => obj,
+      // Recorded so the receipt-issuer wiring (DECISION-112) can be asserted by rendering the ON clause.
+      innerJoin: (table: unknown, on: unknown) => {
+        mockDbState.joins.push({ table, on });
+        return obj;
+      },
       leftJoin: () => obj,
       then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
         Promise.resolve(mockDbState.queue.shift() ?? []).then(resolve, reject),
@@ -104,8 +112,9 @@ import {
   listPendingAcknowledgments,
   listAcknowledgmentsSummary,
   listUnlinkedGifts,
+  getAcknowledgment,
 } from "./ledger-queries";
-import { ledgerBudgets, ledgerBudgetLines } from "./db/schema";
+import { ledgerBudgets, ledgerBudgetLines, ledgerEntities } from "./db/schema";
 import { causeLineReferenceKey } from "./ledger";
 import { db } from "./db";
 
@@ -2813,5 +2822,100 @@ describe("listUnlinkedGifts", () => {
     expect(sql).toContain('"ledger_transactions"."txn_date" <');
     expect(params).toContain("2025-07-01");
     expect(params).toContain("2026-07-01");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Receipt-issuer wiring (DECISION-112, C17/C18): a receipt FOLLOWS ITS ISSUER,
+// money follows the row. The readers that describe the receipt join
+// ledger_entities on the shared coalesce fragment; the readers that gate or
+// sum on the row keep joining the transaction's own entity.
+// ---------------------------------------------------------------------------
+describe("receipt issuer wiring (C17, C18)", () => {
+  const dialect = new PgDialect();
+  const FRAGMENT =
+    'coalesce("ledger_acknowledgments"."donee_entity_id", "ledger_transactions"."entity_id")';
+
+  /** Every ledger_entities-flavoured join (the table or its alias), rendered. */
+  function entityJoins(): string[] {
+    return mockDbState.joins
+      .filter((j) => {
+        const t = j.table as { [k: symbol]: unknown };
+        const names = Object.getOwnPropertySymbols(t).map((sym) => String(t[sym]));
+        return j.table === ledgerEntities || names.some((n) => n.includes("ack_row_entity"));
+      })
+      .map((j) => dialect.sqlToQuery(j.on as never).sql);
+  }
+
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+    mockDbState.joins = [];
+  });
+
+  it("listAcknowledgmentsSummary joins the ISSUER on the fragment and the row's entity on the transaction", async () => {
+    mockDbState.queue.push([]);
+    await listAcknowledgmentsSummary({});
+    const joins = entityJoins();
+    expect(joins).toContain(`"ledger_entities"."id" = ${FRAGMENT}`);
+    expect(joins.some((j) => j.includes('"ledger_transactions"."entity_id" =') && !j.includes("coalesce"))).toBe(true);
+  });
+
+  it("getAcknowledgment joins the issuer on the fragment", async () => {
+    mockDbState.queue.push([]);
+    await getAcknowledgment("ack-1");
+    expect(entityJoins()).toContain(`"ledger_entities"."id" = ${FRAGMENT}`);
+  });
+
+  it("listPendingAcknowledgments and listUnlinkedGifts still join the TRANSACTION's entity and still gate on donations_deductible", async () => {
+    for (const run of [() => listPendingAcknowledgments(), () => listUnlinkedGifts()]) {
+      mockDbState.joins = [];
+      mockDbState.wheres = [];
+      mockDbState.queue.push([]);
+      await run();
+      const joins = entityJoins();
+      expect(joins.some((j) => j.includes('"ledger_transactions"."entity_id" = "ledger_entities"."id"'))).toBe(true);
+      expect(joins.every((j) => !j.includes("donee_entity_id"))).toBe(true);
+      const where = dialect.sqlToQuery(mockDbState.wheres[0] as never).sql;
+      expect(where).toContain('"ledger_entities"."donations_deductible" = $');
+    }
+  });
+
+  it("an unmoved receipt reads exactly as before; a moved one names its ISSUER and carries where it is booked now (C18)", async () => {
+    mockDbState.queue.push([
+      {
+        id: "ack-1", donationTxnId: "t1", amountCents: 50000, txnDate: "2026-08-01", type: "written_ack_250",
+        sentAt: new Date("2026-08-02"), sentVia: "print", quidProQuoValueCents: null, donorId: "d1",
+        entityName: "Westerville Lions Foundation", doneeEntityId: "foundation", rowEntityName: "Westerville Lions Foundation",
+        fundName: "Charitable Fund", donorName: "Example Donor",
+      },
+      {
+        id: "ack-2", donationTxnId: "t2", amountCents: 50000, txnDate: "2026-08-03", type: "written_ack_250",
+        sentAt: new Date("2026-08-04"), sentVia: "print", quidProQuoValueCents: null, donorId: "d2",
+        // The query's `entityName` is the ISSUER (join on the fragment), the row now sits in the Club.
+        entityName: "Westerville Lions Foundation", doneeEntityId: "foundation", rowEntityName: "Westerville Lions Club",
+        fundName: "Activity Fund", donorName: "Example Donor Two",
+      },
+    ]);
+    const rows = await listAcknowledgmentsSummary({ sentOnly: true });
+    expect(rows[0]).toMatchObject({ entityName: "Westerville Lions Foundation", doneeEntityId: "foundation", rowEntityName: "Westerville Lions Foundation", fundName: "Charitable Fund" });
+    expect(rows[1]).toMatchObject({ entityName: "Westerville Lions Foundation", doneeEntityId: "foundation", rowEntityName: "Westerville Lions Club", fundName: "Activity Fund" });
+  });
+
+  it("getAcknowledgment returns the issuer as `entity` and the row's entity name on `txn`", async () => {
+    mockDbState.queue.push([
+      {
+        ack: { id: "ack-2" },
+        txn: { id: "t2", entityId: "club" },
+        fundName: "Activity Fund",
+        entity: { id: "foundation", name: "Westerville Lions Foundation" },
+        rowEntityName: "Westerville Lions Club",
+        donor: null,
+      },
+    ]);
+    const a = await getAcknowledgment("ack-2");
+    expect(a?.entity?.name).toBe("Westerville Lions Foundation");
+    expect(a?.txn.entityName).toBe("Westerville Lions Club");
+    expect(a?.txn.fundName).toBe("Activity Fund");
   });
 });

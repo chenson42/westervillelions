@@ -26,13 +26,19 @@
  *   404 — session, bank line, or one/more transactions not found
  *   409 — session not open; bank line already matched; a transaction is
  *         already reconciled or already matched to a different bank line;
- *         or a race lost to a concurrent match on one of the selected ids
+ *         or a race lost to a concurrent match on one of the selected ids;
+ *         or, re-checked under a row lock inside the write transaction
+ *         (B-105), `transaction_account_mismatch` (a row's bank account is no
+ *         longer this session's, e.g. a concurrent cross-entity move) or
+ *         `transaction_not_posted` (a row is no longer posted). Nothing is
+ *         written on either.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { ledgerReconciliationMatches } from "@/lib/db/schema";
+import { ledgerReconciliationMatches, ledgerTransactions } from "@/lib/db/schema";
+import { asc, inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import {
@@ -232,8 +238,38 @@ export async function POST(
     // concurrent request matches one of these ids between step 7 and here
     // surfaces as Postgres 23505, mapped to a clean 409.
     try {
-      const inserted = await db.transaction(async (tx) => {
-        return tx
+      const outcome = await db.transaction(async (tx) => {
+        // B-105: the reads above are unlocked, so a concurrent move or
+        // bank-account edit can change a row between them and this insert.
+        // Lock the rows (this waits for any in-flight FOR UPDATE, e.g. the
+        // cross-entity move) and re-verify account and status on the locked
+        // values before writing anything.
+        const locked = await tx
+          .select({
+            id: ledgerTransactions.id,
+            status: ledgerTransactions.status,
+            bankAccountId: ledgerTransactions.bankAccountId,
+          })
+          .from(ledgerTransactions)
+          .where(inArray(ledgerTransactions.id, dedupedTransactionIds))
+          .orderBy(asc(ledgerTransactions.id))
+          .for("update");
+        const lockedById = new Map(locked.map((r) => [r.id, r]));
+
+        const accountMismatchIds = dedupedTransactionIds.filter(
+          (id) => lockedById.get(id)?.bankAccountId !== reconSession.bankAccountId,
+        );
+        if (accountMismatchIds.length > 0) {
+          return { kind: "account_mismatch" as const, ids: accountMismatchIds };
+        }
+        const notPostedLockedIds = dedupedTransactionIds.filter(
+          (id) => lockedById.get(id)?.status !== "posted",
+        );
+        if (notPostedLockedIds.length > 0) {
+          return { kind: "not_posted" as const, ids: notPostedLockedIds };
+        }
+
+        const rows = await tx
           .insert(ledgerReconciliationMatches)
           .values(
             dedupedTransactionIds.map((transactionId) => ({
@@ -244,7 +280,31 @@ export async function POST(
             })),
           )
           .returning({ id: ledgerReconciliationMatches.id, transactionId: ledgerReconciliationMatches.transactionId });
+        return { kind: "inserted" as const, rows };
       });
+
+      if (outcome.kind === "account_mismatch") {
+        return NextResponse.json(
+          {
+            error:
+              "One or more transactions no longer belong to this session's bank account — refresh and try again",
+            code: "transaction_account_mismatch",
+            invalidTransactionIds: outcome.ids,
+          },
+          { status: 409 },
+        );
+      }
+      if (outcome.kind === "not_posted") {
+        return NextResponse.json(
+          {
+            error: "One or more transactions are no longer posted — refresh and try again",
+            code: "transaction_not_posted",
+            invalidTransactionIds: outcome.ids,
+          },
+          { status: 409 },
+        );
+      }
+      const inserted = outcome.rows;
 
       return NextResponse.json(
         {

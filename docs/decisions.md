@@ -28,6 +28,138 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-113: Cross-entity move implementation shape: per-destination preview, policy then state then tier then input, acknowledgment settled before the UPDATE with throw-to-rollback, two separately built UPDATE shapes
+
+**Status:** Resolved
+**Date:** 2026-10-01
+
+**Decision:** Implementation choices under DECISION-112 (design in
+`docs/work-log/2026-10-01-cross-entity-transaction-move.md` Phase 3, rulings X1 to X13):
+
+1. **The guard order is policy, then cross-entity state, then tier, then input**, identical for `GET` and `POST`
+   (row-state block and `expectedFundId` first). A refused request never reports a lower-ranked reason: a denied
+   direction never says "needs Manage", and a closed-session row shows its checklist to a caller who cannot reopen it.
+   The cross-entity state checks run **prior fiscal year, closed session, legacy mark, open-session match**: the
+   impossible refusal first, so a guided checklist never leads to a dead end.
+2. **The preview is per destination.** Tier, warnings, bank-account options, impact, duplicate candidates and the
+   `unlock` block live on each `destinations[]` entry; the top-level `tier` and `warnings` are removed. A tier refusal
+   is a **200** with a per-destination denial (it was a top-level 403 in v1.86.0). Parity is stated per destination:
+   every destination listed as allowed passes steps 1 to 6 in POST, and every denial carries the code and status POST
+   returns. The only GET-only code is `dest_no_active_bank_account`; step 7 (input) refusals are POST-only.
+3. **The two UPDATE shapes are built by two separate exported functions** (`buildSameEntityMoveSet`,
+   `buildCrossEntityMoveSet`) and their key sets are pinned by tests. The same-entity shape can never contain
+   `bankAccountId` or `entityId`, which is the premise of the reconciled carve-out in DECISION-109 item 4. A same-entity
+   request carrying `destBankAccountId` is a distinct 400 (`dest_bank_account_not_allowed`), not a silent ignore.
+4. **Acknowledgment settlement runs before the pinned UPDATE, and a zero-row UPDATE throws a private rollback
+   sentinel.** Returning from a `db.transaction` callback commits, so "settle, UPDATE, `return` a 409 on zero rows"
+   would persist the acknowledgment stamp or deletion while the row stayed put. The sentinel is caught only in
+   `executeFundMove()` and mapped to `409 stale`; any other error propagates to the route's 500. The stamp value is the
+   source entity id captured from the locked row, never a join. Same-entity moves skip settlement entirely.
+5. **Where the new code lives.** `ledger-fund-move-queries.ts` stays the evaluator and `executeFundMove`;
+   read-only preview computation is in `ledger-fund-move-preview.ts`; settlement is in `ledger-fund-move-ack.ts`
+   (pure `decideAckOutcome` plus the transaction step); the issuer join fragment is the single
+   `ackDoneeEntityId` in `ledger-ack-donee.ts`. `getLaterClosedSessionForAccount()` is left alone and a sibling
+   `listLaterClosedSessionsForAccount()` returns the newest-first list the checklist needs (the shipped function
+   returns only the earliest later session, which is itself not reopenable while a later one is closed).
+6. **Audit parser versioning.** `parseVersioned(text, allowedVersions)`; the moved action accepts 1 and 2 with
+   per-version field guards, the deleted action accepts only 1; failures degrade to `{ raw }`. Same-entity moves keep
+   writing `v: 1`. `details.entityId` stays the source entity so a v1-only reader still lists the move under it.
+7. **The sweep prefill reads the audit row**, not the clock: `getLatestFundMove()` supplies the source label and the
+   `America/New_York` date; with no audit row the memo makes no "moved" claim. This also closes B-102.
+8. **`MoveResponse` carries the destination `entitySlug`**, and the dialog builds the sweep deep link from it, because
+   the dialog's own `entitySlug` prop is the register's entity (on the Foundation register it would build a link that
+   validates to nothing).
+9. **Static correction copy never hard-codes an account name** (the Delete-dialog mirror pointer says "in the bank
+   account the money landed in"), and the warning for a Foundation statement says "Foundation", not the shipped
+   hard-coded "Administrative".
+
+**Rationale:** Items 1 to 3 make the preview and the execute path unable to disagree and keep the one column
+reconciliation is keyed on out of reach of the same-entity path. Item 4 is the one place a natural-looking
+implementation silently corrupts data. Items 5 to 9 keep each rule in one place (CLAUDE.md duplication rule) and avoid
+two latent bugs (the wrong deep-link entity, the clock-derived memo date). The cost is a wider preview type and about
+three more modules than the minimum.
+
+**Impact:** `ledger-correction.ts`, `ledger-fund-move-policy.ts`, `ledger-transaction-lock.ts`,
+`ledger-fund-move-queries.ts`, `ledger-audit.ts`, `ledger-transaction-validation.ts` (returns the bank account name),
+`reconciliation-queries.ts` (+1 function), the move route, the dialog and register files listed in the work-log
+Phase 3. Existing tests that change shape are enumerated there. No new dependency; no email.
+
+---
+
+## DECISION-112: Cross-entity move of an income row, Foundation Charitable to Club Activity (one cell); acknowledgments record their issuing entity; audit payload v2 (amends DECISION-109 item 3)
+
+**Status:** Resolved
+**Date:** 2026-10-01
+
+**Decision:**
+
+1. **The cross-entity restriction in DECISION-109 is relaxed for exactly one cell:** `flow = income`, a Foundation
+   `charitable` fund to a Club `activity` fund, through the existing `GET/POST /api/admin/ledger/transactions/[id]/move`
+   endpoint with one new optional body key, `destBankAccountId` (required for a cross-entity move, forbidden for a
+   same-entity one). Every other cross-entity pair stays denied, each with its own code: `charitable` to
+   `administrative` is `away_from_public`; `activity` or `administrative` to `charitable` is
+   **`club_to_foundation_not_supported`**, because the sweep is the only way Club money reaches the Foundation and its
+   board-minute reference is what gates it; any other cross-entity pair (including every cross-entity expense) is
+   `cross_entity`. The supported answer for the mirror case is delete the Club entry and enter the gift on the
+   Foundation's register, which is bank-consistent because the re-entered row lands on the account the cash touched.
+2. **The two direction policies still must not be merged.** The new cell is denied by `checkTransferDirection()` (the
+   one-way valve), so the mutual-exclusion test stays literally true; the sweep's own cell (`activity` to
+   `charitable`) is denied by the move policy. This move reclassifies provenance (the cash was never in the
+   Foundation's account); it is not a movement of value.
+3. **The reconciled-row carve-out of DECISION-109 item 4 does not extend.** A cross-entity move must change
+   `bank_account_id`, the column reconciliation is keyed on. A cross-entity move requires the row to be unreconciled
+   by either mark, not matched in a reconciliation session, and dated in the current fiscal year. The dialog guides the
+   treasurer through reopen, unmatch, move, give the freed bank line its right entry, re-close and sweep, and
+   automates none of it. Reopening a session can hide the Foundation's monthly member statements from that month
+   onward until the session is closed again, and the guidance says so.
+4. **`LEDGER_MANAGE` for every cross-entity move**, evaluated server-side from (row, destination) on the
+   `FOR UPDATE` row. The tier is a function of the pair, so the preview reports it per destination. No new `FEATURES`
+   key. It is a permission, not a second approver.
+5. **Acknowledgments record who issued them.** `ledger_acknowledgments.donee_entity_id` (nullable FK to
+   `ledger_entities`, no cascade, write-once) is written at creation, by the idempotent backfill (NULL rows only), and
+   by the move (`COALESCE(existing, source entity)` inside the move transaction). Readers that **describe the receipt**
+   follow it; readers that **sum money** follow the transaction. A **sent** acknowledgment is kept (its `sent_at`,
+   `sent_via`, letter text, file key and donor are never touched); an **unsent** one is removed and the removal is
+   audited. A name/EIN/classification snapshot was rejected: `letter_text` already snapshots the letter, entity rows
+   are immutable in practice, and an id gives a join, a gate and an "issued elsewhere" test.
+6. **Audit:** cross-entity moves write `v: 2` (both entities, both bank accounts, donor, acknowledgment outcome, both
+   entities' sent-statement months); same-entity moves keep `v: 1`; the parser accepts both; the Recent corrections
+   reader lists a move under either entity.
+7. **No board-minute reference on the move itself.** Controls: `LEDGER_MANAGE`, a required reason, a required
+   destination bank account, the unreconciled-and-unmatched precondition, the both-entity audit row and reader, and the
+   board-minuted sweep that must follow for the money to reach the Foundation. The asymmetry is stated plainly: the
+   sweep needs a minute because it moves Club money to the Foundation; this move pulls Foundation-recorded money into
+   the Club on one admin's say-so. If the board treats that as a board act, the flip is one required input and one
+   audit field.
+8. **Whether the Foundation's receipt is still the right document is not a ledger decision.** The ledger preserves it
+   as issued and warns; the guide tells the treasurer to confirm with whoever advises the club on tax matters and to
+   mention a receipted-gift move at the next board meeting.
+
+**Rationale:** The treasurer's next occurrence is a gift deposited into the Club's account but booked to the
+Foundation with a receipt already sent. Deleting is blocked by DECISION-110 (a sent receipt is the IRS substantiation
+record), and delete-and-re-enter would destroy that record. Moving it keeps the donor, the date, the check number and
+the receipt, and the sweep that follows is the existing minuted path.
+
+**Residual risk, stated plainly:** provenance is not machine-verifiable. A `LEDGER_MANAGE` holder can reclassify any
+unreconciled, unmatched, current-year Foundation income row into the Club. The money stays public in the Activity Fund
+(it leaves only through a minuted sweep or Activity expenses). A second residual, found by QA and closed in the same release (B-105): `match/route.ts` read a
+transaction's bank account without a lock and inserted afterwards, so a match request whose read landed inside a move's
+transaction could leave a Club row matched to a Foundation bank line, and the close-time tie-out did **not** surface it
+(close checked amounts and posted status, never the matched row's bank account; QA reproduced the orphan 4 of 4 and a
+clean 200 close). The match route now re-verifies each row's account and status under `FOR UPDATE` in its write
+transaction (409 `transaction_account_mismatch` or `transaction_not_posted`), and the close route refuses
+(400 `transaction_account_mismatch`) when any matched transaction's account differs from the session's. The bank-account
+PATCH's read-then-write is covered only by the close-time refusal.
+
+**Impact:** `ledger-fund-move-policy.ts` (one allowed cell, one new code, T1 becomes two cells), `ledger-transaction-lock.ts`,
+`ledger-correction.ts` (parser v2), `ledger-fund-move-queries.ts` (+ preview and acknowledgment siblings),
+`ledger-ack-donee.ts`, `ledger-audit.ts`, the move route and dialog, both registers, the Treasury guide. One schema
+change (one column) and one idempotent migration; no new dependency; no email. The CLAUDE.md "Ledger corrections"
+paragraph is rewritten at ship time. Follow-ups: B-98 (re-aimed, ships in this increment), B-104 to B-107; implementation
+shape is DECISION-113.
+
+---
+
 ## DECISION-111: Move/delete implementation shape: one evaluator for preview and execute, validate-on-change, pinned reconcile UPDATE, client-safe vocabulary split from the server-only audit module
 
 **Status:** Resolved
@@ -120,7 +252,7 @@ handler, the compliance page section, a comment block in `schema.ts`. Follow-ups
 
 ## DECISION-109: Same-entity fund reclassification of an income row via a dedicated `POST .../transactions/[id]/move` endpoint; second narrow carve-out of the reconciled lock (amends DECISION-036 item 4, extends DECISION-099)
 
-**Status:** Resolved
+**Status:** Resolved (item 3's cross-entity denial is amended for one cell by DECISION-112)
 **Date:** 2026-10-01
 
 **Decision:**

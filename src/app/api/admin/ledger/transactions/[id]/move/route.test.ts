@@ -1,5 +1,5 @@
 /**
- * T21-T22: the move route's gates, body validation and status map
+ * T21-T22 and the DECISION-112 additions (destBankAccountId, per-destination GET): the move route's gates, body validation and status map
  * (DECISION-109/111). The query layer is mocked: its own behavior is covered in
  * ledger-fund-move-queries.test.ts; this file proves the route is a thin,
  * correctly-gated shell.
@@ -113,6 +113,9 @@ describe("status map and gating (T22)", () => {
         categoryId: U2,
         categoryName: "Public donations",
         sweepSuggested: true,
+        entitySlug: "club",
+        crossEntity: false,
+        acknowledgment: "none",
       },
     });
     const res = await POST(req({ ...GOOD, reason: "  Zeffy gift booked to the wrong fund  " }), params());
@@ -125,12 +128,16 @@ describe("status map and gating (T22)", () => {
       categoryId: U2,
       categoryName: "Public donations",
       sweepSuggested: true,
+      entitySlug: "club",
+      crossEntity: false,
+      acknowledgment: "none",
     });
+    // parseMoveBody normalizes an absent destBankAccountId to null.
     expect(executeFundMove).toHaveBeenCalledWith({
       transactionId: ID,
       actorUserId: "user-1",
       callerCanManage: true,
-      input: GOOD,
+      input: { ...GOOD, destBankAccountId: null },
     });
   });
 
@@ -149,8 +156,17 @@ describe("status map and gating (T22)", () => {
 
   const failures: Array<[number, string]> = [
     [400, "category_invalid"],
+    [400, "dest_bank_account_required"],
+    [400, "dest_bank_account_invalid"],
+    [400, "dest_bank_account_not_allowed"],
     [403, "approved"],
     [403, "away_from_public"],
+    [403, "manage_required"],
+    [403, "club_to_foundation_not_supported"],
+    [403, "reconciled_session"],
+    [403, "reconciled_legacy"],
+    [403, "matched_open_session"],
+    [403, "prior_fiscal_year_cross_entity"],
     [404, "not_found"],
     [404, "fund_not_found"],
     [404, "category_not_found"],
@@ -182,5 +198,66 @@ describe("status map and gating (T22)", () => {
     const refused = await GET(req(), params());
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({ error: "msg", code: "dues_synced" });
+  });
+});
+
+describe("destBankAccountId (DECISION-112)", () => {
+  const BANK = "44444444-4444-4444-8444-444444444444";
+  const okResult = {
+    ok: true as const,
+    result: {
+      id: ID,
+      fundId: U1,
+      fundSlug: "activity",
+      fundName: "Activity Fund",
+      categoryId: null,
+      categoryName: null,
+      sweepSuggested: true,
+      entitySlug: "club",
+      crossEntity: true,
+      acknowledgment: "kept" as const,
+    },
+  };
+
+  it("a string is passed through verbatim, and so is null", async () => {
+    grant(FEATURES.LEDGER_RECORD, FEATURES.LEDGER_MANAGE);
+    vi.mocked(executeFundMove).mockResolvedValue(okResult);
+    await POST(req({ ...GOOD, destBankAccountId: BANK }), params());
+    expect(vi.mocked(executeFundMove).mock.calls[0][0].input.destBankAccountId).toBe(BANK);
+    await POST(req({ ...GOOD, destBankAccountId: null }), params());
+    expect(vi.mocked(executeFundMove).mock.calls[1][0].input.destBankAccountId).toBeNull();
+  });
+
+  it("a malformed string is NOT a parse error (the destination decides which 400 it is)", async () => {
+    vi.mocked(executeFundMove).mockResolvedValue(okResult);
+    const res = await POST(req({ ...GOOD, destBankAccountId: "not-a-uuid" }), params());
+    expect(res.status).toBe(200);
+    expect(vi.mocked(executeFundMove).mock.calls[0][0].input.destBankAccountId).toBe("not-a-uuid");
+  });
+
+  it.each([5, {}, [], true])("a %j value is 400 invalid_body with no query-layer call", async (value) => {
+    const res = await POST(req({ ...GOOD, destBankAccountId: value }), params());
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("invalid_body");
+    expect(executeFundMove).not.toHaveBeenCalled();
+  });
+
+  it("a GET carrying a per-destination manage_required denial is passed through as 200", async () => {
+    const preview = {
+      callerCanManage: false,
+      destinations: [
+        {
+          fundId: U1,
+          allowed: false,
+          denial: { code: "manage_required", status: 403, reason: "needs manage" },
+        },
+      ],
+      reasonLimits: { min: 10, max: 500 },
+    };
+    vi.mocked(previewFundMove).mockResolvedValueOnce({ ok: true, preview: preview as never });
+    const res = await GET(req(), params());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(preview);
+    expect(vi.mocked(previewFundMove).mock.calls[0][0].callerCanManage).toBe(false);
   });
 });

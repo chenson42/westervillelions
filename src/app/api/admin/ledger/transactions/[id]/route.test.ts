@@ -410,6 +410,21 @@ describe("PATCH .../[id] — reconciled-lock donor-link carve-out (DECISION-099)
     expect(row.details).toContain("session-42");
   });
 
+  it("C19: neither donor-link write site (reconciled carve-out and ordinary) ever sets the acknowledgment's donee_entity_id (write-once, DECISION-112)", async () => {
+    mockDbState.donorRows = [{ id: "donor-1" }];
+    for (const existing of [RECONCILED_TXN, { ...RECONCILED_TXN, reconciledSessionId: null }]) {
+      mockDbState.updates = [];
+      mockDbState.existing = existing;
+      const res = await PATCH(
+        makeRequest({ donorId: "donor-1" }, "http://localhost/api/admin/ledger/transactions/txn-reconciled"),
+        makeParams("txn-reconciled"),
+      );
+      expect(res.status).toBe(200);
+      expect(mockDbState.updates.length).toBeGreaterThan(0);
+      for (const u of mockDbState.updates) expect(Object.keys(u.set)).not.toContain("doneeEntityId");
+    }
+  });
+
   it("test 15: a non-reconciled row's donorId edit is unchanged from today's behavior — 200, no audit row", async () => {
     mockDbState.existing = { ...RECONCILED_TXN, reconciledSessionId: null };
     mockDbState.donorRows = [{ id: "donor-1" }];

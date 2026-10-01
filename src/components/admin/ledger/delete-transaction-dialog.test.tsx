@@ -129,3 +129,28 @@ describe("DeleteTransactionDialog source", () => {
     expect(failBranch).not.toContain("router.refresh");
   });
 });
+
+describe("DeleteDialogBody: Foundation pointer (C40)", () => {
+  const POINTER = "enter the gift on the Foundation";
+
+  it("shows the static pointer on a Club income row", () => {
+    const html = body({ foundationPointer: true }).replace(/&#x27;/g, "'");
+    expect(html).toContain(POINTER.replace("the Foundation", "the Foundation"));
+    expect(html).toContain("in the bank account the money landed in");
+    // A data value (an account name) is never hard-coded into the static line.
+    expect(html).not.toContain("Foundation Checking");
+  });
+
+  it("is absent by default (Foundation rows, expenses, transfers)", () => {
+    expect(body()).not.toContain("bank account the money landed in");
+    expect(body({ isTransfer: true })).not.toContain("bank account the money landed in");
+  });
+
+  it("is hidden in the blocked (receipt already sent) state", () => {
+    const html = body({ foundationPointer: true, ackStatus: "sent" });
+    expect(html).not.toContain("bank account the money landed in");
+    expect(html).toContain(RECEIPT_SENT_MESSAGE);
+    expect(body({ foundationPointer: true, receiptSent: true })).not.toContain("bank account the money landed in");
+  });
+});
+

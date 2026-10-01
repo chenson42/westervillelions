@@ -77,7 +77,10 @@ describe("bank-account validation (T12)", () => {
 
   it("loads the row and applies the fit check", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
-    expect(await validateBankAccountForEntity(exec([{ ...ACCT, id }]).exec, id, "e1")).toEqual({ ok: true });
+    // C36: success returns the account name (it goes into the move's audit payload).
+    expect(
+      await validateBankAccountForEntity(exec([{ ...ACCT, id, name: "Administrative Checking" }]).exec, id, "e1"),
+    ).toEqual({ ok: true, account: { id, name: "Administrative Checking" } });
     expect(await validateBankAccountForEntity(exec([]).exec, id, "e1")).toMatchObject({ ok: false, status: 400 });
     expect(
       await validateBankAccountForEntity(exec([{ ...ACCT, id, entityId: "e2" }]).exec, id, "e1"),

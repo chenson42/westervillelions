@@ -1,22 +1,38 @@
 /**
- * Move a ledger transaction to another fund (DECISION-109/111,
- * docs/work-log/2026-10-01-move-or-cancel-transaction.md).
+ * Move a ledger transaction to another fund (DECISION-109/111/112/113,
+ * docs/work-log/2026-10-01-move-or-cancel-transaction.md and
+ * docs/work-log/2026-10-01-cross-entity-transaction-move.md).
  *
  * GET  /api/admin/ledger/transactions/[id]/move  - preview
  * POST /api/admin/ledger/transactions/[id]/move  - execute
  *
  * Gate (both verbs, in this body, not only the proxy): LEDGER_RECORD; then a
- * row-derived tier: a reconciled or prior-fiscal-year row also needs
- * LEDGER_MANAGE. The tier is computed server-side from the row (on the
- * FOR UPDATE row for POST), never from the client.
+ * tier derived server-side from the ROW AND THE DESTINATION: a reconciled or
+ * prior-fiscal-year row, and EVERY cross-entity move, also needs LEDGER_MANAGE.
+ * It is computed on the FOR UPDATE row for POST, never from the client. It is a
+ * permission tier, not a second approver.
  *
- * GET returns the same status and `code` POST would for any state-based
- * refusal; a 200 means "this move would be accepted if the body is valid".
+ * Guard order, identical for GET and POST: row state, stale (POST), destination
+ * fund, direction policy, cross-entity row state, tier, input.
  *
- * POST body is EXACTLY { destFundId, categoryId | null, reason, expectedFundId }.
- * Status map: 400 invalid_body | category_invalid; 401; 403 approved | rejected |
- * pending | transfer_leg | dues_synced | manage_required | cross_entity |
- * expense_not_supported | away_from_public | not_permitted; 404 not_found |
+ * GET returns 200 with a PER-DESTINATION decision: every destination it lists
+ * as allowed passes steps 1-6 in POST, and every denial carries the code and
+ * status POST would return (`manage_required` is a per-destination denial, not
+ * a top-level 403). Destination-independent row-state blocks (approved,
+ * rejected, pending, transfer_leg, dues_synced, not_found) stay top-level 4xx.
+ * Step-7 input refusals are POST-only; `dest_no_active_bank_account` is GET-only.
+ *
+ * POST body is { destFundId, categoryId | null, reason, expectedFundId } plus
+ * the OPTIONAL `destBankAccountId` (string | null; absent is null). It is
+ * REQUIRED for a cross-entity move and 400 `dest_bank_account_not_allowed` for
+ * a same-entity move. Any other key is a 400.
+ *
+ * Status map: 400 invalid_body | category_invalid | dest_bank_account_required |
+ * dest_bank_account_invalid | dest_bank_account_not_allowed; 401; 403 approved |
+ * rejected | pending | transfer_leg | dues_synced | manage_required |
+ * cross_entity | expense_not_supported | away_from_public | not_permitted |
+ * club_to_foundation_not_supported | prior_fiscal_year_cross_entity |
+ * reconciled_session | reconciled_legacy | matched_open_session; 404 not_found |
  * fund_not_found | category_not_found; 409 stale | same_fund |
  * bank_account_entity_mismatch; 500.
  *

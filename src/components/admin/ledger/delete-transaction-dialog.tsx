@@ -18,6 +18,10 @@ const secondaryButton =
 const destructiveButton =
   "bg-red-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-red-700 transition min-h-[44px] focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center justify-center";
 
+/** Static pointer for the opposite direction of a move (DECISION-112, X5). */
+export const FOUNDATION_POINTER_COPY =
+  "If this gift\u2019s money is actually in the Foundation\u2019s bank account, delete this entry here and enter the gift on the Foundation\u2019s register, in the bank account the money landed in.";
+
 export interface DeleteDialogBodyProps {
   isTransfer: boolean;
   /** Foundation income rows only; null elsewhere. */
@@ -30,6 +34,12 @@ export interface DeleteDialogBodyProps {
   error: string | null;
   /** True once the server (or the page's data) says a receipt was sent. */
   receiptSent: boolean;
+  /**
+   * A Club income entry: its money may really be in the Foundation's bank
+   * account, and a Club entry cannot be moved onto the Foundation's books, so
+   * the dialog says what to do instead. Static copy; computed by the register.
+   */
+  foundationPointer?: boolean;
   onReasonChange: (reason: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
@@ -73,6 +83,11 @@ export function DeleteDialogBody(props: DeleteDialogBodyProps) {
               A record of the deleted entry and your reason is kept for the board to read.
             </p>
           </div>
+          {props.foundationPointer && (
+            <p role="note" className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+              {FOUNDATION_POINTER_COPY}
+            </p>
+          )}
           <CorrectionReasonField
             id="delete-reason"
             value={props.reason}
@@ -119,6 +134,7 @@ interface DeleteTransactionDialogProps {
   isTransfer: boolean;
   ackStatus: "pending" | "sent" | null;
   summary: string;
+  foundationPointer?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -128,6 +144,7 @@ export default function DeleteTransactionDialog({
   isTransfer,
   ackStatus,
   summary,
+  foundationPointer = false,
   open,
   onOpenChange,
 }: DeleteTransactionDialogProps) {
@@ -199,6 +216,7 @@ export default function DeleteTransactionDialog({
         submitting={submitting}
         error={error}
         receiptSent={receiptSent}
+        foundationPointer={foundationPointer}
         onReasonChange={setReason}
         onConfirm={handleConfirm}
         onCancel={() => handleOpenChange(false)}

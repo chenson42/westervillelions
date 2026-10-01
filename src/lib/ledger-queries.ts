@@ -46,6 +46,7 @@ import {
 } from "@/lib/db/schema";
 import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, ne, sql, count, getTableColumns } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { ackDoneeEntityId } from "@/lib/ledger-ack-donee";
 import { getFiscalYear, currentFiscalYear, fiscalYearLabel, fyBounds } from "@/lib/fiscal-year";
 import { formatTimestamp } from "@/lib/format-date";
 import {
@@ -5048,7 +5049,17 @@ export type AcknowledgmentSummaryRow = {
    */
   sentVia: string | null;
   quidProQuoValueCents: number | null;
+  /**
+   * The ISSUER's name (the entity named on the receipt), not the entity the
+   * transaction now sits in: a receipt follows its issuer (DECISION-112, X6).
+   * The field keeps its name so existing consumers need no change.
+   */
   entityName: string;
+  /** The entity that issued the receipt (`coalesce(donee_entity_id, transaction entity)`). */
+  doneeEntityId: string;
+  /** The entity the transaction is booked in NOW ("booked in ..."); money follows the row. */
+  rowEntityName: string;
+  /** The row's own fund (where the money is now). */
   fundName: string;
   // PII fields — only included when caller has LEDGER_RECORD
   donorId?: string | null;
@@ -5221,6 +5232,7 @@ export async function listAcknowledgmentsSummary(opts: {
   sentOnly?: boolean;
   includePii?: boolean;
 }): Promise<AcknowledgmentSummaryRow[]> {
+  const rowEntity = alias(ledgerEntities, "ack_row_entity");
   const conditions = [];
   if (opts.pendingOnly) {
     conditions.push(isNull(ledgerAcknowledgments.sentAt));
@@ -5240,6 +5252,8 @@ export async function listAcknowledgmentsSummary(opts: {
       quidProQuoValueCents: ledgerAcknowledgments.quidProQuoValueCents,
       donorId: ledgerAcknowledgments.donorId,
       entityName: ledgerEntities.name,
+      doneeEntityId: ackDoneeEntityId,
+      rowEntityName: rowEntity.name,
       fundName: ledgerFunds.name,
       donorName: ledgerDonors.name,
     })
@@ -5249,7 +5263,10 @@ export async function listAcknowledgmentsSummary(opts: {
       eq(ledgerAcknowledgments.donationTxnId, ledgerTransactions.id),
     )
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
-    .innerJoin(ledgerEntities, eq(ledgerTransactions.entityId, ledgerEntities.id))
+    // A receipt follows its issuer (DECISION-112): the entity named here is the
+    // acknowledgment's own, not necessarily the transaction's current one.
+    .innerJoin(ledgerEntities, eq(ledgerEntities.id, ackDoneeEntityId))
+    .innerJoin(rowEntity, eq(ledgerTransactions.entityId, rowEntity.id))
     .leftJoin(ledgerDonors, eq(ledgerAcknowledgments.donorId, ledgerDonors.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(ledgerAcknowledgments.txnDate));
@@ -5265,6 +5282,8 @@ export async function listAcknowledgmentsSummary(opts: {
       sentVia: r.sentVia ?? null,
       quidProQuoValueCents: r.quidProQuoValueCents,
       entityName: r.entityName ?? "Unknown Entity",
+      doneeEntityId: r.doneeEntityId,
+      rowEntityName: r.rowEntityName ?? "Unknown Entity",
       fundName: r.fundName ?? "Unknown Fund",
     };
     if (opts.includePii) {
@@ -5283,15 +5302,18 @@ export async function getAcknowledgment(ackId: string): Promise<
   (LedgerAcknowledgment & {
     txn: LedgerTransaction & { entityName: string; fundName: string };
     donor: LedgerDonor | null;
+    /** The ISSUER (DECISION-112: a receipt follows its issuer), not the row's current entity. */
     entity: LedgerEntity | null;
   }) | null
 > {
+  const rowEntity = alias(ledgerEntities, "ack_row_entity");
   const rows = await db
     .select({
       ack: ledgerAcknowledgments,
       txn: ledgerTransactions,
       fundName: ledgerFunds.name,
       entity: ledgerEntities,
+      rowEntityName: rowEntity.name,
       donor: ledgerDonors,
     })
     .from(ledgerAcknowledgments)
@@ -5300,7 +5322,8 @@ export async function getAcknowledgment(ackId: string): Promise<
       eq(ledgerAcknowledgments.donationTxnId, ledgerTransactions.id),
     )
     .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
-    .innerJoin(ledgerEntities, eq(ledgerTransactions.entityId, ledgerEntities.id))
+    .innerJoin(ledgerEntities, eq(ledgerEntities.id, ackDoneeEntityId))
+    .innerJoin(rowEntity, eq(ledgerTransactions.entityId, rowEntity.id))
     .leftJoin(ledgerDonors, eq(ledgerAcknowledgments.donorId, ledgerDonors.id))
     .where(eq(ledgerAcknowledgments.id, ackId))
     .limit(1);
@@ -5313,7 +5336,8 @@ export async function getAcknowledgment(ackId: string): Promise<
     txn: {
       ...row.txn,
       fundName: row.fundName ?? "Unknown Fund",
-      entityName: row.entity?.name ?? "Unknown Entity",
+      // Money follows the row: the transaction's own entity name.
+      entityName: row.rowEntityName ?? "Unknown Entity",
     },
     donor: row.donor ?? null,
     entity: row.entity ?? null,

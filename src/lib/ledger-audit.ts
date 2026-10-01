@@ -105,9 +105,19 @@ export async function getRecentLedgerCorrections(args: {
   for (const r of fetched) {
     if (r.action === TRANSACTION_FUND_MOVED_AUDIT_ACTION) {
       const details = parseAuditDetails(TRANSACTION_FUND_MOVED_AUDIT_ACTION, r.details);
-      if (!isRawAudit(details) && details.entityId !== args.entityId) continue;
+      if (!isRawAudit(details)) {
+        // A cross-entity (v2) move is listed under BOTH entities' pages; v1
+        // moves only know the one entity. The delete reader applies the same
+        // any-leg rule.
+        const entityIds =
+          details.v === 2 ? [details.entityId, details.destEntityId] : [details.entityId];
+        if (!entityIds.includes(args.entityId)) continue;
+      }
       const before = parseAuditBefore(TRANSACTION_FUND_MOVED_AUDIT_ACTION, r.before);
       const after = parseAuditAfter(r.after);
+      const v2Details = !isRawAudit(details) && details.v === 2 ? details : null;
+      const v2Before = !isRawAudit(before) && before.v === 2 ? before : null;
+      const v2After = !isRawAudit(after) && after.v === 2 ? after : null;
       mapped.push({
         id: r.id,
         createdAt: r.createdAt,
@@ -122,6 +132,15 @@ export async function getRecentLedgerCorrections(args: {
         settledPeriod: isRawAudit(details) ? false : details.reconciled || details.priorFiscalYear,
         rowCount: 1,
         sentStatementMonth: isRawAudit(details) ? null : details.sentStatementMonth,
+        crossEntity: v2Details !== null,
+        fromEntityName: v2Before?.entity.name ?? null,
+        toEntityName: v2After?.entity.name ?? null,
+        fromBankAccount: v2Before?.bankAccount?.name ?? null,
+        toBankAccount: v2After?.bankAccount.name ?? null,
+        receiptSent:
+          v2Details !== null &&
+          v2Details.acknowledgment.sent === true &&
+          v2Details.acknowledgment.outcome === "kept",
       });
     } else if (r.action === TRANSACTION_DELETED_AUDIT_ACTION) {
       const details = parseAuditDetails(TRANSACTION_DELETED_AUDIT_ACTION, r.details);
@@ -145,9 +164,53 @@ export async function getRecentLedgerCorrections(args: {
         settledPeriod: isRawAudit(details) ? false : details.reconciled || details.priorFiscalYear,
         rowCount: isRawAudit(details) ? 1 : details.rowCount,
         sentStatementMonth: isRawAudit(details) ? null : details.sentStatementMonth,
+        crossEntity: false,
+        fromEntityName: null,
+        toEntityName: null,
+        fromBankAccount: null,
+        toBankAccount: null,
+        receiptSent: false,
       });
     }
   }
 
   return { rows: mapped.slice(0, displayCap), totalInWindow: mapped.length };
+}
+
+/**
+ * The most recent `transaction_fund_moved` audit row for one transaction, for
+ * the sweep memo prefill (DECISION-112 / Gap 10): the date comes from the audit
+ * row, never the page-load clock. `targetTransactionId` survives a move (the
+ * row is kept). `sourceLabel` is "the " + the source entity's display name for
+ * a v2 move, and the source fund's name minus a trailing " Fund" for a v1
+ * move; null when the row is raw or absent.
+ *
+ * Plain equality on two columns (uses `ix_ledger_audit_log_transaction`); the
+ * payload is parsed in JavaScript, never cast to jsonb in SQL (DECISION-111
+ * item 6).
+ */
+export async function getLatestFundMove(
+  transactionId: string,
+): Promise<{ createdAt: Date; sourceLabel: string } | null> {
+  const rows = await db
+    .select({
+      createdAt: ledgerAuditLog.createdAt,
+      before: ledgerAuditLog.before,
+    })
+    .from(ledgerAuditLog)
+    .where(
+      and(
+        eq(ledgerAuditLog.action, TRANSACTION_FUND_MOVED_AUDIT_ACTION),
+        eq(ledgerAuditLog.targetTransactionId, transactionId),
+      ),
+    )
+    .orderBy(desc(ledgerAuditLog.createdAt))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const before = parseAuditBefore(TRANSACTION_FUND_MOVED_AUDIT_ACTION, row.before);
+  if (isRawAudit(before)) return null;
+  const sourceLabel =
+    before.v === 2 ? `the ${before.entity.name}` : before.fund.name.replace(/ Fund$/, "");
+  return { createdAt: row.createdAt, sourceLabel };
 }

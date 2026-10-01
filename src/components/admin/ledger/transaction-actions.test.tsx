@@ -19,7 +19,7 @@ vi.mock("sonner", () => ({
 import TransactionActions from "./transaction-actions";
 import ReconcileToggle from "./reconcile-toggle";
 import { moveButtonState } from "./transaction-move-eligibility";
-import { MANAGE_REQUIRED_MESSAGE } from "@/lib/ledger-correction";
+import { CROSS_ENTITY_MANAGE_REQUIRED_MESSAGE, MANAGE_REQUIRED_MESSAGE } from "@/lib/ledger-correction";
 import { LOCK_COPY } from "@/lib/ledger-transaction-lock";
 import type { LedgerFund, LedgerTransaction } from "@/lib/db/schema";
 
@@ -34,6 +34,7 @@ const adminFund = fund("a0000000-0000-4000-8000-000000000001", CLUB, "administra
 const activityFund = fund("a0000000-0000-4000-8000-000000000002", CLUB, "activity");
 const charitableFund = fund("a0000000-0000-4000-8000-000000000003", FOUNDATION, "charitable");
 const clubFunds = [adminFund, activityFund];
+const allFunds = [adminFund, activityFund, charitableFund];
 
 function txn(over: Partial<LedgerTransaction> = {}): LedgerTransaction {
   return {
@@ -59,13 +60,23 @@ function txn(over: Partial<LedgerTransaction> = {}): LedgerTransaction {
 
 function render(
   transaction: LedgerTransaction,
-  opts: { funds?: LedgerFund[]; canManage?: boolean; ackStatus?: "pending" | "sent" | null } = {},
+  opts: {
+    funds?: LedgerFund[];
+    moveFunds?: LedgerFund[];
+    banks?: string[];
+    canManage?: boolean;
+    ackStatus?: "pending" | "sent" | null;
+    foundationPointer?: boolean;
+  } = {},
 ) {
   return renderToStaticMarkup(
     <TransactionActions
       transaction={transaction}
       entityId={transaction.entityId}
       funds={opts.funds ?? clubFunds}
+      moveFunds={opts.moveFunds ?? allFunds}
+      entityIdsWithActiveBank={opts.banks ?? [CLUB, FOUNDATION]}
+      foundationPointer={opts.foundationPointer ?? false}
       categories={[]}
       bankAccounts={[]}
       budgetLines={[]}
@@ -150,9 +161,10 @@ describe("TransactionActions: Move button gating (D1)", () => {
     expect(render(txn({ transferGroupId: "d0000000-0000-4000-8000-000000000001" }))).not.toContain(">Move<");
   });
 
-  it("is absent on a Foundation row (no legal destination)", () => {
+  it("is present on a Foundation income row (the cross-entity cell)", () => {
     const html = render(txn({ entityId: FOUNDATION, fundId: charitableFund.id }), { funds: [charitableFund] });
-    expect(html).not.toContain(">Move<");
+    expect(buttonTag(html, "Move")).not.toBeNull();
+    expect(buttonTag(html, "Move")).not.toMatch(DISABLED);
   });
 
   it("is absent on an Activity row (no legal destination)", () => {
@@ -186,12 +198,88 @@ describe("TransactionActions: Move button gating (D1)", () => {
 });
 
 describe("moveButtonState", () => {
-  const base = { funds: clubFunds, canManage: true, now: new Date(NOW) };
+  const base = {
+    funds: clubFunds,
+    entityIdsWithActiveBank: [CLUB, FOUNDATION],
+    canManage: true,
+    now: new Date(NOW),
+  };
   it("omits when the row's fund is not in the supplied list", () => {
     expect(moveButtonState({ ...base, funds: [], transaction: txn() })).toEqual({ kind: "omit" });
   });
-  it("enabled for the one legal cell", () => {
+  it("enabled for the same-entity cell, with no cross-entity hint", () => {
     expect(moveButtonState({ ...base, transaction: txn() })).toEqual({ kind: "enabled" });
+  });
+});
+
+/** C37: the Foundation row's Move button (cross-entity cell) */
+describe("moveButtonState: Foundation to Club (C37)", () => {
+  const base = {
+    funds: allFunds,
+    entityIdsWithActiveBank: [CLUB, FOUNDATION],
+    canManage: true,
+    now: new Date(NOW),
+  };
+  const foundationRow = (over: Partial<LedgerTransaction> = {}) =>
+    txn({ entityId: FOUNDATION, fundId: charitableFund.id, ...over });
+
+  it("is enabled for a manage caller and flagged cross-entity-only", () => {
+    expect(moveButtonState({ ...base, transaction: foundationRow() })).toEqual({
+      kind: "enabled",
+      crossEntityOnly: true,
+    });
+  });
+
+  it("is disabled with the cross-entity permission message for a record-only caller", () => {
+    expect(moveButtonState({ ...base, canManage: false, transaction: foundationRow() })).toEqual({
+      kind: "disabled",
+      reason: CROSS_ENTITY_MANAGE_REQUIRED_MESSAGE,
+      crossEntityOnly: true,
+    });
+  });
+
+  it("is omitted when the Club has no active bank account", () => {
+    expect(
+      moveButtonState({ ...base, entityIdsWithActiveBank: [FOUNDATION], transaction: foundationRow() }),
+    ).toEqual({ kind: "omit" });
+  });
+
+  it("is omitted for an expense row and for a prior-fiscal-year Foundation row (X10)", () => {
+    expect(moveButtonState({ ...base, transaction: foundationRow({ flow: "expense" }) })).toEqual({
+      kind: "omit",
+    });
+    expect(moveButtonState({ ...base, transaction: foundationRow({ txnDate: "2026-06-30" }) })).toEqual({
+      kind: "omit",
+    });
+  });
+
+  it("stays enabled for a closed-session Foundation row (the dialog shows the checklist)", () => {
+    expect(
+      moveButtonState({
+        ...base,
+        transaction: foundationRow({ reconciled: true, reconciledSessionId: "c0000000-0000-4000-8000-000000000001" }),
+      }),
+    ).toEqual({ kind: "enabled", crossEntityOnly: true });
+  });
+
+  it("Club Administrative income is unchanged (same-entity only) and Club Activity income is omitted", () => {
+    expect(moveButtonState({ ...base, transaction: txn() })).toEqual({ kind: "enabled" });
+    expect(moveButtonState({ ...base, transaction: txn({ fundId: activityFund.id }) })).toEqual({
+      kind: "omit",
+    });
+  });
+
+  it("a closed-session Foundation row shows the 'see Move to the Club' sentence beside the lock label", () => {
+    const html = render(
+      txn({
+        entityId: FOUNDATION,
+        fundId: charitableFund.id,
+        reconciled: true,
+        reconciledSessionId: "c0000000-0000-4000-8000-000000000001",
+      }),
+    );
+    expect(html).toContain("see Move to the Club");
+    expect(render(txn())).not.toContain("see Move to the Club");
   });
 });
 
