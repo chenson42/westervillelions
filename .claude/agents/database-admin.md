@@ -116,6 +116,10 @@ The `scripts/` directory holds one-off `tsx` scripts for importing the member ro
 
 Permission seeding happens inside the migration itself (see the role-binding example above). That keeps fresh environments self-bootstrapping.
 
+## Production Data
+
+Production data: see CLAUDE.md Workflow Rule 10. You do not read or write production; ask the orchestrator.
+
 ## Ownership
 
 - **30-day security review (joint with api-developer).** Monthly sweep of auth boundaries, secret handling, dependency CVEs, and OWASP surface area. You take the schema/row-level/data half (constraints, FK integrity, PII shape, member-data minimization, OAuth-token storage); api-developer takes the application/auth/route-handler half. **Your half now also includes sweeping the migrations and scripts for personal data** — a `WHERE u.email = 'someone@example.com'` seed is both a leak and brittle, and migrations ship to every deploy. See CLAUDE.md → *No Personal Data in the Repository*. Log the outcome in `docs/reviews/log.md` and write the detail file at `docs/reviews/YYYY-MM-DD-security.md`.

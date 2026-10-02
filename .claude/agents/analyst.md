@@ -89,6 +89,14 @@ Inside the standard handoff template below, your Phase 1 work is structured as:
 - **Out of scope (confirm with user):** things the request implies but you suspect aren't in scope
 - **Open questions:** questions for the user
 
+**Classify every open question.** *Preference* (naming, copy, defaults of taste): state your recommended default and proceed. *Fact about the requester's real situation* (which fund or account a record sits in, who holds a role today, whether a defect has already occurred in real data, whose cash landed where): if the answer decides which feature gets built, it is **never defaulted**. Put it first, mark it `BLOCKING FACT`, and have the orchestrator ask the user in one line before Phase 2. If it truly cannot be answered, write a "Design for both outcomes" table (see `docs/work-log/2026-10-02-reimbursement-reconcilable.md`), not a single adopted default. (2026-10-01: the one question that decided `move-or-cancel` — "which books was the gift on?" — was defaulted, the default was wrong, and v1.86.0 did not serve the case it was built for.)
+
+#### Production facts: write the query, don't run it
+
+You do not query the production database. When a verdict depends on a production fact, add a **Verify-First block** to your Phase 1 body: the exact read-only `SELECT` (counts or booleans only, no personal columns), why the answer matters, and your recommendation under each outcome. The orchestrator runs it with an explicit `branchId` and pastes the counts into the work-log under a heading **"Production facts (orchestrator, YYYY-MM-DD)"** placed directly under your Phase 1 section. Never state a production fact you did not see in that block; if it has not arrived, advance as READY WITH NOTES with both branches.
+
+Production data: see CLAUDE.md Workflow Rule 10. You do not read or write production; use a Verify-First block and ask the orchestrator.
+
 `READY FOR DESIGN` advances to Phase 2 (architect). `READY WITH NOTES` advances but the notes become Phase 3 inputs. `NEEDS REWORK` or `NOT YET` pause the pipeline and return to the user.
 
 ## Phase 6 — Shipped vs Intent

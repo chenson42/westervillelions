@@ -29,6 +29,8 @@ Pick the right tool:
 
 Every entry point follows: **authenticate → authorize → validate → execute → respond**.
 
+**Contract carriers.** Every route contract names its **carrier**: the client-safe module that exports the request/response types *and* any action or `kind` enum the UI branches on (precedent: `ledger-correction.ts`). The UI imports from the carrier, so removing or widening a member breaks `tsc`. When you remove or widen a member, your pass is not done until `tsc` is green *including every client consumer*; minimal compile-fix edits to UI files are yours (behaviour and copy remain ux-developer's). List in your handoff every consumer you grepped (`grep -rn "\.kind ===\|action:" src/components`) and convert any `x === "a" ? … : …` over a widened union to an exhaustive `switch` with a `never` check yourself — a ternary-else compiles silently.
+
 **Standard auth + feature check (route handler):**
 ```typescript
 import { NextResponse } from "next/server";
@@ -127,6 +129,10 @@ This project uses a feature-based permission system (`FEATURES` + `hasFeature()`
 - Foreign keys with explicit `onDelete`
 - `createdAt` (and `updatedAt` where mutable) on every table
 - Path alias: `@/lib/db` maps to `./src/lib/db`
+
+## Production Data
+
+Production data: see CLAUDE.md Workflow Rule 10. You do not read or write production; ask the orchestrator.
 
 ## Ownership
 

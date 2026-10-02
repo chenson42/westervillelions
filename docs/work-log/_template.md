@@ -101,6 +101,7 @@
 - `POST /api/...` — purpose, request body, response shape
 - `GET /api/...` — purpose, query params, response shape
 - Or server-action signatures: `async function actionName(input): Promise<Result>`
+- **Carrier:** the client-safe module that exports the request/response types *and* any action or `kind` enum the UI branches on (precedent: `ledger-correction.ts`); the UI imports from it so a removed or widened member breaks `tsc`.
 
 ## Data Model
 

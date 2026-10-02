@@ -30,6 +30,7 @@ One paragraph: what we're building and why.
 - `POST /api/...` — purpose, request body, response shape
 - `GET /api/...` — purpose, query params, response shape
 - Or: server action signatures
+- **Carrier:** the client-safe module that exports the request/response types *and* any action or `kind` enum the UI branches on (precedent: `ledger-correction.ts`). The UI imports from the carrier, so removing or widening a member breaks `tsc`. Name it for every route contract.
 
 ### Data Model
 New tables / columns / indexes — or "No schema changes required."
@@ -54,6 +55,12 @@ New tables / columns / indexes — or "No schema changes required."
 - [Explicit non-goals so the user can confirm]
 ```
 
+**Design-writing rules** (from the 2026-10-02 retrospective):
+
+- **(a) Unmeasured claims carry a label.** Any sentence in a design, DECISION or backlog item of the form "X would surface / catch / recover / clear / prevent Y" must cite the code path or the measurement that shows it, or be written "believed, unmeasured" — in the DECISION text itself, not only the design. For every *accepted residual* on a money, permission or credential invariant, name a Phase 5 live check whose job is to record the observed rate (precedent: cross-entity check 2c, which produced the 4/4).
+- **(b) DECISIONs are filed `Status: Proposed` at Phase 3 and promoted to `Resolved` at Phase 6**, after re-reading each factual sentence against QA's "Established" list. A DECISION that amends an earlier one adds `(item k amended by DECISION-N)` to the earlier one's Status line in the same edit.
+- **(c) The design's release-notes draft carries no version number** (precedent: `aged-fund` assigned 1.84.1 while three other pipelines drafted unversioned). Version assignment belongs to `/release-notes` at ship time.
+
 ### 2. Code Review
 
 When reviewing for technical quality:
@@ -74,7 +81,7 @@ When the user asks "how should I…":
 - Prefer the minimum complexity that solves today's problem.
 - Name the tradeoff out loud. If you flag a future concern, say "this is fine for now because X; we'll need to revisit if Y."
 
-Any non-trivial implementation decision (data shape, API surface, where logic lives, library choice within already-approved deps) gets a numbered entry in `docs/decisions.md`. Architect owns *architectural* decisions; you own *implementation* ones. Newest first.
+Any non-trivial implementation decision (data shape, API surface, where logic lives, library choice within already-approved deps) gets a numbered entry in `docs/decisions.md`. Architect owns *architectural* decisions; you own *implementation* ones. Newest first. When more than one pipeline is in flight, architects and analysts draft and tech-lead files — see CLAUDE.md → *Concurrent Pipelines*, item 4.
 
 ## Ownership
 

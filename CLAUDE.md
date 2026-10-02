@@ -505,6 +505,8 @@ A loop-back from any later phase returns to the **earliest** phase where the fai
 
 **Specialist split vs. full-stack:** For a large feature with new schema + API + UI, run the specialist split (database-admin → api-developer → ux-developer) — every increment of The Ledger ran this way cleanly. Reserve **full-stack-developer** for work that is small and tightly coupled (~< 150 lines across API + UI) where a handoff would add more overhead than it removes.
 
+**Scope is routed at the phase where it appears.** Every Phase 3 design opens with a "Rulings that differ from Phase 1/2 (read first)" section; every Phase 4 handoff has "Deviations from the design". Anything an implementer or user adds beyond the design is listed there and routed by size: under ~30 lines, no schema and no new API → absorbed with a note; a new schema, API or page → back to Phase 3; a new flow or permission → back to Phase 1. Scope added by an agent unprompted (as in the 2026-09-10 compiler-findings case) is rejected unless it meets the same test.
+
 **Gate:** Typecheck passes. The production build (`pnpm build:only`) passes. No native browser dialogs. No `console.log` left in production paths. All invariants honored. Migrations are idempotent. Auth + `hasFeature()` gates present on every protected route/action. **Every unit test named in the Phase 3 design doc is written and passing** — the implementer delivers these, not qa.
 **Loop-back:** Design unbuildable returns to Phase 3. Architectural problem discovered returns to Phase 2.
 
@@ -547,6 +549,19 @@ sent-claim?"* requires no knowledge of DECISION-102. Six same-shaped defects shi
 2026-09-25, several through exactly this seam; one of them cost a month of undelivered club mail.
 
 **Skipping a phase requires explicit notation in the work-log. No silent skips.** Even a trivial bug fix gets a minimal work-log stub (slug, one-line root cause, reproduction steps, which phases were skipped and why) — the work-log is the pipeline's source of truth and an untracked fix is invisible to the next session.
+
+### Concurrent Pipelines (shared working tree)
+
+When more than one pipeline is in flight against one working tree:
+
+1. **Scratch space.** Every agent works in `<scratchpad>/<pipeline-slug>/` from its first command and never writes to the scratchpad root. **`rm -rf` only a path you created in the same command** (from `mktemp -d` or your own `<pipeline-slug>/` subdirectory, verified non-empty and absolute) — never a directory you "just made by mistake" and cannot vouch for.
+2. **One dev server, owned by the orchestrator.** Agents do not kill, replace or restart the `:3000` server; ask the orchestrator, which announces the restart in the affected work-logs. A schema change in any pipeline requires a restart before another pipeline's live checks. `pnpm dev` replays `drizzle/migrations/` at start: a pipeline's in-flight migration is applied by *every* pipeline's server start, so migration files are not added to the tree until the owner's Phase 4 schema step is complete.
+3. **Gate failures in files you did not touch are "concurrent, not this diff."** Record file, line and owning pipeline; re-run until green or classify; never edit another pipeline's file to turn a gate green. A PASS states the tree state it was measured on.
+4. **Filing.** Architects and analysts draft; only tech-lead edits `docs/decisions.md` (this narrows `tech-lead.md`'s "architect logs architectural ones" — in every log read, the architect already drafted rather than filed), only the orchestrator or tech-lead edits `docs/backlog.md`, `package.json` and `docs/release-notes/`. Other agents write "Proposed DECISION/backlog text" blocks. IDs are reserved by the orchestrator in a `Reserved IDs:` line in the work-log header at pipeline start; migration numbers are re-derived (`ls drizzle/migrations | sort | tail -3`) at Phase 4 start.
+5. **Worktrees.** A pipeline that adds a migration, and any second pipeline in Phase 4/5 at the same time, runs its implementers and qa in an `isolation: "worktree"` with its own Neon branch for the dev database and its own `.env.local` copy. Read-only phases (1, 2, 3, 6) share the main tree. A soft cap of two pipelines past Phase 3 on one tree.
+6. **Push.** One `/pre-push` on the combined tree after every in-flight pipeline reaches Phase 6; the orchestrator, not an individual QA, owns the push gates. Commits are split by pipeline with hunk-level staging where files interleave.
+
+*Why:* the week of 2026-09-26 to 2026-10-02 ran four pipelines on one tree and logged 14 collision incidents (red gates from half-written files, one `rm -rf` on a path the agent could not vouch for, the single dev server killed by at least four agents, bundled commits that cannot be reverted separately), none of which shipped a defect. See `docs/reviews/2026-10-02-retrospective.md` §2.5.
 
 ### Per-Feature Tracking
 
@@ -600,6 +615,8 @@ shared home — not a note that the code "could be DRYer".
 
 If the user says proceed, do not append a fake log entry — the next session will surface the gap again.
 
+Also read the most recent `retrospective` line. If its `musts:` figure is not `n/n`, list the open MUSTs by name before any feature work, the same way an overdue review is surfaced. This is what lets a retrospective's edits land: the checkpoint sits in a file every session already reads.
+
 **Trivial work skips the cadence check:** typo fixes, single-line config edits, answering codebase questions.
 
 ### Logging Outcomes
@@ -611,6 +628,8 @@ YYYY-MM-DD | <type> | <one-line outcome>
 ```
 
 For substantial reviews, also write `docs/reviews/YYYY-MM-DD-<type>.md` with details and link it from the log entry.
+
+A retrospective is not closed until each MUST it proposes has been applied or explicitly declined by the user, in the same session. Its log line ends with `musts: <applied>/<proposed>`. If the user is not present to approve edits, the retrospective logs `musts: 0/<n> (awaiting approval)` and the next session treats that as an overdue review.
 
 ## Document Naming
 
@@ -634,6 +653,7 @@ Slugs are short, lowercase, hyphenated, and stable. Don't rename them after the 
 7. **Test locally before pushing.** Run `pnpm dev` and verify changes in the browser. Run `pnpm build:only` to confirm the production build passes.
 8. **Never rewrite `main`'s history to diagnose an external-system failure.** If a deploy/CI failure appears after a push, the commit is rarely the cause — especially when the *same input* (identical commit/author) suddenly produces a *different result*, which means the external system's state changed, not your code. Get ground truth from the failing service's dashboard/logs **before** amending, re-authoring, or force-pushing. The 2026-06-24 Vercel deploy block (a duplicate Vercel account had claimed the GitHub login — see `docs/reviews/2026-06-24-retrospective.md` and the deployment-engineer agent's "external-system failures" note) cost three needless force-pushes that fixed nothing.
 9. **Delegate substantive work to background agents; keep the main thread responsive.** For any non-trivial or multi-step work — investigations, feature implementation, reviews, data diagnostics, doc-heavy changes — spawn an agent (via the Agent tool, which runs in the background) rather than doing the work inline on the main thread. The main thread is for orchestration, clarification, quick reads, and relaying results, so the user can ask questions and redirect without waiting on a long-running task. Trivial single-step actions (one file read, a one-line edit, answering a question directly) may stay inline. When several pieces of work are independent, launch them as parallel background agents; when they share files or the working tree, sequence them.
+10. **Production data is read-only to agents.** A subagent never writes to the production database by any route: `PROD_DATABASE_URL`, the Neon MCP (`run_sql`, `run_sql_transaction`, `prepare_database_migration`, `create_branch`/`reset_*`/`restore_*` on the production branch), or a script run with `--apply` while `PROD_DATABASE_URL` is set. The orchestrator writes to production only when the user names that specific write in that turn — a general "fix it" or an earlier instruction does not count — and records the exact statement, the row counts before and after, and the user's words in the work-log. **Reads** are allowed to the orchestrator only: counts, booleans and role/config names; never copy personal data into the repo or a work-log; always pass `branchId` explicitly (the Neon MCP default branch *is* production). When a production data problem surfaces, report what the read shows, name the in-app audited path, or propose building it — do not propose hand SQL. A correction to the club's books goes through the app's audited routes so the audit log records that a correction happened; hand SQL leaves a history in which the original entry never existed.
 
 ## Key Invariants
 

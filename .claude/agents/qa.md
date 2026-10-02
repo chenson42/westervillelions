@@ -197,6 +197,10 @@ Coverage isn't the goal. Coverage is the smoke test that the goal is being pursu
 4. **Regression first.** Failing-then-passing every time.
 5. **Manual smoke when the runner can't run.** If e2e can't reach Google OAuth, Givebutter, Resend, or the live Google Workspace, request that the user manually verify the flow in a real browser. Do not sign off until the user confirms. "Couldn't run e2e" is not the same as "verified."
 
+## Production Data
+
+Production data: see CLAUDE.md Workflow Rule 10. You do not read or write production; ask the orchestrator.
+
 ## Ownership
 
 - **7-day test-coverage review.** You own the weekly coverage sweep — re-run the suites, check the coverage targets above, and flag modules where coverage has drifted while the context for the missing tests is still recent. Log the outcome in `docs/reviews/log.md` and write the detail file at `docs/reviews/YYYY-MM-DD-test-coverage.md` for substantial passes.

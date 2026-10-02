@@ -454,6 +454,8 @@ corrections of paid reimbursements (a third action, `transaction_corrected`); sa
 
 ## DECISION-109: Same-entity fund reclassification of an income row via a dedicated `POST .../transactions/[id]/move` endpoint; second narrow carve-out of the reconciled lock (amends DECISION-036 item 4, extends DECISION-099)
 
+**Amended by DECISION-115 (2026-10-02):** item 5's statement that `ledger.manage` is bound to admin only ("the treasurer is one of the two admins") no longer holds — migration 0110 binds it to the `treasurer` role.
+
 **Status:** Resolved (item 3's cross-entity denial is amended for one cell by DECISION-112)
 **Date:** 2026-10-01
 

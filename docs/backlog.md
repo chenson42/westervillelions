@@ -38,6 +38,10 @@ was deleted on the strength of this review alone.
 - B-111 — Treasurer permission baseline: bind or split `ledger.manage`, fix two gating mismatches.
 
 **Soon**
+- B-145 — Member RSVP and signup routes have no tests
+- B-146 — Public forms and the v1.83.0 junk-guard wiring have no route or e2e coverage
+- B-147 — Unit-test the DB-bound permission resolver (carried since 2026-05-18 and 2026-06-24)
+- B-152 — One e2e sign-in helper with a bounded, logged retry for the `MissingCSRF` bounce
 - B-110 — Officer-handover screen.
 - B-109 — Ledger structure admin: bank accounts, opening balances, funds, entity.
 - B-112 — Treasury Guide refresh and handover/close checklists.
@@ -84,6 +88,12 @@ was deleted on the strength of this review alone.
 - B-105 — The reconciliation match route re-verifies the transaction under a lock
 
 **Later**
+- B-148 — Pin the aged-fund loader SQL
+- B-149 — Reimbursement lifecycle e2e, including Mark Paid under deny-by-default email
+- B-150 — Commit e2e for the discard-session and close/match account-mismatch guards
+- B-151 — `provisionUserForMember` existing-user branches have no tests
+- B-153 — `user_roles` has no `UNIQUE (user_id, role_id)`
+- B-154 — e2e fixtures date with a UTC date, not the Eastern wall clock (latent rot)
 - B-114 — Fiscal-year close.
 - B-123 — Complete read-only year export.
 - B-118 — Donor merge.
@@ -392,6 +402,22 @@ was deleted on the strength of this review alone.
 
 ## Soon
 
+- [ ] **B-145 — Member RSVP and signup routes have no tests.**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P1; priority: should-do, high; nominate api-developer for the route tests, full-stack-developer for the e2e)
+  `src/app/api/events/[id]/rsvp/route.ts` (157 lines) and `src/app/api/events/[id]/signup/route.ts` (298 lines) have no unit test, and the only e2e touching them is `cancel-occurrence.spec.ts:174` (member signup on a cancelled occurrence returns 400); `/api/events/[id]/rsvp` appears in no spec. Untested logic: `maxAttendees` capacity with guests (`COALESCE(SUM(1 + guestCount))`), the 409 "occurrence is full" and unique-violation race, required `occurrenceDate` for recurring series, per-occurrence keying, and the wall-clock/UTC parsing of `occurrenceDate` that already produced the "12:30 PM shows as 8:30 AM" bug. First time this has been flagged (it was missed, not deferred). Add route tests for `POST /api/events/[id]/rsvp` and `POST|DELETE /api/events/[id]/signup` (mocked db): invalid status 400, recurring without `occurrenceDate` 400, cap reached 409 including guest counts, unique-violation race 409, non-recurring vs per-occurrence keying, 401 when unauthenticated on signup. Add one member-side e2e (self-seeded private RSVP event like `cancel-occurrence.spec.ts`): a signed-in member signs up for one occurrence of a weekly series and only that occurrence's count rises.
+
+- [ ] **B-146 — Public forms and the v1.83.0 junk-guard wiring have no route or e2e coverage.**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P2; priority: should-do, high; related: DECISION-104, `docs/work-log/2026-09-28-public-form-spam.md`)
+  `contact`, `newsletter/subscribe`, `membership-applications` and `auth/register` have no route tests, `auth/reset-password` (token consumption) has none, and no e2e submits any public form; the charter names "public form submission" as a high-value flow. `form-guard.ts` is well covered as pure functions; what is untested is the **wiring** (cooldown-before-content-guard order, `renderedAt` timing check, honeypot, the dynamic `@/lib/db` import in `checkAndRecordFormCooldown()`), which was verified once by hand with `TURNSTILE_SECRET_KEY` removed. The guard returns `{"success":true}` on rejection, so a false positive on a real applicant is invisible to the applicant and the club; only a test can notice. (a) Route tests for contact, newsletter/subscribe, membership-applications: honeypot filled returns success and writes nothing; two-field gibberish returns success and writes nothing; one gibberish field plus one legitimate field writes the row; hard-surname legitimate input (Nguyen, Krzyzewski shapes) writes the row; same email on a second form inside the cooldown is dropped while a different email is not; the cooldown check runs before the content guard (assert call order). (b) One Playwright spec per form with Turnstile unset in dev, waiting deliberately past the render-time floor (Playwright and password-manager autofill otherwise test the guard instead of the form), asserting the row (or the `email_queue` row, status `blocked_non_production`) and the success state. (c) Route tests for `auth/reset-password` and `auth/register`, and one forgot-reset-sign-in e2e.
+
+- [ ] **B-147 — Unit-test the DB-bound permission resolver (carried since 2026-05-18 and 2026-06-24).**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P3; priority: should-do, high; assignee: qa, as assigned 2026-06-24 and never done; flagged High on 2026-05-18 and Medium on 2026-06-24)
+  `src/lib/permissions-server.ts` is 14.28% covered: `permissions-server.test.ts` tests only the two pure session helpers, while `getUserFeatures`, `hasFeature`, `hasAnyFeature`, `hasAllFeatures`, `requireFeature` and the 60-second cache have no test. 62 other test files `vi.mock` this module, so every gate test asserts "the route called `hasFeature` with the right key" and none asserts what `hasFeature` returns for a real role set. The "admin gets ALL features" rule and the union-of-roles `selectDistinct` are implemented twice, in `getUserFeatures()` and in the JWT callback `src/lib/auth/index.ts:243-264` (0% covered), with no test that they agree. Mock Drizzle and cover: admin role returns every feature, multi-role union without duplicates, no roles returns empty, cache hit inside 60s makes no second query, cache expiry (fake timers) re-queries, `clearUserPermissionCache`, `hasAnyFeature([])` is false, `hasAllFeatures([])` behavior is pinned deliberately, `requireFeature` throws with the key named. Add a parity test that the JWT callback and `getUserFeatures` resolve the same feature set for the same role rows (or extract one shared resolver; the rule lives in two places). About 60 lines. Related, not claimed as a defect: 3 route files read `session.user.features` (JWT, refreshed at sign-in) while 118 use DB-backed `hasFeature`/`hasAnyFeature`; a revocation reaches the second group within 60s and the first only at re-sign-in, and how stale the JWT can get was not tested.
+
+- [ ] **B-152 — One e2e sign-in helper with a bounded, logged retry for the `MissingCSRF` bounce.**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, "Flaky e2e" section; priority: should-do, low-medium; fold in B-154)
+  Sign-in logic is copy-pasted: `e2e/helpers/auth.ts` (`signInAsAdmin`, 21 spec files) plus nine spec-local copies of the same five lines (`admin-email-queue-access`, `admin-events-announce-page-gate`, `admin-ledger-budget-committee-gate`, `club-files-flow`, `proposals-permission-boundary`, `admin-minutes-notetaker-gate`, `social-requests-flow`, `admin-subscriptions-page-gate`, `admin-documents-notetaker-gate`). The cold-start `MissingCSRF` race recurred this week in one of each kind (`budget-star-notes` via the helper, `admin-events-announce` via a local copy), so a retry added only to `auth.ts` fixes half. Consolidate into `signInAs(page, email, password)` in `e2e/helpers/auth.ts` (`signInAsAdmin` delegates; replace the nine local copies). Retry only the specific failure: after submit, if the URL is still `/signin` and no credentials-error message is visible, `await page.request.get("/api/auth/csrf")` and re-submit, capped at 3 attempts so a real auth break (wrong hash, Turnstile on) still fails within about 45s; `console.warn("[e2e] sign-in retry n")` on every retry so the flake stays visible. Do **not** set `retries: 1` globally (serial describes re-run non-idempotent `beforeAll` fixture setup). The implementer must confirm the credentials-error selector on `/signin`. Also (retrospective S5): extract `WARM_PATHS` from `e2e/global-setup.ts` into `e2e/helpers/warm.ts` and export `warmDevServer()`, because scripted QA walks after a dev-server restart bypass `globalSetup`. Done when a cold-after-edit dev server no longer fails the first sign-in in a full run and a wrong password still fails fast. Believed, not established: the race may also come from source edits under a running `next dev` during e2e (correlate `[auth][error] MissingCSRF` log lines with file-save times before relying on it). This is also the "same decision in more than two places" duplication finding for sign-in.
+
 - [ ] **B-126 — Prior-fiscal-year cross-entity move has no web path.**
   (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md`; DECISION-112)
   The cell is refused with `prior_fiscal_year_cross_entity` and the Move button is omitted on prior-year Foundation rows
@@ -636,6 +662,18 @@ was deleted on the strength of this review alone.
   once designed: send via a durable-claim caller such that it fails (claim reverts, `email_queue`
   row lands `failed`) → retry that row via the admin route → mock the retry as a Resend success →
   assert the claim table's own state, before and after the fix.
+
+  **Amended 2026-10-02 (2026-10-02 test-coverage review): the exposure is both narrower and wider.**
+  *Wider — the actor set.* DECISION-115 gates the retry route on `EMAIL_QUEUE_FEATURES`
+  (`email_queue.manage` or `admin.users`), so since v1.88.0 the **`treasurer` role** — not only
+  `admin.users` holders — can trigger the double-send path. Phase 1 must include that role in its
+  permissions pass. *Narrower — the
+  window.* The v1.85.0 retention purge deletes `email_queue` rows older than 183 days and the three
+  claim tables' `email_queue_id` FKs are `ON DELETE SET NULL` (verified in the dev DB), so only
+  rows younger than about six months are retryable. Status unchanged: still open, no code change
+  (`grep` for the four claim tables in the retry route is empty). See also B-136 (removes `admin.users`
+  from the gate; does not remove `treasurer`) and gap P8 of the review (pin the three `email_queue`
+  FKs to `SET NULL`; not filed).
 
 - [x] **B-73 — `dues_reminders` and `event_announcements` read `sendBulkMemberEmail()`'s raw
   `.success` directly, the exact pre-DECISION-102 pattern, and were never migrated to the new
@@ -1084,6 +1122,30 @@ was deleted on the strength of this review alone.
 ---
 
 ## Later
+
+- [ ] **B-148 — Pin the aged-fund loader SQL.**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P4; priority: should-do, medium; the loader is the actual input behind the 2026-10-01 aged-fund bug report)
+  `getOverview()` lines ~3170-3250 of `ledger-queries.ts`, including Query A2 (`COALESCE(SUM(CASE WHEN txn_date >= cutoff ...))` per public fund, `status = 'posted'`, `flow IN ('income','expense')`), are 0 of 22 statements covered and no e2e references the flag. The pure function `computeAgedPublicFunds` is 100% covered, but a one-character change in the loader (`>=` to `>`, dropping the `posted` filter, mis-handling the cutoff) would pass all unit tests and ship a wrong compliance flag. Extract the Query A2 block into a small function (or test it in place) and cover: SQL shape rendered through `PgDialect` (posted-only, income and expense, `txn_date >= cutoff::date`, grouped by fund and flow), the row-to-facts mapping (income window vs total, missing fund defaults to 0), and that the cutoff comes from `agedPublicFundCutoffDate(settings.holdingPeriodWarnDays)`.
+
+- [ ] **B-149 — Reimbursement lifecycle e2e, including Mark Paid under deny-by-default email.**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P5; priority: should-do, medium)
+  The only reimbursement e2e is `ledger-reimbursement-correct.spec.ts`, which seeds paid rows by DB and states in its header that it "NEVER drives Mark Paid (it emails the member)". That premise predates deny-by-default outbound email: with a fixture member on `example.invalid` and `EMAIL_DEV_ALLOWLIST` unset, `sendEmail()` queues `blocked_non_production` and nothing leaves the machine. Seed a fixture member and a submitted request; as the e2e admin open Mark Paid, assert bank account is required and preselected, the check number field appears for Check only, submit, assert the posted transaction exists with the account and number and is locked against edit/delete, the Paid tab shows payer and fund, and the member and treasurer emails land as `blocked_non_production` rows. Second test: reject twice, second is 409. Update the spec header comment. Also untested at any layer: `GET admin/ledger/reimbursements/route.ts`, `members/reimbursements/page.tsx`, `reimbursement-form.tsx`.
+
+- [ ] **B-150 — Commit e2e for the discard-session and close/match account-mismatch guards.**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P6; priority: should-do, medium)
+  Both are verified only by throwaway scripts. (a) Close and match refuse an off-account matched transaction (F1 fix, v1.87.0): seed a Club row matched by direct SQL into an open Foundation session; `POST .../close` must return 400 `transaction_account_mismatch` and leave the row unreconciled; `POST .../match` of an off-account row must return 409. (b) Discard an open session end to end through the `ConfirmDialog`: session/lines/matches gone, transactions untouched and unreconciled, a closed session answers 409 byte-identical, and the same period can be re-created. Reuse `cleanupMoveTransactionFixtures()`. The `FOR UPDATE` contention, parallel-POST races and `BEFORE UPDATE ... RETURN NULL` fault injection stay mock/static-pinned: they cannot be a CI test.
+
+- [ ] **B-151 — `provisionUserForMember` existing-user branches have no tests.**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P7; carry-over of 2026-09-25 finding #3; priority: small, medium)
+  `members.ts` lines 149-166 (existing user found; `EMAIL_CONFLICT` when `existingUser.memberId` is set and differs; otherwise relink and return `wasExisting: true`) and line 184 (missing `member` role warning) are 0%. Route tests mock `provisionUserForMember` and test how they handle `EMAIL_CONFLICT`, not whether it is raised. Add three tests beside `members-welcome-email.test.ts` (the mock surface already exists): existing unlinked user (case-insensitive email) is linked with no welcome email; existing user linked to the same member is re-affirmed; existing user linked to a different member throws `EMAIL_CONFLICT` and writes nothing. An active member without a linked user is a defect, per project memory.
+
+- [ ] **B-153 — `user_roles` has no `UNIQUE (user_id, role_id)`.**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, P11; priority: low; schema change goes to database-admin; production not checked, never read by QA)
+  Only `user_roles_pkey` on `id` exists (`schema.ts:82-87`), so `scripts/create-test-user.mjs`'s `ON CONFLICT DO NOTHING` has nothing to conflict on and the e2e admin now has 10 `user_roles` rows for 2 roles (5 copies each). Harmless today because `getUserFeatures` uses `selectDistinct`, but a role-removal path that deletes by `(user_id, role_id)` would remove every copy, and any other assignment path can duplicate. Add `UNIQUE (user_id, role_id)` via an idempotent migration that first de-duplicates (and mirror it in `schema.ts`), or make the script check-then-insert; also sweep the two leaked dev fixtures (event "E2E QA Cancel Occurrence Fixture ..." of 2026-09-11 and one `qa-...@example.invalid` user of 2026-09-18). Someone with production access should check production for duplicate `user_roles` rows (orchestrator read, Workflow Rule 10).
+
+- [ ] **B-154 — e2e fixtures date with a UTC date, not the Eastern wall clock (latent rot).**
+  (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, "Date-anchored fixtures"; priority: low; fold into B-152's helper cleanup)
+  `todayIso()` in `e2e/ledger-move-transaction.spec.ts:74` and `e2e/helpers/cross-entity-move-fixtures.ts:51` is `new Date().toISOString().slice(0, 10)`, a UTC date, while the app uses the Eastern wall clock. Between 8 PM and midnight Eastern it returns tomorrow. Harmless this month; on the evening of 2027-06-30 it would date the fixture 2027-07-01, the next fiscal year, and the tier tests (prior-year vs current-year needs `ledger.manage`) would flip. `ledger-reimbursement-correct.spec.ts:77-90` uses the machine-local date, correct only on an Eastern-time machine. Use one Eastern-date helper in e2e fixtures (same source as the app's `nowEastern()`).
 
 - [ ] **B-141 — Own-request paid-reimbursement rows on the register still show Correct / Add bank account.**
   (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; DECISION-114)

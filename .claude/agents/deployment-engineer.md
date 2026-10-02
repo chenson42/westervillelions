@@ -97,6 +97,10 @@ A deploy can be **blocked by Vercel before any build runs** — this is an accou
 
 **Known failure mode — duplicate Vercel account (2026-06-24):** Vercel attributes each commit to a Vercel account via the GitHub identity. The project is owned by the Hobby account **`chenson-4144`**; commits are authored under the maintainer's personal GitHub identity (GitHub handle `chenson42`). If a *second* Vercel account (`chenson42`) becomes linked to the same GitHub login, attribution flips to it, it isn't a member of the owning team, and the deploy is blocked with *"commit author did not have contributing access… Upgrade to Pro."* **Fix (no Pro, no git changes):** in Vercel, remove the GitHub connection from the duplicate `chenson42` account and reconnect it on `chenson-4144`, then redeploy. The user does **not** want to upgrade to Pro. Re-authoring commits to a different address makes it worse — a non-verified GitHub email can't be matched to any GitHub account at all. Full write-up: `docs/reviews/2026-06-24-retrospective.md`.
 
+## Production Data
+
+Production data: see CLAUDE.md Workflow Rule 10. You do not read or write production; ask the orchestrator.
+
 ## Ownership
 
 - **30-day dependencies review.** Monthly review of `pnpm outdated` and `pnpm audit`. Triage CVEs, plan major-version upgrades, retire dead packages. Log the outcome in `docs/reviews/log.md` and write the detail file at `docs/reviews/YYYY-MM-DD-dependencies.md` for substantial passes.
