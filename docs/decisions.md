@@ -88,6 +88,8 @@ Phase 3. Existing tests that change shape are enumerated there. No new dependenc
 
 ## DECISION-112: Cross-entity move of an income row, Foundation Charitable to Club Activity (one cell); acknowledgments record their issuing entity; audit payload v2 (amends DECISION-109 item 3)
 
+**Treasurer confirmation 2026-10-02:** (a) prior-fiscal-year cross-entity moves stay refused — the treasurer's answer to Open Question 3 is "no, it should not be movable"; B-126 is reduced to its part (a), the disabled button with a reason plus a guide sentence; (b) Open Question 2 answered: the only cross-entity cell will ever be Foundation Charitable → Club Activity; no mirror, no further cells (B-96 is closed as won't-do).
+
 **Status:** Resolved
 **Date:** 2026-10-01
 
@@ -452,6 +454,8 @@ purging visit; and production's first real purge is on/after 2026-10-13 (oldest 
 
 ## DECISION-106: Reimbursements no longer require board approval: the treasurer reviews and pays, the board reviews after the fact
 
+**Treasurer confirmation 2026-10-02:** the September 2026 citation stands as written (no minute reference to add); no reimbursement ceiling for now — "we can tweak in the future" (B-84 remains the typo-guard consolidation only).
+
 **Status:** Resolved
 **Date:** 2026-10-01
 
@@ -555,6 +559,8 @@ The rule is replaced by a first-in-first-out reading of "age of the money, oldes
    the count, the names and the flag text are all derived from that array, so they cannot disagree
    (replaces `countAgedPublicFunds()` / `agedPublicFundNames()`, DECISION-028 point 3 and DECISION-032's
    names field). `GuardrailsInput.agedPublicFunds` becomes that array.
+
+**Treasurer sign-off received 2026-10-02:** the oldest-first reading is confirmed. The treasurer added that the check "can probably just go away" — retiring the aged public-fund guardrail entirely is tracked as B-128; until then it stays as shipped.
 
 **Treasurer sign-off requested (the reading we are adopting):** the LCI Board Policy Manual Ch. VII text is not
 in this repository, so "FIFO, age of the money" is our reading of "returned to public use within a

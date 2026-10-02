@@ -88,6 +88,7 @@ was deleted on the strength of this review alone.
 - B-116 — Reconciliation input flexibility.
 - B-124 — Compliance filing editing.
 - B-127 — Bank-account PATCH re-verifies "not matched" under a lock
+- B-128 — Consider retiring the aged public-fund guardrail entirely
 - B-117 — Dues "Mark Paid" should ask the payment method.
 - B-97 — Dues-synced row deletion and the fiscal-year delete gate
 - B-95 — Migrate the seven existing `insert(ledgerAuditLog)` sites to `recordLedgerAudit()`
@@ -367,6 +368,7 @@ was deleted on the strength of this review alone.
   (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-4; audit priority P0, mostly a role-binding decision; audit top-10 rank 2)
   `ledger.manage` is bound to `admin` only, so a non-admin `treasurer` cannot reopen a reconciliation, edit a fund, manage categories, change settings, add a compliance filing, waive a receipt, move a reconciled or prior-year entry, or delete a donor. (Today's treasurer is presumably an admin, which hides all of this; audit open question 1 is whether the successor will be one. If yes, this item shrinks to the two gating fixes below.) Decide which of those abilities the `treasurer` role should hold by default and either bind `ledger.manage` to `treasurer` in a migration or split it into narrower keys (for example a corrections key versus a destructive-admin key). In the same change fix two mismatches: (1) the budget page "+ Add category" button is shown to `budget.edit` holders but `POST /categories` requires `ledger.manage`, so the treasurer and budget_committee get a 403; (2) the Email Queue nav entry carries no `requiredFeature` while its page requires `admin.users` (the access fix is B-122). Add a test that every control rendered for a permission is accepted by the server for the same permission. Widening a nav permission widens proxy access (CLAUDE.md, Admin-Area Protection): confirm every page under a widened segment gates independently. **Related:** B-97 (inconsistent record-versus-manage gate for prior-year deletes), B-16 (standalone category management, listed in the obsolete tier). Audit rows Y7, Y9, M5, H5. Needs a Phase 1 role-binding decision from the treasurer.
   **Amendment (2026-10-01, Phase 6 of the cross-entity work-log):** Add: cross-entity Move, and the Reopen step its checklist depends on, both need `ledger.manage`, so a successor on the `treasurer` role alone can read the checklist but cannot act on it. Someone with production access should confirm the current treasurer's account also holds `admin` (QA only read the dev role table).
+  **Confirmed 2026-10-02 (treasurer):** next year's treasurer will probably NOT be an admin, so this is the first handover item to build; B-108 second.
 
 ---
 
@@ -383,6 +385,7 @@ was deleted on the strength of this review alone.
   entities' totals for a closed year, which feeds each entity's filed return) or specify the supported correction (e.g. a
   dated refund entry plus re-entry) so it is a documented web procedure. Priority: Soon — the real risk to the
   "next treasurer never needs SQL" goal.
+  **Decided 2026-10-02 (treasurer):** prior-year gifts stay NOT movable. Part (b) is closed; only part (a) remains — show Move disabled with the reason and add one guide sentence pointing at the documented correction (refund entry on the Foundation register + re-entry on the Club register where the cash sits, then sweep). Priority drops to Later.
 
 - [ ] **B-110 — Officer-handover screen.**
   (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-3; audit priority P1; audit top-10 rank 3)
@@ -391,6 +394,7 @@ was deleted on the strength of this review alone.
 - [ ] **B-109 — Ledger structure admin: bank accounts, opening balances, funds, entity.**
   (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-2; audit priority P1; audit top-10 rank 4)
   A `ledger.manage` page under Settings to add, rename, deactivate and set-default **bank accounts** (institution, type and **opening balance**, which has no writer anywhere: `ledger_bank_accounts.opening_balance_cents`, DECISION-091, is touched only by import scripts), create and deactivate **funds**, and edit **entity** details (name, EIN, fiscal-year end; the schema comment says "editable via ledger.manage" but no route exists). Audited. Include "why can't I delete this" explanations (an account with transactions can only be deactivated). Replaces the guide's "adding an account needs a developer script." Fund edit (name, opening balance) today is also unaudited and unlocked against reconciled periods and sent statements, so editing it after a statement went out silently rewrites history; this item should lock or warn on that (see B-115 for the audit half). Audit rows Y3 to Y6. Priority note: moves from "rare" to "next" if the club changes banks or adds an account soon (audit open question 3). Needs Phase 1.
+  **Confirmed 2026-10-02 (treasurer):** a bank change is possible but low priority; keep in Soon at low priority.
 
 - [ ] **B-112 — Treasury Guide refresh and handover/close checklists.**
   (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-5; audit priority P1; audit top-10 rank 5)
@@ -431,7 +435,7 @@ was deleted on the strength of this review alone.
   `reconciliation/sessions/[sessionId]/match/route.ts` reads each submitted transaction's `bank_account_id` and `reconciled` flag with a plain unlocked SELECT and inserts the match afterwards. A plain SELECT is not blocked by the cross-entity move's `FOR UPDATE`, and the match insert's key-share lock on the referenced row simply waits for the move to commit and then succeeds, so a match request whose read lands anywhere **inside the move transaction** (roughly the length of its round trips, not sub-millisecond as first written) can leave a Club row matched to a Foundation reconciliation session's bank line. The same read-then-write shape exists against the bank-account PATCH. Needs two admins acting on one row at once, and, contrary to this item's first draft, the close-time tie-out did not surface it (fixed in v1.87.0, see below), but it breaks the one invariant a cross-entity move relies on. Fix shape: run the insert in one transaction, re-select the submitted rows `FOR SHARE` (which waits for any in-flight `FOR UPDATE`), and re-check status, account and `reconciled = false` before inserting; return the existing 400/409 shapes. Live check 2c of the cross-entity work-log records whether the orphan is reproducible. Medium; pull it into the next ledger increment.
   **Picked up 2026-10-01 (v1.87.0):** qa reproduced the race live 4/4 (F1 in the cross-entity work-log) and found close never checked a matched row's bank account. Fix shipped in the same release: the match route re-verifies account + posted status under FOR UPDATE and 409s; the close route refuses (400) when any matched row's bank account differs from the session's.
 
-- [ ] **B-96 — Deferred fund-move shapes (expense moves first).**
+- [x] **B-96 — Deferred fund-move shapes (expense moves first).**
   (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109)
   v1 allows exactly one move: same entity, income, Administrative to Activity. Still denied: **expense moves**
   (Activity to Administrative first, because it cures Activity money spent on Club operations and is the more
@@ -444,6 +448,7 @@ was deleted on the strength of this review alone.
   has the branch and a unit-test slot. Priority: first follow-up if the treasurer hits an expense mis-booking.
   **Amendment (2026-10-01, Phase 6 of the move-or-cancel work-log):** two properties the expense cell will bring. (1) Enabling Activity to Administrative expense moves can un-gate a month (an unreconciled Administrative expense row gates; the same row in Activity does not, per T20), so the dialog and release note must say so then; v1 income moves cannot (uncleared deposits never gate, DECISION-059). (2) When the cross-entity item is designed, run the direction policy before the bank-account assertion so a cross-entity request returns 403 `cross_entity` with the policy reason instead of 409 `bank_account_entity_mismatch`.
   **Amendment (2026-10-01, Phase 3 of the cross-entity work-log):** the cross-entity item above is now partly decided. One cell, income Foundation Charitable to Club Activity, shipped as DECISION-112 (the unsafe case named earlier is cash in the *Foundation's* account; cash in the *Club's* account is exactly what that cell serves). The mirror direction is B-104; cross-entity **expense** moves and Foundation-to-Administrative stay denied. The direction-policy-before-bank-assertion reordering this item asked for is done in DECISION-113.
+  **Closed 2026-10-02 (won't do):** the treasurer confirmed the only cross-entity move cell will ever be Foundation Charitable → Club Activity (shipped v1.87.0, DECISION-112). The Club→Foundation mirror and the expense cell are not wanted.
 
 - [ ] **B-93 — Detector for public money entered in the Administrative fund.**
   (added 2026-10-01, Phase 2 of `docs/work-log/2026-10-01-move-or-cancel-transaction.md`; DECISION-109)
@@ -1043,6 +1048,14 @@ was deleted on the strength of this review alone.
 ---
 
 ## Later
+
+- [ ] **B-128 — Consider retiring the aged public-fund guardrail entirely.**
+  (added 2026-10-02 from the treasurer's sign-off on DECISION-105)
+  On signing off the oldest-first reading the treasurer said the check "can probably just go away". It now only fires
+  for money genuinely parked past the holding period (e.g. a dormant opening-balance-only fund), which the Treasury
+  guide already tells the treasurer to sweep. Decide at the next ledger touch: delete the flag, the `holdingPeriodWarnDays`
+  setting and its guide rows, or keep it as info-severity. If deleted, DECISION-027/028/105 get a superseding note and
+  B-79/B-80 close as moot. Priority: low.
 
 - [ ] **B-127 — Bank-account PATCH re-verifies "not matched" under a lock.**
   (added 2026-10-01 from Phase 6 of `docs/work-log/2026-10-01-cross-entity-transaction-move.md`; DECISION-112)
