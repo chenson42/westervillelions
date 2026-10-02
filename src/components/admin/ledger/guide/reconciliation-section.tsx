@@ -82,6 +82,35 @@ export default function ReconciliationSection() {
         </li>
       </ol>
 
+      <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">
+        Paying a reimbursement by check, and the duplicate warning
+      </h3>
+      <p className="mt-2 text-sm text-gray-700">
+        A reimbursement paid from Mark Paid is already in the register, with its bank account and
+        check number, so its check line matches like any other check. Do not use{" "}
+        <span className="font-semibold">Create transaction</span> for it: that would record the
+        payment twice.
+      </p>
+      <ul className="mt-2 space-y-2 text-sm text-gray-700 list-disc pl-5">
+        <li>
+          When you create a transaction from a debit line and a paid reimbursement of the same amount
+          is waiting, the dialog warns you. Choose{" "}
+          <span className="font-semibold">Use that entry instead</span>: if the entry has no bank
+          account it opens Add bank account with this session&rsquo;s account preselected, and then
+          you match it. To create a new entry anyway, tick{" "}
+          <span className="font-semibold">This is a different payment</span>.
+        </li>
+        <li>
+          If a debit line&rsquo;s match list has no row of the same amount, the picker tells you when a
+          paid reimbursement of that amount has no bank account, with an Add bank account button.
+        </li>
+        <li>
+          A payment that was already double-booked in a closed period: reopen the session (Manage
+          Ledger), unmatch the extra entry, delete it with a reason, match the reimbursement&rsquo;s
+          entry to the bank line, and close the session again.
+        </li>
+      </ul>
+
       <div className="mt-4 rounded-2xl bg-blue-50 border border-blue-100 p-4">
         <p className="text-sm text-blue-800">
           <span className="font-semibold">Coming soon:</span> automatic match suggestions that

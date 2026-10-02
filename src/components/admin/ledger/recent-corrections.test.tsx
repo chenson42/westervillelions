@@ -2,6 +2,8 @@
 
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import RecentCorrections from "./recent-corrections";
 import type { LedgerCorrectionRow } from "@/lib/ledger-correction";
 
@@ -123,5 +125,69 @@ describe("RecentCorrections", () => {
     );
     expect(html).toContain("Foundation to Club");
     expect(html).not.toContain("Receipt already sent");
+  });
+});
+
+describe("RecentCorrections: corrected kind (B-108, T44)", () => {
+  const corrected = (over: Partial<LedgerCorrectionRow> = {}) =>
+    row({
+      id: "c1",
+      kind: "corrected",
+      flow: "expense",
+      from: null,
+      to: null,
+      reason: "Entered under the wrong category",
+      changes: ["Bank account added: Admin Checking", "Category: Supplies to Postage", "Description edited"],
+      ...over,
+    });
+
+  it("renders the Corrected badge and the changes list, never a Deleted or Moved badge", () => {
+    const html = renderToStaticMarkup(<RecentCorrections rows={[corrected()]} totalInWindow={1} />);
+    expect(html).toContain("Corrected");
+    expect(html).not.toContain("Deleted");
+    expect(html).not.toContain("Moved");
+    expect(html).toContain("Bank account added: Admin Checking");
+    expect(html).toContain("Category: Supplies to Postage");
+    expect(html).toContain("Description edited");
+    expect(html).toContain("Entered under the wrong category");
+    expect(html).toContain("$50.00 expense dated 2026-09-12");
+  });
+
+  it("never renders memo text (only the server-composed labels)", () => {
+    const html = renderToStaticMarkup(
+      <RecentCorrections rows={[corrected({ changes: ["Description edited"] })]} totalInWindow={1} />,
+    );
+    expect(html).toContain("Description edited");
+    expect(html).not.toContain("Supplies for the fall drive");
+  });
+
+  it("a corrected row without changes still renders as a card", () => {
+    const html = renderToStaticMarkup(<RecentCorrections rows={[corrected({ changes: undefined })]} totalInWindow={1} />);
+    expect(html).toContain("Corrected");
+    expect(html).not.toContain("<ul class=\"mt-1 list-disc");
+  });
+
+  it("all three kinds render, each with its own badge", () => {
+    const html = renderToStaticMarkup(
+      <RecentCorrections
+        rows={[row({ id: "m", kind: "moved" }), row({ id: "d", kind: "deleted", from: null, to: null }), corrected()]}
+        totalInWindow={3}
+      />,
+    );
+    for (const label of ["Moved", "Deleted", "Corrected"]) expect(html).toContain(label);
+  });
+
+  it("keeps the settled-period badge on a corrected row", () => {
+    const html = renderToStaticMarkup(
+      <RecentCorrections rows={[corrected({ settledPeriod: true })]} totalInWindow={1} />,
+    );
+    expect(html).toContain("Settled period");
+  });
+
+  it("is exhaustive over the three kinds at compile time (a fourth kind must fail the build)", () => {
+    const src = readFileSync(join(__dirname, "recent-corrections.tsx"), "utf8");
+    expect(src).toContain("Record<CorrectionKind");
+    expect(src).toContain("const unreachable: never = row.kind");
+    expect(src).not.toMatch(/row\.kind === "moved" \? "Moved" : "Deleted"/);
   });
 });

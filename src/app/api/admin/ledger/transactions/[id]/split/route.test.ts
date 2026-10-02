@@ -270,3 +270,17 @@ describe("POST /api/admin/ledger/transactions/[id]/split — success", () => {
     expect(mockDbState.updatedSet).toMatchObject({ amountCents: 6_000 });
   });
 });
+
+// B-108 / DECISION-114 / T22: the approvedAt guard stays unconditional and runs before any body parse.
+describe("POST .../split — approved rows stay refused without parsing (T22)", () => {
+  it("403s an approved expense row and never calls request.json()", async () => {
+    mockDbState.existing = { ...BASE_TXN, approvedAt: new Date("2026-10-01T09:00:00Z"), bankAccountId: null };
+    const json = vi.fn(async () => ({ amountCents: 1000 }));
+    const res = await POST({ json } as unknown as NextRequest, makeParams());
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("Approved transactions cannot be split");
+    expect(json).not.toHaveBeenCalled();
+    expect(mockDbState.insertedValues).toBeNull();
+    expect(mockDbState.updatedSet).toBeNull();
+  });
+});

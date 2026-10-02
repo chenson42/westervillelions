@@ -272,8 +272,8 @@ export default async function AdminLedgerCompliancePage({
       <section>
         <h2 className="text-lg font-semibold text-gray-900 mb-1">Recent corrections</h2>
         <p className="text-sm text-gray-500 mb-4">
-          Entries moved to another fund or deleted in the last 90 days, with who made the
-          change and why.
+          Entries moved to another fund, deleted, or corrected (paid reimbursements) in the last
+          90 days, with who made the change and why.
         </p>
         <RecentCorrections
           rows={corrections?.rows ?? []}

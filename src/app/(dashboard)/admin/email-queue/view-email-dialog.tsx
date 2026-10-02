@@ -119,6 +119,11 @@ export function ViewEmailDialog({ to, cc, bcc, subject, status, createdAtLabel, 
             </div>
           </Dialog.Description>
 
+          <p className="text-xs text-gray-500 mb-2">
+            Password-reset links and temporary passwords are hidden in this preview. Retrying a failed
+            email still sends the original.
+          </p>
+
           <div className="flex-1 min-h-0 rounded-lg border border-gray-200 overflow-hidden bg-gray-50">
             {/* Sandboxed with no `allow-scripts` — stored HTML is rendered inert, never trusted. */}
             <iframe

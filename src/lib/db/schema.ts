@@ -826,6 +826,15 @@ export const ledgerAuditLog = pgTable(
     // two carry versioned JSON in before/after/details, written by
     // recordLedgerAudit() in ledger-audit.ts; a delete's target is null and its
     // before holds the row snapshot(s) — see ledger-correction.ts)
+    // 'transaction_corrected' (B-108 / DECISION-114: a paid reimbursement's row repaired or
+    // corrected through POST .../transactions/[id]/correct; versioned JSON in
+    // before/after/details with `details.operation` = 'fill_bank_account' | 'correct',
+    // see ledger-correction.ts)
+    // 'fund_updated' | 'donor_deleted' | 'ledger_settings_updated' (DECISION-115:
+    // lightweight same-transaction notes written by recordLedgerAuditNote() in
+    // ledger-audit.ts; both targets null, plain-text details, no PII; they are
+    // NOT in CORRECTION_AUDIT_ACTIONS so the board-visible reader never lists
+    // them, and they have no reader yet)
     // ('category_created' is a reserved future value — category creation is
     // NOT audited in v1, per DECISION-066 item 5.)
     action: text("action").notNull(),

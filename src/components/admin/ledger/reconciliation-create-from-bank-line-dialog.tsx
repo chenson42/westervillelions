@@ -7,6 +7,17 @@ import { useRouter } from "next/navigation";
 import type { BankLineWithMatch } from "@/lib/reconciliation-queries";
 import type { LedgerFund, LedgerCategory } from "@/lib/db/schema";
 import { formatCalendarDate } from "@/lib/format-date";
+import { CHECK_NUMBER_MAX_LEN } from "@/lib/ledger";
+import type {
+  CreateFromBankLineCandidate,
+  PossibleDuplicateBody,
+} from "@/lib/ledger-reimbursement-correction";
+import DuplicatePaymentAdvisory from "./duplicate-payment-advisory";
+import {
+  acknowledgeFlag,
+  hasDuplicateCandidates,
+  isCreateBlockedByDuplicate,
+} from "./create-from-bank-line-logic";
 
 const METHOD_LABELS: Record<string, string> = {
   check: "Check",
@@ -29,6 +40,12 @@ interface ReconciliationCreateFromBankLineDialogProps {
   categories: LedgerCategory[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * "Use that entry instead" (B-108): the grid closes this dialog and either
+   * opens the repair dialog (the candidate has no bank account) or the match
+   * picker.
+   */
+  onUseCandidate: (candidate: CreateFromBankLineCandidate) => void;
 }
 
 /**
@@ -50,6 +67,7 @@ export default function ReconciliationCreateFromBankLineDialog({
   categories,
   open,
   onOpenChange,
+  onUseCandidate,
 }: ReconciliationCreateFromBankLineDialogProps) {
   const router = useRouter();
   const isDebit = bankLine.amountCents < 0;
@@ -64,6 +82,10 @@ export default function ReconciliationCreateFromBankLineDialog({
     isDebit ? bankLine.checkOrSlipNumber ?? "" : ""
   );
   const [submitting, setSubmitting] = useState(false);
+  // Paid reimbursements of the same amount that may already record this payment
+  // (B-108). Advisory: the POST is the authority and answers 409 regardless.
+  const [candidates, setCandidates] = useState<CreateFromBankLineCandidate[]>([]);
+  const [acknowledged, setAcknowledged] = useState(false);
 
   // Reset every field whenever a different bank line is opened (or this one
   // re-opened) so stale values from a prior line never leak in.
@@ -76,9 +98,37 @@ export default function ReconciliationCreateFromBankLineDialog({
       setMemo("");
       setPaymentMethod("");
       setCheckNumber(isDebit ? bankLine.checkOrSlipNumber ?? "" : "");
+      setCandidates([]);
+      setAcknowledged(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, bankLine.id]);
+
+  // Look for an already-booked paid reimbursement when a debit line is opened.
+  // A failed lookup never blocks the dialog.
+  useEffect(() => {
+    if (!open || !isDebit) return;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/admin/ledger/reconciliation/sessions/${sessionId}/create-from-bank-line?bankLineId=${encodeURIComponent(bankLine.id)}`,
+          { signal: controller.signal },
+        );
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as {
+          candidates?: CreateFromBankLineCandidate[];
+        } | null;
+        if (data?.candidates) setCandidates(data.candidates);
+      } catch {
+        // Aborted or offline.
+      }
+    })();
+    return () => controller.abort();
+  }, [open, isDebit, sessionId, bankLine.id]);
+
+  const duplicateGuard = { flow, candidates, acknowledged };
+  const showAdvisory = hasDuplicateCandidates(flow, candidates);
 
   const activeFund = funds.find((f) => f.id === fundId);
   const filteredCategories = categories.filter(
@@ -121,10 +171,19 @@ export default function ReconciliationCreateFromBankLineDialog({
             flow,
             paymentMethod: paymentMethod || undefined,
             checkNumber: checkNumber.trim() || null,
+            ...acknowledgeFlag(duplicateGuard),
           }),
         },
       );
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data?.code === "possible_duplicate") {
+        // A stale dialog (or a candidate that appeared since it opened): show
+        // the same advisory and require the acknowledgment before retrying.
+        setCandidates((data as PossibleDuplicateBody).candidates ?? []);
+        setAcknowledged(false);
+        toast.error("A paid reimbursement of the same amount may already record this payment. Review it below.");
+        return;
+      }
       if (!res.ok) {
         throw new Error(data.error || "Failed to create the transaction.");
       }
@@ -157,6 +216,16 @@ export default function ReconciliationCreateFromBankLineDialog({
           </Dialog.Description>
 
           <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+            {showAdvisory && (
+              <DuplicatePaymentAdvisory
+                candidates={candidates}
+                acknowledged={acknowledged}
+                onAcknowledgedChange={setAcknowledged}
+                onUseCandidate={onUseCandidate}
+                disabled={submitting}
+              />
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
               <div className="grid grid-cols-2 gap-2">
@@ -286,7 +355,7 @@ export default function ReconciliationCreateFromBankLineDialog({
                 type="text"
                 value={checkNumber}
                 onChange={(e) => setCheckNumber(e.target.value)}
-                maxLength={20}
+                maxLength={CHECK_NUMBER_MAX_LEN}
                 className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
               />
               {!isDebit && bankLine.checkOrSlipNumber && (
@@ -301,15 +370,15 @@ export default function ReconciliationCreateFromBankLineDialog({
               <Dialog.Close asChild>
                 <button
                   type="button"
-                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+                  className="rounded-lg border border-gray-300 px-4 py-2 min-h-[44px] text-sm font-medium text-gray-700 hover:bg-gray-50 transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
                 >
                   Cancel
                 </button>
               </Dialog.Close>
               <button
                 type="submit"
-                disabled={submitting}
-                className="bg-lions-blue text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+                disabled={submitting || isCreateBlockedByDuplicate(duplicateGuard)}
+                className="bg-lions-blue text-white px-5 py-2 min-h-[44px] rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-lions-blue"
               >
                 {submitting ? "Saving…" : "Create & Match"}
               </button>

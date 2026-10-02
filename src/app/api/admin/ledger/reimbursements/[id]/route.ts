@@ -33,7 +33,17 @@
  *
  * pay:
  *   Body: { action: 'pay', fundId, categoryId, paymentDate, paymentMethod,
- *     note?, budgetLineId?, expectedAmountCents: integer, expectedUpdatedAt: ISO }.
+ *     bankAccountId, checkNumber?, note?, budgetLineId?,
+ *     expectedAmountCents: integer, expectedUpdatedAt: ISO }.
+ *   bankAccountId is REQUIRED (B-108 / DECISION-114): the account the money came
+ *   out of, validated server-side (exists, active, of the fund's entity) beside
+ *   the fund / category / budget-line validators. A paid reimbursement used to
+ *   post an approved, locked expense with NO bank account, which can never be a
+ *   reconciliation candidate. A body without it (a stale open dialog) is 400.
+ *   checkNumber is optional (shared normalizeCheckNumber), stored as given
+ *   regardless of method; the dialog sends it only for Check. `note` is the
+ *   register description: the dialog pre-fills it with the member's description,
+ *   and an omitted note still falls back to that description (memo is unchanged).
  *   expectedAmountCents / expectedUpdatedAt echo the row the treasurer was
  *   looking at; a mismatch is 409 "edited after you opened it" (a member may
  *   edit while status='submitted'). The timestamp is compared in application
@@ -66,6 +76,7 @@ import {
   ledgerCategories,
 } from "@/lib/db/schema";
 import { eq, and, inArray, isNull } from "drizzle-orm";
+import { validateBankAccountForEntity } from "@/lib/ledger-transaction-validation";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import {
@@ -75,7 +86,12 @@ import {
 } from "@/lib/ledger-queries";
 import {
   REIMBURSEMENT_ACTIONABLE_STATUSES,
+  REIMBURSEMENT_PAYMENT_METHODS,
+  isBudgetLinePickValid,
   isOwnReimbursementRequest,
+  isReimbursementPaymentMethod,
+  normalizeCheckNumber,
+  parseIsoDate,
   reimbursementTransactionStamp,
 } from "@/lib/ledger";
 import { sendEmail } from "@/lib/email";
@@ -85,8 +101,6 @@ import { resolveTreasurer } from "@/lib/board-positions";
 
 const REASON_MAX_LEN = 1000;
 const NOTE_MAX_LEN = 1000;
-const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-const VALID_PAYMENT_METHODS = ["check", "cash", "other"] as const;
 
 const STALE_MESSAGE = "This request was edited after you opened it. Reload and review it again.";
 const ALREADY_PROCESSED = "This request was already processed";
@@ -96,13 +110,6 @@ class ReimbursementConflictError extends Error {
   constructor() {
     super("REIMBURSEMENT_CONFLICT");
   }
-}
-
-function parseDate(raw: unknown): string | null {
-  if (typeof raw !== "string" || !DATE_REGEX.test(raw)) return null;
-  const d = new Date(raw + "T00:00:00");
-  if (isNaN(d.getTime())) return null;
-  return raw;
 }
 
 function json(error: string, status: number) {
@@ -300,16 +307,24 @@ export async function PATCH(
     if (!fundId || typeof fundId !== "string") {
       return json("fundId is required", 400);
     }
-    const paymentDate = parseDate(body?.paymentDate);
+    const paymentDate = parseIsoDate(body?.paymentDate);
     if (!paymentDate) {
       return json("paymentDate must be a valid date in YYYY-MM-DD format", 400);
     }
     const paymentMethod = body?.paymentMethod;
-    if (
-      !paymentMethod ||
-      !VALID_PAYMENT_METHODS.includes(paymentMethod as (typeof VALID_PAYMENT_METHODS)[number])
-    ) {
-      return json(`paymentMethod must be one of: ${VALID_PAYMENT_METHODS.join(", ")}`, 400);
+    if (!isReimbursementPaymentMethod(paymentMethod)) {
+      return json(`paymentMethod must be one of: ${REIMBURSEMENT_PAYMENT_METHODS.join(", ")}`, 400);
+    }
+    const bankAccountId = body?.bankAccountId;
+    if (!bankAccountId || typeof bankAccountId !== "string") {
+      return json(
+        "Reload the page: the payment form now asks which bank account the money came out of.",
+        400,
+      );
+    }
+    const checkNumberResult = normalizeCheckNumber(body?.checkNumber);
+    if ("error" in checkNumberResult) {
+      return json(checkNumberResult.error, 400);
     }
     const rawNote = body?.note;
     const note =
@@ -327,6 +342,16 @@ export async function PATCH(
     }
     if (!fund.isActive) {
       return json("The specified fund is not active. Please select an active fund.", 400);
+    }
+
+    // The account must exist, be active and belong to the fund's entity (R5:
+    // validated here on `db`, beside the other validators; the account row is
+    // not locked either way, so reading it inside the transaction buys nothing).
+    const bankFit = await validateBankAccountForEntity(db, bankAccountId, fund.entityId, {
+      requireActive: true,
+    });
+    if (!bankFit.ok) {
+      return json(bankFit.error, 400);
     }
 
     // categoryId is REQUIRED (B-30, DECISION-061) — a paid reimbursement's
@@ -366,10 +391,11 @@ export async function PATCH(
         return json("Budget line not found", 404);
       }
       if (
-        line.fundId !== fundId ||
-        line.fiscalYear !== derivedFiscalYear ||
-        line.categoryId !== categoryId ||
-        line.flow !== "expense"
+        !isBudgetLinePickValid(line, {
+          fundId,
+          fiscalYear: derivedFiscalYear,
+          categoryId,
+        })
       ) {
         return json("This budget line does not match the payment's fund, fiscal year, or category.", 400);
       }
@@ -388,6 +414,8 @@ export async function PATCH(
         .values({
           entityId: fund.entityId,
           fundId,
+          bankAccountId: bankFit.account.id,
+          checkNumber: checkNumberResult.value,
           txnDate: paymentDate,
           flow: "expense",
           amountCents: reimb.amountCents,
@@ -398,7 +426,7 @@ export async function PATCH(
           // beneficiaryCause — not newly collected at pay time (B-30).
           beneficiaryCause: reimb.beneficiaryCause ?? null,
           budgetLineId: validatedBudgetLineId,
-          paymentMethod: paymentMethod as string,
+          paymentMethod,
           // status 'posted' bypasses disbApprovalThresholdCents — reimbursements
           // carry no board-approval step (DECISION-106). The stamp below IS the
           // lock (see reimbursementTransactionStamp): do not remove or null it.

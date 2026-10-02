@@ -63,6 +63,7 @@ import { getFiscalYear } from "@/lib/fiscal-year";
 import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
 import { sendBulkMemberEmail } from "@/lib/email";
 import { getFromEmail, getAppUrl } from "@/lib/email-compose";
+import { normalizeCheckNumber } from "@/lib/ledger";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
 import { validateBankAccountForEntity } from "@/lib/ledger-transaction-validation";
@@ -75,7 +76,6 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
 const VALID_FLOWS = ["income", "expense"] as const;
 const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "bill_pay", "other"] as const;
-const CHECK_NUMBER_MAX_LEN = 20;
 const PUBLIC_NOTE_MAX_LEN = 200;
 
 type Flow = (typeof VALID_FLOWS)[number];
@@ -103,23 +103,6 @@ function validateAmount(v: unknown): string | null {
   if (v <= 0) return "amountCents must be greater than 0";
   if (v > INT4_MAX) return `amountCents must not exceed ${INT4_MAX} (~$21.4M)`;
   return null;
-}
-
-/**
- * Trim and length-cap checkNumber (T-18). Free-text identifier, not
- * strict-numeric — a hypothetical future suffixed/lettered check reference
- * (e.g. "1234-R") shouldn't be rejected. Returns `{ error }` on invalid
- * input, or `{ value }` with empty string normalized to null.
- */
-function normalizeCheckNumber(v: unknown): { value: string | null } | { error: string } {
-  if (v === undefined || v === null) return { value: null };
-  if (typeof v !== "string") return { error: "checkNumber must be a string" };
-  const trimmed = v.trim();
-  if (!trimmed) return { value: null };
-  if (trimmed.length > CHECK_NUMBER_MAX_LEN) {
-    return { error: `checkNumber must not exceed ${CHECK_NUMBER_MAX_LEN} characters` };
-  }
-  return { value: trimmed };
 }
 
 /**

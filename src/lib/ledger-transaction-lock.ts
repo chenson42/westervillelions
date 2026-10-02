@@ -12,6 +12,7 @@ import type { LedgerTransaction } from "@/lib/db/schema";
 import { getFiscalYear, currentFiscalYear } from "@/lib/fiscal-year";
 
 export type TransactionLockKind =
+  | "paid_reimbursement"
   | "approved"
   | "rejected"
   | "pending"
@@ -29,11 +30,23 @@ export type LockableRow = Pick<
   | "reconciled"
   | "reconciledSessionId"
   | "txnDate"
->;
+> & {
+  /**
+   * Server-derived (ledger-reimbursement-link.ts): a PAID reimbursement links
+   * to this row. Never client input. Optional so existing callers and fixtures
+   * are unchanged; only the register supplies it (B-108 / DECISION-114).
+   */
+  paidReimbursement?: boolean;
+};
 
-/** Every lock kind that applies, in precedence order (approved first). */
+/**
+ * Every lock kind that applies, in precedence order (paid_reimbursement and
+ * approved first; a paid reimbursement is always also approved, so both are
+ * listed and the first is the classification).
+ */
 export function transactionLockKinds(row: LockableRow): TransactionLockKind[] {
   const kinds: TransactionLockKind[] = [];
+  if (row.approvedAt && row.paidReimbursement) kinds.push("paid_reimbursement");
   if (row.approvedAt) kinds.push("approved");
   if (row.status === "rejected") kinds.push("rejected");
   if (row.status === "pending") kinds.push("pending");
@@ -70,6 +83,19 @@ export function editLockKind(
   if (row.status === "rejected") return "rejected";
   if (row.reconciledSessionId) return "reconciled_session";
   return null;
+}
+
+/**
+ * The lock kind to DISPLAY for an edit-locked row: `editLockKind` (which mirrors
+ * the PATCH guards and is deliberately unchanged) with "approved" shown as
+ * "paid_reimbursement" when a paid reimbursement links to the row.
+ */
+export function editLockDisplayKind(
+  row: Pick<LockableRow, "approvedAt" | "status" | "reconciledSessionId" | "paidReimbursement">,
+): "paid_reimbursement" | "approved" | "rejected" | "reconciled_session" | null {
+  const kind = editLockKind(row);
+  if (kind === "approved" && row.paidReimbursement) return "paid_reimbursement";
+  return kind;
 }
 
 /** Why a row cannot be moved to another fund (reconciliation is a tier, not a block). */
@@ -148,6 +174,11 @@ export const CLOSED_SESSION_LOCK_MESSAGE =
  * kind. An exhaustive Record: a new kind is a compile error.
  */
 export const LOCK_COPY: Record<TransactionLockKind, { label: string; nextStep: string }> = {
+  paid_reimbursement: {
+    label: "Paid reimbursement",
+    nextStep:
+      "Paid reimbursements can't be edited or deleted. Use Correct to change the category, date, method, check number, description or bank account.",
+  },
   approved: {
     label: "Approved",
     nextStep: "Approved transactions cannot be edited. Record a refund entry to correct one.",

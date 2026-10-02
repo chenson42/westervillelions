@@ -67,6 +67,7 @@ function render(
     canManage?: boolean;
     ackStatus?: "pending" | "sent" | null;
     foundationPointer?: boolean;
+    paidReimbursement?: boolean;
   } = {},
 ) {
   return renderToStaticMarkup(
@@ -84,6 +85,7 @@ function render(
       ackStatus={opts.ackStatus ?? null}
       nowIso={NOW}
       entitySlug="club"
+      paidReimbursement={opts.paidReimbursement}
     />,
   );
 }
@@ -302,9 +304,64 @@ describe("no native dialogs", () => {
       "move-transaction-dialog.tsx",
       "delete-transaction-dialog.tsx",
       "sweep-prefill-launcher.tsx",
+      "correct-reimbursement-dialog.tsx",
+      "reconciliation-create-from-bank-line-dialog.tsx",
+      "duplicate-payment-advisory.tsx",
+      "add-bank-account-button.tsx",
+      "pay-reimbursement-dialog.tsx",
     ]) {
       const src = readFileSync(join(__dirname, file), "utf8");
       expect(src).not.toMatch(/window\.(confirm|alert|prompt)\(|\b(confirm|alert|prompt)\(/);
     }
+  });
+});
+
+describe("TransactionActions: paid reimbursement rows (B-108, T40)", () => {
+  const paid = (over: Partial<LedgerTransaction> = {}) =>
+    txn({
+      flow: "expense",
+      approvedAt: new Date("2026-09-30"),
+      bankAccountId: null,
+      ...over,
+    });
+
+  it("labels the row Paid reimbursement, shows Correct (enabled), no Edit, Delete disabled with the new copy", () => {
+    const html = render(paid(), { paidReimbursement: true });
+    expect(html).toContain("Paid reimbursement.");
+    expect(html).not.toContain("Approved.");
+    expect(buttonTag(html, "Correct")).not.toBeNull();
+    expect(buttonTag(html, "Correct")).not.toMatch(DISABLED);
+    expect(buttonTag(html, "Edit")).toBeNull();
+    expect(buttonTag(html, "Delete")).toMatch(DISABLED);
+    expect(html.replace(/&#x27;/g, "'")).toContain(LOCK_COPY.paid_reimbursement.nextStep);
+    expect(html).not.toContain("refund entry");
+    expect(html).not.toContain(">Move<");
+    expect(html).not.toContain(">Split<");
+  });
+
+  it("shows the No bank account line and Add bank account only for an unreconciled null-account row", () => {
+    const html = render(paid(), { paidReimbursement: true });
+    expect(html).toContain("No bank account.");
+    expect(buttonTag(html, "Add bank account")).not.toBeNull();
+
+    const withAccount = render(paid({ bankAccountId: "d0000000-0000-4000-8000-000000000001" }), {
+      paidReimbursement: true,
+    });
+    expect(withAccount).not.toContain("No bank account.");
+    expect(buttonTag(withAccount, "Add bank account")).toBeNull();
+
+    const reconciled = render(paid({ reconciled: true }), { paidReimbursement: true });
+    expect(reconciled).not.toContain("No bank account.");
+    expect(buttonTag(reconciled, "Add bank account")).toBeNull();
+  });
+
+  it("a non-reimbursement approved row is byte-identical to before", () => {
+    const row = txn({ approvedAt: new Date("2026-09-20") });
+    expect(render(row, { paidReimbursement: false })).toBe(render(row));
+    const html = render(row);
+    expect(html).toContain("Approved.");
+    expect(buttonTag(html, "Edit")).toMatch(DISABLED);
+    expect(buttonTag(html, "Correct")).toBeNull();
+    expect(html).not.toContain("Paid reimbursement.");
   });
 });

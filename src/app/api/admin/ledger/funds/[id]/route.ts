@@ -6,6 +6,11 @@
  *
  * Gate: LEDGER_MANAGE
  *
+ * Audited (DECISION-115): a change writes ONE `fund_updated` ledger_audit_log
+ * row (changed fields, old and new) in the same transaction, so an edit with no
+ * audit row cannot commit. A PATCH that changes nothing is a no-op: no write, no
+ * updatedAt bump, no audit row, same 200 response. These rows have no reader yet.
+ *
  * Body (all optional, at least one required):
  * {
  *   name?: string;
@@ -20,6 +25,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ledgerFunds } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { recordLedgerAuditNote } from "@/lib/ledger-audit";
+import { diffChangedFields } from "@/lib/ledger-audit-notes";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 
@@ -101,7 +108,52 @@ export async function PATCH(
       update.openingBalanceCents = openingBalanceCents;
     }
 
-    await db.update(ledgerFunds).set(update).where(eq(ledgerFunds.id, id));
+    const actorUserId = session.user.id;
+    const patch = { name: update.name, openingBalanceCents: update.openingBalanceCents };
+
+    const outcome = await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({
+          id: ledgerFunds.id,
+          name: ledgerFunds.name,
+          openingBalanceCents: ledgerFunds.openingBalanceCents,
+        })
+        .from(ledgerFunds)
+        .where(eq(ledgerFunds.id, id))
+        .for("update");
+      if (!current) return "not_found" as const;
+
+      const diff = diffChangedFields(
+        { name: current.name, openingBalanceCents: current.openingBalanceCents },
+        patch,
+        ["name", "openingBalanceCents"],
+      );
+      if (!diff) return "noop" as const;
+
+      await tx
+        .update(ledgerFunds)
+        .set({ ...diff.set, updatedAt: update.updatedAt })
+        .where(eq(ledgerFunds.id, id));
+
+      const changes = Object.keys(diff.after)
+        .map((key) => {
+          const k = key as "name" | "openingBalanceCents";
+          return `${k} ${JSON.stringify(diff.before[k])} to ${JSON.stringify(diff.after[k])}`;
+        })
+        .join("; ");
+      await recordLedgerAuditNote(tx, {
+        actorUserId,
+        action: "fund_updated",
+        before: { fundId: id, ...diff.before },
+        after: { fundId: id, ...diff.after },
+        details: `Edited fund "${current.name}" (${id}): ${changes}`,
+      });
+      return "updated" as const;
+    });
+
+    if (outcome === "not_found") {
+      return NextResponse.json({ error: "Fund not found" }, { status: 404 });
+    }
 
     return NextResponse.json({ id });
   } catch (error) {

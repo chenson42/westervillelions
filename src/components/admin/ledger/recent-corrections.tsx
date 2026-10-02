@@ -1,8 +1,10 @@
 import { formatStatementMonth, type LedgerCorrectionRow } from "@/lib/ledger-correction";
 
+type CorrectionKind = LedgerCorrectionRow["kind"];
+
 /**
- * "Recent corrections" list for the Compliance page (DECISION-110): every move
- * and delete from the last 90 days, who/when/amount/reason, so the board can see
+ * "Recent corrections" list for the Compliance page (DECISION-110, DECISION-114):
+ * every move, delete and paid-reimbursement correction from the last 90 days, who/when/amount/reason, so the board can see
  * corrections to settled money. Server component, presentational, stacked cards
  * (not a table) so it never scrolls sideways at 360px.
  *
@@ -36,18 +38,63 @@ function formatWhen(date: Date): string {
   }).format(date);
 }
 
-function Badge({ children, tone }: { children: React.ReactNode; tone: "blue" | "red" | "gold" | "gray" }) {
+function Badge({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone: "blue" | "red" | "gold" | "gray" | "green";
+}) {
   const tones = {
     blue: "bg-blue-50 text-lions-blue border-blue-100",
     red: "bg-red-50 text-red-700 border-red-100",
     gold: "bg-amber-50 text-amber-800 border-amber-200",
     gray: "bg-gray-100 text-gray-600 border-gray-200",
+    green: "bg-green-50 text-green-700 border-green-200",
   } as const;
   return (
     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${tones[tone]}`}>
       {children}
     </span>
   );
+}
+
+/**
+ * One entry per correction kind. A `Record<CorrectionKind, ...>` so a fourth
+ * kind is a compile error here, not a card silently mislabelled "Deleted".
+ */
+const KIND_BADGE: Record<CorrectionKind, { label: string; tone: "blue" | "red" | "gold" | "gray" | "green" }> = {
+  moved: { label: "Moved", tone: "blue" },
+  deleted: { label: "Deleted", tone: "red" },
+  corrected: { label: "Corrected", tone: "green" },
+};
+
+/** The headline of a card, per kind; exhaustive, with a `never` check. */
+function Headline({ row }: { row: LedgerCorrectionRow }) {
+  const amount = row.amountCents != null ? formatMoney(row.amountCents) : "Amount unavailable";
+  const base = `${amount}${row.flow ? ` ${row.flow}` : ""}${row.txnDate ? ` dated ${row.txnDate}` : ""}`;
+  switch (row.kind) {
+    case "moved":
+      return (
+        <>
+          {base}
+          {row.from && row.to ? (
+            <span className="font-normal text-gray-700">
+              {" "}
+              from {row.from} to {row.to}
+            </span>
+          ) : null}
+        </>
+      );
+    case "deleted":
+      return <>{base}</>;
+    case "corrected":
+      return <>{base}</>;
+    default: {
+      const unreachable: never = row.kind;
+      return unreachable;
+    }
+  }
 }
 
 export default function RecentCorrections({ rows, totalInWindow, loadFailed }: RecentCorrectionsProps) {
@@ -74,9 +121,7 @@ export default function RecentCorrections({ rows, totalInWindow, loadFailed }: R
         {rows.map((row) => (
           <li key={row.id} className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={row.kind === "moved" ? "blue" : "red"}>
-                {row.kind === "moved" ? "Moved" : "Deleted"}
-              </Badge>
+              <Badge tone={KIND_BADGE[row.kind].tone}>{KIND_BADGE[row.kind].label}</Badge>
               {row.settledPeriod && <Badge tone="gold">Settled period</Badge>}
               {row.sentStatementMonth && (
                 <Badge tone="gold">
@@ -97,16 +142,16 @@ export default function RecentCorrections({ rows, totalInWindow, loadFailed }: R
             </div>
 
             <p className="mt-2 text-sm font-semibold text-gray-900 break-words">
-              {row.amountCents != null ? formatMoney(row.amountCents) : "Amount unavailable"}
-              {row.flow ? ` ${row.flow}` : ""}
-              {row.txnDate ? ` dated ${row.txnDate}` : ""}
-              {row.kind === "moved" && row.from && row.to ? (
-                <span className="font-normal text-gray-700">
-                  {" "}
-                  from {row.from} to {row.to}
-                </span>
-              ) : null}
+              <Headline row={row} />
             </p>
+
+            {row.kind === "corrected" && row.changes && row.changes.length > 0 && (
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-gray-700 break-words">
+                {row.changes.map((c, i) => (
+                  <li key={`${i}-${c}`}>{c}</li>
+                ))}
+              </ul>
+            )}
 
             {row.kind === "moved" && row.crossEntity && (row.fromBankAccount || row.toBankAccount) && (
               <p className="mt-1 text-sm text-gray-700 break-words">

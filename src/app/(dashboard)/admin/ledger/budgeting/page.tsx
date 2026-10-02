@@ -2,7 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { hasAnyFeature, hasFeature } from "@/lib/permissions-server";
-import { FEATURES } from "@/lib/permissions";
+import { BUDGET_WRITE_FEATURES, FEATURES } from "@/lib/permissions";
 import {
   getEntities,
   getEntity,
@@ -54,10 +54,9 @@ export default async function AdminLedgerBudgetingPage({
   ]);
   if (!canAccess) redirect("/access-pending");
 
-  const canManage = await hasAnyFeature(session.user.id, [
-    FEATURES.LEDGER_MANAGE,
-    FEATURES.BUDGET_EDIT,
-  ]);
+  // BUDGET_WRITE_FEATURES: the same constant the budget routes (and POST
+  // /categories, the "+ Add category" dialog's route) gate on — Y9, DECISION-115.
+  const canManage = await hasAnyFeature(session.user.id, BUDGET_WRITE_FEATURES);
   const canApprove = await hasFeature(session.user.id, FEATURES.LEDGER_APPROVE);
 
   // --- Params ---

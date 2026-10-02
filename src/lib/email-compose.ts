@@ -77,3 +77,49 @@ export function getFromEmail(displayName?: string): string {
 export function getAppUrl(): string {
   return process.env.NEXTAUTH_URL?.replace(/\/$/, "") ?? "https://westervillelions.org";
 }
+
+/**
+ * HTML body of the "Reset your password" email (POST /api/auth/forgot-password).
+ * Extracted from the route so the sender and the Email Queue redaction tests
+ * (src/lib/email-queue-view.test.ts) share ONE source rather than a pasted
+ * copy. The body carries a live reset token in `resetUrl` — see
+ * src/lib/email-queue-view.ts, which hides it from every queue viewer
+ * (DECISION-115). Whitespace is byte-identical to the previous inline literal.
+ */
+export function buildPasswordResetEmailHtml(resetUrl: string): string {
+  return `
+          <h2>Password Reset Request</h2>
+          <p>You requested a password reset for your Westerville Lions Club account.</p>
+          <p><a href="${resetUrl}" style="background:#003F87;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin:16px 0;">Reset Password</a></p>
+          <p>This link expires in 24 hours. If you did not request a reset, you can ignore this email.</p>
+        `;
+}
+
+/**
+ * HTML body of the new-member "set your password" welcome email
+ * (sendWelcomeEmail in src/lib/members.ts). Carries a live reset token in
+ * `setPasswordUrl`; same sharing and redaction rationale as
+ * buildPasswordResetEmailHtml(). `name` is HTML-escaped here.
+ */
+export function buildWelcomeSetPasswordEmailHtml(input: {
+  name: string;
+  setPasswordUrl: string;
+  appUrl: string;
+}): string {
+  const { name, setPasswordUrl, appUrl } = input;
+  return `
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>Welcome to the Westerville Lions Club! Your member portal account has been created.</p>
+      <p>Click the button below to set your password and activate your account:</p>
+      <p style="text-align:center; margin: 24px 0;">
+        <a href="${setPasswordUrl}" style="background-color:#003F87; color:white; padding:12px 24px; border-radius:6px; text-decoration:none; font-weight:bold;">
+          Set Your Password
+        </a>
+      </p>
+      <p>This link expires in 24 hours. If you need a new one, use the <a href="${appUrl}/forgot-password">forgot password</a> page.</p>
+      <p>Alternatively, if your Google account uses this email address, you can sign in directly with Google — no password needed.</p>
+      <br />
+      <p>Yours in service,</p>
+      <p><strong>Westerville Lions Club</strong></p>
+    `;
+}

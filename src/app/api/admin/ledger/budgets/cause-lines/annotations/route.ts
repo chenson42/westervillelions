@@ -31,7 +31,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hasAnyFeature } from "@/lib/permissions-server";
-import { FEATURES } from "@/lib/permissions";
+import { BUDGET_WRITE_FEATURES } from "@/lib/permissions";
 import { setBudgetCauseLineAnnotation } from "@/lib/ledger-queries";
 
 export async function PATCH(request: NextRequest) {
@@ -40,7 +40,7 @@ export async function PATCH(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
+    if (!(await hasAnyFeature(session.user.id, BUDGET_WRITE_FEATURES))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

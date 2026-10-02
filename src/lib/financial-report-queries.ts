@@ -48,7 +48,7 @@ import {
   ledgerBankLines,
   type LedgerFund,
 } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getFundReport, type FundReportCategoryLine } from "@/lib/ledger-queries";
 import { formatCalendarDate, parseCalendarDate } from "@/lib/format-date";
@@ -299,7 +299,7 @@ function reconciledAtToYMD(d: Date): string {
  * getOverview()'s own `firstOfCurrentMonth` already uses
  * (`now.getFullYear()`/`now.getMonth()+1`, ledger-queries.ts).
  */
-function hasMonthElapsed(monthEnd: string, now: Date = new Date()): boolean {
+export function hasMonthElapsed(monthEnd: string, now: Date = new Date()): boolean {
   const currentMonthStart = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
   return monthEnd < currentMonthStart;
 }
@@ -418,13 +418,115 @@ export async function isMonthGatedForEntity(
       ),
     );
 
-  return rows.some(
-    (r) =>
-      isMemberExposedKind(r.fundKind) &&
-      r.txnDate <= monthEnd &&
-      !isOutstandingCheckRow(r) &&
-      !isUnclearedDepositRow(r),
-  );
+  return monthGatedByRows(rows, monthEnd);
+}
+
+/**
+ * True iff a posted, UNRECONCILED row would gate (hide) the monthly statement
+ * for any month ending on/after its date: it sits in a member-exposed fund and
+ * is neither an outstanding (uncashed) check nor an uncleared deposit. The one
+ * definition shared by isMonthGatedForEntity(), getLatestOpenMonthForEntity()'s
+ * blocking-date filter and the correct route's would-hide-statement refusal
+ * (B-108 / DECISION-114): never a second copy. In practice only an expense
+ * paid by anything other than check can gate, since every income row is an
+ * uncleared deposit.
+ */
+export function rowGatesStatement(r: {
+  fundKind: string;
+  paymentMethod: string | null;
+  flow: string;
+}): boolean {
+  return isMemberExposedKind(r.fundKind) && !isOutstandingCheckRow(r) && !isUnclearedDepositRow(r);
+}
+
+/**
+ * Pure core of isMonthGatedForEntity(): the month is gated when it has not
+ * elapsed, or when any of the given posted, unreconciled rows both gates
+ * (rowGatesStatement) and is dated on/before `monthEnd`.
+ */
+export function monthGatedByRows(
+  rows: ReadonlyArray<{
+    txnDate: string;
+    fundKind: string;
+    paymentMethod: string | null;
+    flow: string;
+  }>,
+  monthEnd: string,
+  now: Date = new Date(),
+): boolean {
+  if (!hasMonthElapsed(monthEnd, now)) return true;
+  return rows.some((r) => r.txnDate <= monthEnd && rowGatesStatement(r));
+}
+
+/**
+ * Earliest `txn_date` among the entity's OTHER posted, unreconciled rows that
+ * gate the statement, or null. Read on whatever handle it is given (the
+ * correct route passes its transaction handle).
+ */
+export async function loadEarliestGatingDate(
+  exec: Pick<typeof db, "select">,
+  entityId: string,
+  excludeTxnId: string,
+): Promise<string | null> {
+  const rows = await exec
+    .select({
+      txnDate: ledgerTransactions.txnDate,
+      fundKind: ledgerFunds.kind,
+      paymentMethod: ledgerTransactions.paymentMethod,
+      flow: ledgerTransactions.flow,
+    })
+    .from(ledgerTransactions)
+    .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+    .where(
+      and(
+        eq(ledgerTransactions.entityId, entityId),
+        eq(ledgerTransactions.status, "posted"),
+        eq(ledgerTransactions.reconciled, false),
+        ne(ledgerTransactions.id, excludeTxnId),
+      ),
+    );
+  let earliest: string | null = null;
+  for (const r of rows) {
+    if (rowGatesStatement(r) && (earliest === null || r.txnDate < earliest)) earliest = r.txnDate;
+  }
+  return earliest;
+}
+
+/**
+ * The first "YYYY-MM" whose statement is VISIBLE today and would be HIDDEN
+ * after this one row changes its date and/or payment method, or null.
+ *
+ * A month M (elapsed) is visible today iff no gating row is dated on/before its
+ * month-end, i.e. monthEnd(M) < min(otherEarliest, beforeFrom) where
+ * `beforeFrom` is the row's date if it gates today, else infinity. After the
+ * change the row gates iff `after.gates`, from `after.txnDate`; every other row
+ * is unchanged, so M is newly hidden iff `after.gates`, `after.txnDate <=
+ * monthEnd(M)` and M was visible. The smallest such M is the month of
+ * `after.txnDate`; later months only move further past the limit. A row that
+ * is reconciled gates neither before nor after (pass `gates: false`).
+ */
+export function newlyHiddenStatementMonth(args: {
+  before: { gates: boolean; txnDate: string };
+  after: { gates: boolean; txnDate: string };
+  otherEarliestGatingDate: string | null;
+  now?: Date;
+}): string | null {
+  if (!args.after.gates) return null;
+  const candidate = args.after.txnDate.slice(0, 7);
+  let monthEnd: string;
+  try {
+    monthEnd = monthBounds(candidate).monthEnd;
+  } catch {
+    return null;
+  }
+  if (!hasMonthElapsed(monthEnd, args.now ?? new Date())) return null;
+  const limits: string[] = [];
+  if (args.otherEarliestGatingDate !== null) limits.push(args.otherEarliestGatingDate);
+  if (args.before.gates) limits.push(args.before.txnDate);
+  const limit = limits.length > 0 ? limits.reduce((a, b) => (a < b ? a : b)) : null;
+  // Visible today only when the month ends strictly before every gating date.
+  if (limit !== null && monthEnd >= limit) return null;
+  return candidate;
 }
 
 // ---------------------------------------------------------------------------
@@ -673,12 +775,7 @@ export async function getLatestOpenMonthForEntity(
   const ceilingMonth = priorMonthKey(currentMonthKey);
 
   const blockingDates = rows
-    .filter(
-      (r) =>
-        isMemberExposedKind(r.fundKind) &&
-        !isOutstandingCheckRow(r) &&
-        !isUnclearedDepositRow(r),
-    )
+    .filter((r) => rowGatesStatement(r))
     .map((r) => r.txnDate);
 
   let candidate: string;

@@ -2462,3 +2462,105 @@ export function reimbursementTransactionStamp(
  * private copy until B-94 consolidates it.
  */
 export const PUBLIC_DONATIONS_CATEGORY_NAME = "Public donations";
+
+// ---------------------------------------------------------------------------
+// Shared field rules (B-108 / DECISION-114 — one home for decisions that were
+// copy-pasted across routes; the duplication rule in CLAUDE.md)
+// docs/work-log/2026-10-02-reimbursement-reconcilable.md
+// ---------------------------------------------------------------------------
+
+/** Maximum length of a check number (T-18). Dialogs use it for `maxLength`. */
+export const CHECK_NUMBER_MAX_LEN = 20;
+
+/**
+ * Trim and length-cap a check number. A free-text identifier, not strict
+ * numeric (a lettered reference such as "1234-R" must not be rejected). Returns
+ * `{ error }` on invalid input, or `{ value }` with undefined, null and blank
+ * all normalized to null.
+ *
+ * Replaces five copies (transactions POST and PATCH, create-from-bank-line, the
+ * reimbursement pay route, the correct route). The old PATCH copy rejected
+ * `undefined`, but its only call site is already guarded by `!== undefined`,
+ * so no caller's behavior changed.
+ */
+export function normalizeCheckNumber(v: unknown): { value: string | null } | { error: string } {
+  if (v === undefined || v === null) return { value: null };
+  if (typeof v !== "string") return { error: "checkNumber must be a string" };
+  const trimmed = v.trim();
+  if (!trimmed) return { value: null };
+  if (trimmed.length > CHECK_NUMBER_MAX_LEN) {
+    return { error: `checkNumber must not exceed ${CHECK_NUMBER_MAX_LEN} characters` };
+  }
+  return { value: trimmed };
+}
+
+/**
+ * Payment methods a reimbursement can be paid by. B-13 (the all-methods list)
+ * stays open; this is only the reimbursement subset, shared by the pay route,
+ * the correct route and both dialogs.
+ */
+export const REIMBURSEMENT_PAYMENT_METHODS = ["check", "cash", "other"] as const;
+export type ReimbursementPaymentMethod = (typeof REIMBURSEMENT_PAYMENT_METHODS)[number];
+
+export const REIMBURSEMENT_PAYMENT_METHOD_LABELS: Record<ReimbursementPaymentMethod, string> = {
+  check: "Check",
+  cash: "Cash",
+  other: "Other",
+};
+
+export function isReimbursementPaymentMethod(v: unknown): v is ReimbursementPaymentMethod {
+  return typeof v === "string" && (REIMBURSEMENT_PAYMENT_METHODS as readonly string[]).includes(v);
+}
+
+/**
+ * The bank account a form should preselect: the sole ACTIVE account, else the
+ * active account flagged `isDefault`, else null (several accounts and no
+ * default means the user must choose; a wrong guess silently breaks the next
+ * reconciliation). An inactive default is ignored. `isActive` defaults to true
+ * when the caller's rows do not carry it.
+ */
+export function pickDefaultBankAccount<T extends { isDefault: boolean; isActive?: boolean }>(
+  accounts: readonly T[],
+): T | null {
+  const active = accounts.filter((a) => a.isActive !== false);
+  if (active.length === 1) return active[0];
+  return active.find((a) => a.isDefault) ?? null;
+}
+
+/**
+ * Strict `YYYY-MM-DD`: the string must round-trip through a calendar date, so
+ * `2026-02-31` (which JS rolls to March 3 and Postgres then rejects with a 500)
+ * and `2026-13-01` are null. The three inline `parseDate` copies in the
+ * transactions POST/PATCH and the old pay route accept those; migrating the
+ * POST/PATCH copies is B-94 and is deliberately not done here.
+ */
+export function parseIsoDate(raw: unknown): string | null {
+  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [y, m, d] = raw.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (
+    dt.getUTCFullYear() !== y ||
+    dt.getUTCMonth() !== m - 1 ||
+    dt.getUTCDate() !== d
+  ) {
+    return null;
+  }
+  return raw;
+}
+
+/**
+ * True when a budget line may be linked to an expense with this fund, fiscal
+ * year and category (B-30, DECISION-061): same fund, same fiscal year, same
+ * category, and an expense-flow line. Pure; the caller loads the line.
+ */
+export function isBudgetLinePickValid(
+  line: { fundId: string; fiscalYear: number; categoryId: string | null; flow: string },
+  expected: { fundId: string; fiscalYear: number; categoryId: string | null },
+): boolean {
+  return (
+    line.fundId === expected.fundId &&
+    line.fiscalYear === expected.fiscalYear &&
+    line.categoryId === expected.categoryId &&
+    line.flow === "expense"
+  );
+}

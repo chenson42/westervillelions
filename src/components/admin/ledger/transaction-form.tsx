@@ -10,6 +10,7 @@ import BudgetContextPanel from "./budget-context-panel";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
 import type { BudgetLineOption } from "@/lib/ledger-queries";
 import { getFiscalYear } from "@/lib/fiscal-year";
+import { CHECK_NUMBER_MAX_LEN, pickDefaultBankAccount } from "@/lib/ledger";
 
 // Convenience type for a partial transaction used when editing
 type EditableTransaction = Pick<
@@ -203,7 +204,7 @@ export default function TransactionForm({
   // legacy row whose stored bankAccountId is NULL, so opening Edit on one of
   // those rows is itself a one-click fix. Also doubles as the SOURCE account
   // for a new Transfer/Sweep (e.g. Admin Checking, where the cash sits).
-  const defaultBankAccountId = bankAccounts.find((a) => a.isDefault)?.id ?? "";
+  const defaultBankAccountId = pickDefaultBankAccount(bankAccounts)?.id ?? "";
   const prefillAccountId =
     activePrefill?.bankAccountId && bankAccounts.some((a) => a.id === activePrefill.bankAccountId)
       ? activePrefill.bankAccountId
@@ -335,7 +336,7 @@ export default function TransactionForm({
       setDestBankAccountId(fallback);
     } else if (flowMode === "sweep" && crossEntityContext) {
       const fallback =
-        crossEntityContext.bankAccounts.find((a) => a.isDefault)?.id ??
+        pickDefaultBankAccount(crossEntityContext.bankAccounts)?.id ??
         crossEntityContext.bankAccounts[0]?.id ??
         "";
       setDestBankAccountId(fallback);
@@ -737,7 +738,7 @@ export default function TransactionForm({
             type="text"
             value={checkNumber}
             onChange={(e) => setCheckNumber(e.target.value)}
-            maxLength={20}
+            maxLength={CHECK_NUMBER_MAX_LEN}
             className="block w-full rounded-lg border border-gray-300 py-2 pl-3 pr-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             placeholder="e.g., 8249"
           />

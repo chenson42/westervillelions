@@ -12,7 +12,7 @@
  * reason to read a reason.
  */
 
-import { and, asc, desc, eq, gte, lte, ne, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   ledgerAcknowledgments,
@@ -27,6 +27,12 @@ import {
 import { fundBalanceCents } from "@/lib/ledger";
 import { MEMBER_EXPOSED_FUND_KINDS, monthBounds } from "@/lib/financial-report-queries";
 import { listLaterClosedSessionsForAccount } from "@/lib/reconciliation-queries";
+import {
+  DUPLICATE_CANDIDATE_CAP,
+  DUPLICATE_WINDOW_DAYS,
+  findDuplicateRows,
+  shiftIsoDate,
+} from "@/lib/ledger-duplicate-candidates";
 import type {
   MoveBankOption,
   MoveDuplicateCandidate,
@@ -35,8 +41,9 @@ import type {
 
 export type SelectExec = Pick<typeof db, "select">;
 
-export const DUPLICATE_WINDOW_DAYS = 30;
-export const DUPLICATE_CANDIDATE_CAP = 5;
+// Re-exported so existing importers keep one import path; the finder itself
+// lives in ./ledger-duplicate-candidates.ts (B-108 / DECISION-114).
+export { DUPLICATE_WINDOW_DAYS, DUPLICATE_CANDIDATE_CAP, shiftIsoDate };
 
 // ---------------------------------------------------------------------------
 // Sent-statement lookup
@@ -181,65 +188,36 @@ export async function listActiveBankOptions(
 // Duplicate candidates (advisory)
 // ---------------------------------------------------------------------------
 
-/** "YYYY-MM-DD" plus `days` (UTC arithmetic on the calendar date; no timezone drift). */
-export function shiftIsoDate(iso: string, days: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
-}
-
 /**
  * Posted income rows in the DESTINATION entity (any fund, any account) with the
  * same amount within 30 days of the row's date, excluding the row itself and
  * transfer legs, newest first, capped at 5. ADVISORY only: it cannot see a
  * deposit bundled with other money (B-107). Never blocks a move.
+ *
+ * A thin wrapper over the shared finder (./ledger-duplicate-candidates.ts): it
+ * pins flow = income and the destination entity and projects to
+ * MoveDuplicateCandidate, so the cross-entity move is unchanged.
  */
 export async function findDuplicateCandidates(
   exec: SelectExec,
   args: { row: Pick<LedgerTransaction, "id" | "txnDate" | "amountCents">; destEntityId: string },
 ): Promise<MoveDuplicateCandidate[]> {
-  const rows = await exec
-    .select({
-      id: ledgerTransactions.id,
-      txnDate: ledgerTransactions.txnDate,
-      party: ledgerTransactions.party,
-      amountCents: ledgerTransactions.amountCents,
-      reconciled: ledgerTransactions.reconciled,
-      reconciledSessionId: ledgerTransactions.reconciledSessionId,
-      fundName: ledgerFunds.name,
-      bankAccountName: ledgerBankAccounts.name,
-      matchId: ledgerReconciliationMatches.id,
-    })
-    .from(ledgerTransactions)
-    .innerJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
-    .leftJoin(ledgerBankAccounts, eq(ledgerTransactions.bankAccountId, ledgerBankAccounts.id))
-    .leftJoin(
-      ledgerReconciliationMatches,
-      eq(ledgerReconciliationMatches.transactionId, ledgerTransactions.id),
-    )
-    .where(
-      and(
-        eq(ledgerTransactions.entityId, args.destEntityId),
-        eq(ledgerTransactions.flow, "income"),
-        eq(ledgerTransactions.status, "posted"),
-        eq(ledgerTransactions.amountCents, args.row.amountCents),
-        gte(ledgerTransactions.txnDate, shiftIsoDate(args.row.txnDate, -DUPLICATE_WINDOW_DAYS)),
-        lte(ledgerTransactions.txnDate, shiftIsoDate(args.row.txnDate, DUPLICATE_WINDOW_DAYS)),
-        ne(ledgerTransactions.id, args.row.id),
-        isNull(ledgerTransactions.transferGroupId),
-      ),
-    )
-    .orderBy(desc(ledgerTransactions.txnDate))
-    .limit(DUPLICATE_CANDIDATE_CAP);
-
+  const rows = await findDuplicateRows(exec, {
+    entityId: args.destEntityId,
+    flow: "income",
+    amountCents: args.row.amountCents,
+    aroundDate: args.row.txnDate,
+    excludeTransactionId: args.row.id,
+  });
   return rows.map((r) => ({
     id: r.id,
     txnDate: r.txnDate,
     party: r.party,
     amountCents: r.amountCents,
     fundName: r.fundName,
-    bankAccountName: r.bankAccountName ?? null,
-    matched: r.matchId != null,
-    reconciled: r.reconciled === true || r.reconciledSessionId != null,
+    bankAccountName: r.bankAccountName,
+    matched: r.matched,
+    reconciled: r.reconciled,
   }));
 }
 

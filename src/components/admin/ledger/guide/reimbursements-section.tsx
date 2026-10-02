@@ -29,6 +29,20 @@ export default function ReimbursementsSection() {
         it with a reason.
       </p>
       <p className="mt-3 text-sm text-gray-700">
+        <span className="font-semibold">Mark Paid asks which bank account the money came out of</span>{" "}
+        (the entity&rsquo;s default is preselected) and, for a check, the{" "}
+        <span className="font-semibold">check number</span>. Both let the payment match its line when
+        you reconcile. The <span className="font-semibold">Register description</span> starts as what
+        the member wrote; change it only if the register should read differently.
+      </p>
+      <p className="mt-3 text-sm text-gray-700">
+        On the Paid tab, each request shows its account and check number. One recorded without an
+        account shows a <span className="font-semibold">Needs bank account</span> badge with an{" "}
+        <span className="font-semibold">Add bank account</span> button. If a paid request was entered
+        wrong, use <span className="font-semibold">Correct</span> on its row in the register (see
+        Books &amp; the Register).
+      </p>
+      <p className="mt-3 text-sm text-gray-700">
         The board reviews reimbursements after the fact. The <span className="font-semibold">Paid</span>{" "}
         tab on the Reimbursements page lists every paid request, newest payment first, with who
         paid it and from which fund.

@@ -5,9 +5,17 @@ import TransactionFormDialog from "./transaction-form-dialog";
 import SplitTransactionDialog from "./split-transaction-dialog";
 import MoveTransactionDialog from "./move-transaction-dialog";
 import DeleteTransactionDialog from "./delete-transaction-dialog";
+import CorrectReimbursementDialog from "./correct-reimbursement-dialog";
+import type { CorrectMode } from "./correct-reimbursement-dialog-logic";
 import { moveButtonState } from "./transaction-move-eligibility";
 import { formatMoneyCents } from "./correction-dialog-logic";
-import { LOCK_COPY, editLockKind, type TransactionLockKind } from "@/lib/ledger-transaction-lock";
+import {
+  LOCK_COPY,
+  editLockDisplayKind,
+  editLockKind,
+  isTransactionReconciled,
+  type TransactionLockKind,
+} from "@/lib/ledger-transaction-lock";
 import type { LedgerTransaction, LedgerFund, LedgerCategory, LedgerBankAccount } from "@/lib/db/schema";
 import type { BudgetLineOption } from "@/lib/ledger-queries";
 
@@ -38,6 +46,12 @@ interface TransactionActionsProps {
   nowIso: string;
   /** Slug of the entity whose register this is (for the sweep deep link). */
   entitySlug: string;
+  /**
+   * Server-derived (ledger-reimbursement-link.ts): a PAID reimbursement links to
+   * this row. Swaps Edit for Correct and the lock label for "Paid
+   * reimbursement" (B-108 / DECISION-114). Optional so other callers are unchanged.
+   */
+  paidReimbursement?: boolean;
 }
 
 const actionBase =
@@ -68,11 +82,13 @@ export default function TransactionActions({
   ackStatus,
   nowIso,
   entitySlug,
+  paidReimbursement = false,
 }: TransactionActionsProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [correctMode, setCorrectMode] = useState<CorrectMode | null>(null);
 
   const isTransfer = Boolean(transaction.transferGroupId);
 
@@ -89,6 +105,18 @@ export default function TransactionActions({
     !isTransfer;
 
   const hardLock = editLockKind(transaction);
+  // The label and the advice shown for a hard lock: a paid reimbursement reads
+  // "Paid reimbursement" (use Correct), not "Approved" (refund entry).
+  const displayLock = editLockDisplayKind({
+    approvedAt: transaction.approvedAt,
+    status: transaction.status,
+    reconciledSessionId: transaction.reconciledSessionId,
+    paidReimbursement,
+  });
+  const canCorrect = paidReimbursement && transaction.status === "posted";
+  // A null-account row can never have been matched, so it is repairable.
+  const needsBankAccount =
+    canCorrect && transaction.bankAccountId == null && !isTransactionReconciled(transaction);
   const moveState = moveButtonState({
     transaction,
     funds: moveFunds,
@@ -105,7 +133,7 @@ export default function TransactionActions({
       : isTransfer
         ? "transfer_leg"
         : null;
-  const labelKind = hardLock ?? infoLock;
+  const labelKind = displayLock ?? infoLock;
 
   const deleteSummary = `${transaction.txnDate} · ${
     isTransfer ? "Transfer" : (transaction.party || transaction.memo || "No party")
@@ -141,15 +169,25 @@ export default function TransactionActions({
           table already scrolls horizontally too, but this keeps the actions
           cell itself well-behaved regardless. */}
       <div className="flex flex-wrap items-center gap-2 justify-end">
-        <button
-          type="button"
-          onClick={() => setEditOpen(true)}
-          disabled={hardLock !== null}
-          title={hardLock ? LOCK_COPY[hardLock].nextStep : undefined}
-          className={`${actionBase} text-lions-blue hover:text-lions-blue-dark focus:ring-lions-blue`}
-        >
-          {isTransfer ? "Edit transfer" : "Edit"}
-        </button>
+        {canCorrect ? (
+          <button
+            type="button"
+            onClick={() => setCorrectMode("correct")}
+            className={`${actionBase} text-lions-blue hover:text-lions-blue-dark focus:ring-lions-blue`}
+          >
+            Correct
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            disabled={hardLock !== null}
+            title={displayLock ? LOCK_COPY[displayLock].nextStep : undefined}
+            className={`${actionBase} text-lions-blue hover:text-lions-blue-dark focus:ring-lions-blue`}
+          >
+            {isTransfer ? "Edit transfer" : "Edit"}
+          </button>
+        )}
         {canSplit && (
           <button
             type="button"
@@ -174,7 +212,7 @@ export default function TransactionActions({
           type="button"
           onClick={() => setDeleteOpen(true)}
           disabled={hardLock !== null}
-          title={hardLock ? LOCK_COPY[hardLock].nextStep : undefined}
+          title={displayLock ? LOCK_COPY[displayLock].nextStep : undefined}
           className={`${actionBase} text-gray-500 hover:text-red-600 focus:ring-gray-300`}
         >
           Delete
@@ -196,10 +234,22 @@ export default function TransactionActions({
             />
           </svg>
           <span className="font-medium">{LOCK_COPY[labelKind].label}.</span>
-          {hardLock && (
-            <span className="hidden max-w-[14rem] sm:inline">{LOCK_COPY[hardLock].nextStep}</span>
+          {displayLock && (
+            <span className="hidden max-w-[14rem] sm:inline">{LOCK_COPY[displayLock].nextStep}</span>
           )}
         </p>
+      )}
+      {needsBankAccount && (
+        <div className="mt-1 ml-auto flex max-w-[14rem] flex-col items-end gap-1 whitespace-normal text-right text-xs text-gray-500">
+          <p>No bank account. It can&rsquo;t be reconciled yet.</p>
+          <button
+            type="button"
+            onClick={() => setCorrectMode("add_bank_account")}
+            className={`${actionBase} border border-lions-blue text-lions-blue hover:bg-lions-blue/5 focus:ring-lions-blue`}
+          >
+            Add bank account
+          </button>
+        </div>
       )}
       {hardLock === "reconciled_session" &&
         moveState.kind !== "omit" &&
@@ -230,6 +280,15 @@ export default function TransactionActions({
           entitySlug={entitySlug}
           open={moveOpen}
           onOpenChange={setMoveOpen}
+        />
+      )}
+
+      {canCorrect && correctMode && (
+        <CorrectReimbursementDialog
+          transactionId={transaction.id}
+          mode={correctMode}
+          open
+          onOpenChange={(o) => !o && setCorrectMode(null)}
         />
       )}
 

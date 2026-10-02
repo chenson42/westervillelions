@@ -7,6 +7,14 @@ import { useRouter } from "next/navigation";
 import type { BankLineWithMatch, CandidateTransactionRow } from "@/lib/reconciliation-queries";
 import { computeSelectionSummary } from "@/lib/reconciliation";
 import { formatCalendarDate } from "@/lib/format-date";
+import type { CreateFromBankLineCandidate } from "@/lib/ledger-reimbursement-correction";
+import CorrectReimbursementDialog from "./correct-reimbursement-dialog";
+import {
+  pickerHintCandidate,
+  pickerHintText,
+  pickerNeedsHintLookup,
+  offerInsteadAction,
+} from "./create-from-bank-line-logic";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
@@ -55,6 +63,10 @@ interface ReconciliationMatchPickerProps {
   candidateTransactions: CandidateTransactionRow[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Pre-fills the search box (for example the amount, from "Use that entry instead"). */
+  initialQuery?: string;
+  /** The session's bank account, preselected when a missing account is added from the hint. */
+  sessionBankAccountId?: string | null;
 }
 
 /**
@@ -73,15 +85,46 @@ export default function ReconciliationMatchPicker({
   candidateTransactions,
   open,
   onOpenChange,
+  initialQuery = "",
+  sessionBankAccountId = null,
 }: ReconciliationMatchPickerProps) {
   const router = useRouter();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
+  // A paid reimbursement with no bank account is not a candidate (B-108): look
+  // for one only when this debit line has no same-amount expense row listed.
+  const [hintCandidate, setHintCandidate] = useState<CreateFromBankLineCandidate | null>(null);
+  const [repairTxnId, setRepairTxnId] = useState<string | null>(null);
+  const needsHintLookup = pickerNeedsHintLookup(bankLine, candidateTransactions);
   const [activeMethods, setActiveMethods] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [committing, setCommitting] = useState(false);
   const selectAllRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open || !needsHintLookup) {
+      setHintCandidate(null);
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/admin/ledger/reconciliation/sessions/${sessionId}/create-from-bank-line?bankLineId=${encodeURIComponent(bankLine.id)}`,
+          { signal: controller.signal },
+        );
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as {
+          candidates?: CreateFromBankLineCandidate[];
+        } | null;
+        setHintCandidate(pickerHintCandidate(data?.candidates ?? []));
+      } catch {
+        // The hint is a nicety; the match POST is the authority.
+      }
+    })();
+    return () => controller.abort();
+  }, [open, needsHintLookup, sessionId, bankLine.id]);
 
   const paymentMethods = useMemo(() => {
     const set = new Set<string>();
@@ -279,6 +322,28 @@ export default function ReconciliationMatchPicker({
             />
           </div>
 
+          {hintCandidate && (
+            <div
+              role="note"
+              className="mt-3 flex flex-col gap-2 rounded-lg border border-lions-gold bg-amber-50 p-3 text-sm text-gray-800 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <p className="break-words">{pickerHintText(hintCandidate)}</p>
+              {offerInsteadAction(hintCandidate).disabledReason === null ? (
+                <button
+                  type="button"
+                  onClick={() => setRepairTxnId(hintCandidate.transactionId)}
+                  className="shrink-0 border-2 border-lions-blue text-lions-blue px-4 py-2 min-h-[44px] rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
+                >
+                  Add bank account
+                </button>
+              ) : (
+                <p className="text-xs text-gray-600">
+                  {offerInsteadAction(hintCandidate).disabledReason}
+                </p>
+              )}
+            </div>
+          )}
+
           {paymentMethods.length > 1 && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-gray-500">Filter:</span>
@@ -432,6 +497,15 @@ export default function ReconciliationMatchPicker({
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      {repairTxnId && (
+        <CorrectReimbursementDialog
+          transactionId={repairTxnId}
+          mode="add_bank_account"
+          preselectBankAccountId={sessionBankAccountId}
+          open
+          onOpenChange={(o) => !o && setRepairTxnId(null)}
+        />
+      )}
     </Dialog.Root>
   );
 }

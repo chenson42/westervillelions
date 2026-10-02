@@ -276,7 +276,7 @@ describe("getFirstAccessibleAdminHref", () => {
 
   it("only returns hrefs for items that declare a requiredFeature — System items with none can't be the landing target", () => {
     // Arrange — sanity check on the fixture itself: System group items with no
-    // requiredFeature (Email Queue, Sync Log, Release Notes) must stay
+    // requiredFeature (Release Notes) must stay
     // unreachable as a "first accessible" landing target
     const systemGroup = ADMIN_NAVIGATION.find((g) => g.label === "System");
     const openItems = systemGroup?.items.filter((i) => !i.requiredFeature) ?? [];
@@ -394,12 +394,27 @@ describe("getAdminProtectionRules", () => {
     expect(membersRule?.pattern.test("/admin/members/123")).toBe(true);
   });
 
-  it("produces no rule for System items with no requiredFeature of their own (Email Queue, Release Notes)", () => {
+  it("derives an /admin/email-queue rule requiring EMAIL_QUEUE_MANAGE (plus ADMIN_USERS for one release, DECISION-115); release-notes still has none", () => {
     const rules = getAdminProtectionRules();
-    const segments = rules.map((r) => r.segment);
+    const emailQueueRule = rules.find((r) => r.segment === "email-queue");
 
-    expect(segments).not.toContain("email-queue");
-    expect(segments).not.toContain("release-notes");
+    expect(emailQueueRule).toBeDefined();
+    expect(emailQueueRule?.requiredFeatures).toEqual([FEATURES.EMAIL_QUEUE_MANAGE, FEATURES.ADMIN_USERS]);
+    expect(emailQueueRule?.pattern.test("/admin/email-queue")).toBe(true);
+    expect(rules.map((r) => r.segment)).not.toContain("release-notes");
+  });
+
+  it("canAccessAdminArea admits a holder of only EMAIL_QUEUE_MANAGE", () => {
+    expect(canAccessAdminArea([FEATURES.EMAIL_QUEUE_MANAGE])).toBe(true);
+  });
+
+  it("getFirstAccessibleAdminHref lands an EMAIL_QUEUE_MANAGE-only user on /admin/email-queue", () => {
+    expect(getFirstAccessibleAdminHref([FEATURES.EMAIL_QUEUE_MANAGE])).toBe("/admin/email-queue");
+  });
+
+  it("the two migration-mirrored descriptions contain no apostrophe, so SQL escaping can never desync them from the migration", () => {
+    expect(FEATURE_DESCRIPTIONS[FEATURES.LEDGER_MANAGE]).not.toContain("'");
+    expect(FEATURE_DESCRIPTIONS[FEATURES.EMAIL_QUEUE_MANAGE]).not.toContain("'");
   });
 
   it("derives a /admin/sync-log rule requiring SYNC_LOG_VIEW — B-41 (docs/backlog.md): this area used to have no requiredFeature at all and relied on the ADMIN_DASHBOARD catch-all, exposing Google Group sync history (real member emails) to any admin.dashboard holder", () => {

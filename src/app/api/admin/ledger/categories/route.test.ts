@@ -1,7 +1,8 @@
 /**
  * Unit tests for GET /api/admin/ledger/categories (Ledger Category
- * Management, 2026-08-07 / DECISION-065/066). POST on this route predates
- * this feature and is unchanged/untested here.
+ * Management, 2026-08-07 / DECISION-065/066), plus the POST gate regression
+ * for Y9 (DECISION-115): "+ Add category" on the budgeting page was shown to
+ * a budget.edit-only user while the route required ledger.manage.
  *
  * Covers Phase 3 test 11 (permission gate, before touching the database)
  * plus the entityId-required/entity-not-found validation path.
@@ -17,10 +18,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
-vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
-// POST (unchanged/untested here) imports @/lib/db directly for the insert —
-// mocked so importing the route module doesn't throw without DATABASE_URL.
-vi.mock("@/lib/db", () => ({ db: {} }));
+vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn(), hasAnyFeature: vi.fn() }));
+// POST inserts through @/lib/db; the mock records the insert so a test can
+// assert that a refused request wrote nothing.
+const insertValues = vi.fn();
+vi.mock("@/lib/db", () => ({
+  db: {
+    insert: () => ({
+      values: (v: Record<string, unknown>) => {
+        insertValues(v);
+        return { returning: async () => [{ id: "cat-1", isActive: true, ...v }] };
+      },
+    }),
+  },
+}));
 vi.mock("@/lib/ledger-queries", () => ({
   getEntityById: vi.fn(),
   getFunds: vi.fn(),
@@ -43,10 +54,11 @@ vi.mock("@/lib/ledger-category-queries", () => ({
   }),
 }));
 
-import { GET } from "./route";
+import { GET, POST } from "./route";
 import { auth } from "@/lib/auth";
-import { hasFeature } from "@/lib/permissions-server";
-import { getEntityById } from "@/lib/ledger-queries";
+import { hasFeature, hasAnyFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
+import { getEntityById, getFunds, getCategories, assertBudgetUnlocked } from "@/lib/ledger-queries";
 import { listCategoriesForAdmin } from "@/lib/ledger-category-queries";
 
 function makeRequest(query = ""): NextRequest {
@@ -109,5 +121,104 @@ describe("GET /api/admin/ledger/categories — validation", () => {
       flow: undefined,
       includeInactive: true,
     });
+  });
+});
+
+// ── POST — the Y9 regression (DECISION-115) ──────────────────────────────────
+// Holds a set of features; hasAnyFeature / hasFeature answer from it, so a
+// "budget.edit-only" caller is modelled exactly.
+
+function holdOnly(...held: string[]) {
+  vi.mocked(hasFeature).mockImplementation(async (_u, f) => held.includes(f));
+  vi.mocked(hasAnyFeature).mockImplementation(async (_u, fs) => fs.some((f) => held.includes(f)));
+}
+
+function postRequest(overrides: Record<string, unknown> = {}): NextRequest {
+  return {
+    json: async () => ({
+      entityId: "entity-1",
+      fiscalYear: 2027,
+      fundKind: "administrative",
+      flow: "expense",
+      name: "Postage",
+      ...overrides,
+    }),
+  } as unknown as NextRequest;
+}
+
+describe("POST /api/admin/ledger/categories — gate (Y9)", () => {
+  beforeEach(() => {
+    insertValues.mockReset();
+    vi.mocked(getFunds).mockResolvedValue([{ kind: "administrative" }] as never);
+    vi.mocked(getCategories).mockResolvedValue([]);
+    vi.mocked(assertBudgetUnlocked).mockResolvedValue({ ok: true } as never);
+  });
+
+  it("a budget.edit-only caller can create a category", async () => {
+    holdOnly(FEATURES.BUDGET_EDIT);
+
+    const response = await POST(postRequest());
+
+    expect(response.status).toBe(200);
+    expect(insertValues).toHaveBeenCalledTimes(1);
+  });
+
+  it("a caller with neither key gets a plain-language 403 before any DB read", async () => {
+    holdOnly(FEATURES.LEDGER_VIEW);
+
+    const response = await POST(postRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error).not.toBe("Forbidden");
+    expect(body.error).toMatch(/Budget edit or Ledger management/);
+    expect(getEntityById).not.toHaveBeenCalled();
+    expect(insertValues).not.toHaveBeenCalled();
+  });
+
+  it("a budget.edit-only caller sending countsAsGiving true, or omitting it, is accepted", async () => {
+    holdOnly(FEATURES.BUDGET_EDIT);
+
+    expect((await POST(postRequest({ countsAsGiving: true }))).status).toBe(200);
+    expect((await POST(postRequest())).status).toBe(200);
+  });
+
+  it("a budget.edit-only caller sending countsAsGiving false gets 403 and nothing is inserted", async () => {
+    holdOnly(FEATURES.BUDGET_EDIT);
+
+    const response = await POST(postRequest({ countsAsGiving: false }));
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/ledger management access/);
+    expect(getEntityById).not.toHaveBeenCalled();
+    expect(insertValues).not.toHaveBeenCalled();
+  });
+
+  it("a budget.edit-only caller sending a non-empty form990Line gets 403; a blank one is ignored", async () => {
+    holdOnly(FEATURES.BUDGET_EDIT);
+
+    expect((await POST(postRequest({ form990Line: "Line 16" }))).status).toBe(403);
+    expect(insertValues).not.toHaveBeenCalled();
+    expect((await POST(postRequest({ form990Line: "   " }))).status).toBe(200);
+  });
+
+  it("a ledger.manage caller may set both", async () => {
+    holdOnly(FEATURES.LEDGER_MANAGE);
+
+    const response = await POST(postRequest({ countsAsGiving: false, form990Line: "Line 16" }));
+
+    expect(response.status).toBe(200);
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ countsAsGiving: false, form990Line: "Line 16" }),
+    );
+  });
+
+  it("GET stays ledger.manage-only: a budget.edit-only caller is refused", async () => {
+    holdOnly(FEATURES.BUDGET_EDIT);
+
+    const response = await GET(makeRequest("?entityId=entity-1"));
+
+    expect(response.status).toBe(403);
+    expect(listCategoriesForAdmin).not.toHaveBeenCalled();
   });
 });

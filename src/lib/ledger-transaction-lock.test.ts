@@ -5,6 +5,7 @@ import {
   LOCK_COPY,
   classifyTransactionLock,
   editLockKind,
+  editLockDisplayKind,
   isTransactionReconciled,
   moveBlockKind,
   requiredMoveTier,
@@ -200,6 +201,7 @@ describe("crossEntityBlockKind (C8)", () => {
 
 describe("LOCK_COPY (T7)", () => {
   const KINDS: TransactionLockKind[] = [
+    "paid_reimbursement",
     "approved",
     "rejected",
     "pending",
@@ -218,5 +220,48 @@ describe("LOCK_COPY (T7)", () => {
 
   it("CLOSED_SESSION_LOCK_MESSAGE names the next step", () => {
     expect(CLOSED_SESSION_LOCK_MESSAGE).toMatch(/Reopen the session/);
+  });
+});
+
+describe("paid_reimbursement lock kind (T26, B-108 / DECISION-114)", () => {
+  const PAID = { ...APPROVED, paidReimbursement: true };
+
+  it("is first in precedence and implies approved", () => {
+    expect(transactionLockKinds(row(PAID))).toEqual(["paid_reimbursement", "approved"]);
+    expect(classifyTransactionLock(row(PAID))).toBe("paid_reimbursement");
+    expect(transactionLockKinds(row({ ...PAID, ...SESSION }))).toEqual([
+      "paid_reimbursement",
+      "approved",
+      "reconciled_session",
+    ]);
+  });
+
+  it("without the flag the classification is approved", () => {
+    expect(classifyTransactionLock(row(APPROVED))).toBe("approved");
+    expect(classifyTransactionLock(row({ ...APPROVED, paidReimbursement: false }))).toBe("approved");
+  });
+
+  it("the flag alone, on an unapproved row, adds no lock kind", () => {
+    expect(transactionLockKinds(row({ paidReimbursement: true }))).toEqual([]);
+  });
+
+  it("editLockKind is unchanged: it still reports approved", () => {
+    expect(editLockKind(row(PAID))).toBe("approved");
+  });
+
+  it("editLockDisplayKind shows paid_reimbursement only for an approved row with the flag", () => {
+    expect(editLockDisplayKind(row(PAID))).toBe("paid_reimbursement");
+    expect(editLockDisplayKind(row(APPROVED))).toBe("approved");
+    expect(editLockDisplayKind(row(REJECTED))).toBe("rejected");
+    expect(editLockDisplayKind(row(SESSION))).toBe("reconciled_session");
+    expect(editLockDisplayKind(row())).toBeNull();
+  });
+
+  it("the copy is the reimbursement copy and no longer advises a refund entry", () => {
+    expect(LOCK_COPY.paid_reimbursement.label).toBe("Paid reimbursement");
+    expect(LOCK_COPY.paid_reimbursement.nextStep).toMatch(/Use Correct/);
+    expect(LOCK_COPY.paid_reimbursement.nextStep).not.toMatch(/refund entry/);
+    // the approved copy for a non-reimbursement approved row is untouched
+    expect(LOCK_COPY.approved.nextStep).toMatch(/refund entry/);
   });
 });

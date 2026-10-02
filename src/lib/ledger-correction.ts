@@ -71,14 +71,23 @@ export function normalizeCorrectionReason(
 
 export const TRANSACTION_FUND_MOVED_AUDIT_ACTION = "transaction_fund_moved" as const;
 export const TRANSACTION_DELETED_AUDIT_ACTION = "transaction_deleted" as const;
+/**
+ * A paid reimbursement's row was repaired or corrected through
+ * POST /api/admin/ledger/transactions/[id]/correct (B-108 / DECISION-114).
+ * One action for both operations: "bank account added" is
+ * `details.operation = "fill_bank_account"`, not a separate action.
+ */
+export const TRANSACTION_CORRECTED_AUDIT_ACTION = "transaction_corrected" as const;
 
 export type CorrectionAuditAction =
   | typeof TRANSACTION_FUND_MOVED_AUDIT_ACTION
-  | typeof TRANSACTION_DELETED_AUDIT_ACTION;
+  | typeof TRANSACTION_DELETED_AUDIT_ACTION
+  | typeof TRANSACTION_CORRECTED_AUDIT_ACTION;
 
 export const CORRECTION_AUDIT_ACTIONS: readonly CorrectionAuditAction[] = [
   TRANSACTION_FUND_MOVED_AUDIT_ACTION,
   TRANSACTION_DELETED_AUDIT_ACTION,
+  TRANSACTION_CORRECTED_AUDIT_ACTION,
 ];
 
 // ---------------------------------------------------------------------------
@@ -429,8 +438,12 @@ export function formatStatementMonth(ym: string): string {
   return name ? `${name} ${match[1]}` : ym;
 }
 
-export function sentStatementWarning(ym: string, label = "Administrative"): string {
-  return `The ${label} statement for ${formatStatementMonth(ym)} was already sent to the board. After this move it will show as changed and you will be offered a corrected resend. Nothing is sent automatically.`;
+export function sentStatementWarning(
+  ym: string,
+  label = "Administrative",
+  action: "move" | "correction" = "move",
+): string {
+  return `The ${label} statement for ${formatStatementMonth(ym)} was already sent to the board. After this ${action} it will show as changed and you will be offered a corrected resend. Nothing is sent automatically.`;
 }
 
 export function sweepNotAutomaticWarning(bankAccountName: string | null): string {
@@ -755,10 +768,71 @@ export interface TransactionDeletedAuditPayload {
   };
 }
 
-export type AuditPayloadFor<A extends CorrectionAuditAction> =
-  A extends typeof TRANSACTION_FUND_MOVED_AUDIT_ACTION
-    ? FundMoveAuditPayload
-    : TransactionDeletedAuditPayload;
+/** A field a paid reimbursement's row may have corrected, in canonical display order. */
+export type CorrectableField =
+  | "categoryId"
+  | "budgetLineId"
+  | "txnDate"
+  | "paymentMethod"
+  | "checkNumber"
+  | "memo"
+  | "bankAccountId";
+
+/** One side (before or after) of a correction: ONLY the changed fields, each self-describing. */
+export interface ReimbursementCorrectionSide {
+  v: 1;
+  bankAccount?: BankRefSnapshot | null;
+  category?: CategoryRefSnapshot | null;
+  budgetLineId?: string | null;
+  txnDate?: string;
+  paymentMethod?: string | null;
+  checkNumber?: string | null;
+  memo?: string | null;
+}
+
+/**
+ * `transaction_corrected` v1 (B-108 / DECISION-114). No member name anywhere:
+ * the reimbursement is identified by id only. `reason` is the typed reason for
+ * `correct` and the fixed FILL_BANK_ACCOUNT_REASON for `fill_bank_account`.
+ */
+export interface ReimbursementCorrectedAuditPayload {
+  before: ReimbursementCorrectionSide;
+  after: ReimbursementCorrectionSide;
+  details: {
+    v: 1;
+    operation: "fill_bank_account" | "correct";
+    reason: string;
+    /** The reader's entity filter (JS-side, DECISION-111 item 6). */
+    entityId: string;
+    reimbursementId: string;
+    /** The row AS LOCKED, before the change (like Move). */
+    txnDate: string;
+    amountCents: number;
+    flow: "expense";
+    fiscalYear: number;
+    tier: "record" | "manage";
+    reconciled: boolean;
+    reconciledSessionId: string | null;
+    priorFiscalYear: boolean;
+    /** "YYYY-MM" of an already-sent statement this change restates, or null. */
+    sentStatementMonth: string | null;
+    newSentStatementMonth: string | null;
+    changed: CorrectableField[];
+    budgetLineLinkCleared: boolean;
+  };
+}
+
+/**
+ * Payload type per audit action. A missing key is a compile error, so adding an
+ * action to CorrectionAuditAction without its payload fails the build.
+ */
+export interface AuditPayloadMap {
+  [TRANSACTION_FUND_MOVED_AUDIT_ACTION]: FundMoveAuditPayload;
+  [TRANSACTION_DELETED_AUDIT_ACTION]: TransactionDeletedAuditPayload;
+  [TRANSACTION_CORRECTED_AUDIT_ACTION]: ReimbursementCorrectedAuditPayload;
+}
+
+export type AuditPayloadFor<A extends CorrectionAuditAction> = AuditPayloadMap[A];
 
 /** Serialize a typed payload into the three text columns. */
 export function serializeAuditPayload(payload: {
@@ -807,6 +881,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /** Versions the MOVED action may carry. A v2 DELETE is never written, so it parses as raw. */
 const MOVED_VERSIONS = [1, 2] as const;
 const DELETED_VERSIONS = [1] as const;
+/** Its own version space: a future v2 corrected payload parses as raw. */
+const CORRECTED_VERSIONS = [1] as const;
+
+const CORRECTED_OPERATIONS = ["fill_bank_account", "correct"] as const;
 
 /**
  * Parse a `details` column for one of the correction actions. NEVER throws:
@@ -822,9 +900,29 @@ export function parseAuditDetails(
   text: string | null | undefined,
 ): TransactionDeletedAuditPayload["details"] | RawAudit;
 export function parseAuditDetails(
+  action: typeof TRANSACTION_CORRECTED_AUDIT_ACTION,
+  text: string | null | undefined,
+): ReimbursementCorrectedAuditPayload["details"] | RawAudit;
+export function parseAuditDetails(
   action: CorrectionAuditAction,
   text: string | null | undefined,
-): FundMoveAuditPayload["details"] | TransactionDeletedAuditPayload["details"] | RawAudit {
+):
+  | FundMoveAuditPayload["details"]
+  | TransactionDeletedAuditPayload["details"]
+  | ReimbursementCorrectedAuditPayload["details"]
+  | RawAudit {
+  if (action === TRANSACTION_CORRECTED_AUDIT_ACTION) {
+    const corrected = parseVersioned(text, CORRECTED_VERSIONS);
+    if (isRawAudit(corrected)) return corrected;
+    if (
+      typeof corrected.reason !== "string" ||
+      typeof corrected.entityId !== "string" ||
+      !(CORRECTED_OPERATIONS as readonly unknown[]).includes(corrected.operation)
+    ) {
+      return { raw: text ?? "" };
+    }
+    return corrected as unknown as ReimbursementCorrectedAuditPayload["details"];
+  }
   const parsed = parseVersioned(
     text,
     action === TRANSACTION_FUND_MOVED_AUDIT_ACTION ? MOVED_VERSIONS : DELETED_VERSIONS,
@@ -852,9 +950,22 @@ export function parseAuditBefore(
   text: string | null | undefined,
 ): TransactionDeletedAuditPayload["before"] | RawAudit;
 export function parseAuditBefore(
+  action: typeof TRANSACTION_CORRECTED_AUDIT_ACTION,
+  text: string | null | undefined,
+): ReimbursementCorrectedAuditPayload["before"] | RawAudit;
+export function parseAuditBefore(
   action: CorrectionAuditAction,
   text: string | null | undefined,
-): FundMoveAuditPayload["before"] | TransactionDeletedAuditPayload["before"] | RawAudit {
+):
+  | FundMoveAuditPayload["before"]
+  | TransactionDeletedAuditPayload["before"]
+  | ReimbursementCorrectedAuditPayload["before"]
+  | RawAudit {
+  if (action === TRANSACTION_CORRECTED_AUDIT_ACTION) {
+    const parsed = parseVersioned(text, CORRECTED_VERSIONS);
+    if (isRawAudit(parsed)) return parsed;
+    return parsed as unknown as ReimbursementCorrectedAuditPayload["before"];
+  }
   if (action === TRANSACTION_DELETED_AUDIT_ACTION) {
     const parsed = parseVersioned(text, DELETED_VERSIONS);
     if (isRawAudit(parsed)) return parsed;
@@ -864,11 +975,27 @@ export function parseAuditBefore(
   return parseMovedSide(text, false) as FundMoveAuditPayload["before"] | RawAudit;
 }
 
-/** Parse the `after` column of a moved row. Never throws. */
+/**
+ * Parse the `after` column. One argument: a moved row (the shipped signature).
+ * Two arguments with the corrected action: a corrected row. Never throws.
+ */
 export function parseAuditAfter(
   text: string | null | undefined,
-): FundMoveAuditPayload["after"] | RawAudit {
-  return parseMovedSide(text, true) as FundMoveAuditPayload["after"] | RawAudit;
+): FundMoveAuditPayload["after"] | RawAudit;
+export function parseAuditAfter(
+  action: typeof TRANSACTION_CORRECTED_AUDIT_ACTION,
+  text: string | null | undefined,
+): ReimbursementCorrectedAuditPayload["after"] | RawAudit;
+export function parseAuditAfter(
+  first: string | null | undefined,
+  second?: string | null,
+): FundMoveAuditPayload["after"] | ReimbursementCorrectedAuditPayload["after"] | RawAudit {
+  if (arguments.length >= 2 && first === TRANSACTION_CORRECTED_AUDIT_ACTION) {
+    const parsed = parseVersioned(second, CORRECTED_VERSIONS);
+    if (isRawAudit(parsed)) return parsed;
+    return parsed as unknown as ReimbursementCorrectedAuditPayload["after"];
+  }
+  return parseMovedSide(first, true) as FundMoveAuditPayload["after"] | RawAudit;
 }
 
 /** Shared `before`/`after` guard for the moved action, keyed on version. */
@@ -895,7 +1022,7 @@ export interface LedgerCorrectionRow {
   id: string;
   createdAt: Date;
   actorName: string | null;
-  kind: "moved" | "deleted";
+  kind: "moved" | "deleted" | "corrected";
   amountCents: number | null;
   flow: string | null;
   txnDate: string | null;
@@ -916,4 +1043,10 @@ export interface LedgerCorrectionRow {
   toBankAccount: string | null;
   /** v2 only: a receipt was sent and kept with the moved row. */
   receiptSent: boolean;
+  /**
+   * `corrected` rows only: server-composed display labels (for example
+   * "Bank account added: Checking"), rendered as given. Memo text is never in
+   * this list. Absent on moved and deleted rows.
+   */
+  changes?: string[];
 }

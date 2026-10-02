@@ -15,8 +15,9 @@ import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { db } from "@/lib/db";
-import { ledgerDonors, members } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { ledgerAcknowledgments, ledgerDonors, ledgerTransactions, members } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
+import { recordLedgerAuditNote } from "@/lib/ledger-audit";
 import { getDonor } from "@/lib/ledger-queries";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -210,6 +211,11 @@ export async function PATCH(
  * ledger_transactions.donor_id and ledger_acknowledgments.donor_id automatically.
  *
  * Gate: LEDGER_MANAGE (destructive action — higher gate than RECORD).
+ *
+ * Audited (DECISION-115): one `donor_deleted` ledger_audit_log row in the same
+ * transaction, holding the donor's display name and the count of transactions
+ * and acknowledgments whose link was nulled. NO email address, postal address or
+ * phone number is stored. The row has no reader yet.
  */
 export async function DELETE(
   _request: NextRequest,
@@ -226,15 +232,40 @@ export async function DELETE(
 
     const { id } = await params;
 
-    const existing = await db.query.ledgerDonors.findFirst({
-      where: eq(ledgerDonors.id, id),
-      columns: { id: true },
+    const actorUserId = session.user.id;
+    const found = await db.transaction(async (tx) => {
+      const [donor] = await tx
+        .select({ id: ledgerDonors.id, name: ledgerDonors.name })
+        .from(ledgerDonors)
+        .where(eq(ledgerDonors.id, id))
+        .for("update");
+      if (!donor) return false;
+
+      const [txnCount] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(ledgerTransactions)
+        .where(eq(ledgerTransactions.donorId, id));
+      const [ackCount] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(ledgerAcknowledgments)
+        .where(eq(ledgerAcknowledgments.donorId, id));
+      const linkedTransactionCount = txnCount?.n ?? 0;
+      const linkedAcknowledgmentCount = ackCount?.n ?? 0;
+
+      await tx.delete(ledgerDonors).where(eq(ledgerDonors.id, id));
+
+      await recordLedgerAuditNote(tx, {
+        actorUserId,
+        action: "donor_deleted",
+        before: { donorId: id, name: donor.name, linkedTransactionCount, linkedAcknowledgmentCount },
+        after: null,
+        details: `Deleted donor "${donor.name}": ${linkedTransactionCount} transactions and ${linkedAcknowledgmentCount} acknowledgments were unlinked`,
+      });
+      return true;
     });
-    if (!existing) {
+    if (!found) {
       return NextResponse.json({ error: "Donor not found" }, { status: 404 });
     }
-
-    await db.delete(ledgerDonors).where(eq(ledgerDonors.id, id));
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {

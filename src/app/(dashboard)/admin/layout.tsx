@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { canAccessAdminArea, FEATURES } from "@/lib/permissions";
+import { canAccessAdminArea, EMAIL_QUEUE_FEATURES, FEATURES } from "@/lib/permissions";
 import AdminSidebar from "@/components/admin/admin-sidebar";
 import { getFailedEmailCount } from "@/lib/email-queue-stats";
 import { getReadyToSendReportCountCached } from "@/lib/financial-report-send";
@@ -38,13 +38,13 @@ export default async function AdminLayout({
 
   // Failed-email-count badge (docs/work-log/2026-09-25-email-silent-success.md
   // Phase 6 follow-up #1). Only queried for users who could actually open
-  // /admin/email-queue — that page gates on ADMIN_USERS specifically (a
-  // narrower check than "can access some admin area"), so this mirrors it
+  // /admin/email-queue — that page gates on EMAIL_QUEUE_FEATURES (the narrow
+  // email_queue.manage key, or admin.users for one release; DECISION-115), a
+  // narrower check than "can access some admin area", so this mirrors it
   // rather than leaking the count to an admin who can't see the page. The
-  // Email Queue nav item deliberately carries no requiredFeature of its own
-  // (see permissions.ts/permissions.test.ts) — this check does not add one,
-  // it only decides whether to fetch and pass a number as a prop.
-  const canSeeEmailQueue = isAdmin || userFeatures.includes(FEATURES.ADMIN_USERS);
+  // Email Queue nav item declares those same keys (permissions.ts); this check
+  // only decides whether to fetch and pass a number as a prop.
+  const canSeeEmailQueue = isAdmin || EMAIL_QUEUE_FEATURES.some((f) => userFeatures.includes(f));
   const failedEmailCount = canSeeEmailQueue ? await getFailedEmailCount() : 0;
 
   // Ready-to-send-reports badge (B-69, docs/work-log/2026-09-25-ready-to-send-badge.md).

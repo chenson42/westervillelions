@@ -544,3 +544,26 @@ describe("POST /api/admin/ledger/transactions — Transfer/Sweep (DECISION-058)"
     void data;
   });
 });
+
+// ---------------------------------------------------------------------------
+// B-108 / T1 — behavior pin for the shared normalizeCheckNumber migration
+// ---------------------------------------------------------------------------
+
+describe("POST /api/admin/ledger/transactions — checkNumber normalizer (T1 pin)", () => {
+  const FUND = { id: "fund-1", kind: "administrative", entityId: "entity-1" };
+  const BANK = { id: VALID_NORMAL_BODY.bankAccountId, entityId: "entity-1", isActive: true };
+
+  it("a 21-character check number is still 400 with the same message", async () => {
+    mockDbState.selectQueue.push([FUND], [BANK]);
+    const res = await POST(makeRequest({ ...VALID_NORMAL_BODY, checkNumber: "1".repeat(21) }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("checkNumber must not exceed 20 characters");
+  });
+
+  it("a non-string check number is still 400 with the same message", async () => {
+    mockDbState.selectQueue.push([FUND], [BANK]);
+    const res = await POST(makeRequest({ ...VALID_NORMAL_BODY, checkNumber: 8249 }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("checkNumber must be a string");
+  });
+});

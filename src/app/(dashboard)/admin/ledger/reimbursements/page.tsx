@@ -10,12 +10,18 @@ import {
   getFunds,
   getCategories,
   getBudgetLineOptions,
+  getBankAccounts,
 } from "@/lib/ledger-queries";
 import { RejectReimbursementDialog } from "@/components/admin/ledger/reject-dialog";
 import PayReimbursementDialog from "@/components/admin/ledger/pay-reimbursement-dialog";
+import AddBankAccountButton from "@/components/admin/ledger/add-bank-account-button";
+import {
+  paidRowNeedsBankAccount,
+  paidRowRepairAction,
+} from "@/components/admin/ledger/paid-reimbursement-logic";
 import { isOwnReimbursementRequest } from "@/lib/ledger";
 import type { ReimbursementAdminRow, BudgetLineOption } from "@/lib/ledger-queries";
-import type { LedgerFund, LedgerCategory } from "@/lib/db/schema";
+import type { LedgerFund, LedgerCategory, LedgerBankAccount } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -107,15 +113,21 @@ export default async function AdminLedgerReimbursementsPage({
   let allFunds: LedgerFund[] = [];
   let allCategories: LedgerCategory[] = [];
   let allBudgetLines: BudgetLineOption[] = [];
+  let allBankAccounts: LedgerBankAccount[] = [];
   for (const entity of entities) {
-    const [entityFunds, entityCategories, entityBudgetLines] = await Promise.all([
-      getFunds(entity.id),
-      getCategories(entity.id, { flow: "expense" }),
-      getBudgetLineOptions(entity.id),
-    ]);
+    const [entityFunds, entityCategories, entityBudgetLines, entityBankAccounts] =
+      await Promise.all([
+        getFunds(entity.id),
+        getCategories(entity.id, { flow: "expense" }),
+        getBudgetLineOptions(entity.id),
+        // Active accounts only (B-108): the Pay dialog requires the account
+        // the money came out of, filtered to the selected fund's entity.
+        getBankAccounts(entity.id),
+      ]);
     allFunds = allFunds.concat(entityFunds);
     allCategories = allCategories.concat(entityCategories);
     allBudgetLines = allBudgetLines.concat(entityBudgetLines);
+    allBankAccounts = allBankAccounts.concat(entityBankAccounts);
   }
 
   const { reimbursements, total } = await listReimbursementsForAdmin({
@@ -239,6 +251,16 @@ export default async function AdminLedgerReimbursementsPage({
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Status
                   </th>
+                  {activeTab === "paid" && (
+                    <>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                        Account
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                        Check #
+                      </th>
+                    </>
+                  )}
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
                     Receipt
                   </th>
@@ -299,6 +321,24 @@ export default async function AdminLedgerReimbursementsPage({
                           </div>
                         )}
                       </td>
+                      {activeTab === "paid" && (
+                        <>
+                          <td className="px-4 py-3 text-sm text-gray-700">
+                            {r.paidTransaction?.bankAccountName ? (
+                              <span className="whitespace-nowrap">{r.paidTransaction.bankAccountName}</span>
+                            ) : paidRowNeedsBankAccount(r.paidTransaction) ? (
+                              <span className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                                Needs bank account
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">&mdash;</span>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm tabular-nums text-gray-700">
+                            {r.paidTransaction?.checkNumber ?? <span className="text-gray-400">&mdash;</span>}
+                          </td>
+                        </>
+                      )}
                       <td className="whitespace-nowrap px-4 py-3">
                         <a
                           href={`/api/admin/ledger/reimbursements/${r.id}/receipt`}
@@ -338,6 +378,8 @@ export default async function AdminLedgerReimbursementsPage({
                                   funds={allFunds}
                                   categories={allCategories}
                                   budgetLines={allBudgetLines}
+                                  bankAccounts={allBankAccounts}
+                                  description={r.description}
                                 >
                                   <button
                                     type="button"
@@ -357,6 +399,30 @@ export default async function AdminLedgerReimbursementsPage({
                                 </RejectReimbursementDialog>
                               </>
                             ))}
+
+                          {/* Paid tab — repair a row recorded without a bank account.
+                              Hidden on the viewer's own request (another reviewer
+                              must repair it; the server enforces the same). */}
+                          {activeTab === "paid" &&
+                            r.paidTransaction &&
+                            (() => {
+                              const repair = paidRowRepairAction({
+                                paidTransaction: r.paidTransaction,
+                                isSelf,
+                                canRecord,
+                              });
+                              if (repair === "button") {
+                                return <AddBankAccountButton transactionId={r.paidTransaction.id} />;
+                              }
+                              if (repair === "self") {
+                                return (
+                                  <span className="text-xs text-gray-500 italic">
+                                    Submitted by you. Another reviewer must add its bank account.
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
 
                           {/* Paid tab — link to transaction */}
                           {activeTab === "paid" && r.ledgerTransactionId && (

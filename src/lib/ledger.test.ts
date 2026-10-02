@@ -10,6 +10,13 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  CHECK_NUMBER_MAX_LEN,
+  REIMBURSEMENT_PAYMENT_METHODS,
+  REIMBURSEMENT_PAYMENT_METHOD_LABELS,
+  normalizeCheckNumber,
+  pickDefaultBankAccount,
+  parseIsoDate,
+  isBudgetLinePickValid,
   fundBalanceCents,
   rolledForwardOpeningCents,
   entityBalanceCents,
@@ -3082,5 +3089,92 @@ describe("escapeIlikeTerm", () => {
 
   it("leaves an empty string unchanged", () => {
     expect(escapeIlikeTerm("")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-108 shared field rules (T1-T5)
+// ---------------------------------------------------------------------------
+
+describe("normalizeCheckNumber (T1)", () => {
+  it("undefined and null are null", () => {
+    expect(normalizeCheckNumber(undefined)).toEqual({ value: null });
+    expect(normalizeCheckNumber(null)).toEqual({ value: null });
+  });
+  it("trims; empty and whitespace are null", () => {
+    expect(normalizeCheckNumber("  8249 ")).toEqual({ value: "8249" });
+    expect(normalizeCheckNumber("")).toEqual({ value: null });
+    expect(normalizeCheckNumber("   ")).toEqual({ value: null });
+  });
+  it("20 characters pass, 21 fail with the exact message", () => {
+    expect(CHECK_NUMBER_MAX_LEN).toBe(20);
+    expect(normalizeCheckNumber("1".repeat(20))).toEqual({ value: "1".repeat(20) });
+    expect(normalizeCheckNumber("1".repeat(21))).toEqual({
+      error: "checkNumber must not exceed 20 characters",
+    });
+  });
+  it("a number or object is an error", () => {
+    expect(normalizeCheckNumber(8249)).toEqual({ error: "checkNumber must be a string" });
+    expect(normalizeCheckNumber({})).toEqual({ error: "checkNumber must be a string" });
+  });
+});
+
+describe("REIMBURSEMENT_PAYMENT_METHODS (T2)", () => {
+  it("is exactly check, cash, other, each labelled", () => {
+    expect([...REIMBURSEMENT_PAYMENT_METHODS]).toEqual(["check", "cash", "other"]);
+    for (const m of REIMBURSEMENT_PAYMENT_METHODS) {
+      expect(REIMBURSEMENT_PAYMENT_METHOD_LABELS[m].length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("pickDefaultBankAccount (T3)", () => {
+  const a = (id: string, isDefault: boolean, isActive = true) => ({ id, isDefault, isActive });
+  it("the sole active non-default account wins", () => {
+    expect(pickDefaultBankAccount([a("1", false)])?.id).toBe("1");
+  });
+  it("picks the default among several", () => {
+    expect(pickDefaultBankAccount([a("1", false), a("2", true)])?.id).toBe("2");
+  });
+  it("several with no default is null", () => {
+    expect(pickDefaultBankAccount([a("1", false), a("2", false)])).toBeNull();
+  });
+  it("an inactive default is ignored", () => {
+    expect(pickDefaultBankAccount([a("1", true, false), a("2", false)])?.id).toBe("2");
+    expect(pickDefaultBankAccount([a("1", true, false), a("2", false), a("3", false)])).toBeNull();
+  });
+  it("empty is null", () => {
+    expect(pickDefaultBankAccount([])).toBeNull();
+  });
+});
+
+describe("parseIsoDate (T4)", () => {
+  it("accepts a valid date", () => {
+    expect(parseIsoDate("2026-10-02")).toBe("2026-10-02");
+    expect(parseIsoDate("2028-02-29")).toBe("2028-02-29");
+  });
+  it("rejects a rolled or malformed date", () => {
+    expect(parseIsoDate("2026-02-31")).toBeNull();
+    expect(parseIsoDate("2027-02-29")).toBeNull();
+    expect(parseIsoDate("2026-13-01")).toBeNull();
+    expect(parseIsoDate("2026-1-1")).toBeNull();
+    expect(parseIsoDate(20261002)).toBeNull();
+    expect(parseIsoDate(null)).toBeNull();
+  });
+});
+
+describe("isBudgetLinePickValid (T5)", () => {
+  const line = { fundId: "f", fiscalYear: 2026, categoryId: "c", flow: "expense" };
+  const want = { fundId: "f", fiscalYear: 2026, categoryId: "c" };
+  it("a matching expense line is valid", () => {
+    expect(isBudgetLinePickValid(line, want)).toBe(true);
+  });
+  it.each([
+    ["fund", { ...line, fundId: "x" }],
+    ["fiscal year", { ...line, fiscalYear: 2025 }],
+    ["category", { ...line, categoryId: "x" }],
+    ["flow", { ...line, flow: "income" }],
+  ])("a wrong %s is invalid", (_n, l) => {
+    expect(isBudgetLinePickValid(l, want)).toBe(false);
   });
 });

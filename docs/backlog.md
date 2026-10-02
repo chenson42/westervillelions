@@ -44,6 +44,10 @@ was deleted on the strength of this review alone.
 - B-113 — Start-a-new-fiscal-year flow.
 - B-115 — Complete audit coverage and one audit page.
 - B-122 — Email operations for the treasurer role.
+- B-131 — Refresh JWT features and `isActive` on a short TTL, so a role change or deactivation does not wait for sign-out
+- B-132 — Board-visible reader for non-transaction ledger audit rows (fold into B-115)
+- B-135 — Inventory every surface that renders persisted email bodies or other credential-bearing rows
+- B-137 — A front door for roles without `admin.dashboard`
 - B-120 — Zeffy donation import.
 - B-125 — `sync-roster.ts` and `import-roster.ts` write a `members.userId` column that does not exist.
 - B-126 — Prior-fiscal-year cross-entity move has no web path
@@ -89,6 +93,18 @@ was deleted on the strength of this review alone.
 - B-124 — Compliance filing editing.
 - B-127 — Bank-account PATCH re-verifies "not matched" under a lock
 - B-128 — Consider retiring the aged public-fund guardrail entirely
+- B-129 — Make the reimbursement-to-transaction link provably 1:1 with a partial unique index
+- B-130 — Void or reissue a lost or stale reimbursement check
+- B-133 — Migration description versus `FEATURE_DESCRIPTIONS` parity sweep
+- B-134 — Convert the nine `[LEDGER_MANAGE, BUDGET_EDIT]` literals to `BUDGET_WRITE_FEATURES` (shipped v1.88.0)
+- B-136 — Remove `admin.users` from the Email Queue gate (after B-131 or 30 days)
+- B-138 — Create-category dialog shows two manage-only fields to a `budget.edit`-only user
+- B-139 — Sticky mobile admin header covers an eyebrow-less first heading at 360px
+- B-140 — Plain-language 403 sweep for UI-reachable ledger routes
+- B-141 — Own-request paid-reimbursement rows on the register still show Correct / Add bank account
+- B-142 — After "Add bank account" from the match-picker hint, the picker closes
+- B-143 — Pin match absence in `correctWhere` for date and bank-account changes
+- B-144 — The `approved` lock copy still says "Record a refund entry" for expense rows
 - B-117 — Dues "Mark Paid" should ask the payment method.
 - B-97 — Dues-synced row deletion and the fiscal-year delete gate
 - B-95 — Migrate the seven existing `insert(ledgerAuditLog)` sites to `recordLedgerAudit()`
@@ -358,13 +374,15 @@ was deleted on the strength of this review alone.
   should be told directly that acknowledgments he records against these categories won't show up in
   Generate Letters.
 
-- [ ] **B-108 — Paid reimbursements must be reconcilable and correctable.**
+- [x] **B-108 — Paid reimbursements must be reconcilable and correctable.**
   (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-1; audit priority P0; audit top-10 rank 1)
   **Verify first (code reading only; no live DB was queried).** The pay route inserts the ledger row with no `bankAccountId` and no `checkNumber` and stamps it approved-and-locked. `getCandidateTransactionsForMatching()` requires `bankAccountId = session account`, so the row can never appear as a match candidate, cannot be edited to add the account, and the bank's check line is left unmatched. The likely workaround, "create from bank line", would record the expense twice. Before scheduling, run a read-only query for `ledger_transactions` rows with a linked `ledger_reimbursements.ledger_transaction_id` and a NULL `bank_account_id`, and for expense rows created from a bank line that duplicate a reimbursement's amount and date. If no reimbursement check has cleared yet, the fix is preventive rather than corrective.
   **Fix shape:** (a) the pay dialog collects the bank account (default pre-selected, as the transaction form does) and check number, and the route writes both; (b) a narrow, allowlisted, audited carve-out in the approved-row lock (modelled on DECISION-099's `donorId` carve-out) lets a `ledger.record` holder set `bankAccountId`/`checkNumber` on a reimbursement-derived row that has none, so existing rows can be repaired without a script; (c) decide whether a paid reimbursement may be corrected (category, date, method) through an audited edit instead of an offsetting entry. None of this may change a closed session's arithmetic.
   **Related:** B-85 (the missing reverse marker; only notes the symptom). Repair today is the `backfill-bank-account.ts` script or SQL. Audit rows M10, M17, R3, R4. Needs Phase 1.
+  **Shipped v1.88.0 (2026-10-02):** docs/work-log/2026-10-02-reimbursement-reconcilable.md, DECISION-114. The two Oct 1 production rows are repairable from the register with "Add bank account".
 
-- [ ] **B-111 — Treasurer permission baseline: bind or split `ledger.manage`, fix two gating mismatches.**
+- [x] **B-111 — Treasurer permission baseline: bind or split `ledger.manage`, fix two gating mismatches.**
+  **Shipped v1.88.0 (2026-10-02), work-log `2026-10-02-treasurer-permission-baseline`, DECISION-115.** `ledger.manage` bound to `treasurer` (bind, not split); both gating mismatches fixed; follow-ups B-136 to B-140 filed.
   (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-4; audit priority P0, mostly a role-binding decision; audit top-10 rank 2)
   `ledger.manage` is bound to `admin` only, so a non-admin `treasurer` cannot reopen a reconciliation, edit a fund, manage categories, change settings, add a compliance filing, waive a receipt, move a reconciled or prior-year entry, or delete a donor. (Today's treasurer is presumably an admin, which hides all of this; audit open question 1 is whether the successor will be one. If yes, this item shrinks to the two gating fixes below.) Decide which of those abilities the `treasurer` role should hold by default and either bind `ledger.manage` to `treasurer` in a migration or split it into narrower keys (for example a corrections key versus a destructive-admin key). In the same change fix two mismatches: (1) the budget page "+ Add category" button is shown to `budget.edit` holders but `POST /categories` requires `ledger.manage`, so the treasurer and budget_committee get a 403; (2) the Email Queue nav entry carries no `requiredFeature` while its page requires `admin.users` (the access fix is B-122). Add a test that every control rendered for a permission is accepted by the server for the same permission. Widening a nav permission widens proxy access (CLAUDE.md, Admin-Area Protection): confirm every page under a widened segment gates independently. **Related:** B-97 (inconsistent record-versus-manage gate for prior-year deletes), B-16 (standalone category management, listed in the obsolete tier). Audit rows Y7, Y9, M5, H5. Needs a Phase 1 role-binding decision from the treasurer.
   **Amendment (2026-10-01, Phase 6 of the cross-entity work-log):** Add: cross-entity Move, and the Reopen step its checklist depends on, both need `ledger.manage`, so a successor on the `treasurer` role alone can read the checklist but cannot act on it. Someone with production access should confirm the current treasurer's account also holds `admin` (QA only read the dev role table).
@@ -412,6 +430,24 @@ was deleted on the strength of this review alone.
 - [ ] **B-122 — Email operations for the treasurer role.**
   (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-14; audit priority P1; audit top-10 rank 8)
   A narrow permission (view and retry failed emails) bindable to `treasurer`, instead of overloading `admin.users`; hide the Email Queue nav entry from those who lack it (today it is visible to every admin-area user, who is then redirected away; see B-111); a manual "dismiss with reason" for stuck rows (today SQL). **When scheduled, fold in B-81 (stranded `pending` rows invisible) and B-72 (permanent versus transient failure in the retry UI); those stay open until then.** Statements, receipts and reminders all depend on mail, and a non-admin treasurer today cannot see or retry a failed send. A bounce is still invisible (B-47). Related: B-66, B-74. Audit rows X1, X2, X3.
+  **Amendment (2026-10-02, v1.88.0):** The access half shipped in v1.88.0 via `email_queue.manage` (DECISION-115), bound to `admin` and `treasurer`: a non-admin treasurer can open the Email Queue and retry a failed send, the nav entry now carries the key so it is hidden from those who lack it, and the page redacts credentials for every viewer. For one release the queue also accepts `admin.users` so existing administrators are not bounced; removing that is B-136. **Still open here:** a manual "dismiss with reason" for stuck rows (today SQL), B-81 (stranded `pending` rows invisible) and B-72 (permanent versus transient failure in the retry UI). A bounce is still invisible (B-47).
+
+- [ ] **B-131 — Refresh JWT features and `isActive` on a short TTL.**
+  (added 2026-10-02 from Phase 2 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; DECISION-115 item 8)
+  Roles and features reach the JWT only at sign-in (`src/lib/auth/index.ts` loads them when `!token.roles || trigger === "update"`, and nothing calls `update()`), while the proxy, admin layout and sidebar read the JWT and pages and APIs read the database. So a role change, a new permission key, or a deactivation takes effect for the proxy and sidebar only after sign-out (cookie lifetime is the NextAuth default of 30 days). Proposed: store `token.featuresCheckedAt` and re-run the existing load block when it is older than about five minutes, failing soft on a database error inside the JWT callback; as a side benefit it refreshes `isActive`, which today keeps passing the proxy until the cookie expires. Deliberately not done in B-111 because it changes the shared authentication path that runs on every proxy request, `src/lib/auth/index.ts` has no test file, and the deactivation semantics need a decision of their own. Needs tests for the refresh, the TTL and the fail-soft path. Priority: medium; B-111's release is the first time an existing administrator is bounced by it (Email Queue).
+  **Amendment (2026-10-02):** B-111 shipped without bouncing existing administrators: the Email Queue accepts `email_queue.manage` or `admin.users` for one release (DECISION-115 items 3 and 8). B-131 now also gates B-136, which removes that allowance and must wait for B-131 or 30 days.
+
+- [ ] **B-132 — Board-visible reader for non-transaction ledger audit rows (fold into B-115).**
+  (added 2026-10-02 from Phase 2 and 3 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; DECISION-115 items 2 and 7)
+  B-111 writes `fund_updated`, `donor_deleted` and `ledger_settings_updated` rows (and the category, discard and letter-template rows already exist), but no screen reads any of them; the only reader is "Recent corrections" on Compliance (moves and deletes). Filed so these rows are not forgotten; **do not schedule separately**, build it as part of B-115's audit page, which also absorbs B-95 (fold `recordLedgerAuditNote()` into the typed `recordLedgerAudit()`). Also record the reopen and re-close of a reconciliation session, which today is attributed only while the session is open (`reopened_by_user_id` is cleared on re-close), and receipt-waiver changes. Keep names and reasons off member-facing surfaces (the existing import-guard rule in `ledger-audit.ts`).
+
+- [ ] **B-135 — Inventory every surface that renders persisted email bodies or other credential-bearing rows.**
+  (added 2026-10-02 from Phase 2 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; DECISION-115 item 4; input to the 30-day security review)
+  B-111 fixes the Email Queue page only (`redactQueuedEmailHtml()` before any body reaches the browser). Find every other place that reads `email_queue.html`, event-announcement or acknowledgment bodies, or any stored row that can carry a reset link, temporary password, token or key, and either apply the same function or record why not (as of 2026-10-02 `email-queue/page.tsx` is the only code that sends a stored body to a browser; the retry route re-sends rows but returns only per-id results). Add the standing rule to the security-review checklist: any viewer of persisted email bodies must be treated as holding every credential those bodies carry. Consider whether the contact-form, membership-application and suggestion mail (addressed to `info@`, containing submitters' contact details) should be redacted or kept out of the queue viewer for roles narrower than the board. Priority: low to medium; part of the next security review.
+
+- [ ] **B-137 — A front door for roles without `admin.dashboard`.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; DECISION-115)
+  The header "Admin" link (`header.tsx`, shown to anyone with `canAccessAdminArea()`, which any ledger feature satisfies) points at `/admin`, and `proxy.ts` has no rule for the bare `/admin` root (`getAdminProtectionRules()` emits segment rules only), so the `ADMIN_DASHBOARD` catch-all sends a `treasurer`-only, `budget_committee`-only or notetaker-only user to `/access-pending` before `admin/page.tsx`'s own onward redirect (`getFirstAccessibleAdminHref`) can run. Pre-existing, but v1.88.0 promises the `treasurer` role is enough on its own. It does not bite today's two holders, because both sit on the Board and `board_member` carries `admin.dashboard`. Fix: make the header link target `getFirstAccessibleAdminHref()` for such users and let the proxy admit bare `/admin` for `canAccessAdminArea` so the page's existing onward redirect runs. Small; add a proxy test. Until then the handover wording must say Board-group membership is what gives a treasurer the dashboard (B-110, B-112).
 
 - [ ] **B-120 — Zeffy donation import.**
   (added 2026-10-01 from `docs/reviews/2026-10-01-treasurer-self-sufficiency.md`, NEW-12; audit priority P1; audit top-10 rank 10)
@@ -1049,6 +1085,63 @@ was deleted on the strength of this review alone.
 
 ## Later
 
+- [ ] **B-141 — Own-request paid-reimbursement rows on the register still show Correct / Add bank account.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; DECISION-114)
+  The register shows the buttons for a row whose reimbursement the viewer submitted; the dialog then refuses with the self-action reason. The Paid tab already hides them. Load the reimbursement's submitter on the register page (one join) and show the "Submitted by you" line with the buttons hidden or disabled, so both surfaces agree. Priority: low.
+
+- [ ] **B-142 — After "Add bank account" from the match-picker hint, the picker closes.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; DECISION-114)
+  Both dialogs close after Done, so the treasurer reopens Match. The grid path already reopens the picker filtered to the amount; make the hint path do the same. Priority: low.
+
+- [ ] **B-143 — Pin match absence in `correctWhere` for date and bank-account changes.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; DECISION-114)
+  The correct route re-pins both reconciled marks but not "no open-session match" for a date or bank-account change; both race orders were proven live under FOR UPDATE, so this is cheap hardening, not a defect. Priority: low.
+
+- [ ] **B-144 — The `approved` lock copy still says "Record a refund entry" for expense rows.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; DECISION-114)
+  For a board-approved disbursement the advice is wrong (a refund entry is income). Decide the right instruction for an approved expense row and fix `LOCK_COPY.approved`. Priority: low; take with B-140.
+
+- [ ] **B-136 — Remove `ADMIN_USERS` from the Email Queue gate.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; DECISION-115 items 3 and 8)
+  v1.88.0 lets the Email Queue accept `email_queue.manage` or `admin.users` (`EMAIL_QUEUE_FEATURES`) so existing administrators are not bounced. Remove `admin.users` from that gate. Change all five sites together: the nav entry (ideally make it use the constant), the page, the retry route, the admin layout and the sidebar (the last four already share `EMAIL_QUEUE_FEATURES`), flip the e2e "transitional" case to expect `/access-pending`, and decide inherit-or-explicit-bind at that time (production check on 2026-10-02: only `admin` holds `admin.users`, and `admin` holds the new key by migration). **Sequencing hazard: do not land this until B-131 ships or 30 days have passed since the v1.88.0 deploy** (JWTs live 30 days), otherwise an administrator who signed in before migration 0110 has no `email_queue.manage` in the token and the bounce v1.88.0 avoided comes back.
+
+- [ ] **B-138 — Create-category dialog shows two manage-only fields to a `budget.edit`-only user.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; DECISION-115 item 6)
+  `POST /categories` now accepts `budget.edit`, but refuses `countsAsGiving: false` and a non-blank `form990Line` without `ledger.manage`, with a plain-language 403. The create dialog still shows "Counts toward reported community giving" and "Form 990 line" to a `budget.edit`-only user, who learns only on submit. Disable or hide both when the user lacks `ledger.manage` (pass a second boolean from the budgeting pages) so the 403 is a backstop, not the primary signal. Small.
+
+- [ ] **B-139 — Sticky mobile admin header covers an eyebrow-less first heading at 360px.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`)
+  At 360px the sticky header overlaps the first heading on an admin page that has no eyebrow line (Email Queue reads as "ueue"). Pre-existing, not caused by B-111. Audit the other eyebrow-less admin pages for the same overlap in the same pass. Small ux item.
+
+- [ ] **B-140 — Plain-language 403 sweep for UI-reachable ledger routes.**
+  (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; Phase 2 suggestion 2)
+  The Email Queue retry route and the other UI-reachable ledger routes still return the bare word "Forbidden". With nav-to-page parity restored a 403 now means a stale session or a bug, so this is low priority; replace the bare word with a sentence a person can act on (for example, sign out and back in).
+
+- [x] **B-134 — Convert the nine `[LEDGER_MANAGE, BUDGET_EDIT]` literals to `BUDGET_WRITE_FEATURES`.**
+  **Shipped v1.88.0 (2026-10-02) inside B-111 (`2026-10-02-treasurer-permission-baseline`); the sweep was mechanical and nothing was deferred.**
+  (added 2026-10-02 from Phase 2 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; DECISION-115 item 6)
+  **Scheduled inside B-111 Phase 4** (the sweep is mechanical: `budget-notes`, `budgets`, `budgets/seed`, `budgets/annotations`, `budgets/cause-lines` twice, `.../group`, `.../collapse`, `.../cause-lines/annotations`, plus the two budgeting pages' `canManage`, guarded by a source-scan test). This entry stays open only if the implementer finds a non-mechanical site and defers it; check it off with the work-log slug when B-111 ships the sweep.
+
+- [ ] **B-133 — Migration description versus `FEATURE_DESCRIPTIONS` parity sweep.**
+  (added 2026-10-02 from Phase 2 of `docs/work-log/2026-10-02-treasurer-permission-baseline.md`; DECISION-115 item 5)
+  Many migration comments claim the description literal is "byte-identical" to `FEATURE_DESCRIPTIONS`, and it is enforced by hand. B-111 asserts it only for its own two strings (and found that production still carries the 0045 text for `ledger.manage`). Reuse the migration-parsing helper from `src/lib/default-role-bundles.test.ts` to compare every `INSERT INTO features` / `UPDATE features SET description` literal with the TS map, expecting historical drift; triage it before asserting, with a reasoned allowlist for strings intentionally left behind. Priority: low.
+
+- [ ] **B-130 — Void or reissue a lost or stale reimbursement check.**
+  (added 2026-10-02 from the Phase 2 ruling of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; audit row M17)
+  A reimbursement cannot return from `paid` today, so a lost, voided or stale check has no path: the ledger row is
+  approved and locked, and the reimbursement stays `paid`. Explicitly out of scope for B-108 (DECISION-114), which only
+  corrects classification and bank account. Needs its own DECISION: how a reversal of an approved row interacts with
+  DECISION-110 item 5 (no `voided` status, no reversal pairs), and whether the reimbursement returns to a payable state
+  or a new one is raised. Priority: low until a check is actually lost.
+
+- [ ] **B-129 — Make the reimbursement-to-transaction link provably 1:1 with a partial unique index.**
+  (added 2026-10-02 from the Phase 2 ruling of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; DECISION-114)
+  Add a partial UNIQUE index on `ledger_reimbursements.ledger_transaction_id WHERE ledger_transaction_id IS NOT NULL`, so
+  the `EXISTS` join that defines "paid reimbursement" in DECISION-114 can never match two reimbursements to one row. The FK
+  is `ON DELETE SET NULL` with no unique index today. Needs a production duplicate check first and an idempotent guarded
+  `DO $$` migration (migrations re-run every deploy). Not required for B-108 (the self-action check already covers every
+  linked reimbursement). Priority: low.
+
 - [ ] **B-128 — Consider retiring the aged public-fund guardrail entirely.**
   (added 2026-10-02 from the treasurer's sign-off on DECISION-105)
   On signing off the oldest-first reading the treasurer said the check "can probably just go away". It now only fires
@@ -1177,6 +1270,10 @@ was deleted on the strength of this review alone.
   posted expense is indistinguishable in the register from any other expense. If the board wants to filter or
   flag reimbursements in the register, add a reverse marker (column or derived join). Priority: low; revisit
   after B-83 ships and the board says whether the Paid tab and report are enough.
+  **Narrowed 2026-10-02 by B-108 / DECISION-114 (not closed):** reimbursement-derived rows are now identified by a
+  server-side `EXISTS` join on `ledger_reimbursements.ledger_transaction_id` (status `paid`), and the register shows them as a
+  `paid_reimbursement` lock kind with Correct / Add bank account actions. Remaining scope: any other surface that needs the
+  fact, and whether a marker column is ever warranted. See B-129 for making the join provably 1:1.
 
 - [ ] **B-86 — Transactions created from a reconciliation bank line carry no marker back to it.**
   (added 2026-10-01, Phase 1 and 3 of `docs/work-log/2026-10-01-discard-reconciliation-session.md`; DECISION-108;

@@ -7,7 +7,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getFromEmail, getAppUrl, escapeHtml } from "@/lib/email-compose";
+import {
+  getFromEmail,
+  getAppUrl,
+  escapeHtml,
+  buildPasswordResetEmailHtml,
+  buildWelcomeSetPasswordEmailHtml,
+} from "@/lib/email-compose";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -86,5 +92,27 @@ describe("escapeHtml (re-exported)", () => {
     expect(escapeHtml(`<a href="javascript:alert(1)">click</a>`)).toBe(
       "&lt;a href=&quot;javascript:alert(1)&quot;&gt;click&lt;/a&gt;",
     );
+  });
+});
+
+describe("credential-bearing email body builders", () => {
+  const url = "https://example.com/reset-password?token=abc123";
+
+  it("buildPasswordResetEmailHtml includes the URL exactly once", () => {
+    const html = buildPasswordResetEmailHtml(url);
+    expect(html.split(url)).toHaveLength(2);
+    expect(html).toContain("Password Reset Request");
+  });
+
+  it("buildWelcomeSetPasswordEmailHtml includes the URL once and HTML-escapes the member name", () => {
+    const html = buildWelcomeSetPasswordEmailHtml({
+      name: "<script>alert(1)</script>",
+      setPasswordUrl: url,
+      appUrl: "https://example.com",
+    });
+    expect(html.split(url)).toHaveLength(2);
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("https://example.com/forgot-password");
   });
 });

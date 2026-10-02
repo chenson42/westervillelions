@@ -1,4 +1,16 @@
 /**
+ * GET /api/admin/ledger/reconciliation/sessions/[sessionId]/create-from-bank-line?bankLineId=<uuid>
+ *
+ * Advisory candidates for the create dialog and the match picker (B-108 /
+ * DECISION-114). Gate: LEDGER_RECORD. 404 for an unknown session or line.
+ * Returns { candidates: CreateFromBankLineCandidate[] }: reimbursement-derived
+ * expenses of the same amount within 30 days, unmatched and unreconciled, with
+ * no bank account yet or on the session's account. Empty for a credit line.
+ * `ownRequest` is computed server-side. A failure here never blocks creating:
+ * POST is the authority.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
  * POST /api/admin/ledger/reconciliation/sessions/[sessionId]/create-from-bank-line
  *
  * One-click shortcut for bank fees, interest, and other missed entries: given
@@ -28,13 +40,24 @@
  *   flow: 'income' | 'expense';
  *   paymentMethod?: string;   // 'check' | 'cash' | 'zeffy' | 'debit_card' | 'other'
  *   checkNumber?: string | null;
+ *   acknowledgeDuplicate?: boolean;  // strict boolean when present
  * }
  * Response 201: { transactionId, matchId }
  *
+ * Double-booking guard (B-108 / DECISION-114): for flow='expense', when the
+ * advisory finder returns a candidate (a paid reimbursement of the same amount
+ * that may already record this payment), the response is 409
+ * { error, code: 'possible_duplicate', candidates } and NOTHING is inserted,
+ * unless the body carries acknowledgeDuplicate: true. Advisory in the
+ * DECISION-113 sense (acknowledged, never a hard block) but SERVER-checked, so
+ * a stale dialog or a direct call cannot bypass it. No lock: it is advisory;
+ * the match constraints still protect the books. The flag is not audited.
+ *
  * Errors:
- *   400 — validation failure (flow, fund/category mismatch, party required, etc.)
+ *   400 — validation failure (flow, fund/category mismatch, party required,
+ *         non-boolean acknowledgeDuplicate, etc.)
  *   404 — session, bank line, fund, or category not found
- *   409 — session not open, or bank line already matched
+ *   409 — session not open, bank line already matched, or possible_duplicate
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -49,6 +72,13 @@ import {
 import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { normalizeCheckNumber } from "@/lib/ledger";
+import { isUuid } from "@/lib/utils";
+import { findCreateFromBankLineCandidates } from "@/lib/ledger-duplicate-candidates";
+import {
+  POSSIBLE_DUPLICATE_MESSAGE,
+  type PossibleDuplicateBody,
+} from "@/lib/ledger-reimbursement-correction";
 import {
   getReconciliationSessionById,
   getBankLineById,
@@ -57,7 +87,6 @@ import {
 
 const VALID_FLOWS = ["income", "expense"] as const;
 const VALID_METHODS = ["check", "cash", "zeffy", "debit_card", "bill_pay", "other"] as const;
-const CHECK_NUMBER_MAX_LEN = 20;
 
 type Flow = (typeof VALID_FLOWS)[number];
 
@@ -68,16 +97,47 @@ function isValidMethod(v: unknown): boolean {
   return typeof v === "string" && (VALID_METHODS as readonly string[]).includes(v);
 }
 
-/** Trim and length-cap checkNumber (T-18) — mirrors transactions/route.ts. */
-function normalizeCheckNumber(v: unknown): { value: string | null } | { error: string } {
-  if (v === undefined || v === null) return { value: null };
-  if (typeof v !== "string") return { error: "checkNumber must be a string" };
-  const trimmed = v.trim();
-  if (!trimmed) return { value: null };
-  if (trimmed.length > CHECK_NUMBER_MAX_LEN) {
-    return { error: `checkNumber must not exceed ${CHECK_NUMBER_MAX_LEN} characters` };
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ sessionId: string }> },
+) {
+  try {
+    const authSession = await auth();
+    if (!authSession?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!(await hasFeature(authSession.user.id, FEATURES.LEDGER_RECORD))) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { sessionId } = await params;
+    const bankLineId = new URL(request.url).searchParams.get("bankLineId");
+    if (!isUuid(sessionId)) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    const reconSession = await getReconciliationSessionById(sessionId);
+    if (!reconSession) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    if (!bankLineId || !isUuid(bankLineId)) {
+      return NextResponse.json({ error: "Bank line not found" }, { status: 404 });
+    }
+    const bankLine = await getBankLineById(sessionId, bankLineId);
+    if (!bankLine) {
+      return NextResponse.json({ error: "Bank line not found" }, { status: 404 });
+    }
+
+    const candidates = await findCreateFromBankLineCandidates(db, {
+      entityId: reconSession.entityId,
+      bankAccountId: reconSession.bankAccountId,
+      bankLine,
+      actor: { userId: authSession.user.id, memberId: authSession.user.memberId ?? null },
+    });
+    return NextResponse.json({ candidates });
+  } catch (error) {
+    console.error("Error loading create-from-bank-line candidates:", error);
+    return NextResponse.json({ error: "Could not check for possible duplicates." }, { status: 500 });
   }
-  return { value: trimmed };
 }
 
 export async function POST(
@@ -95,8 +155,17 @@ export async function POST(
 
     const { sessionId } = await params;
     const body = await request.json();
-    const { bankLineId, fundId, categoryId, party, memo, flow, paymentMethod, checkNumber } =
-      body ?? {};
+    const {
+      bankLineId,
+      fundId,
+      categoryId,
+      party,
+      memo,
+      flow,
+      paymentMethod,
+      checkNumber,
+      acknowledgeDuplicate,
+    } = body ?? {};
 
     // Session must be open
     const reconSession = await getReconciliationSessionById(sessionId);
@@ -221,6 +290,34 @@ export async function POST(
         { error: "Cannot create a transaction from a zero-amount bank line" },
         { status: 400 },
       );
+    }
+
+    // acknowledgeDuplicate: a strict boolean when present (a string "true" is not consent)
+    if (acknowledgeDuplicate !== undefined && typeof acknowledgeDuplicate !== "boolean") {
+      return NextResponse.json(
+        { error: "acknowledgeDuplicate must be a boolean" },
+        { status: 400 },
+      );
+    }
+
+    // Double-booking guard: a debit that a paid reimbursement may already record.
+    if (flow === "expense" && acknowledgeDuplicate !== true) {
+      const candidates = await findCreateFromBankLineCandidates(db, {
+        entityId: reconSession.entityId,
+        bankAccountId: reconSession.bankAccountId,
+        bankLine,
+        actor: { userId: authSession.user.id, memberId: authSession.user.memberId ?? null },
+      });
+      if (candidates.length > 0) {
+        return NextResponse.json(
+          {
+            error: POSSIBLE_DUPLICATE_MESSAGE,
+            code: "possible_duplicate",
+            candidates,
+          } satisfies PossibleDuplicateBody,
+          { status: 409 },
+        );
+      }
     }
 
     // Atomic: insert transaction + match row together

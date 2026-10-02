@@ -40,8 +40,12 @@ const EDITOR_EMAIL = `qa-events-announce-editor-only-gate-${Date.now()}@example.
 const MEMBER_EMAIL = `qa-events-announce-plain-member-gate-${Date.now()}@example.test`;
 const PASSWORD = "E2eEventsAnnounceGate!2026";
 const FIXTURE_ROLE_NAME = `qa_events_edit_only_fixture_${Date.now()}`;
+const ANNOUNCE_ONLY_EMAIL = `qa-events-announce-only-gate-${Date.now()}@example.test`;
+const ANNOUNCE_ONLY_ROLE_NAME = `qa_events_announce_only_fixture_${Date.now()}`;
 
 let fixtureRoleId: string | undefined;
+let announceOnlyRoleId: string | undefined;
+let announceOnlyUserId: string | undefined;
 let editorUserId: string | undefined;
 let memberUserId: string | undefined;
 let fixtureEventId: string | undefined;
@@ -97,6 +101,33 @@ test.beforeAll(async () => {
   memberUserId = memberUser.id;
   await db.insert(userRoles).values({ userId: memberUserId, roleId: memberRole.id });
 
+  // B-111 (DECISION-115): /admin/events now admits events.announce holders. No shipped
+  // role holds announce without edit, so compose a disposable announce-ONLY role.
+  const eventsAnnounceFeature = await db.query.features.findFirst({
+    where: eq(features.name, "events.announce"),
+  });
+  if (!eventsAnnounceFeature) {
+    throw new Error("Fixture setup requires the 'events.announce' feature — run `pnpm db:migrate` first.");
+  }
+  const [announceRole] = await db
+    .insert(roles)
+    .values({ name: ANNOUNCE_ONLY_ROLE_NAME, description: "QA fixture — events.announce only, no events.edit" })
+    .returning({ id: roles.id });
+  announceOnlyRoleId = announceRole.id;
+  await db.insert(roleFeatures).values({ roleId: announceOnlyRoleId, featureId: eventsAnnounceFeature.id });
+  const [announceUser] = await db
+    .insert(users)
+    .values({
+      email: ANNOUNCE_ONLY_EMAIL,
+      name: "QA Events Announce-Only Gate Fixture",
+      password: passwordHash,
+      role: "member",
+      isActive: true,
+    })
+    .returning({ id: users.id });
+  announceOnlyUserId = announceUser.id;
+  await db.insert(userRoles).values({ userId: announceOnlyUserId, roleId: announceOnlyRoleId });
+
   // A real event so the edit-page "Announce" link visibility check and the
   // announce-page redirect both exercise a genuine record, not a 404.
   const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -117,15 +148,17 @@ test.afterAll(async () => {
   if (fixtureEventId) {
     await db.delete(events).where(eq(events.id, fixtureEventId));
   }
-  for (const id of [editorUserId, memberUserId]) {
+  for (const id of [editorUserId, memberUserId, announceOnlyUserId]) {
     if (id) {
       await db.delete(userRoles).where(eq(userRoles.userId, id));
       await db.delete(users).where(eq(users.id, id));
     }
   }
-  if (fixtureRoleId) {
-    await db.delete(roleFeatures).where(eq(roleFeatures.roleId, fixtureRoleId));
-    await db.delete(roles).where(eq(roles.id, fixtureRoleId));
+  for (const id of [fixtureRoleId, announceOnlyRoleId]) {
+    if (id) {
+      await db.delete(roleFeatures).where(eq(roleFeatures.roleId, id));
+      await db.delete(roles).where(eq(roles.id, id));
+    }
   }
 });
 
@@ -241,5 +274,37 @@ test.describe("a plain member (no events.edit, no events.announce) at the announ
 
     // Assert
     expect([401, 403]).toContain(res.status());
+  });
+});
+
+test.describe("an events.announce-only account (no events.edit) at the events list — B-111 / DECISION-115", () => {
+  test("can load /admin/events instead of being redirected — regression for the nav-versus-page gate mismatch", async ({
+    page,
+  }) => {
+    // Arrange — the Events nav entry lists events.announce on purpose (the derived proxy
+    // rule must admit /admin/events/[id]/announce), but the list page used to require
+    // events.edit alone and bounced an announce-only holder to /admin.
+    await signIn(page, ANNOUNCE_ONLY_EMAIL);
+
+    // Act
+    await page.goto("/admin/events");
+    await page.waitForLoadState("networkidle");
+
+    // Assert
+    expect(new URL(page.url()).pathname).toBe("/admin/events");
+  });
+
+  test("is still refused the event edit page /admin/events/[id], which keeps requiring events.edit", async ({
+    page,
+  }) => {
+    // Arrange
+    await signIn(page, ANNOUNCE_ONLY_EMAIL);
+
+    // Act
+    await page.goto(`/admin/events/${fixtureEventId}`);
+    await page.waitForLoadState("networkidle");
+
+    // Assert — the documented limitation: the list admits the holder, the edit page does not.
+    expect(page.url()).not.toContain(`/admin/events/${fixtureEventId}`);
   });
 });

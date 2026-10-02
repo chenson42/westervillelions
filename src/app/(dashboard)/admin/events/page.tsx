@@ -3,7 +3,7 @@ import { events, eventRsvps, eventOccurrenceOverrides } from "@/lib/db/schema";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { and, eq, gte, isNotNull, isNull, lt, or, sql, inArray } from "drizzle-orm";
 import { EventTableRow, type RsvpSummary } from "@/components/admin/event-table-row";
@@ -20,7 +20,13 @@ export default async function AdminEventsPage({
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
-  const canAccess = await hasFeature(session.user.id, FEATURES.EVENTS_EDIT);
+  // The nav entry lists events.announce on purpose (so the derived proxy rule
+  // admits /admin/events/[id]/announce), so this page admits an announce-only
+  // holder too (DECISION-115). Known limitation: the row links go to
+  // /admin/events/[id], which still requires events.edit and bounces an
+  // announce-only holder. That state is unreachable with seeded roles (announce
+  // is bound only to roles that also hold edit).
+  const canAccess = await hasAnyFeature(session.user.id, [FEATURES.EVENTS_EDIT, FEATURES.EVENTS_ANNOUNCE]);
   if (!canAccess) redirect("/admin");
 
   const { page: pageParam = "1", view = "upcoming" } = await searchParams;

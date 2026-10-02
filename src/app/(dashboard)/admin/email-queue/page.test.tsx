@@ -11,12 +11,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { calls, state } = vi.hoisted(() => ({
+const { calls, state, dialogProps, hasAnyFeatureMock } = vi.hoisted(() => ({
   calls: [] as string[],
+  dialogProps: [] as Array<{ html: string }>,
+  hasAnyFeatureMock: vi.fn(),
   state: {
     session: { user: { id: "u1" } } as { user?: { id?: string } } | null,
     canManage: true,
     pruneError: null as Error | null,
+    rows: [] as unknown[],
   },
 }));
 
@@ -26,8 +29,12 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 vi.mock("@/lib/auth", () => ({ auth: vi.fn(async () => state.session) }));
-vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn(async () => state.canManage) }));
-vi.mock("@/lib/permissions", () => ({ FEATURES: { ADMIN_USERS: "admin.users" } }));
+vi.mock("@/lib/permissions-server", () => ({
+  hasAnyFeature: hasAnyFeatureMock.mockImplementation(async () => state.canManage),
+}));
+vi.mock("@/lib/permissions", () => ({
+  EMAIL_QUEUE_FEATURES: ["email_queue.manage", "admin.users"],
+}));
 vi.mock("@/lib/db/schema", () => ({
   emailQueue: { status: "status", createdAt: "createdAt", sentAt: "sentAt" },
 }));
@@ -43,7 +50,7 @@ vi.mock("@/lib/db", () => {
     q.from = () => q;
     q.where = () => q;
     q.orderBy = () => q;
-    q.limit = () => Promise.resolve([]);
+    q.limit = () => Promise.resolve(state.rows);
     return q;
   };
   return { db: { select: vi.fn(chain) } };
@@ -61,7 +68,13 @@ vi.mock("@/lib/email-queue-stats", () => ({
 }));
 vi.mock("./retry-button", () => ({ default: () => null }));
 vi.mock("./row-retry-button", () => ({ default: () => null }));
-vi.mock("./view-email-dialog", () => ({ ViewEmailDialog: () => null, StatusPill: () => null }));
+vi.mock("./view-email-dialog", () => ({
+  ViewEmailDialog: (props: { html: string }) => {
+    dialogProps.push(props);
+    return null;
+  },
+  StatusPill: () => null,
+}));
 
 import AdminEmailQueuePage from "./page";
 import { pruneEmailQueue } from "@/lib/email-queue-stats";
@@ -72,6 +85,9 @@ describe("AdminEmailQueuePage retention purge", () => {
     state.session = { user: { id: "u1" } };
     state.canManage = true;
     state.pruneError = null;
+    state.rows = [];
+    dialogProps.length = 0;
+    hasAnyFeatureMock.mockClear();
     vi.mocked(pruneEmailQueue).mockClear();
   });
 
@@ -94,7 +110,7 @@ describe("AdminEmailQueuePage retention purge", () => {
     errSpy.mockRestore();
   });
 
-  it("does not purge for a user without ADMIN_USERS, nor for an unauthenticated session", async () => {
+  it("does not purge for a user without EMAIL_QUEUE_MANAGE (or ADMIN_USERS), nor for an unauthenticated session", async () => {
     state.canManage = false;
     await expect(AdminEmailQueuePage()).rejects.toThrow("NEXT_REDIRECT:/admin");
     expect(pruneEmailQueue).not.toHaveBeenCalled();
@@ -112,5 +128,41 @@ describe("AdminEmailQueuePage retention purge", () => {
     );
     expect(html).toContain("No emails sent in the last 6 months.");
     expect(html).not.toContain("No emails sent yet.");
+  });
+
+  it("gates on EMAIL_QUEUE_MANAGE or ADMIN_USERS (one release), via hasAnyFeature", async () => {
+    await AdminEmailQueuePage();
+
+    expect(hasAnyFeatureMock).toHaveBeenCalledWith("u1", ["email_queue.manage", "admin.users"]);
+  });
+
+  it("hands ViewEmailDialog redacted html for failed, blocked and sent rows; the token never reaches a prop or the markup", async () => {
+    const token = "c0ffee".repeat(11);
+    state.rows = [
+      {
+        id: "r1",
+        to: "x@example.com",
+        cc: null,
+        bcc: null,
+        subject: "Reset your password",
+        status: "failed",
+        attempts: 1,
+        nextRetryAt: null,
+        createdAt: new Date(),
+        sentAt: new Date(),
+        lastError: null,
+        html: `<a href="https://example.com/reset-password?token=${token}">Reset</a>`,
+      },
+    ];
+
+    const markup = renderToStaticMarkup(await AdminEmailQueuePage());
+
+    // One row per section query (failed, blocked, sent) -> three dialogs.
+    expect(dialogProps).toHaveLength(3);
+    for (const props of dialogProps) {
+      expect(props.html).not.toContain(token);
+      expect(props.html).toContain("reset-password?token=[hidden]");
+    }
+    expect(markup).not.toContain(token);
   });
 });

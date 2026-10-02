@@ -56,6 +56,27 @@ describe("AdminSidebar — failed-email-count badge", () => {
     expect(html).toContain("140 failed emails");
   });
 
+  it("shows the badge to a holder of EMAIL_QUEUE_MANAGE alone (DECISION-115)", () => {
+    const html = renderToStaticMarkup(
+      <AdminSidebar userFeatures={[FEATURES.EMAIL_QUEUE_MANAGE]} failedEmailCount={4} />
+    );
+
+    expect(html).toContain("4 failed emails");
+  });
+
+  it("shows the Email Queue link only to a holder of EMAIL_QUEUE_MANAGE, ADMIN_USERS (one release) or isAdmin", () => {
+    const link = 'href="/admin/email-queue"';
+    expect(renderToStaticMarkup(<AdminSidebar userFeatures={[FEATURES.EMAIL_QUEUE_MANAGE]} />)).toContain(link);
+    expect(renderToStaticMarkup(<AdminSidebar userFeatures={[FEATURES.ADMIN_USERS]} />)).toContain(link);
+    expect(renderToStaticMarkup(<AdminSidebar userFeatures={[]} isAdmin />)).toContain(link);
+  });
+
+  it("a LEDGER_VIEW-only user no longer sees the Email Queue link (it used to be visible to every admin-area user)", () => {
+    const html = renderToStaticMarkup(<AdminSidebar userFeatures={[FEATURES.LEDGER_VIEW]} />);
+
+    expect(html).not.toContain('href="/admin/email-queue"');
+  });
+
   it("shows nothing when the user lacks ADMIN_USERS, even if a nonzero count is passed by mistake (defense in depth)", () => {
     const html = renderToStaticMarkup(
       <AdminSidebar userFeatures={["some.other.feature"]} failedEmailCount={7} />

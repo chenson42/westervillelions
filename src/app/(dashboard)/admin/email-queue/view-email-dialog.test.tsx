@@ -12,9 +12,25 @@
  * src/components/admin/admin-sidebar.test.tsx.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { StatusPill } from "./view-email-dialog";
+import { StatusPill, ViewEmailDialog } from "./view-email-dialog";
+
+// The dialog body only mounts when open; render the primitives as plain
+// pass-through elements so the static markup includes the content.
+vi.mock("@radix-ui/react-dialog", () => {
+  const passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
+  return {
+    Root: passthrough,
+    Trigger: passthrough,
+    Portal: passthrough,
+    Overlay: () => null,
+    Content: passthrough,
+    Title: passthrough,
+    Description: passthrough,
+    Close: passthrough,
+  };
+});
 
 describe("StatusPill — retrying (B-66)", () => {
   it("renders a distinct 'Retrying…' label, not the raw string and not the unknown-status fallback", () => {
@@ -41,5 +57,22 @@ describe("StatusPill — retrying (B-66)", () => {
 
     expect(html).toContain(">totally_made_up<");
     expect(html).toContain("bg-gray-100");
+  });
+});
+
+describe("ViewEmailDialog — credential caption (DECISION-115)", () => {
+  it("tells the viewer links and temporary passwords are hidden and that retry sends the original", () => {
+    const html = renderToStaticMarkup(
+      <ViewEmailDialog
+        to="x@example.com"
+        subject="Reset your password"
+        status="failed"
+        createdAtLabel="Oct 2"
+        html="<p>hi</p>"
+      />
+    );
+
+    expect(html).toContain("Password-reset links and temporary passwords are hidden");
+    expect(html).toContain("Retrying a failed");
   });
 });

@@ -148,6 +148,7 @@ export default async function ReconciliationSessionDetailPage({
         categories={categories}
         isOpen={isOpen}
         canRecord={canRecord}
+        bankAccountId={reconSession.bankAccountId}
       />
     </div>
   );

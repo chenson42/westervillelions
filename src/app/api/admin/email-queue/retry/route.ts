@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailQueue, type EmailQueueItem } from "@/lib/db/schema";
-import { hasFeature } from "@/lib/permissions-server";
-import { FEATURES } from "@/lib/permissions";
+import { hasAnyFeature } from "@/lib/permissions-server";
+import { EMAIL_QUEUE_FEATURES } from "@/lib/permissions";
 import { and, eq, inArray, lte } from "drizzle-orm";
 import { Resend } from "resend";
 import { shouldBlockNonProductionSend } from "@/lib/email-guard";
@@ -346,7 +346,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
+  // EMAIL_QUEUE_MANAGE or ADMIN_USERS for one release (DECISION-115).
+  const canManage = await hasAnyFeature(session.user.id, EMAIL_QUEUE_FEATURES);
   if (!canManage) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

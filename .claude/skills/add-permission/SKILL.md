@@ -51,25 +51,29 @@ ls drizzle/migrations/*.sql | sort | tail -3
 Create `drizzle/migrations/NNNN_add_events_export_permission.sql` with **idempotent** statements (every migration in this project re-runs on every deploy):
 
 ```sql
--- Add events.export feature permission
-INSERT INTO features (key, name, description, category)
-SELECT 'events.export', 'Export events', 'Export events to CSV.', 'events'
-WHERE NOT EXISTS (SELECT 1 FROM features WHERE key = 'events.export');
+-- Add events.export feature permission.
+-- Column names are REAL (verified against src/lib/db/schema.ts on 2026-10-02):
+--   features(id, name, category, description)   -- the key is `name`; there is no `key` column
+--   role_features(id, role_id, feature_id)       -- joins by feature *id*; there is no `feature_key`
+-- Role names are lowercase ('admin', 'treasurer', 'board_member', ...), not 'Admin'.
+INSERT INTO features (name, category, description)
+SELECT 'events.export', 'events', 'Export events to CSV.'
+WHERE NOT EXISTS (SELECT 1 FROM features WHERE name = 'events.export');
 
--- Bind to the Admin role
-INSERT INTO role_features (role_id, feature_key)
-SELECT r.id, 'events.export'
-FROM roles r
-WHERE r.name = 'Admin'
-  AND NOT EXISTS (
-    SELECT 1 FROM role_features rf
-    WHERE rf.role_id = r.id AND rf.feature_key = 'events.export'
-  );
+-- Bind to the admin role. Use EXACTLY this CROSS JOIN + NOT EXISTS idiom (model: 0104, 0110):
+-- the migration-parsing role-bundle test in src/lib/default-role-bundles.test.ts (B-111)
+-- parses bind statements of this shape and fails loudly on any it cannot parse.
+INSERT INTO role_features (role_id, feature_id)
+SELECT r.id, f.id FROM roles r CROSS JOIN features f
+WHERE r.name = 'admin' AND f.name = 'events.export'
+AND NOT EXISTS (
+  SELECT 1 FROM role_features rf WHERE rf.role_id = r.id AND rf.feature_id = f.id
+);
 ```
 
-> Check the actual column names in `src/lib/db/schema.ts` before writing the SQL — the columns are `key`/`name`/`description`/`category` on `features`, and `role_id`/`feature_key` on `role_features` (verify against the current schema).
+> The description string in the migration must be byte-identical to `FEATURE_DESCRIPTIONS[FEATURES.EVENTS_EXPORT]` in `src/lib/permissions.ts` — a guarded `UPDATE features SET description = ... WHERE name = ... AND description IS DISTINCT FROM ...` is the idempotent way to correct an existing row.
 
-For an existing database, the migration will only *add* the binding; it will not revoke it from any role that already has the permission via custom assignment. That's the right behavior.
+For an existing database, the migration will only *add* the binding; it will not revoke it from any role that already has the permission via custom assignment. That's the right behavior. (No migration in this repo deletes from `role_features`; a runtime revoke of a migration-seeded bind is re-created on the next deploy — see DECISION-115.)
 
 ## Step 4: Apply the Migration Locally
 

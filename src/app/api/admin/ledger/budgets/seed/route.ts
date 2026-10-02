@@ -83,7 +83,7 @@ import { db } from "@/lib/db";
 import { ledgerCategories } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hasAnyFeature } from "@/lib/permissions-server";
-import { FEATURES } from "@/lib/permissions";
+import { BUDGET_WRITE_FEATURES } from "@/lib/permissions";
 import {
   getEntityById,
   getFunds,
@@ -161,7 +161,7 @@ export async function POST(request: NextRequest) {
     // Gate widened additively (docs/work-log/2026-07-29-budget-permissions.md)
     // to accept BUDGET_EDIT alongside the existing LEDGER_MANAGE — nothing
     // that could write before loses that ability.
-    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
+    if (!(await hasAnyFeature(session.user.id, BUDGET_WRITE_FEATURES))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

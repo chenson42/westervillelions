@@ -42,7 +42,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hasAnyFeature } from "@/lib/permissions-server";
-import { FEATURES } from "@/lib/permissions";
+import { BUDGET_WRITE_FEATURES } from "@/lib/permissions";
 import { setBudgetCategoryAnnotation } from "@/lib/ledger-queries";
 
 const VALID_FLOWS = ["income", "expense"] as const;
@@ -60,7 +60,7 @@ export async function PATCH(request: NextRequest) {
     // Gate widened additively (docs/work-log/2026-07-29-budget-permissions.md)
     // to accept BUDGET_EDIT alongside the existing LEDGER_MANAGE — nothing
     // that could write before loses that ability.
-    if (!(await hasAnyFeature(session.user.id, [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT]))) {
+    if (!(await hasAnyFeature(session.user.id, BUDGET_WRITE_FEATURES))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

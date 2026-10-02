@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ADMIN_NAVIGATION as navigation, FEATURES } from "@/lib/permissions";
+import { ADMIN_NAVIGATION as navigation, EMAIL_QUEUE_FEATURES, FEATURES } from "@/lib/permissions";
 import { matchNavEntry } from "@/lib/fuzzy-match";
 import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
@@ -61,9 +61,9 @@ export default function AdminSidebar({
   userFeatures: string[];
   isAdmin?: boolean;
   // Count of email_queue rows with status='failed', already gated by the
-  // caller (admin layout) on the same FEATURES.ADMIN_USERS permission the
-  // /admin/email-queue page itself requires. Re-checked below anyway
-  // (defense in depth) so a future caller passing this by mistake can never
+  // caller (admin layout) on the same EMAIL_QUEUE_FEATURES (email_queue.manage,
+  // or admin.users for one release; DECISION-115) the /admin/email-queue page
+  // requires. Re-checked below anyway (defense in depth) so a future caller passing this by mistake can never
   // leak the count to a user who couldn't open the page.
   failedEmailCount?: number;
   // Count of actionable (never_sent/corrected) monthly financial statements
@@ -317,7 +317,7 @@ export default function AdminSidebar({
                   const isActive = item.href === activeHref;
                   // Defense in depth: only ever show the failed-email count on
                   // the Email Queue item, and only to a user who could
-                  // actually open that page (its own gate is ADMIN_USERS,
+                  // actually open that page (its own gate is EMAIL_QUEUE_FEATURES,
                   // deliberately narrower than "can access some admin area").
                   // The admin layout already withholds a nonzero count from
                   // anyone lacking that permission, but a future caller
@@ -325,7 +325,7 @@ export default function AdminSidebar({
                   const showFailedBadge =
                     item.href === "/admin/email-queue" &&
                     failedEmailCount > 0 &&
-                    (isAdmin || userFeatures.includes(FEATURES.ADMIN_USERS));
+                    (isAdmin || EMAIL_QUEUE_FEATURES.some((f) => userFeatures.includes(f)));
                   // Same defense-in-depth shape as showFailedBadge above:
                   // only the Reports item, only nonzero, only for a user who
                   // could actually send (FEATURES.LEDGER_REPORT_SEND) — not

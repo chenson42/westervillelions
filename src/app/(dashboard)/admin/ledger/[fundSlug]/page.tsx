@@ -29,6 +29,8 @@ import { listMoveRegisterContext } from "@/lib/ledger-fund-move-preview";
 import { getLatestFundMove } from "@/lib/ledger-audit";
 import { buildSweepMemo } from "@/lib/ledger-correction";
 import { isUuid } from "@/lib/utils";
+import { db } from "@/lib/db";
+import { listPaidReimbursementTransactionIds } from "@/lib/ledger-reimbursement-link";
 import type { LedgerTransaction, LedgerFund, LedgerBankAccount, LedgerCategory } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -231,6 +233,17 @@ export default async function AdminLedgerFundPage({
       }
     }
   }
+
+  // Which approved expense rows a PAID reimbursement links to (B-108 /
+  // DECISION-114). One query over only this page's approved expense rows; the
+  // fact is derived server-side and never client-supplied. Failure degrades to
+  // "none", which only means the generic Approved label shows.
+  const paidReimbursementIds = canRecord
+    ? await listPaidReimbursementTransactionIds(
+        db,
+        transactions.filter((t) => t.flow === "expense" && t.approvedAt).map((t) => t.id),
+      ).catch(() => new Set<string>())
+    : new Set<string>();
 
   // Category name lookup
   const categoryNameMap = new Map(categories.map((c) => [c.id, c.name]));
@@ -626,6 +639,7 @@ export default async function AdminLedgerFundPage({
                             ackStatus={ackStatusByTxnId.get(txn.id) ?? null}
                             nowIso={nowIso}
                             entitySlug={resolvedEntitySlug}
+                            paidReimbursement={paidReimbursementIds.has(txn.id)}
                           />
                         </td>
                       )}

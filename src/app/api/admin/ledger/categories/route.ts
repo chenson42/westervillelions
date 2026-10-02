@@ -30,7 +30,15 @@
  * targets by categoryId, so a bucket that only existed for budgeting could
  * never be compared against real spend.
  *
- * Gate: LEDGER_MANAGE
+ * Gate: LEDGER_MANAGE or BUDGET_EDIT (BUDGET_WRITE_FEATURES, the same constant
+ * the budgeting page's canManage and every budget route use — Y9,
+ * DECISION-115: the page showed "+ Add category" to a budget.edit-only user
+ * and this route refused them). The two fields that feed the philanthropy
+ * dashboard and the Form 990 worksheet, countsAsGiving: false and a non-empty
+ * form990Line, stay LEDGER_MANAGE-only: a caller without it who sends either
+ * gets a plain-language 403 before any lookup. Omitted or countsAsGiving: true
+ * (the dialog's default) is accepted. GET and the [id] / merge routes stay
+ * LEDGER_MANAGE-only.
  *
  * Per DECISION-044, this endpoint never accepts an amount — the category is
  * created bare (no ledger_budgets row) and appears in BudgetEditor as an
@@ -59,7 +67,8 @@
  *         match any active fund of that kind for the entity, or
  *         validateCategoryCreateInput rejects the name/flow.
  *   401 — not authenticated
- *   403 — forbidden (missing LEDGER_MANAGE)
+ *   403 — forbidden (neither LEDGER_MANAGE nor BUDGET_EDIT, or a manage-only
+ *         field sent without LEDGER_MANAGE); the message is plain language
  *   404 — entity not found
  *   409 — budget for (entityId, fiscalYear) is locked, or a case-insensitive
  *         duplicate name already exists for this (entityId, fundKind, flow).
@@ -69,8 +78,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ledgerCategories } from "@/lib/db/schema";
-import { hasFeature } from "@/lib/permissions-server";
-import { FEATURES } from "@/lib/permissions";
+import { hasAnyFeature, hasFeature } from "@/lib/permissions-server";
+import { BUDGET_WRITE_FEATURES, FEATURES } from "@/lib/permissions";
 import { getEntityById, getFunds, getCategories, assertBudgetUnlocked } from "@/lib/ledger-queries";
 import { listCategoriesForAdmin, toCategoryDTO } from "@/lib/ledger-category-queries";
 import { validateCategoryCreateInput, nextCategorySortOrder } from "@/lib/ledger";
@@ -127,8 +136,11 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!(await hasAnyFeature(session.user.id, BUDGET_WRITE_FEATURES))) {
+      return NextResponse.json(
+        { error: "You need Budget edit or Ledger management access to add a category." },
+        { status: 403 },
+      );
     }
 
     const body = await request.json();
@@ -166,6 +178,21 @@ export async function POST(request: NextRequest) {
     }
     if (form990Line !== undefined && form990Line !== null && typeof form990Line !== "string") {
       return NextResponse.json({ error: "form990Line must be a string" }, { status: 400 });
+    }
+
+    // Manage-only fields (DECISION-115 ruling 6): only a DEVIATION from the
+    // defaults needs ledger.manage, because the Guided Budgeting dialog always
+    // sends countsAsGiving (default true). Checked before any DB lookup.
+    const setsManageOnlyField =
+      countsAsGiving === false || (typeof form990Line === "string" && form990Line.trim() !== "");
+    if (setsManageOnlyField && !(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+      return NextResponse.json(
+        {
+          error:
+            "Setting 'counts as giving' to off, or a Form 990 line, needs ledger management access. Add the category with the defaults and ask the treasurer to adjust it.",
+        },
+        { status: 403 },
+      );
     }
 
     const entity = await getEntityById(entityId);

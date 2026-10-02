@@ -56,6 +56,9 @@ import {
   getMonthlyStatement,
   getLatestOpenMonthForEntity,
   MEMBER_EXPOSED_FUND_KINDS,
+  rowGatesStatement,
+  monthGatedByRows,
+  newlyHiddenStatementMonth,
   type MonthlyStatementCategoryLine,
 } from "./financial-report-queries";
 import { getFiscalYear } from "./fiscal-year";
@@ -692,5 +695,156 @@ describe("getMonthlyStatement — exposure projection", () => {
       // that could carry a leaked field.
       expect(line.causeLines).toBeNull();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-108 / DECISION-114: the statement-hiding rule (T23, T25)
+// ---------------------------------------------------------------------------
+
+describe("rowGatesStatement (T23)", () => {
+  const base = { fundKind: "administrative", paymentMethod: "cash", flow: "expense" };
+  it("an expense paid by check does not gate (outstanding check)", () => {
+    expect(rowGatesStatement({ ...base, paymentMethod: "check" })).toBe(false);
+  });
+  it("an expense paid by cash, other or no method gates", () => {
+    expect(rowGatesStatement(base)).toBe(true);
+    expect(rowGatesStatement({ ...base, paymentMethod: "other" })).toBe(true);
+    expect(rowGatesStatement({ ...base, paymentMethod: null })).toBe(true);
+  });
+  it("income never gates (uncleared deposit), any method", () => {
+    for (const paymentMethod of ["check", "cash", "zeffy", null]) {
+      expect(rowGatesStatement({ ...base, flow: "income", paymentMethod })).toBe(false);
+    }
+  });
+  it("only the administrative and charitable funds gate", () => {
+    expect(rowGatesStatement({ ...base, fundKind: "charitable" })).toBe(true);
+    expect(rowGatesStatement({ ...base, fundKind: "activity" })).toBe(false);
+    expect(rowGatesStatement({ ...base, fundKind: "scholarship" })).toBe(false);
+  });
+});
+
+describe("newlyHiddenStatementMonth (T25)", () => {
+  const NOW = new Date(2026, 9, 2); // 2026-10-02: September 2026 has elapsed, October has not
+  const g = (txnDate: string) => ({ gates: true, txnDate });
+  const n = (txnDate: string) => ({ gates: false, txnDate });
+
+  it("an earlier date into a visible month hides it", () => {
+    expect(
+      newlyHiddenStatementMonth({
+        before: g("2026-09-20"),
+        after: g("2026-08-15"),
+        otherEarliestGatingDate: null,
+        now: NOW,
+      }),
+    ).toBe("2026-08");
+  });
+  it("a date in the same month returns null (the month is already gated by this row)", () => {
+    expect(
+      newlyHiddenStatementMonth({
+        before: g("2026-09-20"),
+        after: g("2026-09-05"),
+        otherEarliestGatingDate: null,
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
+  it("a later date returns null", () => {
+    expect(
+      newlyHiddenStatementMonth({
+        before: g("2026-08-10"),
+        after: g("2026-09-25"),
+        otherEarliestGatingDate: null,
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
+  it("method Check to Cash into an elapsed month hides it; Cash to Check never does", () => {
+    expect(
+      newlyHiddenStatementMonth({
+        before: n("2026-08-10"),
+        after: g("2026-08-10"),
+        otherEarliestGatingDate: null,
+        now: NOW,
+      }),
+    ).toBe("2026-08");
+    expect(
+      newlyHiddenStatementMonth({
+        before: g("2026-08-10"),
+        after: n("2026-08-10"),
+        otherEarliestGatingDate: null,
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
+  it("another row that already gates an earlier date keeps the month hidden already", () => {
+    expect(
+      newlyHiddenStatementMonth({
+        before: g("2026-09-20"),
+        after: g("2026-08-15"),
+        otherEarliestGatingDate: "2026-07-01",
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
+  it("a month that has not elapsed is never newly hidden", () => {
+    expect(
+      newlyHiddenStatementMonth({
+        before: n("2026-09-20"),
+        after: g("2026-10-01"),
+        otherEarliestGatingDate: null,
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
+  it("a reconciled row (gates false after) never hides anything", () => {
+    expect(
+      newlyHiddenStatementMonth({
+        before: n("2026-09-20"),
+        after: n("2026-01-15"),
+        otherEarliestGatingDate: null,
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
+
+  it("brute force: non-null exactly when some month is visible before and gated after", () => {
+    const gating = { fundKind: "administrative", paymentMethod: "cash", flow: "expense" };
+    const months: string[] = [];
+    for (let m = 0; m < 16; m++) {
+      const y = 2025 + Math.floor((11 + m) / 12);
+      const mm = ((11 + m) % 12) + 1;
+      months.push(`${y}-${String(mm).padStart(2, "0")}`);
+    }
+    const dates = ["2026-02-10", "2026-05-20", "2026-08-30", "2026-09-10", "2026-10-01"];
+    const others = [null, "2026-03-07", "2026-08-15"];
+    let checked = 0;
+    for (const other of others) {
+      for (const bGates of [true, false]) {
+        for (const aGates of [true, false]) {
+          for (const bDate of dates) {
+            for (const aDate of dates) {
+              const otherRows = other ? [{ txnDate: other, ...gating }] : [];
+              const beforeRows = [...otherRows, ...(bGates ? [{ txnDate: bDate, ...gating }] : [])];
+              const afterRows = [...otherRows, ...(aGates ? [{ txnDate: aDate, ...gating }] : [])];
+              const firstHidden =
+                months.find((ym) => {
+                  const end = monthBounds(ym).monthEnd;
+                  return !monthGatedByRows(beforeRows, end, NOW) && monthGatedByRows(afterRows, end, NOW);
+                }) ?? null;
+              const got = newlyHiddenStatementMonth({
+                before: { gates: bGates, txnDate: bDate },
+                after: { gates: aGates, txnDate: aDate },
+                otherEarliestGatingDate: other,
+                now: NOW,
+              });
+              expect(got, JSON.stringify({ other, bGates, aGates, bDate, aDate })).toBe(firstHidden);
+              checked++;
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBe(3 * 2 * 2 * 5 * 5);
   });
 });

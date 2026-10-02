@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -13,6 +13,8 @@ import type { LedgerFund, LedgerCategory } from "@/lib/db/schema";
 import { formatCalendarDate } from "@/lib/format-date";
 import ReconciliationMatchPicker from "./reconciliation-match-picker";
 import ReconciliationCreateFromBankLineDialog from "./reconciliation-create-from-bank-line-dialog";
+import CorrectReimbursementDialog from "./correct-reimbursement-dialog";
+import type { CreateFromBankLineCandidate } from "@/lib/ledger-reimbursement-correction";
 
 function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
@@ -39,6 +41,9 @@ interface ReconciliationMatchingGridProps {
   categories: LedgerCategory[];
   isOpen: boolean;
   canRecord: boolean;
+  /** The session's bank account: preselected when a candidate's missing account
+   *  is added from "Use that entry instead" (B-108). */
+  bankAccountId: string;
 }
 
 /**
@@ -68,10 +73,18 @@ export default function ReconciliationMatchingGrid({
   categories,
   isOpen,
   canRecord,
+  bankAccountId,
 }: ReconciliationMatchingGridProps) {
   const router = useRouter();
   const [matchPickerLine, setMatchPickerLine] = useState<BankLineWithMatch | null>(null);
+  const [matchPickerQuery, setMatchPickerQuery] = useState("");
   const [createLine, setCreateLine] = useState<BankLineWithMatch | null>(null);
+  // "Use that entry instead": the paid reimbursement to repair (it has no bank
+  // account), and the bank line to match it against once it is repaired.
+  const [repair, setRepair] = useState<{ transactionId: string; line: BankLineWithMatch } | null>(
+    null,
+  );
+  const repairSavedRef = useRef(false);
   const [unmatchTarget, setUnmatchTarget] = useState<{ matchId: string; label: string } | null>(
     null,
   );
@@ -89,6 +102,22 @@ export default function ReconciliationMatchingGrid({
   }
 
   const canAct = isOpen && canRecord;
+
+  function openPicker(line: BankLineWithMatch, query = "") {
+    setMatchPickerQuery(query);
+    setMatchPickerLine(line);
+  }
+
+  function handleUseCandidate(line: BankLineWithMatch, candidate: CreateFromBankLineCandidate) {
+    setCreateLine(null);
+    if (candidate.needsBankAccount) {
+      repairSavedRef.current = false;
+      setRepair({ transactionId: candidate.transactionId, line });
+    } else {
+      // Already on this account: it is in the picker's list; filter to its amount.
+      openPicker(line, (Math.abs(candidate.amountCents) / 100).toFixed(2));
+    }
+  }
 
   function toggleExpanded(lineId: string) {
     setExpandedLineIds((prev) => {
@@ -194,7 +223,7 @@ export default function ReconciliationMatchingGrid({
                             <>
                               <button
                                 type="button"
-                                onClick={() => setMatchPickerLine(line)}
+                                onClick={() => openPicker(line)}
                                 className="text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-1 py-0.5"
                               >
                                 Match
@@ -311,6 +340,8 @@ export default function ReconciliationMatchingGrid({
           candidateTransactions={candidateTransactions}
           open={Boolean(matchPickerLine)}
           onOpenChange={(o) => !o && setMatchPickerLine(null)}
+          initialQuery={matchPickerQuery}
+          sessionBankAccountId={bankAccountId}
         />
       )}
 
@@ -322,6 +353,27 @@ export default function ReconciliationMatchingGrid({
           categories={categories}
           open={Boolean(createLine)}
           onOpenChange={(o) => !o && setCreateLine(null)}
+          onUseCandidate={(c) => handleUseCandidate(createLine, c)}
+        />
+      )}
+
+      {repair && (
+        <CorrectReimbursementDialog
+          transactionId={repair.transactionId}
+          mode="add_bank_account"
+          preselectBankAccountId={bankAccountId}
+          open
+          onSaved={() => {
+            repairSavedRef.current = true;
+          }}
+          onOpenChange={(o) => {
+            if (o) return;
+            const { line } = repair;
+            const saved = repairSavedRef.current;
+            setRepair(null);
+            // Repaired: it now appears in the picker, filtered to this amount.
+            if (saved) openPicker(line, (Math.abs(line.amountCents) / 100).toFixed(2));
+          }}
         />
       )}
 

@@ -38,11 +38,24 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { ledgerAuditLog } from "@/lib/db/schema";
-import { getLatestFundMove, getRecentLedgerCorrections, recordLedgerAudit } from "./ledger-audit";
 import {
+  getLatestFundMove,
+  getRecentLedgerCorrections,
+  recordLedgerAudit,
+  recordLedgerAuditNote,
+} from "./ledger-audit";
+import {
+  CORRECTION_AUDIT_ACTIONS,
+  TRANSACTION_CORRECTED_AUDIT_ACTION,
   TRANSACTION_DELETED_AUDIT_ACTION,
   TRANSACTION_FUND_MOVED_AUDIT_ACTION,
+  parseAuditAfter,
+  parseAuditBefore,
+  parseAuditDetails,
   serializeAuditPayload,
+  type AuditPayloadMap,
+  type CorrectionAuditAction,
+  type ReimbursementCorrectedAuditPayload,
   type FundMoveAuditPayload,
   type FundMoveAuditPayloadV2,
   type TransactionDeletedAuditPayload,
@@ -201,15 +214,80 @@ describe("recordLedgerAudit (T31)", () => {
   });
 });
 
+describe("recordLedgerAuditNote (DECISION-115)", () => {
+  function recordingExec(error?: Error) {
+    const inserted: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const exec = {
+      insert: (table: unknown) => ({
+        values: (values: Record<string, unknown>) => {
+          inserted.push({ table, values });
+          return error ? Promise.reject(error) : Promise.resolve();
+        },
+      }),
+    };
+    return { exec: exec as never, inserted };
+  }
+
+  it("writes through the supplied executor with both targets null, JSON before/after and the plain details", async () => {
+    const { exec, inserted } = recordingExec();
+    await recordLedgerAuditNote(exec, {
+      actorUserId: ACTOR,
+      action: "fund_updated",
+      before: { fundId: "f1", name: "Old" },
+      after: { fundId: "f1", name: "New" },
+      details: "Edited fund",
+    });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].table).toBe(ledgerAuditLog);
+    const v = inserted[0].values;
+    expect(v.action).toBe("fund_updated");
+    expect(v.actorUserId).toBe(ACTOR);
+    expect(v.targetCategoryId).toBeNull();
+    expect(v.targetTransactionId).toBeNull();
+    expect(JSON.parse(v.before as string)).toEqual({ fundId: "f1", name: "Old" });
+    expect(JSON.parse(v.after as string)).toEqual({ fundId: "f1", name: "New" });
+    expect(v.details).toBe("Edited fund");
+  });
+
+  it("a null after is stored as null", async () => {
+    const { exec, inserted } = recordingExec();
+    await recordLedgerAuditNote(exec, {
+      actorUserId: ACTOR,
+      action: "donor_deleted",
+      before: { donorId: "d1" },
+      after: null,
+      details: "Deleted donor",
+    });
+    expect(inserted[0].values.after).toBeNull();
+  });
+
+  it("rethrows a failed insert, so the surrounding transaction rolls back", async () => {
+    const { exec } = recordingExec(new Error("db down"));
+    await expect(
+      recordLedgerAuditNote(exec, {
+        actorUserId: ACTOR,
+        action: "ledger_settings_updated",
+        before: {},
+        after: {},
+        details: "x",
+      }),
+    ).rejects.toThrow("db down");
+  });
+});
+
 describe("getRecentLedgerCorrections (T32)", () => {
   const NOW = new Date("2026-10-01T12:00:00Z");
 
-  it("selects only the two actions and applies the window cutoff in SQL, with no jsonb cast", async () => {
+  it("selects only the three actions and applies the window cutoff in SQL, with no jsonb cast", async () => {
     await getRecentLedgerCorrections({ entityId: "club", now: NOW });
     const q = new PgDialect().sqlToQuery(state.where as SQL);
-    expect(q.sql).toContain('"ledger_audit_log"."action" in ($1, $2)');
-    expect(q.params.slice(0, 2)).toEqual(["transaction_fund_moved", "transaction_deleted"]);
-    const cutoff = q.params[2] as Date | string;
+    expect(q.sql).toContain('"ledger_audit_log"."action" in ($1, $2, $3)');
+    expect(q.params.slice(0, 3)).toEqual([
+      "transaction_fund_moved",
+      "transaction_deleted",
+      "transaction_corrected",
+    ]);
+    const cutoff = q.params[3] as Date | string;
     const cutoffMs = cutoff instanceof Date ? cutoff.getTime() : new Date(cutoff).getTime();
     expect(cutoffMs).toBe(NOW.getTime() - 90 * 24 * 60 * 60 * 1000);
     expect(q.sql.toLowerCase()).not.toContain("jsonb");
@@ -454,7 +532,193 @@ describe("member-surface import guard (T33)", () => {
         .map((n) => join(root, "lib", n)),
     ];
     expect(files.length).toBeGreaterThan(0);
-    const offenders = files.filter((f) => /ledger-(audit|correction)["'/]/.test(readFileSync(f, "utf8")));
+    // B-108: the regex also covers ledger-reimbursement-correction(-queries); the
+    // old `ledger-(audit|correction)` form would NOT match those names.
+    const offenders = files.filter((f) =>
+      /ledger-(audit|correction|reimbursement-correction)(-queries)?["'/]/.test(readFileSync(f, "utf8")),
+    );
     expect(offenders).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-108 / DECISION-114: the third kind, `transaction_corrected` (T27-T31)
+// ---------------------------------------------------------------------------
+
+const CORRECTED_FILL: ReimbursementCorrectedAuditPayload = {
+  before: { v: 1, bankAccount: null },
+  after: { v: 1, bankAccount: { id: "b1", name: "Administrative Checking" } },
+  details: {
+    v: 1,
+    operation: "fill_bank_account",
+    reason: "Bank account added to a paid reimbursement that was recorded without one.",
+    entityId: "club",
+    reimbursementId: "r1",
+    txnDate: "2026-09-30",
+    amountCents: 4500,
+    flow: "expense",
+    fiscalYear: 2026,
+    tier: "record",
+    reconciled: false,
+    reconciledSessionId: null,
+    priorFiscalYear: false,
+    sentStatementMonth: null,
+    newSentStatementMonth: null,
+    changed: ["bankAccountId"],
+    budgetLineLinkCleared: false,
+  },
+};
+
+const CORRECTED_EDIT: ReimbursementCorrectedAuditPayload = {
+  before: {
+    v: 1,
+    category: { id: "c1", name: "Supplies" },
+    memo: "SECRET MEMO TEXT",
+    paymentMethod: "check",
+  },
+  after: {
+    v: 1,
+    category: { id: "c2", name: "Postage" },
+    memo: "NEW SECRET MEMO",
+    paymentMethod: "cash",
+  },
+  details: {
+    ...CORRECTED_FILL.details,
+    operation: "correct",
+    reason: "Wrong category was picked at pay time",
+    tier: "manage",
+    reconciled: true,
+    changed: ["categoryId", "paymentMethod", "memo"],
+  },
+};
+
+describe("recordLedgerAudit with a corrected payload (T28)", () => {
+  it("writes the three text columns and the row target", async () => {
+    const inserted: Array<Record<string, unknown>> = [];
+    const exec = {
+      insert: () => ({
+        values: (v: Record<string, unknown>) => {
+          inserted.push(v);
+          return Promise.resolve();
+        },
+      }),
+    };
+    await recordLedgerAudit(exec as never, {
+      actorUserId: ACTOR,
+      action: TRANSACTION_CORRECTED_AUDIT_ACTION,
+      targetTransactionId: "txn-1",
+      ...CORRECTED_FILL,
+    });
+    expect(inserted[0].action).toBe("transaction_corrected");
+    expect(inserted[0].targetTransactionId).toBe("txn-1");
+    expect(inserted[0].targetCategoryId).toBeNull();
+    expect(JSON.parse(inserted[0].before as string)).toEqual(CORRECTED_FILL.before);
+    expect(JSON.parse(inserted[0].after as string)).toEqual(CORRECTED_FILL.after);
+    expect(JSON.parse(inserted[0].details as string)).toEqual(CORRECTED_FILL.details);
+  });
+
+  it("a moved payload is rejected by the type system under the corrected action", () => {
+    const exec = { insert: () => ({ values: () => Promise.resolve() }) };
+    // @ts-expect-error a fund-move payload is not a corrected payload
+    void recordLedgerAudit(exec as never, {
+      actorUserId: ACTOR,
+      action: TRANSACTION_CORRECTED_AUDIT_ACTION,
+      targetTransactionId: "txn-1",
+      ...MOVE,
+    });
+  });
+});
+
+describe("AuditPayloadMap (T30)", () => {
+  it("has a key for every correction action", () => {
+    // Compile-time: this Record must stay assignable from the map's keys. Adding an
+    // action to CorrectionAuditAction without an AuditPayloadMap entry breaks tsc.
+    const keys: Record<keyof AuditPayloadMap, true> = {
+      transaction_fund_moved: true,
+      transaction_deleted: true,
+      transaction_corrected: true,
+    };
+    const actions: Record<CorrectionAuditAction, true> = keys;
+    expect(Object.keys(actions).sort()).toEqual([...CORRECTION_AUDIT_ACTIONS].sort());
+  });
+});
+
+describe("corrected rows in the reader (T27, T31)", () => {
+  const NOW = new Date("2026-10-01T12:00:00Z");
+
+  it("maps a corrected v1 row: kind, labels, reason, settled period, no memo text", async () => {
+    state.fetched = [
+      fetchedRow("k1", "transaction_corrected", CORRECTED_EDIT, new Date("2026-09-30")),
+      fetchedRow("k2", "transaction_corrected", CORRECTED_FILL, new Date("2026-09-29")),
+    ];
+    const r = await getRecentLedgerCorrections({ entityId: "club", now: NOW });
+    expect(r.rows).toHaveLength(2);
+    expect(r.rows[0]).toMatchObject({
+      kind: "corrected",
+      reason: "Wrong category was picked at pay time",
+      settledPeriod: true,
+      amountCents: 4500,
+      flow: "expense",
+      txnDate: "2026-09-30",
+      from: null,
+      to: null,
+      rowCount: 1,
+    });
+    expect(r.rows[0].changes).toEqual([
+      "Category: Supplies to Postage",
+      "Payment method: Check to Cash",
+      "Description edited",
+    ]);
+    expect(JSON.stringify(r.rows[0])).not.toContain("SECRET");
+    expect(r.rows[1].changes).toEqual(["Bank account added: Administrative Checking"]);
+    expect(r.rows[1].settledPeriod).toBe(false);
+  });
+
+  it("filters corrected rows by the payload's entity", async () => {
+    state.fetched = [
+      fetchedRow(
+        "k1",
+        "transaction_corrected",
+        { ...CORRECTED_FILL, details: { ...CORRECTED_FILL.details, entityId: "foundation" } },
+        new Date("2026-09-30"),
+      ),
+    ];
+    expect((await getRecentLedgerCorrections({ entityId: "club", now: NOW })).rows).toHaveLength(0);
+    expect((await getRecentLedgerCorrections({ entityId: "foundation", now: NOW })).rows).toHaveLength(1);
+  });
+
+  it("an unparseable corrected row is still listed, with a null reason", async () => {
+    state.fetched = [
+      { id: "bad", action: "transaction_corrected", createdAt: new Date("2026-09-30"), actorName: null, before: "x", after: "y", details: "plain text" },
+    ];
+    const r = await getRecentLedgerCorrections({ entityId: "club", now: NOW });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ kind: "corrected", reason: null, settledPeriod: false, changes: [] });
+  });
+
+  it("an unknown version degrades to raw rather than being read as v1", () => {
+    const v2 = JSON.stringify({ ...CORRECTED_FILL.details, v: 2 });
+    expect(parseAuditDetails(TRANSACTION_CORRECTED_AUDIT_ACTION, v2)).toEqual({ raw: v2 });
+    expect(parseAuditBefore(TRANSACTION_CORRECTED_AUDIT_ACTION, JSON.stringify({ v: 2 }))).toEqual({
+      raw: JSON.stringify({ v: 2 }),
+    });
+    expect(parseAuditAfter(TRANSACTION_CORRECTED_AUDIT_ACTION, "{")).toEqual({ raw: "{" });
+    const badOp = JSON.stringify({ ...CORRECTED_FILL.details, operation: "nuke" });
+    expect(parseAuditDetails(TRANSACTION_CORRECTED_AUDIT_ACTION, badOp)).toEqual({ raw: badOp });
+    // the one-argument form is still the moved parser
+    expect(parseAuditAfter(serializeAuditPayload(MOVE).after)).toEqual(MOVE.after);
+  });
+
+  it("the cap and the total include corrected rows; moved and deleted cases are unchanged", async () => {
+    state.fetched = [
+      fetchedRow("a", "transaction_fund_moved", MOVE, new Date("2026-09-30")),
+      fetchedRow("b", "transaction_corrected", CORRECTED_FILL, new Date("2026-09-29")),
+      fetchedRow("c", "transaction_deleted", deleted("club"), new Date("2026-09-28")),
+    ];
+    const r = await getRecentLedgerCorrections({ entityId: "club", now: NOW, displayCap: 2 });
+    expect(r.rows.map((x) => x.kind)).toEqual(["moved", "corrected"]);
+    expect(r.totalInWindow).toBe(3);
+    expect(r.rows[0]).toMatchObject({ kind: "moved", from: "Administrative Fund", to: "Activity Fund" });
+    expect(r.rows[0].changes).toBeUndefined();
   });
 });

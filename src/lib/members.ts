@@ -13,7 +13,7 @@ import { users, roles, userRoles, passwordResetTokens } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { generateResetToken } from "@/lib/auth/password-reset";
 import { sendEmail } from "@/lib/email";
-import { escapeHtml, getFromEmail, getAppUrl } from "@/lib/email-compose";
+import { getFromEmail, getAppUrl, buildWelcomeSetPasswordEmailHtml } from "@/lib/email-compose";
 import crypto from "crypto";
 
 // ---------------------------------------------------------------------------
@@ -124,21 +124,7 @@ async function sendWelcomeEmail(
     from: getFromEmail("Westerville Lions Club"),
     to: email,
     subject: "Welcome to the Westerville Lions Club — Set Up Your Account",
-    html: `
-      <p>Hi ${escapeHtml(name)},</p>
-      <p>Welcome to the Westerville Lions Club! Your member portal account has been created.</p>
-      <p>Click the button below to set your password and activate your account:</p>
-      <p style="text-align:center; margin: 24px 0;">
-        <a href="${setPasswordUrl}" style="background-color:#003F87; color:white; padding:12px 24px; border-radius:6px; text-decoration:none; font-weight:bold;">
-          Set Your Password
-        </a>
-      </p>
-      <p>This link expires in 24 hours. If you need a new one, use the <a href="${appUrl}/forgot-password">forgot password</a> page.</p>
-      <p>Alternatively, if your Google account uses this email address, you can sign in directly with Google — no password needed.</p>
-      <br />
-      <p>Yours in service,</p>
-      <p><strong>Westerville Lions Club</strong></p>
-    `,
+    html: buildWelcomeSetPasswordEmailHtml({ name, setPasswordUrl, appUrl }),
   });
 }
 

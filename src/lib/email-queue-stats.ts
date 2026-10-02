@@ -174,7 +174,8 @@ export async function pruneEmailQueue(now: Date = new Date()): Promise<number> {
  * than once per request, revisit then.
  *
  * Callers MUST gate on the same permission the /admin/email-queue page
- * itself requires (FEATURES.ADMIN_USERS) before calling this — it does not
+ * itself requires (EMAIL_QUEUE_FEATURES: email_queue.manage, or admin.users
+ * for one release, DECISION-115) before calling this — it does not
  * check permissions itself, the same way any other db.select() in this
  * codebase doesn't.
  */

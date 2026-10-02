@@ -3756,6 +3756,20 @@ export type ReimbursementWithMember = LedgerReimbursement & {
 export type ReimbursementAdminRow = ReimbursementWithMember & {
   paidByName: string | null;
   fundName: string | null;
+  /**
+   * The ledger row a PAID reimbursement posted (B-108 / DECISION-114): its bank
+   * account and check number for the Paid tab, and the "Needs bank account"
+   * badge (`bankAccountId === null && !reconciled`). Null until paid, or if the
+   * link was nulled by a delete.
+   */
+  paidTransaction: {
+    id: string;
+    bankAccountId: string | null;
+    bankAccountName: string | null;
+    checkNumber: string | null;
+    /** Reconciled by either mark (legacy toggle or a closed session). */
+    reconciled: boolean;
+  } | null;
 };
 
 /**
@@ -3846,10 +3860,17 @@ export async function listReimbursementsForAdmin(opts: {
       memberEmail: members.email,
       paidByName: sql<string | null>`coalesce(${payer.name}, ${payer.email})`,
       fundName: ledgerFunds.name,
+      txnId: ledgerTransactions.id,
+      txnBankAccountId: ledgerTransactions.bankAccountId,
+      txnBankAccountName: ledgerBankAccounts.name,
+      txnCheckNumber: ledgerTransactions.checkNumber,
+      txnReconciled: ledgerTransactions.reconciled,
+      txnReconciledSessionId: ledgerTransactions.reconciledSessionId,
     })
     .from(ledgerReimbursements)
     .innerJoin(members, eq(ledgerReimbursements.submittedByMemberId, members.id))
     .leftJoin(ledgerTransactions, eq(ledgerTransactions.id, ledgerReimbursements.ledgerTransactionId))
+    .leftJoin(ledgerBankAccounts, eq(ledgerBankAccounts.id, ledgerTransactions.bankAccountId))
     .leftJoin(payer, eq(payer.id, ledgerTransactions.recordedByUserId))
     .leftJoin(ledgerFunds, eq(ledgerFunds.id, ledgerReimbursements.fundId))
     .where(whereClause)
@@ -3857,7 +3878,31 @@ export async function listReimbursementsForAdmin(opts: {
     .limit(limit)
     .offset(offset);
 
-  return { reimbursements: rows as ReimbursementAdminRow[], total };
+  const reimbursements: ReimbursementAdminRow[] = rows.map((r) => {
+    const {
+      txnId,
+      txnBankAccountId,
+      txnBankAccountName,
+      txnCheckNumber,
+      txnReconciled,
+      txnReconciledSessionId,
+      ...rest
+    } = r;
+    return {
+      ...rest,
+      paidTransaction: txnId
+        ? {
+            id: txnId,
+            bankAccountId: txnBankAccountId ?? null,
+            bankAccountName: txnBankAccountName ?? null,
+            checkNumber: txnCheckNumber ?? null,
+            reconciled: txnReconciled === true || txnReconciledSessionId != null,
+          }
+        : null,
+    };
+  });
+
+  return { reimbursements, total };
 }
 
 /**

@@ -157,3 +157,62 @@ test.describe("budget-committee-shaped member reaches the budgeting area", () =>
     await expect(page).toHaveURL("/admin/ledger");
   });
 });
+
+test.describe("budget-committee member and POST /api/admin/ledger/categories — B-111 / DECISION-115 (Y9)", () => {
+  // "+ Add category" on the Budgeting page used to show for budget.edit but the route
+  // required ledger.manage, so the dialog toasted a bare "Forbidden". Neither request
+  // below can write anything: the first is admitted by the gate and stops at the entity
+  // lookup (404); the second is refused before any lookup (403).
+  const BOGUS_ENTITY = "00000000-0000-0000-0000-000000000000";
+  const body = (extra: Record<string, unknown> = {}) => ({
+    entityId: BOGUS_ENTITY,
+    fiscalYear: 2098,
+    fundKind: "administrative",
+    flow: "expense",
+    name: "QA budget committee gate probe (never written)",
+    ...extra,
+  });
+
+  test("is admitted by the gate (404 on the bogus entity, not 403) with the default countsAsGiving — regression for Y9", async ({
+    page,
+  }) => {
+    // Arrange
+    await signInAsFixture(page);
+
+    // Act
+    const res = await page.request.post("/api/admin/ledger/categories", {
+      data: body({ countsAsGiving: true }),
+    });
+
+    // Assert
+    expect(res.status()).toBe(404);
+  });
+
+  test("gets a plain-language 403 when turning countsAsGiving off, which stays ledger.manage-only", async ({
+    page,
+  }) => {
+    // Arrange
+    await signInAsFixture(page);
+
+    // Act
+    const res = await page.request.post("/api/admin/ledger/categories", {
+      data: body({ countsAsGiving: false }),
+    });
+    const json = await res.json();
+
+    // Assert
+    expect(res.status()).toBe(403);
+    expect(json.error).toMatch(/ledger management access/i);
+  });
+
+  test("still cannot list categories (GET stays ledger.manage-only)", async ({ page }) => {
+    // Arrange
+    await signInAsFixture(page);
+
+    // Act
+    const res = await page.request.get(`/api/admin/ledger/categories?entityId=${BOGUS_ENTITY}`);
+
+    // Assert
+    expect(res.status()).toBe(403);
+  });
+});

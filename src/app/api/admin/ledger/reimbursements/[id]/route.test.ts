@@ -107,6 +107,8 @@ function reimbRow(over: Record<string, unknown> = {}) {
   };
 }
 
+const BANK_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
 function payBody(over: Record<string, unknown> = {}) {
   return {
     action: "pay",
@@ -114,6 +116,7 @@ function payBody(over: Record<string, unknown> = {}) {
     categoryId: "cat-1",
     paymentDate: "2026-10-01",
     paymentMethod: "check",
+    bankAccountId: BANK_ID,
     expectedAmountCents: 4500,
     expectedUpdatedAt: SUBMITTED_AT.toISOString(),
     ...over,
@@ -126,9 +129,13 @@ function req(body: unknown): NextRequest {
 const ctx = { params: Promise.resolve({ id: "r-1" }) };
 const dialect = new PgDialect();
 
-function queueFundAndCategory() {
+const BANK_ROW = { id: BANK_ID, entityId: "ent-1", isActive: true, name: "Administrative Checking" };
+
+/** Fund, then the bank account (R5: beside the other validators), then the category. */
+function queueFundAndCategory(bank: Record<string, unknown> | null = BANK_ROW) {
   h.selectQueue.push(
     [{ id: "fund-1", entityId: "ent-1", kind: "administrative", isActive: true }],
+    bank ? [bank] : [],
     [{ id: "cat-1", fundKind: "administrative", flow: "expense" }],
   );
 }
@@ -361,6 +368,7 @@ describe("pay", () => {
   it("400 when the category fund kind does not match the fund", async () => {
     h.selectQueue.push(
       [{ id: "fund-1", entityId: "ent-1", kind: "administrative", isActive: true }],
+      [BANK_ROW],
       [{ id: "cat-1", fundKind: "charitable", flow: "expense" }],
     );
     const res = await PATCH(req(payBody()), ctx);
@@ -450,5 +458,91 @@ describe("treasury CC (B-48)", () => {
     const res = await PATCH(req(payBody()), ctx);
     expect(res.status).toBe(200);
     warn.mockRestore();
+  });
+});
+
+describe("pay captures the bank account and check number (T37, B-108 / DECISION-114)", () => {
+  it("a body without bankAccountId (a stale open dialog) is 400 with the human sentence and no insert", async () => {
+    const { bankAccountId: _b, ...body } = payBody();
+    void _b;
+    const res = await PATCH(req(body), ctx);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(
+      "Reload the page: the payment form now asks which bank account the money came out of.",
+    );
+    expect(h.transaction).not.toHaveBeenCalled();
+    expect(h.inserts).toHaveLength(0);
+  });
+
+  it.each([
+    ["a malformed id", { bankAccountId: "not-a-uuid" }, null, "Select a valid bank account."],
+    ["a nonexistent account", {}, null, "Bank account not found."],
+    [
+      "an account of another entity",
+      {},
+      { ...BANK_ROW, entityId: "ent-other" },
+      "Bank account does not belong to this entity.",
+    ],
+    [
+      "an inactive account",
+      {},
+      { ...BANK_ROW, isActive: false },
+      "Bank account is inactive. Select an active account.",
+    ],
+  ])("%s is 400 with no insert", async (_n, over, bank, message) => {
+    h.selectQueue.push(
+      [{ id: "fund-1", entityId: "ent-1", kind: "administrative", isActive: true }],
+      bank ? [bank] : [],
+    );
+    const res = await PATCH(req(payBody(over)), ctx);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(message);
+    expect(h.transaction).not.toHaveBeenCalled();
+    expect(h.inserts).toHaveLength(0);
+  });
+
+  it("the insert carries bankAccountId and the normalized check number, and still stamps approval", async () => {
+    queueFundAndCategory();
+    const res = await PATCH(req(payBody({ checkNumber: "  8249 " })), ctx);
+    expect(res.status).toBe(200);
+    const txn = h.inserts[0];
+    expect(txn.bankAccountId).toBe(BANK_ID);
+    expect(txn.checkNumber).toBe("8249");
+    expect(txn.paymentMethod).toBe("check");
+    expect(txn.approvedAt).toBeInstanceOf(Date);
+    expect(txn.approvedByUserId).toBe("u-pay");
+  });
+
+  it("an omitted or blank check number is stored as null", async () => {
+    queueFundAndCategory();
+    await PATCH(req(payBody()), ctx);
+    expect(h.inserts[0].checkNumber).toBeNull();
+    h.inserts.length = 0;
+    queueFundAndCategory();
+    await PATCH(req(payBody({ checkNumber: "   " })), ctx);
+    expect(h.inserts[0].checkNumber).toBeNull();
+  });
+
+  it("a 21-character check number is 400 with the shared message and no insert", async () => {
+    const res = await PATCH(req(payBody({ checkNumber: "1".repeat(21) })), ctx);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("checkNumber must not exceed 20 characters");
+    expect(h.inserts).toHaveLength(0);
+  });
+
+  it("the memo is the sent register description, falling back to the member's description", async () => {
+    queueFundAndCategory();
+    await PATCH(req(payBody({ note: "Postage for the banquet" })), ctx);
+    expect(h.inserts[0].memo).toBe("Postage for the banquet");
+    h.inserts.length = 0;
+    queueFundAndCategory();
+    await PATCH(req(payBody()), ctx);
+    expect(h.inserts[0].memo).toBe("Supplies");
+  });
+
+  it("an impossible calendar date is 400 rather than a database 500", async () => {
+    const res = await PATCH(req(payBody({ paymentDate: "2026-02-31" })), ctx);
+    expect(res.status).toBe(400);
+    expect(h.transaction).not.toHaveBeenCalled();
   });
 });

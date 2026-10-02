@@ -148,6 +148,10 @@ export const FEATURES = {
   // author here, only history to read). Bound to `admin` and `board_member`
   // by 0100_sync_log_view_permission.sql.
   SYNC_LOG_VIEW: "sync_log.view",
+
+  // Outbound email queue: view and retry (DECISION-115). Narrower than
+  // ADMIN_USERS, which can grant itself `admin`; never bind admin.* to treasurer.
+  EMAIL_QUEUE_MANAGE: "email_queue.manage",
 } as const;
 
 // Type for feature names
@@ -171,6 +175,7 @@ export const FEATURE_CATEGORIES = {
   WELCOME_PACKET: "welcome_packet",
   CLUB_FILES: "club_files",
   SYNC_LOG: "sync_log",
+  EMAIL_QUEUE: "email_queue",
 } as const;
 
 // Helper to get features by category
@@ -219,7 +224,7 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.LEDGER_VIEW]: "View ledger overview, fund reports, and transaction history",
   [FEATURES.LEDGER_RECORD]: "Record, edit, and delete ledger transactions",
   [FEATURES.LEDGER_MANAGE]:
-    "Manage funds, budgets, entities, opening balances, and acknowledgment letter templates",
+    "Manage ledger structure and corrections: reopen or discard reconciliations, move or delete settled entries, categories, settings, receipt waivers, compliance filings, fund names and opening balances, donor deletion, and acknowledgment letter templates",
   [FEATURES.LEDGER_APPROVE]: "Approve and reject pending disbursements, and approve or unlock budgets",
   [FEATURES.LEDGER_REPORT_SEND]: "Send the monthly financial statement to the board",
 
@@ -245,9 +250,31 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
   [FEATURES.CLUB_FILES_MANAGE]: "Upload, edit, attach to events, and delete club files",
 
   [FEATURES.SYNC_LOG_VIEW]: "View Google Group sync history, including member email addresses",
+
+  [FEATURES.EMAIL_QUEUE_MANAGE]:
+    "View the outbound email queue and retry failed messages. Password-reset links and temporary passwords are hidden",
 };
 
 // Default role names (should match database seed data)
+/**
+ * The write gate for the budget family (budgets, budget notes, cause lines,
+ * annotations, and creating a category from the budgeting page). One spelling
+ * shared by the routes and the budgeting pages' `canManage`, so the page that
+ * shows "+ Add category" and the route that accepts it cannot drift (Y9,
+ * DECISION-115). `src/lib/budget-write-gate.test.ts` fails if the literal is
+ * spelled inline again.
+ */
+export const BUDGET_WRITE_FEATURES = [FEATURES.LEDGER_MANAGE, FEATURES.BUDGET_EDIT] as const;
+
+/**
+ * Email Queue gate, accepted as ANY of these for ONE release (DECISION-115,
+ * orchestrator ruling F1): the new narrow key, or the old ADMIN_USERS. The page,
+ * retry route, admin layout badge query and sidebar badge all read this one
+ * constant. A follow-up drops ADMIN_USERS (and the nav entry's second key).
+ * Never bind ADMIN_USERS or any admin.* key to the treasurer role.
+ */
+export const EMAIL_QUEUE_FEATURES = [FEATURES.EMAIL_QUEUE_MANAGE, FEATURES.ADMIN_USERS] as const;
+
 export const ROLES = {
   ADMIN: "admin",
   BOARD_MEMBER: "board_member",
@@ -282,8 +309,8 @@ export interface AdminNavItem {
   icon: string;
   // A single feature, or a list where holding ANY one admits the item (e.g.
   // Budgeting: LEDGER_MANAGE, LEDGER_APPROVE, BUDGET_VIEW, or BUDGET_EDIT).
-  // Omitted entirely for items with no permission of their own (Email Queue,
-  // Release Notes) — those are visible to any non-admin who already
+  // Omitted entirely for items with no permission of their own (Release
+  // Notes only; Email Queue gained EMAIL_QUEUE_MANAGE, DECISION-115) — those are visible to any non-admin who already
   // cleared the admin-area gate via some other feature, so they cannot be used
   // as an admission criterion themselves. Sync Log used to be on this list
   // too until B-41 gave it SYNC_LOG_VIEW (docs/backlog.md).
@@ -593,6 +620,12 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         href: "/admin/email-queue",
         icon: "📨",
         keywords: ["mail", "outbound", "blocked", "resend", "delivery"],
+        // DECISION-115: the narrow key, plus ADMIN_USERS for ONE release so a
+        // signed-in admin whose JWT predates migration 0110 (and so lacks
+        // email_queue.manage) is not bounced by the derived proxy rule. A
+        // follow-up removes ADMIN_USERS here and from the page, retry route,
+        // layout badge query and sidebar badge together.
+        requiredFeature: [FEATURES.EMAIL_QUEUE_MANAGE, FEATURES.ADMIN_USERS],
       },
       {
         name: "Sync Log",
@@ -724,7 +757,7 @@ export function getFirstAccessibleAdminHref(features?: string[] | null): string 
 // every segment its own bounded pattern; it does not change matching for
 // any path actually under /admin/members/* itself.
 //
-// Items with no requiredFeature (Email Queue, Sync Log, Release Notes) and
+// Items with no requiredFeature (Release Notes) and
 // the bare "/admin" Dashboard root contribute no segment rule — the
 // Dashboard root is intentionally left to proxy.ts's generic
 // ADMIN_DASHBOARD catch-all, unchanged from before this refactor.

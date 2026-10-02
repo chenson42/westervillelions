@@ -68,6 +68,49 @@ export default function BooksRegisterSection() {
       </p>
 
       <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">
+        Correcting a paid reimbursement
+      </h3>
+      <p className="mt-2 text-sm text-gray-700">
+        A reimbursement you have marked paid is posted to the register as an approved entry, so it
+        is labelled <span className="font-semibold">Paid reimbursement</span> and has no Edit or
+        Delete. Use <span className="font-semibold">Correct</span> on its row instead.
+      </p>
+      <ul className="mt-2 space-y-2 text-sm text-gray-700 list-disc pl-5">
+        <li>
+          Correct can change the <span className="font-semibold">category, budget line, payment
+          date, payment method, check number, register description and bank account</span>. Every
+          correction needs a reason of 10 to 500 characters, which the board can read under Recent
+          corrections on the Compliance page. The amount, the fund and who was paid cannot be
+          changed here: for those, record a refund entry or have the member submit a new request.
+        </li>
+        <li>
+          <span className="font-semibold">Add bank account.</span> A reimbursement paid before the
+          Mark Paid form asked for the account has none, so it could never be matched to the
+          bank&rsquo;s check line. The register shows &ldquo;No bank account&rdquo; with an{" "}
+          <span className="font-semibold">Add bank account</span> button. It adds the account (and
+          the check number, if you have it) and nothing else, and needs no typed reason.
+        </li>
+        <li>
+          The <span className="font-semibold">date and bank account are locked</span> while the entry
+          is matched to a bank line or reconciled, because the reconciliation counts them. If the
+          account is wrong on a matched entry, unmatch it, correct it, then match it again. Changing
+          the account moves the payment between the two accounts&rsquo; book balances.
+        </li>
+        <li>
+          Correcting an entry that was reconciled, is dated in an earlier fiscal year, or whose date
+          moves into another fiscal year needs the Manage Ledger permission. If a statement for the
+          month was already sent to the board, the dialog warns you that it will read as changed.
+        </li>
+        <li>
+          A date change that would take a month&rsquo;s statement off the members&rsquo; page (an
+          unreconciled entry moved into an earlier month) is refused until the entry is reconciled.
+        </li>
+        <li>
+          You cannot correct a reimbursement you submitted yourself; another reviewer has to.
+        </li>
+      </ul>
+
+      <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">
         Moving an entry to another fund
       </h3>
       <p className="mt-2 text-sm text-gray-700">

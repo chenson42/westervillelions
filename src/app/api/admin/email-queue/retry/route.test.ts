@@ -113,7 +113,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({ emailQueue: {} }));
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
-vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
+vi.mock("@/lib/permissions-server", () => ({ hasAnyFeature: vi.fn() }));
 
 // B-66 (docs/work-log/2026-09-25-retry-stranding.md): resetStaleRetryingEmails()
 // is exercised on its own behavior in src/lib/email-queue-stats.test.ts — here
@@ -144,7 +144,8 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 
 import { POST } from "./route";
 import { auth } from "@/lib/auth";
-import { hasFeature } from "@/lib/permissions-server";
+import { hasAnyFeature } from "@/lib/permissions-server";
+import { FEATURES } from "@/lib/permissions";
 import { lte, inArray } from "drizzle-orm";
 
 /** A bare bulk-mode request — no body, exactly what RetryButton sends. */
@@ -188,7 +189,7 @@ beforeEach(() => {
   eligibleRows = [];
   forceThrowOnNextSentWrite = false;
   vi.mocked(auth).mockResolvedValue({ user: { id: "user-1" } } as never);
-  vi.mocked(hasFeature).mockResolvedValue(true);
+  vi.mocked(hasAnyFeature).mockResolvedValue(true);
   vi.mocked(lte).mockClear();
   vi.mocked(inArray).mockClear();
   resetStaleRetryingEmailsMock.mockClear().mockResolvedValue(0);
@@ -390,7 +391,7 @@ describe("POST /api/admin/email-queue/retry — targeted retry (Follow-Up #2)", 
   });
 
   it("the permission gate still refuses an unauthorized caller in targeted mode", async () => {
-    vi.mocked(hasFeature).mockResolvedValue(false);
+    vi.mocked(hasAnyFeature).mockResolvedValue(false);
     eligibleRows = [makeEligibleRow({ id: "eq-1" })];
 
     const response = await POST(targetedRequest(["eq-1"]));
@@ -398,6 +399,26 @@ describe("POST /api/admin/email-queue/retry — targeted retry (Follow-Up #2)", 
     expect(response.status).toBe(403);
     expect(sendMock).not.toHaveBeenCalled();
     expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("gates on EMAIL_QUEUE_MANAGE (or ADMIN_USERS for one release), not ADMIN_USERS alone (DECISION-115)", async () => {
+    eligibleRows = [makeEligibleRow({ id: "eq-1" })];
+
+    await POST(targetedRequest(["eq-1"]));
+
+    expect(hasAnyFeature).toHaveBeenCalledWith("user-1", [
+      FEATURES.EMAIL_QUEUE_MANAGE,
+      FEATURES.ADMIN_USERS,
+    ]);
+  });
+
+  it("the retried send body is the stored, unredacted html (redaction is view-only)", async () => {
+    const stored = '<a href="https://example.com/reset-password?token=' + "ab".repeat(32) + '">Reset</a>';
+    eligibleRows = [makeEligibleRow({ id: "eq-1", html: stored })];
+
+    await POST(targetedRequest(["eq-1"]));
+
+    expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ html: stored }));
   });
 
   it("an unauthenticated caller is refused in targeted mode", async () => {

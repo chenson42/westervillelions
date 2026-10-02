@@ -28,6 +28,203 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-115: The treasurer role is sufficient on its own: ledger.manage binds to treasurer; email_queue.manage is a new narrow key; the queue viewer redacts credentials; nav-to-page parity and role bundles are tested (amends DECISION-109 item 5)
+
+**Treasurer confirmation 2026-10-02:** the second (non-admin) holder of the `treasurer` role gaining the full `ledger.manage` tier and Email Queue access on deploy is accepted — "yes".
+
+**Status:** Resolved
+**Date:** 2026-10-02
+**Amends:** DECISION-109 item 5, the clause "`ledger.manage` is bound to `admin` only and the treasurer is one of the two admins".
+**Design:** `docs/work-log/2026-10-02-treasurer-permission-baseline.md` (Phase 1 analyst, Phase 2 architect, Phase 3 tech-lead).
+
+**Context:** The club's next treasurer will probably not be an administrator (treasurer, 2026-10-02), and production already has a
+non-admin holder of the `treasurer` role. Every ledger correction and structure ability (reopen or discard a reconciliation, move
+or delete a settled entry, categories, settings, receipt waivers, compliance filings, fund edit, donor delete) is gated on
+`ledger.manage`, which only `admin` held. The Email Queue was gated on `admin.users`, which a treasurer must never hold (it can
+grant itself `admin`). The queue page also renders every stored email body, including live password-reset links.
+
+**Decision:**
+1. **Bind, do not split.** `ledger.manage` is bound to the `treasurer` role by migration. The ability set is the one the
+   admin-treasurer holds today; a corrections/controls split would touch 32 routes and 15 pages for two rare abilities.
+   Revisit if the club wants a second person with corrections but not controls (split along corrections vs controls).
+   `ledger.manage` is **not** a second approver (still true); real separation of duties is `ledger.approve`, the self-approval
+   block, reconciliation tie-out, the monthly statement to the board, and the audit log.
+2. **Accepted residual risks:** (a) a treasurer can raise the disbursement approval threshold and then record a large expense that
+   needs no approval; (b) a treasurer can waive receipts on entries they recorded (a reason is recorded); (c) fund opening-balance
+   edits, donor deletes and settings changes were unaudited and now each write a `ledger_audit_log` row (`fund_updated`,
+   `donor_deleted`, `ledger_settings_updated`; same transaction, plain text, no email addresses, **no reader yet**, tracked as
+   B-132 and folded into B-115); (d) reopen/re-close still leaves no audit row once re-closed (attributed only while open).
+3. **New key `email_queue.manage`** (view and retry the outbound mail queue), category `email_queue`, bound to `admin` and
+   `treasurer` only. **[Corrected 2026-10-02: as filed, this item also bound the key to "every role holding `admin.users`". That
+   inherit-to-`admin.users`-holders statement was dropped and did not ship; see the correction note below.]** For one release the
+   Email Queue consumers accept `email_queue.manage` **or** `admin.users`, through the shared `EMAIL_QUEUE_FEATURES` constant
+   (`src/lib/permissions.ts`), at five sites: the nav entry's `requiredFeature` (the same pair, spelled inline, pinned to the
+   constant by `email-queue-gate-parity.test.ts`), the Email Queue page, the retry route, the admin layout's failed-count query and
+   the sidebar badge. The proxy derives the `/admin/email-queue` rule from the nav entry (DECISION-082), so existing administrators
+   are not bounced. `admin.users`, `admin.roles`, `club_files.manage` and `welcome_packet.manage` are never bound to `treasurer`.
+4. **Queued email bodies carry credentials, so any viewer of them must be treated as holding every credential they carry.**
+   `forgot-password` and the new-member welcome email persist a live reset link in `email_queue.html`, and the queue page renders
+   it. Before `email_queue.manage` can be held by a non-admin, the page redacts, for every viewer and server-side before any body
+   reaches the browser, credential-bearing query values, `XXXX-XXXX-XXXX` temporary-password shapes and any run of 32 or more hex
+   characters (`redactQueuedEmailHtml()`, `src/lib/email-queue-view.ts`). Retry reads the stored row and is unaffected. **Regex
+   only, no per-row marker column:** a marker would protect only rows written after the deploy, and the regex is retroactive on
+   every row already queued. The two credential-bearing templates are extracted to named builders in `email-compose.ts` so the
+   tests and the senders share one source. Any new surface that renders persisted email bodies must apply the same function
+   (B-135 inventories the others). Accepted residual: the queue also shows mail addressed to `info@` (contact form, applications,
+   suggestions) carrying submitters' contact details; those are already in a club inbox the board reads.
+5. **Parity is tested, not registered.** `admin-page-feature-gates.test.ts` asserts each nav item's `requiredFeature` appears in
+   its page's source and that a gated page has a nav `requiredFeature` (or a reasoned allowlist entry), with synthetic negative
+   controls so the check cannot be vacuous. `default-role-bundles.test.ts` parses the migrations (test file only, no TS constant)
+   to compute seeded role bundles and asserts: the `treasurer` bundle covers the Treasury nav except Approvals (which
+   `treasurer` plus `board_member` covers; `ledger.approve` is deliberately a board act), holds no `admin.*` key,
+   `club_files.manage` or `welcome_packet.manage`, and the `budget_committee` bundle satisfies the budget write gate. The test
+   fails loudly on a `role_features` statement it cannot read if that statement mentions `treasurer` or `budget_committee`. A
+   control-to-route registry and a hand-kept control table were rejected as a second declaration layer; the budget family shares
+   one `BUDGET_WRITE_FEATURES` constant instead. The tests do not see an inline `canManage` boolean versus the `fetch()` it
+   triggers, nor a runtime grant at `/admin/permissions`; the Phase 5 persona click-through covers those.
+6. **`POST /api/admin/ledger/categories`** accepts `ledger.manage` or `budget.edit` through `BUDGET_WRITE_FEATURES`, now also the
+   spelling in the other nine budget gate sites and both budgeting pages. A caller without `ledger.manage` gets a plain-language
+   403 if the body sets `countsAsGiving: false` or a non-empty `form990Line` (they feed the philanthropy dashboard and the 990
+   worksheet); the existing dialog always sends `countsAsGiving` (default true), so presence alone cannot be the trigger.
+   Rename, flags, merge and impact stay manage-only. `/admin/events` admits `events.announce` holders, as its nav entry already
+   promised; `/admin/events/[id]` still requires `events.edit`.
+7. **Audit helper.** The three new rows go through one thin same-transaction helper, `recordLedgerAuditNote()` in
+   `ledger-audit.ts` (throws, so a change with no audit row cannot commit), not three hand-rolled inserts. It is the fold target
+   for B-115 / B-95 and does not touch `recordLedgerAudit()`'s typed correction path or the board-visible reader, whose action
+   filter excludes the new actions. A fund or settings PATCH that changes nothing writes nothing.
+8. **Known limitation.** Roles and features reach the JWT only at sign-in; the proxy, layout and sidebar read the JWT, pages and
+   APIs read the database (60-second cache). After a role change the person must sign out and back in, and a page that still
+   bounces within about a minute of re-signing in needs a minute and a reload (QA observed this). **[Corrected 2026-10-02: as
+   filed, this item also said existing administrators would be sent to `/access-pending` on release day until they re-signed in,
+   and accepted that with a release-note line. That did not ship.]** Existing administrators are **not** bounced: their JWT lacks
+   `email_queue.manage`, but the accepted-pair gate in item 3 lets their `admin.users` through. No auth change is made here (B-131).
+   **Sequencing constraint for the follow-up that removes `admin.users` from the Email Queue gate (B-136):** it must wait for B-131
+   to ship or for 30 days to pass (the JWT lifetime, NextAuth default), whichever comes first. Otherwise an administrator who signed
+   in before migration 0110 still has no `email_queue.manage` in the token, and the bounce this release avoided comes back.
+9. **Replay semantics.** Migrations re-run every deploy and bind with `NOT EXISTS`, so a runtime revoke of a seeded binding is
+   re-created on the next deploy. Narrowing `treasurer` later requires a migration with an explicit `DELETE`.
+
+**Rationale:** The decision converts an implicit, accidental property (the treasurer is also an admin) into an explicit one without
+widening anyone's real authority, and it closes the one path by which a key that looks harmless (`email_queue.manage`) was
+admin-equivalent (a reset link read from the queue). Tests are placed where the failures actually happened: a nav entry and its page
+disagreeing (five proxy incidents, Email Queue, Events) and a seeded bundle drifting from what the role needs. Cost accepted: a
+one-time re-sign-in, three audit rows with no screen, and a regex that hides credentials but not personal data.
+
+**Impact:** One migration (feature row, bindings to `admin` and `treasurer`, `ledger.manage` description update; seed data only, no
+schema column change);
+`permissions.ts` (key, category, descriptions, nav `requiredFeature`, `BUDGET_WRITE_FEATURES`, `EMAIL_QUEUE_FEATURES`); `permissions-server.ts`
+(`hasAnyFeature` takes `readonly FeatureName[]`); Email Queue page, retry route, layout and sidebar; `email-queue-view.ts` and
+`email-compose.ts` builders with the two senders; categories POST and nine budget routes; `/admin/events` page gate; fund PATCH,
+donor DELETE and settings PATCH audit rows; comment-only `schema.ts`; new and extended tests. Follow-ups: B-131 (JWT refresh),
+B-132 (audit reader, fold into B-115), B-133 (description parity sweep), B-134 (budget literal sweep; shipped in v1.88.0), B-135
+(inventory of persisted-body readers), and from Phase 6: B-136 (remove `admin.users` from the Email Queue gate), B-137 (front door
+for roles without `admin.dashboard`), B-138 (hide the manage-only fields in the create-category dialog), B-139 (360px sticky header
+overlap), B-140 (bare "Forbidden" 403 copy). B-108's work-log line "`ledger.manage`: admin only today" is stale after this ships. The 30-day security
+review checklist gains: "any viewer of persisted email bodies must be treated as holding every credential those bodies carry."
+
+**Correction note (2026-10-02, tech-lead, from the Phase 6 SHIP WITH NOTES verdict):** Items 3 and 8 and this Impact paragraph, as
+originally filed, described a design that did not ship. Filed: `email_queue.manage` is bound to `admin`, `treasurer` and every role
+holding `admin.users`, replaces `admin.users` on the Email Queue consumers, and existing administrators are bounced to
+`/access-pending` until they sign out and back in. Shipped: the key is bound to `admin` and `treasurer` only (no inherit
+statement); the five consumers accept `email_queue.manage` or `admin.users` for one release via `EMAIL_QUEUE_FEATURES`, so existing
+administrators are not bounced, at no extra exposure because `admin.users` already outranks the queue (production check on
+2026-10-02: only `admin` holds `admin.users`, and `admin` holds the new key by migration). The follow-up that drops `admin.users`
+(B-136) must change all five sites together and must wait for B-131 or 30 days. Every other item stands as filed. The filed wording is
+quoted in the bracketed notes above and in this paragraph rather than rewritten silently.
+
+---
+
+## DECISION-114: Paid reimbursements are reconcilable and correctable through a dedicated audited route; the approved-row guard stays unconditional (amends DECISION-099, 106, 110)
+
+**Status:** Resolved
+**Date:** 2026-10-02
+**Amends:** DECISION-110 item 3 (reader scope: moves and deletes become moves, deletes and corrections), DECISION-099 item 4 (clarified, not changed), DECISION-106 item 3 (stamp unchanged).
+
+**Decision:** Phase 2 rulings (architect) and Phase 3 implementation choices (tech-lead) for
+`docs/work-log/2026-10-02-reimbursement-reconcilable.md` (B-108). Items 1 to 8 are architectural; 9 to 16 are implementation.
+
+1. **Pay captures the money's location.** Mark Paid requires a bank account (active, of the fund's entity) and takes an optional
+   check number, written in the same insert. A paid reimbursement previously posted an approved, locked expense with no bank
+   account, which can never be a reconciliation candidate (`getCandidateTransactionsForMatching` filters on the session's account).
+2. **A dedicated route, not a carve-out in PATCH.** `POST /api/admin/ledger/transactions/[id]/correct` (GET preview on the same
+   route) is the only write path that touches an approved row. The PATCH/DELETE/split `approvedAt` guards remain unconditional and
+   evaluated before the body is parsed (DECISION-099 item 4). The route accepts exactly two operations, each with an exact-key
+   allowlist: `fill_bank_account` (fill-null only, atomic `WHERE bank_account_id IS NULL`, no typed reason, record tier) and
+   `correct` (category, budget line, date, payment method, check number, memo, bank account; reason 10-500 required). Amount, flow,
+   fund, party, status, receipt and the approval stamp are never writable here.
+3. **Eligibility is derived, closed and server-side.** A row is correctable only if a `ledger_reimbursements` row with
+   `status = 'paid'` links to it (`EXISTS` on `ledger_transaction_id`) and the row is a posted, approved expense that is not a
+   transfer leg or a dues row; no marker column. Every other approved row is refused uniformly (403 `not_correctable`).
+   Widening the eligible set requires a new DECISION.
+4. **Closed-session arithmetic cannot move.** Bank account and date change only while the row is unmatched and unreconciled; the
+   remaining fields are read by no tie-out. The permission tier reuses `requiredMoveTier()` (reconciled or prior-fiscal-year
+   needs `ledger.manage`), except `fill_bank_account`, which is record-tier (it changes no reported figure). The submitter of the
+   reimbursement may not repair or correct its row (`isOwnReimbursementRequest`).
+5. **Corrections, not offsetting entries.** The lock copy's "record a refund entry" advice is wrong for an expense (a reversal would
+   be income and misstate revenue and giving; DECISION-110 item 5). A paid reimbursement shows a `paid_reimbursement` lock kind
+   with Correct/Add-bank-account actions. A wrong amount remains a refund entry, out of scope.
+6. **Audit.** One new action, `transaction_corrected`, own `v: 1` payload, written with `recordLedgerAudit(tx, ...)` in the same
+   transaction. DECISION-110 item 3 widens from "moves and deletes" to "moves, deletes and corrections"; same page, same gate,
+   same window and caps. `AuditPayloadFor` becomes an action-keyed `AuditPayloadMap` (a missing entry is a compile error).
+7. **Create-from-bank-line is guarded server-side.** A debit expense line with a candidate reimbursement-derived expense of the same
+   amount within 30 days returns 409 `possible_duplicate` unless `acknowledgeDuplicate: true` (advisory, never a hard block).
+   `findDuplicateCandidates` is generalized into one parameterized finder in `src/lib/ledger-duplicate-candidates.ts`; the
+   cross-entity move wrapper is unchanged.
+8. **Not a durable-claim path.** No sent-claim is written and no email is sent by the new route; DECISION-102/103 do not apply.
+9. **Route shape.** Explicit `operation` discriminator with a separate exact key set per operation (never inferred from which keys
+   are present). Guard order, identical for GET and POST: permission (before any row read), uuid, body shape (no DB), row
+   `FOR UPDATE` as the first statement, `not_correctable`, `own_request`, `stale` (POST), state, `no_change`, tier, semantic input,
+   statement rule, pinned UPDATE, audit row last. A `return` inside `db.transaction` commits, so a zero-row pinned UPDATE throws a
+   private sentinel (DECISION-113 X1). The stale token is compared in application code and is only a partial guard; the real
+   guard is re-deriving match, reconciled mark and session on the locked row. One evaluator serves GET and POST; GET accepts an
+   optional `txnDate` / `paymentMethod` proposal so warnings and refusals show before Save.
+10. **An unreconciled row cannot be moved to an earlier date that would newly hide a visible monthly statement: 409
+    `would_hide_statement`** (refuse, not warn; orchestrator decision 2026-10-02). The month gate hides any month with a posted,
+    unreconciled row on or before its month-end, except outstanding expense checks, so the same predicate is applied to a change of
+    payment method away from Check. It reuses the statement gate's own predicate (`rowGatesStatement`, `monthGatedByRows`), pinned
+    by a brute-force equivalence test, never a second rule. Same-month and later dates are allowed with the existing
+    sent-statement warning (checked for both the old and the new month).
+11. **Tier for `correct`** is `requiredMoveTier()` on the row plus the new date: moving into a prior fiscal year adds
+    `prior_fiscal_year`, and a date that changes fiscal year adds `fiscal_year_change`; either makes the correction a
+    `ledger.manage` action. `fill_bank_account` never needs it.
+12. **Shared homes (duplication rule).** `CHECK_NUMBER_MAX_LEN` and `normalizeCheckNumber` move to `src/lib/ledger.ts` (pure,
+    client-safe) and all five call sites migrate (three existing routes, the pay route, the correct parser); the reimbursement
+    payment-method set, `pickDefaultBankAccount`, a strict round-tripping `parseIsoDate` and the budget-line pick validator join
+    them. The three inline `parseDate` copies accept `2026-02-31`, which Postgres rejects with a 500; the transactions POST and
+    PATCH copies are left for B-94. `listActiveBankOptions()` (cross-entity move) deliberately does not use
+    `pickDefaultBankAccount`: there a default flag is not evidence of where a gift landed (DECISION-112).
+13. **One definition of "reimbursement-derived"** lives in `src/lib/ledger-reimbursement-link.ts` (a SQL `EXISTS` fragment, a
+    register id-set query and the row loader), imported by the finder and the correction queries; it must not import
+    `ledger-audit`. The member-surface firewall regex is widened to cover `ledger-reimbursement-correction(-queries)`.
+14. **Pay validation placement.** The bank account is validated beside the fund, category and budget-line validators (on `db`,
+    before the pay transaction); the account row is not locked either way. A body without `bankAccountId` is a 400 with a human
+    sentence. The member's description is no longer overwritten: the dialog's "Note" field becomes a pre-filled "Register
+    description" (the server still writes `note ?? description`). Existing memos are not migrated.
+15. **Register and reader shapes.** `LockableRow.paidReimbursement` and `LedgerCorrectionRow.changes` are optional so existing
+    fixtures compile; `editLockKind` (which mirrors the PATCH guards) is unchanged and a new `editLockDisplayKind` maps
+    `approved` to `paid_reimbursement` for display. `MoveDuplicateCandidate` stays its own interface (the wrapper projects).
+16. **`scripts/backfill-bank-account.ts` stays** (header note only: paid-reimbursement rows are repaired in the register). Production
+    held exactly two null-account rows, both paid reimbursements, so the script has nothing left to own today; it remains the only
+    bulk, dry-run-first tool for a future batch. The Phase 1 duplicate advisory inside the repair dialog is dropped (production has
+    no twins and item 7 prevents new ones); the closed-period unwind goes in the Treasury Guide.
+
+**Rationale:** The treasurer-self-sufficiency goal (2026-10-02): next year's treasurer must be able to pay, reconcile and correct a
+reimbursement without SQL. The approved-row lock exists to protect a closed session's arithmetic and board-visible finality, and
+none of the allowlisted writes can move either (bank account and date are refused once matched or reconciled; the rest are read by
+no tie-out). An unconditional PATCH guard plus a closed-set, allowlisted, audited route is narrower than any in-PATCH carve-out, and
+keeps a future edit from widening it to every board-approved disbursement. Refusing a date change that would hide a published
+statement costs the treasurer one extra step (reconcile first) and avoids a silent change to what members can see. The cost of the
+design is one new route, two lib modules plus a small link module, and a third kind in the audit reader.
+
+**Impact:** Pay route and dialog; new correct route and its two lib modules plus `ledger-reimbursement-link.ts`;
+`ledger-correction.ts` / `ledger-audit.ts` / `<RecentCorrections>` (third kind); `ledger-transaction-lock.ts` (new lock kind);
+`create-from-bank-line` route (GET, 409) and dialog; the register, Paid tab and reconciliation grid and picker;
+`financial-report-queries.ts` (predicate extraction, no behavior change); check-number normalizer consolidated into `ledger.ts`;
+generalized duplicate finder; comment-only `schema.ts`; Treasury Guide. No migration, no new key, no nav change. Follow-ups: B-85
+(narrowed), B-129 (unique link index), B-130 (void or reissue a lost check), B-94 (the remaining `parseDate` copies).
+
+---
+
 ## DECISION-113: Cross-entity move implementation shape: per-destination preview, policy then state then tier then input, acknowledgment settled before the UPDATE with throw-to-rollback, two separately built UPDATE shapes
 
 **Status:** Resolved
@@ -250,6 +447,9 @@ the change. The cost is a JSON-in-text convention (already the table's conventio
 **Impact:** `src/lib/ledger-audit.ts` and `src/lib/ledger-correction.ts` (see DECISION-111 for why two), the DELETE
 handler, the compliance page section, a comment block in `schema.ts`. Follow-ups: B-95, B-97.
 
+**Amended 2026-10-02 by DECISION-114:** item 3's reader scope widens from "moves and deletes only" to moves, deletes and
+corrections of paid reimbursements (a third action, `transaction_corrected`); same page, same gate, same window and caps.
+
 ---
 
 ## DECISION-109: Same-entity fund reclassification of an income row via a dedicated `POST .../transactions/[id]/move` endpoint; second narrow carve-out of the reconciled lock (amends DECISION-036 item 4, extends DECISION-099)
@@ -458,6 +658,7 @@ purging visit; and production's first real purge is on/after 2026-10-13 (oldest 
 
 **Status:** Resolved
 **Date:** 2026-10-01
+**Clarified 2026-10-02 by DECISION-114:** item 3 stands (the approval stamp IS the lock and no correction may null or change it). A paid reimbursement's bank account, category, date, method, check number and description can be corrected through the audited `/correct` route, and Mark Paid now captures the bank account and check number.
 
 **Decision:** Following a board meeting, September 2026 (minute reference to be supplied by the treasurer), the club
 no longer requires board approval for member reimbursements. They show up on reports and the board reviews them
@@ -962,6 +1163,7 @@ This also means the acknowledgment-letter feature's permanent "claim atomically 
 **Status:** Resolved
 **Date:** 2026-09-21
 **Amends:** DECISION-036 — item 4 only ("a full lock, not a `syncStale`-style silent-degradation marker... cannot be edited (any field)... until its closing session is reopened"). Items 1, 2, 3, and 5–10 of DECISION-036 are unaffected and still stand.
+**Clarified 2026-10-02 by DECISION-114:** item 4 stands unchanged. The `approvedAt` guard stays unconditional and evaluated before the body is parsed; paid reimbursements are repaired through a separate closed-set route, never a carve-out here.
 
 **Decision:**
 

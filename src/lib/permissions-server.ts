@@ -85,7 +85,7 @@ export async function hasFeature(
  */
 export async function hasAnyFeature(
   userId: string,
-  features: FeatureName[]
+  features: readonly FeatureName[]
 ): Promise<boolean> {
   const userFeatures = await getUserFeatures(userId);
   return features.some((feature) => userFeatures.includes(feature));

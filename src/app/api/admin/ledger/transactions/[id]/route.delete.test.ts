@@ -368,3 +368,16 @@ describe("audit snapshot (T30)", () => {
     expect(calls().filter((c) => c.op === "delete")).toHaveLength(1);
   });
 });
+
+// B-108 / DECISION-114 / T22: the approvedAt guard stays unconditional. DELETE
+// reads the reason first (DECISION-110), but an approved row is refused inside
+// the locked transaction no matter what the body says, and writes nothing.
+describe("DELETE — approved rows stay refused (T22)", () => {
+  it("403s an approved expense row even with a valid reason; no delete, insert or audit row", async () => {
+    s.selectQueue = [[txn({ flow: "expense", approvedAt: new Date("2026-10-01T09:00:00Z"), bankAccountId: null })]];
+    const res = await DELETE(req({ reason: REASON }), params());
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("Approved transactions cannot be deleted");
+    expect(calls().filter((c) => c.op === "delete" || c.op === "insert")).toHaveLength(0);
+  });
+});

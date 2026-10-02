@@ -608,3 +608,80 @@ describe("PATCH .../[id] — bankAccountId validation (T24)", () => {
     expect("bankAccountId" in mockDbState.updates[0].set).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// B-108 / T1 — behavior pin for the shared normalizeCheckNumber migration
+// ---------------------------------------------------------------------------
+
+describe("PATCH .../[id] — checkNumber normalizer (T1 pin)", () => {
+  it("a 21-character check number is still 400 with the same message, writing nothing", async () => {
+    mockDbState.existing = { ...ORDINARY_TXN, bankAccountId: BANK_OLD };
+    const res = await PATCH(
+      makeRequest({ checkNumber: "1".repeat(21) }, BASE_URL),
+      makeParams("txn-ordinary"),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("checkNumber must not exceed 20 characters");
+    expect(mockDbState.updates).toHaveLength(0);
+  });
+
+  it("omitting checkNumber leaves the column untouched", async () => {
+    mockDbState.existing = { ...ORDINARY_TXN, bankAccountId: BANK_OLD };
+    const res = await PATCH(makeRequest({ memo: "note" }, BASE_URL), makeParams("txn-ordinary"));
+    expect(res.status).toBe(200);
+    expect("checkNumber" in mockDbState.updates[0].set).toBe(false);
+  });
+
+  it("a padded check number is trimmed and null clears it", async () => {
+    mockDbState.existing = { ...ORDINARY_TXN, bankAccountId: BANK_OLD };
+    let res = await PATCH(makeRequest({ checkNumber: " 8249 " }, BASE_URL), makeParams("txn-ordinary"));
+    expect(res.status).toBe(200);
+    expect(mockDbState.updates[0].set.checkNumber).toBe("8249");
+    mockDbState.updates = [];
+    res = await PATCH(makeRequest({ checkNumber: null }, BASE_URL), makeParams("txn-ordinary"));
+    expect(res.status).toBe(200);
+    expect(mockDbState.updates[0].set.checkNumber).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-108 / DECISION-114 / T22 — the approvedAt guard stays UNCONDITIONAL. The
+// dedicated .../correct route is the only write path onto an approved row; none
+// of its allowlisted fields may become editable through PATCH.
+// ---------------------------------------------------------------------------
+
+describe("PATCH .../[id] — approvedAt guard is still unconditional (T22)", () => {
+  const APPROVED_EXPENSE = {
+    ...ORDINARY_TXN,
+    id: "txn-paid-reimbursement",
+    approvedAt: new Date("2026-10-01T09:00:00Z"),
+    bankAccountId: null,
+    donorId: null,
+    budgetLineId: null,
+  };
+
+  it.each([
+    ["bankAccountId", { bankAccountId: BANK_NEW }],
+    ["donorId", { donorId: "11111111-1111-4111-8111-111111111111" }],
+    ["categoryId", { categoryId: "22222222-2222-4222-8222-222222222222" }],
+    ["checkNumber", { checkNumber: "8249" }],
+    ["memo", { memo: "x" }],
+    ["txnDate", { txnDate: "2026-09-12" }],
+    ["paymentMethod", { paymentMethod: "cash" }],
+  ])("a paid-reimbursement-shaped approved row refuses { %s } with 403 and never parses the body", async (_n, body) => {
+    mockDbState.existing = { ...APPROVED_EXPENSE };
+    mockDbState.bankRows = [{ id: BANK_NEW, entityId: "entity-club", isActive: true }];
+    const json = vi.fn(async () => body);
+    const res = await PATCH(
+      { json, url: BASE_URL } as unknown as NextRequest,
+      makeParams("txn-paid-reimbursement"),
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Approved transactions cannot be edited. Record a refund entry to correct one.",
+    );
+    expect(json).not.toHaveBeenCalled();
+    expect(mockDbState.updates).toHaveLength(0);
+    expect(mockDbState.inserts).toHaveLength(0);
+  });
+});

@@ -1,8 +1,9 @@
 import { db } from "@/lib/db";
 import { emailQueue } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
-import { hasFeature } from "@/lib/permissions-server";
-import { FEATURES } from "@/lib/permissions";
+import { hasAnyFeature } from "@/lib/permissions-server";
+import { EMAIL_QUEUE_FEATURES } from "@/lib/permissions";
+import { redactQueuedEmailHtml } from "@/lib/email-queue-view";
 import { redirect } from "next/navigation";
 import { desc, eq, inArray } from "drizzle-orm";
 import RetryButton from "./retry-button";
@@ -14,7 +15,10 @@ export default async function AdminEmailQueuePage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
 
-  const canManage = await hasFeature(session.user.id, FEATURES.ADMIN_USERS);
+  // FEATURES.EMAIL_QUEUE_MANAGE (new, DECISION-115) OR FEATURES.ADMIN_USERS for
+  // ONE release, via EMAIL_QUEUE_FEATURES: a signed-in admin whose JWT predates
+  // migration 0110 must not be bounced. The nav entry declares both keys.
+  const canManage = await hasAnyFeature(session.user.id, EMAIL_QUEUE_FEATURES);
   if (!canManage) redirect("/admin");
 
   // Self-heals a row stranded at the transient 'retrying' status (a hard
@@ -35,7 +39,7 @@ export default async function AdminEmailQueuePage() {
     console.error("[email-queue] retention purge failed", error);
   }
 
-  const [failed, blocked, recentSent] = await Promise.all([
+  const [rawFailed, rawBlocked, rawSent] = await Promise.all([
     db
       .select()
       .from(emailQueue)
@@ -63,6 +67,16 @@ export default async function AdminEmailQueuePage() {
       .orderBy(desc(emailQueue.sentAt))
       .limit(20),
   ]);
+
+  // DECISION-115 (M1): queued bodies carry live password-reset links. Redact
+  // ONCE here, before any render, and render only from the mapped arrays below
+  // so a later edit cannot hand the raw `html` to ViewEmailDialog. Retry reads
+  // the stored row, not this copy, so it is unaffected.
+  const redact = <T extends { html: string }>(rows: T[]): T[] =>
+    rows.map((row) => ({ ...row, html: redactQueuedEmailHtml(row.html) }));
+  const failed = redact(rawFailed);
+  const blocked = redact(rawBlocked);
+  const recentSent = redact(rawSent);
 
   function formatDate(d: Date | null) {
     if (!d) return "—";
