@@ -14,6 +14,12 @@
  *   pnpm exec tsx scripts/backfill-bank-account.ts --entity=club            # dry run
  *   pnpm exec tsx scripts/backfill-bank-account.ts --entity=club --apply    # writes
  *
+ * Paid-reimbursement rows are repaired in the register (Add bank account on
+ * the row, POST .../transactions/[id]/correct), NOT by this script: that path
+ * is audited and refuses a matched or reconciled row (B-108 / DECISION-114).
+ * This script stays as the only bulk, dry-run-first tool for a future batch of
+ * other null-account rows (an import, a restored backup).
+ *
  * Metadata only — bank_account_id, never amounts/reconciled/fund. Idempotent:
  * only touches rows where bank_account_id IS NULL, so re-running after a
  * successful --apply finds nothing left to do. PROD_DATABASE_URL targets prod.
