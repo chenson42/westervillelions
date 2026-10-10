@@ -1,18 +1,10 @@
 /**
- * Unit tests for POST /api/admin/ledger/transactions/[id]/reject —
- * pair-aware rejection (DECISION-058,
- * docs/work-log/2026-07-29-ledger-account-transfers.md).
+ * Unit tests for POST /api/admin/ledger/transactions/[id]/reject.
  *
- * Covers:
- *   - rejecting either leg's id updates BOTH rows to status='rejected' with
- *     an identical rejectionReason
- *   - self-rejection block still applies, keyed off the shared recordedByUserId
- *   - rejecting a pair where the partner has drifted off 'pending' → 409
- *
- * Hermetic: mocks @/lib/auth, @/lib/permissions-server, @/lib/db —
- * importing the real @/lib/db module throws at import time without
- * DATABASE_URL (see the header comment in src/lib/ledger-queries.test.ts for
- * the same rationale).
+ * The route is a thin wrapper (auth, LEDGER_APPROVE gate, body parsing,
+ * response mapping) over decideTransaction(), which is mocked here; the lock,
+ * pinned UPDATE, self rule and 409 body are covered in
+ * src/lib/ledger-approval-decision.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -20,131 +12,100 @@ import type { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
-
-const { mockDbState } = vi.hoisted(() => ({
-  mockDbState: {
-    selectQueue: [] as unknown[][],
-    updates: [] as { set: Record<string, unknown> }[],
-  },
-}));
-
-vi.mock("@/lib/db", () => ({
-  db: {
-    select: vi.fn(() => ({
-      from: () => ({
-        where: () => {
-          const rows = mockDbState.selectQueue.shift() ?? [];
-          const thenable = Promise.resolve(rows) as Promise<unknown[]> & {
-            limit: () => Promise<unknown[]>;
-          };
-          thenable.limit = () => Promise.resolve(rows);
-          return thenable;
-        },
-      }),
-    })),
-    transaction: vi.fn(async (cb: (tx: unknown) => unknown) => {
-      const tx = {
-        update: () => ({
-          set: (set: Record<string, unknown>) => ({
-            where: () => {
-              mockDbState.updates.push({ set });
-              return Promise.resolve(undefined);
-            },
-          }),
-        }),
-      };
-      return cb(tx);
-    }),
-  },
-}));
+vi.mock("@/lib/ledger-approval-decision", () => ({ decideTransaction: vi.fn() }));
 
 import { POST } from "./route";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
+import { decideTransaction } from "@/lib/ledger-approval-decision";
 
 function makeRequest(body: unknown): NextRequest {
   return { json: async () => body } as unknown as NextRequest;
 }
-function makeParams(id = "txn-source") {
-  return { params: Promise.resolve({ id }) };
-}
-
-const SOURCE_LEG = {
-  id: "txn-source",
-  transferGroupId: "group-1",
-  status: "pending",
-  recordedByUserId: "recorder-1",
-};
-const DEST_LEG = {
-  id: "txn-dest",
-  transferGroupId: "group-1",
-  status: "pending",
-  recordedByUserId: "recorder-1",
-};
-const ORDINARY_EXPENSE = {
-  id: "txn-ordinary",
-  transferGroupId: null,
-  status: "pending",
-  recordedByUserId: "recorder-1",
-};
+const badJsonRequest = {
+  json: async () => {
+    throw new SyntaxError("Unexpected end of JSON input");
+  },
+} as unknown as NextRequest;
+const params = (id = "txn-1") => ({ params: Promise.resolve({ id }) });
 
 beforeEach(() => {
   vi.mocked(auth).mockResolvedValue({ user: { id: "approver-1" } } as never);
   vi.mocked(hasFeature).mockResolvedValue(true);
-  mockDbState.selectQueue = [];
-  mockDbState.updates = [];
+  vi.mocked(decideTransaction).mockReset();
+  vi.mocked(decideTransaction).mockResolvedValue({ ok: true, id: "txn-1" });
 });
 
-describe("POST .../[id]/reject — pair-aware (DECISION-058)", () => {
-  it("rejecting either leg's id updates BOTH rows to rejected with an identical rejectionReason", async () => {
-    mockDbState.selectQueue.push([SOURCE_LEG], [SOURCE_LEG, DEST_LEG]);
-
-    const res = await POST(
-      makeRequest({ reason: "Board declined the sweep at the July meeting." }),
-      makeParams("txn-source"),
-    );
-    expect(res.status).toBe(200);
-
-    expect(mockDbState.updates).toHaveLength(2);
-    const [first, second] = mockDbState.updates;
-    expect(first.set.status).toBe("rejected");
-    expect(second.set.status).toBe("rejected");
-    expect(first.set.rejectionReason).toBe("Board declined the sweep at the July meeting.");
-    expect(second.set.rejectionReason).toBe("Board declined the sweep at the July meeting.");
+describe("POST .../[id]/reject", () => {
+  it("401s when unauthenticated, without deciding", async () => {
+    vi.mocked(auth).mockResolvedValue(null as never);
+    const res = await POST(makeRequest({ reason: "x" }), params());
+    expect(res.status).toBe(401);
+    expect(decideTransaction).not.toHaveBeenCalled();
   });
 
-  it("self-rejection block still applies, keyed off the shared recordedByUserId", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "recorder-1" } } as never);
-    mockDbState.selectQueue.push([SOURCE_LEG], [SOURCE_LEG, DEST_LEG]);
-
-    const res = await POST(makeRequest({ reason: "x" }), makeParams("txn-source"));
+  it("403s without ledger.approve, without deciding", async () => {
+    vi.mocked(hasFeature).mockResolvedValue(false);
+    const res = await POST(makeRequest({ reason: "x" }), params());
     expect(res.status).toBe(403);
-    expect(mockDbState.updates).toHaveLength(0);
+    expect(decideTransaction).not.toHaveBeenCalled();
   });
 
-  it("409s when the partner leg has already drifted off 'pending'", async () => {
-    mockDbState.selectQueue.push([SOURCE_LEG], [SOURCE_LEG, { ...DEST_LEG, status: "rejected" }]);
-
-    const res = await POST(makeRequest({ reason: "x" }), makeParams("txn-source"));
-    const data = await res.json();
-    expect(res.status).toBe(409);
-    expect(data.error).toBe("The paired transaction is no longer pending");
-    expect(mockDbState.updates).toHaveLength(0);
-  });
-
-  it("400s a missing/blank reason", async () => {
-    mockDbState.selectQueue.push([ORDINARY_EXPENSE]);
-
-    const res = await POST(makeRequest({ reason: "   " }), makeParams("txn-ordinary"));
-    expect(res.status).toBe(400);
-    expect(mockDbState.updates).toHaveLength(0);
-  });
-
-  it("rejecting an ordinary expense succeeds and touches only one row (no partner)", async () => {
-    mockDbState.selectQueue.push([ORDINARY_EXPENSE]);
-
-    const res = await POST(makeRequest({ reason: "Not needed." }), makeParams("txn-ordinary"));
+  it("200 returns { id } and passes the actor and input to the helper", async () => {
+    const res = await POST(makeRequest({ reason: "x" }), params("txn-1"));
     expect(res.status).toBe(200);
-    expect(mockDbState.updates).toHaveLength(1);
+    expect(await res.json()).toEqual({ id: "txn-1" });
+    expect(decideTransaction).toHaveBeenCalledWith({
+      id: "txn-1",
+      actorUserId: "approver-1",
+      input: { kind: "reject", reason: "x" },
+    });
+  });
+
+  it("passes a 409 ApprovalConflictBody through unchanged", async () => {
+    const body = {
+      error: "Transaction is no longer pending",
+      code: "not_pending",
+      decision: "approved",
+      deciderName: "Pat Example",
+      decidedAt: "2026-10-10T15:42:00.000Z",
+      decidedByViewer: false,
+    };
+    vi.mocked(decideTransaction).mockResolvedValue({ ok: false, status: 409, body });
+    const res = await POST(makeRequest({ reason: "x" }), params());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(body);
+  });
+
+  it.each([
+    [400, { error: "reason is required" }],
+    [403, { error: "You cannot reject a transaction you recorded" }],
+    [404, { error: "Transaction not found", code: "not_found" }],
+  ] as const)("maps a helper %i result", async (status, body) => {
+    vi.mocked(decideTransaction).mockResolvedValue({ ok: false, status, body });
+    const res = await POST(makeRequest({ reason: "x" }), params());
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual(body);
+  });
+
+  it("malformed JSON becomes the helper's 400, not a 500", async () => {
+    vi.mocked(decideTransaction).mockResolvedValue({
+      ok: false,
+      status: 400,
+      body: { error: "reason is required" },
+    });
+    const res = await POST(badJsonRequest, params());
+    expect(res.status).toBe(400);
+    expect(decideTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { kind: "reject", reason: undefined } }),
+    );
+  });
+
+  it("an unexpected throw is a generic 500 with no internals", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(decideTransaction).mockRejectedValue(new Error("db exploded: secret"));
+    const res = await POST(makeRequest({ reason: "x" }), params());
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(await res.json())).not.toContain("secret");
   });
 });

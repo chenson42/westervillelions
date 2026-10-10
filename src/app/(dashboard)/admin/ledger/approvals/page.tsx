@@ -4,8 +4,11 @@ import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getPendingApprovals, getSettings } from "@/lib/ledger-queries";
-import ApproveDialog from "@/components/admin/ledger/approve-dialog";
-import { RejectTransactionDialog } from "@/components/admin/ledger/reject-dialog";
+import ApprovalActions from "@/components/admin/ledger/approval-actions";
+import ApprovalCard from "@/components/admin/ledger/approval-card";
+import ApprovalFundLabel from "@/components/admin/ledger/approval-fund-label";
+import { describeApprovalFund } from "@/lib/ledger-approval";
+import type { PendingApprovalRow } from "@/lib/ledger-queries";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +23,15 @@ function formatDate(dateStr: string): string {
     month: "short",
     day: "numeric",
     year: "numeric",
+  });
+}
+
+function fundFor(txn: PendingApprovalRow) {
+  return describeApprovalFund({
+    fundName: txn.fundName,
+    partnerFundName: txn.partnerFundName,
+    entityId: txn.entityId,
+    partnerEntityId: txn.partnerEntityId,
   });
 }
 
@@ -102,136 +114,103 @@ export default async function AdminLedgerApprovalsPage() {
               d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
-          <p className="text-lg font-semibold text-gray-700">All expenditures are approved</p>
+          <p className="text-lg font-semibold text-gray-700">Nothing is waiting for approval</p>
           <p className="mt-1 text-sm">
             No pending disbursements. The approval threshold is {threshold}.
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
-                    Date
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
-                    Fund
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
-                    Amount
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Payee / Memo
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
-                    Recorded by
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
-                {pending.map((txn) => {
-                  const isSelf = txn.recordedByUserId === currentUserId;
-                  const amountStr = formatDollars(txn.amountCents);
+        <>
+          {/* Below xl: stacked cards. The admin sidebar offset (lg:pl-64), not the
+              viewport, is what leaves the table too narrow until 1280px. */}
+          <ul className="grid gap-4 md:grid-cols-2 xl:hidden">
+            {pending.map((txn) => (
+              <ApprovalCard
+                key={txn.id}
+                transactionId={txn.id}
+                dateText={formatDate(txn.txnDate)}
+                amount={formatDollars(txn.amountCents)}
+                party={txn.party ?? ""}
+                memo={txn.memo}
+                existingBoardMinute={txn.boardMinute}
+                fund={fundFor(txn)}
+                recordedBy={txn.recorderName}
+                isSelf={txn.recordedByUserId === currentUserId}
+              />
+            ))}
+          </ul>
 
-                  return (
-                    <tr key={txn.id} className="hover:bg-gray-50">
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                        {formatDate(txn.txnDate)}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-700 max-w-[220px]">
-                        {txn.partnerFundName ? (
-                          <div className="space-y-0.5">
-                            <span
-                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                                txn.partnerEntityId && txn.partnerEntityId !== txn.entityId
-                                  ? "bg-purple-50 text-purple-700"
-                                  : "bg-blue-50 text-blue-700"
-                              }`}
-                            >
-                              {txn.partnerEntityId && txn.partnerEntityId !== txn.entityId
-                                ? "Sweep"
-                                : "Transfer"}
-                            </span>
-                            <div className="truncate text-gray-600">
-                              {txn.fundName ?? "Unknown Fund"}{" "}
-                              <span className="text-gray-400">&rarr;</span> {txn.partnerFundName}
-                            </div>
-                          </div>
-                        ) : (
-                          txn.fundName ?? <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900">
-                        {amountStr}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-700 max-w-[200px]">
-                        {txn.party ? (
-                          <div className="truncate font-medium">{txn.party}</div>
-                        ) : null}
-                        {txn.memo ? (
-                          <div className="text-xs text-gray-400 truncate mt-0.5">{txn.memo}</div>
-                        ) : null}
-                        {!txn.party && !txn.memo && (
-                          <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
-                        {isSelf ? (
-                          <span className="inline-flex items-center gap-1 text-amber-700 text-xs font-medium bg-amber-50 rounded px-2 py-0.5">
-                            You recorded this
-                          </span>
-                        ) : (
-                          <span className="text-sm text-gray-600">{txn.recorderName ?? "—"}</span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3">
-                        <div className="flex items-center gap-2 justify-end">
-                          {isSelf ? (
-                            <span
-                              className="text-xs text-gray-400 italic"
-                              title="You cannot approve a disbursement you recorded (segregation of duties)"
-                            >
-                              Cannot self-approve
-                            </span>
-                          ) : (
-                            <ApproveDialog
-                              transactionId={txn.id}
-                              amount={amountStr}
-                              party={txn.party ?? ""}
-                              existingBoardMinute={txn.boardMinute}
-                            >
-                              <button
-                                type="button"
-                                className="bg-lions-blue text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px]"
-                              >
-                                Approve
-                              </button>
-                            </ApproveDialog>
-                          )}
+          <div className="hidden overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm xl:block">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                      Date
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                      Fund
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                      Amount
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      Payee / Memo
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                      Recorded by
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 whitespace-nowrap">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 bg-white">
+                  {pending.map((txn) => {
+                    const isSelf = txn.recordedByUserId === currentUserId;
+                    const fund = fundFor(txn);
 
-                          <RejectTransactionDialog
+                    return (
+                      <tr key={txn.id} data-row-id={txn.id} className="align-top hover:bg-gray-50">
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          {formatDate(txn.txnDate)}
+                        </td>
+                        <td className="max-w-[220px] px-4 py-3 text-sm">
+                          <ApprovalFundLabel fund={fund} />
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900">
+                          {formatDollars(txn.amountCents)}
+                        </td>
+                        <td className="max-w-[200px] px-4 py-3 text-sm text-gray-700">
+                          {txn.party ? <div className="break-words font-medium">{txn.party}</div> : null}
+                          {txn.memo ? (
+                            <div className="mt-0.5 break-words text-xs text-gray-500">{txn.memo}</div>
+                          ) : null}
+                          {!txn.party && !txn.memo && <span className="text-gray-400">—</span>}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          {isSelf ? "You" : (txn.recorderName ?? "—")}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <ApprovalActions
                             transactionId={txn.id}
-                            amount={amountStr}
+                            amount={formatDollars(txn.amountCents)}
                             party={txn.party ?? ""}
-                          >
-                            <span className="text-xs font-medium text-gray-500 hover:text-red-600 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 rounded px-2 py-1">
-                              Reject
-                            </span>
-                          </RejectTransactionDialog>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            memo={txn.memo}
+                            existingBoardMinute={txn.boardMinute}
+                            fund={fund}
+                            recordedBy={txn.recorderName}
+                            isSelf={isSelf}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       <p className="text-xs text-gray-400">

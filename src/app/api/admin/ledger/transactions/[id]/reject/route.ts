@@ -5,8 +5,12 @@
  * The row is preserved as an audit trail; the treasurer can view it as rejected.
  *
  * Pair-aware (DECISION-058): when the target row is a Transfer/Sweep leg
- * (transferGroupId set), the partner leg is fetched, both rows must be
- * pending, and both are rejected atomically with an identical rejectionReason.
+ * (transferGroupId set), both legs are locked, both must be pending, and both
+ * are rejected atomically with an identical rejectionReason.
+ *
+ * Race-safe: the row and its partner are locked FOR UPDATE and the write is
+ * pinned on status='pending' (src/lib/ledger-approval-decision.ts), so an
+ * approve racing a reject cannot leave an approver stamp on a rejected row.
  *
  * Gate: LEDGER_APPROVE
  *
@@ -17,23 +21,21 @@
  *
  * Responses:
  *   200 { id }            — rejected (both legs, if a pair)
- *   400                   — missing/invalid reason
+ *   400                   — missing/invalid reason, or malformed JSON
  *   401                   — not authenticated
- *   403                   — forbidden or self-rejection attempt
- *   404                   — transaction not found
- *   409                   — transaction (or its paired leg) is no longer pending
+ *   403                   — forbidden or self-rejection attempt (the actor
+ *                           recorded either leg)
+ *   404 { error, code: "not_found" } — transaction not found
+ *   409 ApprovalConflictBody — transaction (or its paired leg) is no longer
+ *       pending, or another approver won the race. Names the decider (display
+ *       name, or null; never an email). Type: src/lib/ledger-approval.ts.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
-import { ledgerTransactions } from "@/lib/db/schema";
-import type { LedgerTransaction } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-
-const REASON_MAX_LEN = 1000;
+import { decideTransaction } from "@/lib/ledger-approval-decision";
 
 export async function POST(
   request: NextRequest,
@@ -50,86 +52,18 @@ export async function POST(
 
     const { id } = await params;
 
-    // Fetch the transaction
-    const rows = await db
-      .select()
-      .from(ledgerTransactions)
-      .where(eq(ledgerTransactions.id, id))
-      .limit(1);
-    const txn = rows[0];
-    if (!txn) {
-      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
-    }
+    // A malformed body is the caller's fault: 400, not a 500.
+    const body = await request.json().catch(() => null);
 
-    // Pair-aware (DECISION-058): fetch the partner leg of a Transfer/Sweep pair.
-    let partner: LedgerTransaction | undefined;
-    if (txn.transferGroupId) {
-      const partnerRows = await db
-        .select()
-        .from(ledgerTransactions)
-        .where(eq(ledgerTransactions.transferGroupId, txn.transferGroupId));
-      partner = partnerRows.find((r) => r.id !== txn.id);
-    }
-
-    // 409 if either leg is no longer pending
-    if (txn.status !== "pending") {
-      return NextResponse.json(
-        { error: "Transaction is no longer pending" },
-        { status: 409 },
-      );
-    }
-    if (partner && partner.status !== "pending") {
-      return NextResponse.json(
-        { error: "The paired transaction is no longer pending" },
-        { status: 409 },
-      );
-    }
-
-    // Self-rejection block: the person who recorded cannot reject (identical
-    // recordedByUserId on both legs of a pair — one call created both).
-    if (session.user.id === txn.recordedByUserId) {
-      return NextResponse.json(
-        { error: "You cannot reject a transaction you recorded" },
-        { status: 403 },
-      );
-    }
-
-    // Validate body
-    const body = await request.json();
-    const rawReason = body?.reason;
-    if (!rawReason || typeof rawReason !== "string" || !rawReason.trim()) {
-      return NextResponse.json(
-        { error: "reason is required" },
-        { status: 400 },
-      );
-    }
-    const rejectionReason = rawReason.trim().slice(0, REASON_MAX_LEN);
-    const updatedAt = new Date();
-
-    // Reject — both legs atomically when part of a pair
-    await db.transaction(async (tx) => {
-      await tx
-        .update(ledgerTransactions)
-        .set({
-          status: "rejected",
-          rejectionReason,
-          updatedAt,
-        })
-        .where(eq(ledgerTransactions.id, id));
-
-      if (partner) {
-        await tx
-          .update(ledgerTransactions)
-          .set({
-            status: "rejected",
-            rejectionReason,
-            updatedAt,
-          })
-          .where(eq(ledgerTransactions.id, partner.id));
-      }
+    const result = await decideTransaction({
+      id,
+      actorUserId: session.user.id,
+      input: { kind: "reject", reason: body?.reason },
     });
-
-    return NextResponse.json({ id });
+    if (!result.ok) {
+      return NextResponse.json(result.body, { status: result.status });
+    }
+    return NextResponse.json({ id: result.id });
   } catch (error) {
     console.error("Error rejecting transaction:", error);
     return NextResponse.json({ error: "Failed to reject transaction" }, { status: 500 });

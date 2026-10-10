@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import type { ApprovalKind } from "@/lib/ledger-approval";
+import LedgerDialogShell from "./ledger-dialog-shell";
+import ApprovalDialogContext, { type ApprovalDialogContextData } from "./approval-dialog-context";
+import { approvalFailureAction, approveHint } from "./approval-dialog-logic";
 
 interface ApproveDialogProps {
   transactionId: string;
@@ -18,29 +21,52 @@ interface ApproveDialogProps {
    * citation ("required only if not already set").
    */
   existingBoardMinute?: string | null;
+  /** Fund, memo and recorder, shown above the field so the card need not stay visible. */
+  context: ApprovalDialogContextData;
+  /** Disbursement, transfer or sweep: used in toast copy. */
+  noun?: ApprovalKind;
+  /** Classes for the trigger button this component renders. */
+  triggerClassName: string;
+  /** The trigger button's label. */
   children: React.ReactNode;
 }
 
 /**
- * Opens a dialog that collects a board-minute reference, then POSTs to the
- * approve route. A board-minute is required when the row doesn't already carry
- * one; when it does (e.g. a Sweep cited at creation), the field is pre-filled
- * and a blank submit preserves the original — matching the server's rule.
+ * Renders its own trigger button and a dialog that collects a board-minute
+ * reference, then POSTs to the approve route. A board-minute is required when
+ * the row doesn't already carry one; when it does (e.g. a Sweep cited at
+ * creation), the field is pre-filled and a blank submit preserves the original.
  *
- * The trigger element is passed as children so the parent controls the button
- * appearance without this component needing to know about it.
+ * A 409 (someone decided first) or 404 (entry gone) closes the dialog,
+ * refreshes the page and says what happened; any other failure keeps the dialog
+ * open with the typed text intact.
  */
 export default function ApproveDialog({
   transactionId,
   amount,
   party,
   existingBoardMinute,
+  context,
+  noun = "disbursement",
+  triggerClassName,
   children,
 }: ApproveDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [boardMinute, setBoardMinute] = useState(existingBoardMinute ?? "");
   const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus the field on open only with a fine pointer. On touch the keyboard
+  // would cover the context above it; the person taps the field when ready.
+  useEffect(() => {
+    if (!open) return;
+    if (typeof window !== "undefined" && window.matchMedia?.("(hover: hover) and (pointer: fine)").matches) {
+      inputRef.current?.focus();
+    }
+  }, [open]);
+
+  const hint = approveHint(boardMinute, existingBoardMinute);
 
   async function handleApprove() {
     const trimmed = boardMinute.trim();
@@ -62,80 +88,102 @@ export default function ApproveDialog({
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to approve disbursement.");
+        const data: unknown = await res.json().catch(() => null);
+        const action = approvalFailureAction(res.status, data, "approve", noun);
+        if (action.toastKind === "info") toast.info(action.message);
+        else toast.error(action.message);
+        if (action.close) {
+          setOpen(false);
+          setBoardMinute(existingBoardMinute ?? "");
+        }
+        if (action.refresh) router.refresh();
+        return;
       }
 
       toast.success("Disbursement approved.");
       setOpen(false);
       setBoardMinute(existingBoardMinute ?? "");
       router.refresh();
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Could not approve disbursement. Please try again."
-      );
+    } catch {
+      toast.error(approvalFailureAction(null, null, "approve", noun).message);
     } finally {
       setSubmitting(false);
     }
   }
 
+  const disabled = submitting || !!hint;
+
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger asChild>{children}</Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
-          <Dialog.Title className="text-lg font-semibold text-gray-900">
-            Approve Disbursement
-          </Dialog.Title>
-          <Dialog.Description className="mt-1 text-sm text-gray-500">
-            {amount}{party ? ` — ${party}` : ""}
-          </Dialog.Description>
+    <>
+      <button type="button" onClick={() => setOpen(true)} className={triggerClassName}>
+        {children}
+      </button>
+      <LedgerDialogShell
+        open={open}
+        onOpenChange={setOpen}
+        title="Approve Disbursement"
+        description={`${amount}${party ? `, ${party}` : ""}. Fund: ${context.fundText}.${
+          context.memo ? ` Memo: ${context.memo}.` : ""
+        } Recorded by ${context.recordedBy ?? "an unknown user"}.`}
+      >
+        <p className="-mt-2 mb-3 break-words text-sm text-gray-600">
+          <span className="font-semibold text-gray-900">{amount}</span>
+          {party ? ` — ${party}` : ""}
+        </p>
+        <ApprovalDialogContext data={context} />
 
-          <div className="mt-4 space-y-4">
-            <div>
-              <label
-                htmlFor="approve-board-minute"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Board-minute reference{" "}
-                <span className="text-gray-400 font-normal text-xs">
-                  {existingBoardMinute ? "(pre-filled from the original motion)" : "(required)"}
-                </span>
-              </label>
-              <input
-                id="approve-board-minute"
-                type="text"
-                value={boardMinute}
-                onChange={(e) => setBoardMinute(e.target.value)}
-                maxLength={500}
-                placeholder="e.g., Motion passed May 2026 meeting, minute §4"
-                className="block w-full rounded-lg border border-gray-300 py-2 px-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
-                autoFocus
-              />
-              <p className="mt-1 text-xs text-gray-400">
-                {existingBoardMinute
-                  ? "This item already cites a board motion (shown above). Leave it as-is to keep the original citation, or edit only to amend it."
-                  : "Enter the board-meeting minute or motion reference that authorized this disbursement."}
-              </p>
-            </div>
-          </div>
+        <div>
+          <label
+            htmlFor="approve-board-minute"
+            className="mb-1 block text-sm font-medium text-gray-700"
+          >
+            Board-minute reference{" "}
+            <span className="text-xs font-normal text-gray-500">
+              {existingBoardMinute ? "(pre-filled from the original motion)" : "(required)"}
+            </span>
+          </label>
+          <input
+            ref={inputRef}
+            id="approve-board-minute"
+            type="text"
+            value={boardMinute}
+            onChange={(e) => setBoardMinute(e.target.value)}
+            maxLength={500}
+            placeholder="e.g., Motion passed May 2026 meeting, minute §4"
+            className="block min-h-[44px] w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue sm:text-sm"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            {existingBoardMinute
+              ? "This item already cites a board motion (shown above). Leave it as-is to keep the original citation, or edit only to amend it."
+              : "Enter the board-meeting minute or motion reference that authorized this disbursement."}
+          </p>
+        </div>
 
-          <div className="mt-6 flex justify-end gap-3">
-            <Dialog.Close className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-              Cancel
-            </Dialog.Close>
-            <button
-              type="button"
-              onClick={handleApprove}
-              disabled={submitting || (!boardMinute.trim() && !existingBoardMinute)}
-              className="bg-lions-blue text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue-dark transition disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue"
-            >
-              {submitting ? "Approving…" : "Approve"}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        {hint && (
+          <p id="approve-hint" role="status" className="mt-4 text-xs text-gray-600">
+            {hint}
+          </p>
+        )}
+
+        <div className="mt-4 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="min-h-[44px] rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-lions-blue"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={disabled}
+            aria-describedby={hint ? "approve-hint" : undefined}
+            className="min-h-[44px] rounded-lg bg-lions-blue px-4 py-2 text-sm font-semibold text-white transition hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2 disabled:opacity-60"
+          >
+            {submitting ? "Approving…" : "Approve"}
+          </button>
+        </div>
+      </LedgerDialogShell>
+    </>
   );
 }

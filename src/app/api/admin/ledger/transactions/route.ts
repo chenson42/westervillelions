@@ -62,7 +62,7 @@ import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
 import { sendBulkMemberEmail } from "@/lib/email";
-import { getFromEmail, getAppUrl } from "@/lib/email-compose";
+import { getFromEmail, getAppUrl, buildPendingApprovalEmailHtml } from "@/lib/email-compose";
 import { normalizeCheckNumber } from "@/lib/ledger";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
@@ -390,14 +390,14 @@ export async function POST(request: NextRequest) {
         // $500 approval request. DECISION-085 introduced sendBulkMemberEmail()
         // in response — but these two call sites were never migrated onto it, so
         // the fix for the incident was never applied to the code that caused it.
-        const approvalHtml = `<p>A disbursement requires board approval before it can be posted.</p>
-<ul>
-  <li><strong>Amount:</strong> $${amountDollars}</li>
-  <li><strong>Date:</strong> ${txnDate}</li>
-  ${party ? `<li><strong>Payee:</strong> ${party}</li>` : ""}
-  ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
-</ul>
-<p>Please review and approve or reject this disbursement from the <a href="${getAppUrl()}/admin/ledger/approvals">Approvals screen</a>.</p>`;
+        const approvalHtml = buildPendingApprovalEmailHtml({
+          noun: "disbursement",
+          amountDollars,
+          txnDate,
+          party: typeof party === "string" ? party.trim() : null,
+          memo: typeof memo === "string" ? memo.trim() : null,
+          reviewUrl: `${getAppUrl()}/admin/ledger/approvals`,
+        });
         await sendBulkMemberEmail({
           from: fromEmail,
           subject: `Disbursement pending your approval — $${amountDollars}`,
@@ -406,8 +406,12 @@ export async function POST(request: NextRequest) {
           ...(treasurer.ok ? { cc: treasurer.email } : {}),
           recipients: approverEmails.map((email) => ({ to: email, html: approvalHtml })),
         });
-      } catch {
-        // Best-effort — email failure does not block the transaction insert
+      } catch (error) {
+        // Best-effort — email failure does not block the transaction insert,
+        // but it must not be invisible either: a silent catch hid a dead
+        // notification path from QA on 2026-10-10 (work-log
+        // 2026-10-10-approvals-mobile-and-history, Phase 5 O-1).
+        console.error("[Ledger email] Approver notification failed:", error);
       }
     }
 
@@ -703,21 +707,24 @@ async function handleTransfer(
       }
       // sendBulkMemberEmail(), NOT a hand-rolled loop — same reasoning as the
       // disbursement path above (CLAUDE.md invariant; DECISION-085).
-      const transferHtml = `<p>A ${label.toLowerCase()} requires board approval before it can be posted.</p>
-<ul>
-  <li><strong>Amount:</strong> $${amountDollars}</li>
-  <li><strong>Date:</strong> ${txnDate}</li>
-  ${memo ? `<li><strong>Memo:</strong> ${memo}</li>` : ""}
-</ul>
-<p>Please review and approve or reject this ${label.toLowerCase()} from the <a href="${getAppUrl()}/admin/ledger/approvals">Approvals screen</a>.</p>`;
+      const transferHtml = buildPendingApprovalEmailHtml({
+        noun: direction.mode === "sweep" ? "sweep" : "transfer",
+        amountDollars,
+        txnDate,
+        party: null,
+        memo: cleanMemo,
+        reviewUrl: `${getAppUrl()}/admin/ledger/approvals`,
+      });
       await sendBulkMemberEmail({
         from: fromEmail,
         subject: `${label} pending your approval — $${amountDollars}`,
         ...(treasurer.ok ? { cc: treasurer.email } : {}),
         recipients: approverEmails.map((email) => ({ to: email, html: transferHtml })),
       });
-    } catch {
-      // Best-effort — email failure does not block the transaction insert
+    } catch (error) {
+      // Best-effort — email failure does not block the transaction insert,
+      // but see the expense branch above: never swallow it silently.
+      console.error("[Ledger email] Approver notification failed (transfer):", error);
     }
   }
 

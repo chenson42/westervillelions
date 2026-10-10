@@ -86,6 +86,8 @@ was deleted on the strength of this review alone.
 - B-98 — Mirror-direction pointer: a Club entry whose money is in the Foundation's bank account (delete here, enter on the Foundation's register)
 - B-99 — Make lock next steps visible on phones, and add the bank-account help text.
 - B-105 — The reconciliation match route re-verifies the transaction under a lock
+- B-155 — Password reset drops the sign-in callback
+- B-158 — Approve and reject do not check what the approver saw
 
 **Later**
 - B-148 — Pin the aged-fund loader SQL
@@ -94,6 +96,10 @@ was deleted on the strength of this review alone.
 - B-151 — `provisionUserForMember` existing-user branches have no tests
 - B-153 — `user_roles` has no `UNIQUE (user_id, role_id)`
 - B-154 — e2e fixtures date with a UTC date, not the Eastern wall clock (latent rot)
+- B-156 — Approve dialog does not link the receipt
+- B-157 — Approve and reject leave no audit row
+- B-161 — The pending-approval email goes to the person who recorded the entry
+- B-159 — Audited removal of a wrongly added co-signature
 - B-114 — Fiscal-year close.
 - B-123 — Complete read-only year export.
 - B-118 — Donor merge.
@@ -401,6 +407,10 @@ was deleted on the strength of this review alone.
 ---
 
 ## Soon
+
+- [ ] **B-158 — Approve and reject do not check what the approver saw.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 3; priority: should-do, medium — money governance)
+  A pending entry's amount, payee and memo can be edited by a `ledger.record` holder (`PATCH /api/admin/ledger/transactions/[id]`) until it is approved, and the approve/reject request carries only the minute or reason. An approver can approve a different figure than the one on screen when they opened the dialog. Mirror reimbursement Mark Paid (DECISION-106): the dialog sends the `amountCents` and `updatedAt` it displayed, and `decideTransaction()` 409s with a typed `changed` code when either differs, naming "was edited". Small once the shared decide helper from Increment 1 exists.
 
 - [ ] **B-145 — Member RSVP and signup routes have no tests.**
   (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P1; priority: should-do, high; nominate api-developer for the route tests, full-stack-developer for the e2e)
@@ -1119,6 +1129,10 @@ was deleted on the strength of this review alone.
   B-58/B-60, which shipped in v1.75.0 — confirmed still fully unbuilt (`events` table has no
   `kind`/`type`/`category` column in `schema.ts`).
 
+- [ ] **B-155 — Password reset drops the sign-in callback.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 1 side finding N3 and Phase 2 R4; priority: should-do, medium; needs the auth-email review)
+  The chain `/signin` (links to `/forgot-password` with no `callbackUrl`) → `/api/auth/forgot-password` (builds the reset link in the email, no `callbackUrl`) → `/reset-password` (`router.push("/signin")`, `reset-password/page.tsx` ~line 105) → `/signin` never carries `callbackUrl`, so a member who followed an email deep link and had to reset their password lands on `/members` instead of the page they were sent to. `/register` has the same drop after account creation (`router.push("/signin")`). Fix: `/signin` passes `callbackUrl` to `/forgot-password`; the forgot-password API accepts it, validates it with `safeCallbackPath()` (introduced by the approvals pipeline, `src/lib/safe-callback-path.ts`, same-origin path only), and embeds it in the reset link; `/reset-password` forwards it to `/signin`; `/register` forwards it too. Must not widen the reset token's scope, must never log the callback alongside the token, and the queued reset-link body is a credential already redacted by `redactQueuedEmailHtml()` (DECISION-115). Changing an auth email and its token flow is why this is its own item with its own security review.
+
 ---
 
 ## Later
@@ -1146,6 +1160,22 @@ was deleted on the strength of this review alone.
 - [ ] **B-154 — e2e fixtures date with a UTC date, not the Eastern wall clock (latent rot).**
   (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, "Date-anchored fixtures"; priority: low; fold into B-152's helper cleanup)
   `todayIso()` in `e2e/ledger-move-transaction.spec.ts:74` and `e2e/helpers/cross-entity-move-fixtures.ts:51` is `new Date().toISOString().slice(0, 10)`, a UTC date, while the app uses the Eastern wall clock. Between 8 PM and midnight Eastern it returns tomorrow. Harmless this month; on the evening of 2027-06-30 it would date the fixture 2027-07-01, the next fiscal year, and the tier tests (prior-year vs current-year needs `ledger.manage`) would flip. `ledger-reimbursement-correct.spec.ts:77-90` uses the machine-local date, correct only on an Eastern-time machine. Use one Eastern-date helper in e2e fixtures (same source as the app's `nowEastern()`).
+
+- [ ] **B-156 — Approve dialog does not link the receipt.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 1 N12 / Phase 3 ruling 7; priority: low-medium)
+  Increment 1 of the approvals pipeline moves both dialogs onto `LedgerDialogShell` and shows memo, fund (with Transfer/Sweep from → to) and who recorded the entry inside them, because on a phone the dialog covers the card that carries that context. What remains is the receipt: an approver of a large disbursement cannot open the receipt from the dialog. Link it when the pending row has `receiptStorageKey`, through the existing receipt-proxy download route (never a raw storage URL), and say "No receipt attached" or the waiver reason otherwise.
+
+- [ ] **B-157 — Approve and reject leave no audit row.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 2; priority: low)
+  The decision columns on `ledger_transactions` hold only the latest state. A lost race (now a 409), a later Delete of an approved row, or a corrected board minute leaves no record that a decision happened or who made it. Consider a decision row in `ledger_audit_log` (new action types, an id/pair snapshot, no free text beyond the existing minute and reason) once the compliance reader can show them; B-132 tracks that the log has no general reader, so fold this into B-115. Deliberately not in the approvals pipeline (`recordLedgerAudit()` is a corrections vocabulary, DECISION-116 item 2).
+
+- [ ] **B-161 — The pending-approval email goes to the person who recorded the entry.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 6 of Increment 1; priority: low)
+  `getEmailsForFeature(LEDGER_APPROVE)` has no recorder exclusion, so a recorder who also holds `ledger.approve` (an admin, or the treasurer through Board membership) is told something is "pending your approval" that they are not allowed to decide — the decide helper refuses it with 403. Exclude the recorder from the recipient list (keep the treasurer CC rule, DECISION-086, unchanged), or word the email for that case.
+
+- [ ] **B-159 — Audited removal of a wrongly added co-signature.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 2 addendum and DECISION-117; priority: low; build only on demand)
+  Co-signatures (`ledger_txn_cosigns`, Increment 2b of the approvals pipeline) are append-only with no in-app removal, by design: a record that can be quietly removed is not a record. If a mistaken or unauthorized one ever needs to come off, add a `ledger.manage`-gated removal that requires a reason and writes a `ledger_audit_log` row (a new action in the corrections vocabulary, parsed by the compliance reader, B-132/B-115), never hand SQL (Workflow Rule 10). A co-sign changes no figure, so this is cosmetic unless someone's name is on an entry they did not approve. Do not build a soft-withdraw marker on the table itself; the removal is a hard delete plus the audit row.
 
 - [ ] **B-141 — Own-request paid-reimbursement rows on the register still show Correct / Add bank account.**
   (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; DECISION-114)

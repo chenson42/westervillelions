@@ -1,6 +1,6 @@
 {
   "name": "westerville-lions",
-  "version": "1.88.0",
+  "version": "1.89.0",
   "private": true,
   "engines": {
     "node": ">=20.9.0"
@@ -55,7 +55,8 @@
   },
   "pnpm": {
     "overrides": {
-      "sharp@<0.35.4": ">=0.35.4",
+      "sharp@<0.35.5": ">=0.35.5",
+      "source-map-js@<1.2.2": ">=1.2.2",
       "minimatch": "^10",
       "@eslint/eslintrc>minimatch": "^3.1.2",
       "postcss": ">=8.5.10",

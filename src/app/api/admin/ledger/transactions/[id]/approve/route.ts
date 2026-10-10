@@ -5,9 +5,12 @@
  * approvedAt, and boardMinute.
  *
  * Pair-aware (DECISION-058): when the target row is a Transfer/Sweep leg
- * (transferGroupId set), the partner leg is fetched, both rows must be
- * pending, and both are approved atomically with identical
- * approvedByUserId/approvedAt/boardMinute.
+ * (transferGroupId set), both legs are locked, both must be pending, and both
+ * are approved atomically with identical approvedByUserId/approvedAt/boardMinute.
+ *
+ * Race-safe: the row and its partner are locked FOR UPDATE and the write is
+ * pinned on status='pending' (src/lib/ledger-approval-decision.ts), so two
+ * approvers acting at once cannot both win.
  *
  * Gate: LEDGER_APPROVE
  *
@@ -18,28 +21,27 @@
  *     // citation is preserved when the approver leaves this blank, rather
  *     // than being silently overwritten (DECISION-058 bug fix). Ordinary
  *     // expenses never have a pre-set boardMinute, so this field remains
- *     // effectively required for them, unchanged from before.
+ *     // effectively required for them.
  * }
  *
  * Responses:
  *   200 { id }            — approved (both legs, if a pair)
- *   400                   — missing boardMinute (and none already set)
+ *   400                   — missing boardMinute (and none already set), or
+ *                           malformed JSON
  *   401                   — not authenticated
  *   403                   — forbidden (missing feature) or self-approval attempt
- *   404                   — transaction not found
- *   409                   — transaction (or its paired leg) is no longer pending
+ *                           (the actor recorded either leg)
+ *   404 { error, code: "not_found" } — transaction not found
+ *   409 ApprovalConflictBody — transaction (or its paired leg) is no longer
+ *       pending, or another approver won the race. Names the decider (display
+ *       name, or null; never an email). Type: src/lib/ledger-approval.ts.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
-import { ledgerTransactions } from "@/lib/db/schema";
-import type { LedgerTransaction } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
-
-const BOARD_MINUTE_MAX_LEN = 500;
+import { decideTransaction } from "@/lib/ledger-approval-decision";
 
 export async function POST(
   request: NextRequest,
@@ -56,97 +58,18 @@ export async function POST(
 
     const { id } = await params;
 
-    // Fetch the transaction
-    const rows = await db
-      .select()
-      .from(ledgerTransactions)
-      .where(eq(ledgerTransactions.id, id))
-      .limit(1);
-    const txn = rows[0];
-    if (!txn) {
-      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
-    }
+    // A malformed body is the caller's fault: 400, not a 500.
+    const body = await request.json().catch(() => null);
 
-    // Pair-aware (DECISION-058): fetch the partner leg of a Transfer/Sweep pair.
-    let partner: LedgerTransaction | undefined;
-    if (txn.transferGroupId) {
-      const partnerRows = await db
-        .select()
-        .from(ledgerTransactions)
-        .where(eq(ledgerTransactions.transferGroupId, txn.transferGroupId));
-      partner = partnerRows.find((r) => r.id !== txn.id);
-    }
-
-    // 409 if either leg is no longer pending
-    if (txn.status !== "pending") {
-      return NextResponse.json(
-        { error: "Transaction is no longer pending" },
-        { status: 409 },
-      );
-    }
-    if (partner && partner.status !== "pending") {
-      return NextResponse.json(
-        { error: "The paired transaction is no longer pending" },
-        { status: 409 },
-      );
-    }
-
-    // Self-approval block: the person who recorded cannot approve (identical
-    // recordedByUserId on both legs of a pair — one call created both).
-    if (session.user.id === txn.recordedByUserId) {
-      return NextResponse.json(
-        { error: "You cannot approve a transaction you recorded" },
-        { status: 403 },
-      );
-    }
-
-    // Validate body. Required ONLY when the row doesn't already have a
-    // boardMinute (bug fix, DECISION-058) — a strict generalization of the
-    // prior unconditional requirement: ordinary expenses (which never have a
-    // pre-set boardMinute) behave exactly as before; a Sweep that already
-    // cited one at creation lets the approver leave this blank to keep it,
-    // or override it by typing a new one.
-    const body = await request.json();
-    const providedRaw = typeof body?.boardMinute === "string" ? body.boardMinute.trim() : "";
-    const boardMinute = providedRaw ? providedRaw.slice(0, BOARD_MINUTE_MAX_LEN) : txn.boardMinute;
-    if (!boardMinute) {
-      return NextResponse.json(
-        { error: "boardMinute is required" },
-        { status: 400 },
-      );
-    }
-
-    const approvedAt = new Date();
-    const updatedAt = approvedAt;
-
-    // Approve — both legs atomically when part of a pair
-    await db.transaction(async (tx) => {
-      await tx
-        .update(ledgerTransactions)
-        .set({
-          status: "posted",
-          approvedByUserId: session.user.id,
-          approvedAt,
-          boardMinute,
-          updatedAt,
-        })
-        .where(eq(ledgerTransactions.id, id));
-
-      if (partner) {
-        await tx
-          .update(ledgerTransactions)
-          .set({
-            status: "posted",
-            approvedByUserId: session.user.id,
-            approvedAt,
-            boardMinute,
-            updatedAt,
-          })
-          .where(eq(ledgerTransactions.id, partner.id));
-      }
+    const result = await decideTransaction({
+      id,
+      actorUserId: session.user.id,
+      input: { kind: "approve", boardMinute: body?.boardMinute },
     });
-
-    return NextResponse.json({ id });
+    if (!result.ok) {
+      return NextResponse.json(result.body, { status: result.status });
+    }
+    return NextResponse.json({ id: result.id });
   } catch (error) {
     console.error("Error approving transaction:", error);
     return NextResponse.json({ error: "Failed to approve transaction" }, { status: 500 });

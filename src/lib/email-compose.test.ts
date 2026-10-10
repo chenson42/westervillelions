@@ -13,6 +13,7 @@ import {
   escapeHtml,
   buildPasswordResetEmailHtml,
   buildWelcomeSetPasswordEmailHtml,
+  buildPendingApprovalEmailHtml,
 } from "@/lib/email-compose";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -114,5 +115,52 @@ describe("credential-bearing email body builders", () => {
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("https://example.com/forgot-password");
+  });
+});
+
+describe("buildPendingApprovalEmailHtml", () => {
+  const base = {
+    noun: "disbursement" as const,
+    amountDollars: "2275.00",
+    txnDate: "2026-10-09",
+    reviewUrl: "https://example.com/admin/ledger/approvals",
+  };
+
+  it("escapes party and memo", () => {
+    const html = buildPendingApprovalEmailHtml({
+      ...base,
+      party: "<img src=x onerror=1>",
+      memo: "<script>alert(1)</script> & more",
+    });
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;img src=x onerror=1&gt;");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more");
+  });
+
+  it("omits the Payee and Memo lines when absent", () => {
+    const html = buildPendingApprovalEmailHtml({ ...base, party: null, memo: undefined });
+    expect(html).not.toContain("Payee");
+    expect(html).not.toContain("Memo");
+    expect(html).toContain("<strong>Amount:</strong> $2275.00");
+    expect(html).toContain("<strong>Date:</strong> 2026-10-09");
+  });
+
+  it("uses the given reviewUrl verbatim as the link href (no escaping of &)", () => {
+    const url = "https://example.com/admin/ledger/approvals?a=1&b=2";
+    const html = buildPendingApprovalEmailHtml({ ...base, reviewUrl: url });
+    expect(html).toContain(`<a href="${url}">Approvals screen</a>`);
+  });
+
+  it("reads 'A sweep requires board approval' for noun sweep, and the noun in the call to action", () => {
+    const html = buildPendingApprovalEmailHtml({ ...base, noun: "sweep" });
+    expect(html).toContain("<p>A sweep requires board approval before it can be posted.</p>");
+    expect(html).toContain("approve or reject this sweep from the");
+  });
+
+  it("does not escape amountDollars or txnDate", () => {
+    const html = buildPendingApprovalEmailHtml({ ...base, amountDollars: "1&2", txnDate: "<d>" });
+    expect(html).toContain("$1&2");
+    expect(html).toContain("<d>");
   });
 });

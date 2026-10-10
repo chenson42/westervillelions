@@ -40,7 +40,8 @@ vi.mock("@/lib/ledger-queries", () => ({
   getSettings: vi.fn(),
   getEmailsForFeature: vi.fn(),
 }));
-vi.mock("@/lib/email", () => ({ sendEmail: vi.fn() }));
+vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(), sendBulkMemberEmail: vi.fn() }));
+vi.mock("@/lib/board-positions", () => ({ resolveTreasurer: vi.fn() }));
 
 const { mockDbState } = vi.hoisted(() => ({
   mockDbState: {
@@ -89,7 +90,9 @@ vi.mock("@/lib/db", () => ({
 import { POST } from "./route";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
-import { getSettings } from "@/lib/ledger-queries";
+import { getSettings, getEmailsForFeature } from "@/lib/ledger-queries";
+import { sendBulkMemberEmail } from "@/lib/email";
+import { resolveTreasurer } from "@/lib/board-positions";
 import { db } from "@/lib/db";
 
 function makeRequest(body: unknown): NextRequest {
@@ -164,6 +167,10 @@ beforeEach(() => {
     disbApprovalThresholdCents: DISB_THRESHOLD_CENTS,
   } as never);
   vi.mocked(db.insert).mockClear();
+  vi.mocked(getEmailsForFeature).mockResolvedValue(["approver@example.com"]);
+  vi.mocked(resolveTreasurer).mockResolvedValue({ ok: false, reason: "test" } as never);
+  vi.mocked(sendBulkMemberEmail).mockReset();
+  vi.mocked(sendBulkMemberEmail).mockResolvedValue(undefined as never);
   mockDbState.selectQueue = [];
   mockDbState.insertReturning = [{ id: "txn-1" }];
   mockDbState.lastTransactionInsertValues = null;
@@ -565,5 +572,56 @@ describe("POST /api/admin/ledger/transactions — checkNumber normalizer (T1 pin
     const res = await POST(makeRequest({ ...VALID_NORMAL_BODY, checkNumber: 8249 }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("checkNumber must be a string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Pending-approval notification (E-1): typed text is escaped
+//    (docs/work-log/2026-10-10-approvals-mobile-and-history.md, Increment 1)
+// ---------------------------------------------------------------------------
+
+describe("POST /api/admin/ledger/transactions — pending approval email escaping", () => {
+  const XSS_PAYEE = "<img src=x onerror=1>";
+  const XSS_MEMO = "<script>alert(1)</script>";
+
+  function sentHtml(): string {
+    expect(sendBulkMemberEmail).toHaveBeenCalledTimes(1);
+    const arg = vi.mocked(sendBulkMemberEmail).mock.calls[0][0] as {
+      recipients: { to: string; html: string }[];
+    };
+    return arg.recipients[0].html;
+  }
+
+  it("over-threshold disbursement: payee and memo are HTML-escaped", async () => {
+    mockDbState.selectQueue.push(
+      [{ id: "fund-1", kind: "administrative", entityId: "entity-1" }],
+      [{ id: VALID_NORMAL_BODY.bankAccountId, entityId: "entity-1", isActive: true }],
+    );
+    const res = await POST(
+      makeRequest({ ...VALID_NORMAL_BODY, amountCents: 50_000, party: XSS_PAYEE, memo: XSS_MEMO }),
+    );
+    expect(res.status).toBe(201);
+    const html = sentHtml();
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;img src=x onerror=1&gt;");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("<strong>Payee:</strong>");
+    expect(html).toContain("/admin/ledger/approvals");
+  });
+
+  it("over-threshold Sweep: memo is escaped and there is no Payee line", async () => {
+    mockDbState.selectQueue.push(
+      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
+      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
+      [DEFAULT_PUBLIC_DONATIONS_CAT],
+    );
+    const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, amountCents: 50_000, memo: XSS_MEMO }));
+    expect(res.status).toBe(201);
+    const html = sentHtml();
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).not.toContain("Payee");
+    expect(html).toContain("A sweep requires board approval");
   });
 });
