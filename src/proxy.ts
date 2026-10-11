@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { FEATURES, getAdminProtectionRules } from "@/lib/permissions";
+import { safeCallbackPath } from "@/lib/safe-callback-path";
 
 /**
  * Feature-based route protection middleware
@@ -34,7 +35,13 @@ export async function proxy(request: NextRequest) {
   // Check authentication first
   if (!session?.user) {
     const signInUrl = new URL("/signin", request.url);
-    signInUrl.searchParams.set("callbackUrl", request.nextUrl.pathname);
+    // pathname + search, so a deep link such as ?txn=<id> survives the round trip.
+    signInUrl.searchParams.set(
+      "callbackUrl",
+      safeCallbackPath(request.nextUrl.pathname + request.nextUrl.search, {
+        origin: request.nextUrl.origin,
+      }),
+    );
     return NextResponse.redirect(signInUrl);
   }
 

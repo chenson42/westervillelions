@@ -8,7 +8,12 @@ import type { ApprovalKind } from "@/lib/ledger-approval";
 import LedgerDialogShell from "./ledger-dialog-shell";
 import type { ApprovalDialogContextData } from "./approval-dialog-context";
 import ApprovalDialogContext from "./approval-dialog-context";
-import { approvalFailureAction } from "./approval-dialog-logic";
+import {
+  approvalDialogTitle,
+  approvalFailureAction,
+  approvalSuccessMessage,
+  rejectPlaceholder,
+} from "./approval-dialog-logic";
 
 interface RejectTransactionDialogProps {
   transactionId: string;
@@ -85,7 +90,7 @@ export function RejectTransactionDialog({
         return;
       }
 
-      toast.success("Disbursement rejected.");
+      toast.success(approvalSuccessMessage("reject", noun));
       setOpen(false);
       setReason("");
       router.refresh();
@@ -105,7 +110,7 @@ export function RejectTransactionDialog({
       <LedgerDialogShell
         open={open}
         onOpenChange={setOpen}
-        title="Reject Disbursement"
+        title={approvalDialogTitle("reject", noun)}
         description={`${amount}${party ? `, ${party}` : ""}. Fund: ${context.fundText}.${
           context.memo ? ` Memo: ${context.memo}.` : ""
         } Recorded by ${context.recordedBy ?? "an unknown user"}. This action cannot be undone.`}
@@ -127,7 +132,7 @@ export function RejectTransactionDialog({
             onChange={(e) => setReason(e.target.value)}
             rows={3}
             maxLength={1000}
-            placeholder="Explain why this disbursement is being rejected…"
+            placeholder={rejectPlaceholder(noun)}
             className="block w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue sm:text-sm"
           />
         </div>

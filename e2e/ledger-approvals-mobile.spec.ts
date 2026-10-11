@@ -326,7 +326,7 @@ test.describe("Approvals page, Increment 1", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Approve", exact: true }).click();
 
     // Assert
-    await expect(page.locator("[data-sonner-toast]").filter({ hasText: /already approved this disbursement\. Only one approval is needed\./ })).toBeVisible();
+    await expect(page.locator("[data-sonner-toast]").filter({ hasText: /already approved this disbursement\. You can add your approval too\./ })).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.locator(`[data-row-id="${ids.plainId}"]`)).toHaveCount(0);
     const [row] = await db.select().from(ledgerTransactions).where(eq(ledgerTransactions.id, ids.plainId));

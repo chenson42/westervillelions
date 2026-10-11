@@ -36,6 +36,12 @@ describe("redactQueuedEmailHtml", () => {
     expect(out).toContain('href="https://example.com/forgot-password"');
   });
 
+  it("leaves a ledger approvals ?txn=<uuid> deep link readable (a transaction id is not a credential)", () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const html = `<a href="https://x/admin/ledger/approvals?txn=${id}">Approvals screen</a>`;
+    expect(redactQueuedEmailHtml(html)).toContain(`?txn=${id}`);
+  });
+
   it("works on a token produced by the real generator", () => {
     const token = generateResetToken();
     const out = redactQueuedEmailHtml(buildPasswordResetEmailHtml(`https://example.com/reset-password?token=${token}`));

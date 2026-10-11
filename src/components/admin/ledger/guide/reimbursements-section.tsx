@@ -58,6 +58,12 @@ export default function ReimbursementsSection() {
         excluded from posted fund balances until a board approver acts on them.
       </p>
       <p className="mt-3 text-sm text-gray-700">
+        The Approvals page also has a <span className="font-semibold">Recently decided</span> tab
+        listing the last 25 decisions, with who recorded and who decided each. After an entry
+        posts, other board members can add their approval from there or from the email link;
+        that is a record only and does not change the books.
+      </p>
+      <p className="mt-3 text-sm text-gray-700">
         Requests the board approved under the old process still appear under{" "}
         <span className="font-semibold">Approved (legacy)</span> while any remain, and can be paid or
         rejected like any other.

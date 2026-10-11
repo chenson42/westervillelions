@@ -971,6 +971,10 @@ export const ledgerTransactions = pgTable(
     approvedAt: timestamp("approved_at"),
     boardMinute: text("board_minute"),        // board-minute reference set on approval (inc2)
     rejectionReason: text("rejection_reason"), // reason set on rejection (inc2)
+    // Who rejected a pending disbursement and when (DECISION-116, inc 2a). Nullable; no back-fill.
+    rejectedByUserId: uuid("rejected_by_user_id")
+      .references(() => users.id, { onDelete: "set null" }),
+    rejectedAt: timestamp("rejected_at"),
     reconciled: boolean("reconciled").notNull().default(false),
     reconciledAt: timestamp("reconciled_at"),
     recordedByUserId: uuid("recorded_by_user_id")
@@ -1019,6 +1023,25 @@ export const ledgerTransactions = pgTable(
 
 export type LedgerTransaction = typeof ledgerTransactions.$inferSelect;
 export type NewLedgerTransaction = typeof ledgerTransactions.$inferInsert;
+
+// Informational, append-only co-approvals on a board-approved disbursement (DECISION-117).
+// Keyed on the EXPENSE leg. The posting approval stays on ledgerTransactions.approved_*;
+// the first approval posts, later ones are co-signs. user_id is SET NULL (never cascade)
+// so a deleted account leaves the signature count intact. NULLs are distinct in the unique key.
+export const ledgerTxnCosigns = pgTable(
+  "ledger_txn_cosigns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    txnId: uuid("txn_id")
+      .notNull()
+      .references(() => ledgerTransactions.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    cosignedAt: timestamp("cosigned_at").notNull().defaultNow(), // naive; written from server new Date()
+  },
+  (t) => [unique("ledger_txn_cosigns_txn_user_key").on(t.txnId, t.userId)],
+);
+
+export type LedgerTxnCosign = typeof ledgerTxnCosigns.$inferSelect;
 
 // Acknowledgments — IRS Pub 1771 substantiation records for Foundation donations.
 // One acknowledgment per donation transaction (unique on donationTxnId — DECISION-026).

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { toast } from "sonner";
+import { safeCallbackPath } from "@/lib/safe-callback-path";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type { TurnstileInstance } from "@marsidev/react-turnstile";
 
@@ -24,7 +25,9 @@ export default function RegisterPage() {
 function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/members";
+  // Computed at event time, never at render, so SSR and hydration cannot differ.
+  const getCallback = () =>
+    safeCallbackPath(searchParams.get("callbackUrl"), { origin: window.location.origin });
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -111,7 +114,7 @@ function RegisterForm() {
         <div className="bg-white p-8 rounded-lg shadow-md space-y-6">
           <button
             type="button"
-            onClick={() => signIn("google", { callbackUrl })}
+            onClick={() => signIn("google", { callbackUrl: getCallback() })}
             className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-50 transition"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">

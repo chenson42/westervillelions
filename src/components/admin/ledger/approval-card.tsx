@@ -1,5 +1,6 @@
 import ApprovalActions, { type ApprovalActionsProps } from "./approval-actions";
 import ApprovalFundLabel from "./approval-fund-label";
+import { HIGHLIGHT_CLASSES } from "./approval-highlight";
 
 /**
  * One pending item below the `xl` breakpoint (the admin sidebar offset, not
@@ -8,12 +9,17 @@ import ApprovalFundLabel from "./approval-fund-label";
  */
 export default function ApprovalCard({
   dateText,
+  entityName,
+  highlight = false,
   ...actions
-}: ApprovalActionsProps & { dateText: string }) {
+}: ApprovalActionsProps & { dateText: string; entityName?: string | null; highlight?: boolean }) {
   return (
     <li
       data-row-id={actions.transactionId}
-      className="space-y-3 overflow-hidden rounded-2xl bg-white p-4 shadow-sm"
+      tabIndex={highlight ? -1 : undefined}
+      className={`space-y-3 overflow-hidden rounded-2xl p-4 shadow-sm ${
+        highlight ? HIGHLIGHT_CLASSES : "bg-white"
+      }`}
     >
       <div className="flex items-start justify-between gap-3">
         <p className="text-2xl font-bold tabular-nums text-gray-900">{actions.amount}</p>
@@ -28,7 +34,7 @@ export default function ApprovalCard({
         </div>
       )}
       <div className="text-sm">
-        <ApprovalFundLabel fund={actions.fund} />
+        <ApprovalFundLabel fund={actions.fund} entityName={entityName} />
       </div>
       <p className="text-sm text-gray-500">
         Recorded by{" "}

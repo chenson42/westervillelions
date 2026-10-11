@@ -49,7 +49,7 @@
  * can no longer influence the fund lookup by supplying an entityId).
  * Direction is decided by checkTransferDirection() (src/lib/ledger-transfer-policy.ts) —
  * deny-by-default; blocked directions 403 with a specific policy reason.
- * Response 201: { transferGroupId: string; derivedFiscalYear: number; status: 'posted' | 'pending' }
+ * Response 201: { id: string (the expense-leg id); transferGroupId: string; derivedFiscalYear: number; status: 'posted' | 'pending' }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -62,7 +62,7 @@ import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
 import { sendBulkMemberEmail } from "@/lib/email";
-import { getFromEmail, getAppUrl, buildPendingApprovalEmailHtml } from "@/lib/email-compose";
+import { getFromEmail, buildApprovalReviewUrl, buildPendingApprovalEmailHtml } from "@/lib/email-compose";
 import { normalizeCheckNumber } from "@/lib/ledger";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
@@ -396,7 +396,7 @@ export async function POST(request: NextRequest) {
           txnDate,
           party: typeof party === "string" ? party.trim() : null,
           memo: typeof memo === "string" ? memo.trim() : null,
-          reviewUrl: `${getAppUrl()}/admin/ledger/approvals`,
+          reviewUrl: buildApprovalReviewUrl(txn.id),
         });
         await sendBulkMemberEmail({
           from: fromEmail,
@@ -656,8 +656,8 @@ async function handleTransfer(
     (amountCents as number) > settings.disbApprovalThresholdCents ? "pending" : "posted";
 
   // Atomic two-row insert (DECISION-016, extended by DECISION-058)
-  await db.transaction(async (tx) => {
-    await tx.insert(ledgerTransactions).values([
+  const insertedLegs = await db.transaction(async (tx) => {
+    return tx.insert(ledgerTransactions).values([
       {
         // Debit row: source fund loses money (flow='expense')
         entityId: sourceFund.entityId,
@@ -688,8 +688,12 @@ async function handleTransfer(
         status: derivedStatus,
         recordedByUserId: userId,
       },
-    ]);
+    ]).returning({ id: ledgerTransactions.id, flow: ledgerTransactions.flow });
   });
+  // The expense (source) leg's id is the row the Approvals page lists and the
+  // deep link targets. Absent only if the insert returned nothing usable; the
+  // email then falls back to the plain Approvals URL (the link is a courtesy).
+  const expenseLegId = insertedLegs?.find((r) => r.flow === "expense")?.id;
 
   // E-1: Notify LEDGER_APPROVE holders when a Transfer/Sweep pair is pending
   // approval — same mechanism as an ordinary over-threshold expense.
@@ -713,7 +717,7 @@ async function handleTransfer(
         txnDate,
         party: null,
         memo: cleanMemo,
-        reviewUrl: `${getAppUrl()}/admin/ledger/approvals`,
+        reviewUrl: buildApprovalReviewUrl(expenseLegId),
       });
       await sendBulkMemberEmail({
         from: fromEmail,
@@ -729,7 +733,12 @@ async function handleTransfer(
   }
 
   return NextResponse.json(
-    { transferGroupId, derivedFiscalYear, status: derivedStatus },
+    {
+      ...(expenseLegId ? { id: expenseLegId } : {}),
+      transferGroupId,
+      derivedFiscalYear,
+      status: derivedStatus,
+    },
     { status: 201 },
   );
 }

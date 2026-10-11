@@ -23,11 +23,12 @@
  * split guard keys on, and is never written for a rejection.
  */
 
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { ledgerTransactions, users } from "@/lib/db/schema";
 import type { LedgerTransaction } from "@/lib/db/schema";
 import { isUuid } from "@/lib/utils";
+import { lockDecisionPair } from "@/lib/ledger-board-decision";
 import {
   displayDeciderName,
   type ApprovalConflictBody,
@@ -62,7 +63,13 @@ const PARTNER_NOT_PENDING_MESSAGE = "The paired transaction is no longer pending
 
 type DecisionRow = Pick<
   LedgerTransaction,
-  "id" | "status" | "approvedByUserId" | "approvedAt" | "updatedAt"
+  | "id"
+  | "status"
+  | "approvedByUserId"
+  | "approvedAt"
+  | "rejectedByUserId"
+  | "rejectedAt"
+  | "updatedAt"
 >;
 
 function toIso(value: Date | string | null | undefined): string | null {
@@ -75,7 +82,8 @@ function toIso(value: Date | string | null | undefined): string | null {
  * Pure classification of a non-pending row into the 409 body.
  * decision = "approved" iff status 'posted' AND approvedAt set; "rejected" iff
  * status 'rejected'; otherwise null. decidedAt is approvedAt, or for a
- * rejection updatedAt (Increment 2 reads rejected_at first). `deciderName` is
+ * rejection rejectedAt (falling back to updatedAt for a legacy row with no
+ * stamp; decidedByViewer is then false). `deciderName` is
  * the already-looked-up display name; it is passed through
  * displayDeciderName() so an email-shaped name can never leave this function.
  */
@@ -94,7 +102,8 @@ export function conflictFromRow(
     decidedByViewer = row.approvedByUserId !== null && row.approvedByUserId === viewerId;
   } else if (row.status === "rejected") {
     decision = "rejected";
-    decidedAt = toIso(row.updatedAt);
+    decidedAt = toIso(row.rejectedAt ?? row.updatedAt);
+    decidedByViewer = row.rejectedByUserId !== null && row.rejectedByUserId === viewerId;
   }
   return {
     error,
@@ -108,13 +117,21 @@ export function conflictFromRow(
 
 type Reader = Pick<typeof db, "select">;
 
-/** Display name of the approver, only meaningful for an approved row. */
-async function lookupApproverName(reader: Reader, row: DecisionRow): Promise<string | null> {
-  if (row.status !== "posted" || !row.approvedAt || !row.approvedByUserId) return null;
+/**
+ * Display name of whoever decided the row: the approver for a posted row with
+ * approvedAt, the rejector for a rejected row, otherwise (or with a null id)
+ * null and no query. A separate select, never a LEFT JOIN: Postgres rejects
+ * FOR UPDATE on the nullable side of an outer join.
+ */
+export async function lookupDeciderName(reader: Reader, row: DecisionRow): Promise<string | null> {
+  let deciderId: string | null = null;
+  if (row.status === "posted" && row.approvedAt) deciderId = row.approvedByUserId;
+  else if (row.status === "rejected") deciderId = row.rejectedByUserId;
+  if (!deciderId) return null;
   const found = await reader
     .select({ name: users.name })
     .from(users)
-    .where(eq(users.id, row.approvedByUserId))
+    .where(eq(users.id, deciderId))
     .limit(1);
   return found[0]?.name ?? null;
 }
@@ -125,7 +142,7 @@ async function buildConflict(
   viewerId: string,
   error: string,
 ): Promise<ApprovalConflictBody> {
-  return conflictFromRow(row, await lookupApproverName(reader, row), viewerId, error);
+  return conflictFromRow(row, await lookupDeciderName(reader, row), viewerId, error);
 }
 
 const NOT_FOUND = {
@@ -144,23 +161,9 @@ async function run(args: {
   const verb = input.kind === "approve" ? "approve" : "reject";
 
   return db.transaction(async (tx): Promise<DecideResult> => {
-    // 1. One statement locks the target and its pair partner. For a non-pair
-    //    row the subselect is NULL and `transfer_group_id = NULL` matches
-    //    nothing, so the set is just the target.
-    const locked = await tx
-      .select()
-      .from(ledgerTransactions)
-      .where(
-        or(
-          eq(ledgerTransactions.id, id),
-          eq(
-            ledgerTransactions.transferGroupId,
-            sql`(select transfer_group_id from ledger_transactions where id = ${id})`,
-          ),
-        ),
-      )
-      .orderBy(asc(ledgerTransactions.id))
-      .for("update");
+    // 1. One statement locks the target and its pair partner (shared helper;
+    //    the co-sign path takes the same lock in "share" mode).
+    const locked = await lockDecisionPair(tx, id, "update");
 
     const target = locked.find((r) => r.id === id);
     if (!target) return { ...NOT_FOUND };
@@ -227,6 +230,8 @@ async function run(args: {
       stamps = {
         status: "rejected",
         rejectionReason: raw.trim().slice(0, REJECTION_REASON_MAX_LEN),
+        rejectedByUserId: actorUserId,
+        rejectedAt: now,
         updatedAt: now,
       };
     }

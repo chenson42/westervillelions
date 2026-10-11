@@ -125,6 +125,17 @@ export function buildWelcomeSetPasswordEmailHtml(input: {
 }
 
 /**
+ * The Approvals screen link for a pending-approval email. With a transaction
+ * id (the expense leg for a Transfer/Sweep) the link deep-links to that row;
+ * without one it is the plain Approvals URL, so a missing id can never stop the
+ * send. Built only from getAppUrl(), a fixed path and a UUID: not escaped.
+ */
+export function buildApprovalReviewUrl(txnId?: string | null): string {
+  const base = `${getAppUrl()}/admin/ledger/approvals`;
+  return txnId ? `${base}?txn=${txnId}` : base;
+}
+
+/**
  * HTML body of the "pending your approval" notification sent to every
  * `ledger.approve` holder when a disbursement, Transfer or Sweep needs a board
  * decision (POST /api/admin/ledger/transactions, both E-1 blocks). One builder
@@ -154,5 +165,6 @@ export function buildPendingApprovalEmailHtml(input: {
   ${party ? `<li><strong>Payee:</strong> ${escapeHtml(party)}</li>` : ""}
   ${memo ? `<li><strong>Memo:</strong> ${escapeHtml(memo)}</li>` : ""}
 </ul>
-<p>Please review and approve or reject this ${noun} from the <a href="${reviewUrl}">Approvals screen</a>.</p>`;
+<p>Please review and approve or reject this ${noun} from the <a href="${reviewUrl}">Approvals screen</a>.</p>
+<p>Only one board approval is needed to post this. If a colleague has already approved it, the link will show who, and you can add your approval too.</p>`;
 }

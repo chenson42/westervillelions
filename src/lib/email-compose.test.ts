@@ -14,6 +14,7 @@ import {
   buildPasswordResetEmailHtml,
   buildWelcomeSetPasswordEmailHtml,
   buildPendingApprovalEmailHtml,
+  buildApprovalReviewUrl,
 } from "@/lib/email-compose";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -162,5 +163,34 @@ describe("buildPendingApprovalEmailHtml", () => {
     const html = buildPendingApprovalEmailHtml({ ...base, amountDollars: "1&2", txnDate: "<d>" });
     expect(html).toContain("$1&2");
     expect(html).toContain("<d>");
+  });
+});
+
+describe("buildPendingApprovalEmailHtml (one-approval sentence)", () => {
+  const input = {
+    noun: "transfer" as const,
+    amountDollars: "10.00",
+    txnDate: "2026-10-09",
+    reviewUrl: "https://example.com/admin/ledger/approvals?txn=abc",
+  };
+  it("appends the 2b sentence unconditionally and not the 2a sentence", () => {
+    for (const noun of ["disbursement", "transfer", "sweep"] as const) {
+      const html = buildPendingApprovalEmailHtml({ ...input, noun });
+      expect(html).toContain(
+        "Only one board approval is needed to post this. If a colleague has already approved it, the link will show who, and you can add your approval too.",
+      );
+      expect(html).not.toContain("If a colleague has already acted");
+    }
+  });
+});
+
+describe("buildApprovalReviewUrl", () => {
+  it("deep-links with ?txn= when given an id, and falls back to the plain URL", () => {
+    process.env.NEXTAUTH_URL = "https://example.com";
+    expect(buildApprovalReviewUrl("00000000-0000-4000-8000-000000000001")).toBe(
+      "https://example.com/admin/ledger/approvals?txn=00000000-0000-4000-8000-000000000001",
+    );
+    expect(buildApprovalReviewUrl(undefined)).toBe("https://example.com/admin/ledger/approvals");
+    expect(buildApprovalReviewUrl(null)).toBe("https://example.com/admin/ledger/approvals");
   });
 });

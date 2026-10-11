@@ -2320,6 +2320,8 @@ describe("getPendingApprovals — Transfer/Sweep pair dedup (DECISION-058)", () 
       approvedAt: null,
       boardMinute: null,
       rejectionReason: null,
+      rejectedByUserId: null,
+      rejectedAt: null,
       reconciled: false,
       reconciledAt: null,
       reconciledSessionId: null,
@@ -2361,6 +2363,40 @@ describe("getPendingApprovals — Transfer/Sweep pair dedup (DECISION-058)", () 
     expect(result[0].partnerFundId).toBe("fund-charitable");
     expect(result[0].partnerFundName).toBe("Charitable Fund");
     expect(result[0].partnerEntityId).toBe("entity-foundation");
+  });
+
+  it("carries entity names, resolving a Sweep's partner entity", async () => {
+    const sourceLeg = baseRow({
+      id: "txn-source", entityId: "entity-club", flow: "expense", transferGroupId: "g", fundName: "Activity Fund",
+    });
+    const destLeg = baseRow({
+      id: "txn-dest", entityId: "entity-foundation", flow: "income", transferGroupId: "g", fundName: "Charitable Fund",
+    });
+    const ordinary = baseRow({ id: "txn-ordinary", entityId: "entity-foundation" });
+    mockDbState.queue.push([sourceLeg, destLeg, ordinary]);
+    mockDbState.queue.push([
+      { id: "entity-club", name: "Westerville Lions Club", shortName: "Club" },
+      { id: "entity-foundation", name: "Westerville Lions Foundation", shortName: null },
+    ]);
+
+    const result = await getPendingApprovals();
+    const sweep = result.find((r) => r.id === "txn-source")!;
+    expect(sweep.entityName).toBe("Club");
+    expect(sweep.partnerEntityName).toBe("Westerville Lions Foundation"); // no short name: full name
+    const plain = result.find((r) => r.id === "txn-ordinary")!;
+    expect(plain.entityName).toBe("Westerville Lions Foundation");
+    expect(plain.partnerEntityName).toBeNull();
+  });
+
+  it("selects the reject attribution columns", async () => {
+    mockDbState.queue.push([baseRow({})]);
+    const result = await getPendingApprovals();
+    expect(result[0]).toHaveProperty("rejectedByUserId", null);
+    expect(result[0]).toHaveProperty("rejectedAt", null);
+    const src = readFileSync(path.join(__dirname, "ledger-queries.ts"), "utf8");
+    const fn = src.slice(src.indexOf("export async function getPendingApprovals"));
+    expect(fn).toContain("rejectedByUserId: ledgerTransactions.rejectedByUserId");
+    expect(fn).toContain("rejectedAt: ledgerTransactions.rejectedAt");
   });
 
   it("an ordinary pending expense (no transferGroupId) passes through with null partner fields", async () => {

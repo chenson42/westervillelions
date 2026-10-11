@@ -71,6 +71,8 @@ describe("DonorDetailClient — Acknowledge button gate (any amount)", () => {
             approvedAt: null,
             boardMinute: null,
             rejectionReason: null,
+            rejectedByUserId: null,
+            rejectedAt: null,
             reconciled: false,
             reconciledAt: null,
             recordedByUserId: "user-1",

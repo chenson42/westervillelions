@@ -3623,6 +3623,10 @@ export type PendingApprovalRow = LedgerTransaction & {
   partnerFundId: string | null;
   partnerFundName: string | null;
   partnerEntityId: string | null;
+  /** Short name of the row's own entity (book), e.g. "Club". null if the entity row is gone. */
+  entityName: string | null;
+  /** Name of the partner leg's entity for a Transfer/Sweep source leg; null otherwise. */
+  partnerEntityName: string | null;
 };
 
 /**
@@ -3676,6 +3680,9 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
       approvedAt: ledgerTransactions.approvedAt,
       boardMinute: ledgerTransactions.boardMinute,
       rejectionReason: ledgerTransactions.rejectionReason,
+      // Reject attribution (migration 0111, DECISION-116)
+      rejectedByUserId: ledgerTransactions.rejectedByUserId,
+      rejectedAt: ledgerTransactions.rejectedAt,
       reconciled: ledgerTransactions.reconciled,
       reconciledAt: ledgerTransactions.reconciledAt,
       // Bank Reconciliation inc2 (DECISION-036)
@@ -3697,6 +3704,13 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
     .leftJoin(users, eq(ledgerTransactions.recordedByUserId, users.id))
     .where(and(...conditions))
     .orderBy(asc(ledgerTransactions.txnDate), asc(ledgerTransactions.createdAt));
+
+  // Entity names (two entities in practice): one small select into a Map
+  // rather than a join per row.
+  const entityRows = await db
+    .select({ id: ledgerEntities.id, name: ledgerEntities.name, shortName: ledgerEntities.shortName })
+    .from(ledgerEntities);
+  const entityNames = new Map(entityRows.map((e) => [e.id, e.shortName ?? e.name] as const));
 
   const enriched = rows.map((r) => ({
     ...r,
@@ -3732,9 +3746,18 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
           partnerFundId: partner?.fundId ?? null,
           partnerFundName: partner?.fundName ?? null,
           partnerEntityId: partner?.entityId ?? null,
+          entityName: entityNames.get(r.entityId) ?? null,
+          partnerEntityName: partner ? (entityNames.get(partner.entityId) ?? null) : null,
         };
       }
-      return { ...r, partnerFundId: null, partnerFundName: null, partnerEntityId: null };
+      return {
+        ...r,
+        partnerFundId: null,
+        partnerFundName: null,
+        partnerEntityId: null,
+        entityName: entityNames.get(r.entityId) ?? null,
+        partnerEntityName: null,
+      };
     });
 }
 

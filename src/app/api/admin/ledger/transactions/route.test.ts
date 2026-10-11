@@ -49,6 +49,8 @@ const { mockDbState } = vi.hoisted(() => ({
     insertReturning: [{ id: "txn-1" }] as { id: string }[],
     /** Captured from the LAST db.transaction(...) call's tx.insert(...).values([...]) — the two-leg array. */
     lastTransactionInsertValues: null as Record<string, unknown>[] | null,
+    /** What the pair insert's .returning() yields; null = one expense and one income row. */
+    txReturning: null as { id: string; flow: string }[] | null,
   },
 }));
 
@@ -77,8 +79,17 @@ vi.mock("@/lib/db", () => ({
       const tx = {
         insert: () => ({
           values: (vals: Record<string, unknown>[] | Record<string, unknown>) => {
-            mockDbState.lastTransactionInsertValues = Array.isArray(vals) ? vals : [vals];
-            return Promise.resolve(undefined);
+            const arr = Array.isArray(vals) ? vals : [vals];
+            mockDbState.lastTransactionInsertValues = arr;
+            const result = Promise.resolve(undefined) as Promise<undefined> & {
+              returning: () => Promise<{ id: string; flow: string }[]>;
+            };
+            result.returning = () =>
+              Promise.resolve(
+                mockDbState.txReturning ??
+                  arr.map((v, i) => ({ id: `txn-leg-${i}`, flow: String(v.flow) })),
+              );
+            return result;
           },
         }),
       };
@@ -174,6 +185,7 @@ beforeEach(() => {
   mockDbState.selectQueue = [];
   mockDbState.insertReturning = [{ id: "txn-1" }];
   mockDbState.lastTransactionInsertValues = null;
+  mockDbState.txReturning = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -623,5 +635,75 @@ describe("POST /api/admin/ledger/transactions — pending approval email escapin
     expect(html).toContain("&lt;script&gt;");
     expect(html).not.toContain("Payee");
     expect(html).toContain("A sweep requires board approval");
+  });
+});
+
+describe("POST /api/admin/ledger/transactions — review link and expense-leg id", () => {
+  function sentHtml(): string {
+    expect(sendBulkMemberEmail).toHaveBeenCalledTimes(1);
+    const arg = vi.mocked(sendBulkMemberEmail).mock.calls[0][0] as {
+      recipients: { to: string; html: string }[];
+    };
+    return arg.recipients[0].html;
+  }
+  const SENTENCE =
+    "Only one board approval is needed to post this. If a colleague has already approved it, the link will show who, and you can add your approval too.";
+  const sweepQueue = () =>
+    mockDbState.selectQueue.push(
+      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
+      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
+      [DEFAULT_PUBLIC_DONATIONS_CAT],
+    );
+
+  it("ordinary over-threshold email links to ?txn=<inserted id> and carries the sentence", async () => {
+    mockDbState.selectQueue.push(
+      [{ id: "fund-1", kind: "administrative", entityId: "entity-1" }],
+      [{ id: VALID_NORMAL_BODY.bankAccountId, entityId: "entity-1", isActive: true }],
+    );
+    const res = await POST(makeRequest({ ...VALID_NORMAL_BODY, amountCents: 50_000 }));
+    expect(res.status).toBe(201);
+    expect(sentHtml()).toMatch(/href="[^"]*\/admin\/ledger\/approvals\?txn=txn-1"/);
+    expect(sentHtml()).toContain(SENTENCE);
+  });
+
+  it("Sweep 201 carries the expense-leg id plus the existing fields; the email links to it", async () => {
+    mockDbState.txReturning = [
+      { id: "leg-income", flow: "income" },
+      { id: "leg-expense", flow: "expense" },
+    ];
+    sweepQueue();
+    const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, amountCents: 50_000 }));
+    const data = await res.json();
+    expect(res.status).toBe(201);
+    expect(data).toMatchObject({ id: "leg-expense", status: "pending" });
+    expect(typeof data.transferGroupId).toBe("string");
+    expect(typeof data.derivedFiscalYear).toBe("number");
+    expect(sentHtml()).toMatch(/\/admin\/ledger\/approvals\?txn=leg-expense"/);
+    expect(sentHtml()).toContain(SENTENCE);
+  });
+
+  it("an under-threshold Transfer still returns the expense-leg id and sends no email", async () => {
+    mockDbState.selectQueue.push(
+      [CLUB_ADMIN_FUND],
+      [CLUB_ADMIN_CHECKING, CLUB_PETTY_CASH],
+    );
+    mockDbState.txReturning = [{ id: "leg-expense", flow: "expense" }, { id: "leg-income", flow: "income" }];
+    const res = await POST(makeRequest(VALID_ACCOUNT_TRANSFER_BODY));
+    const data = await res.json();
+    expect(res.status).toBe(201);
+    expect(data.id).toBe("leg-expense");
+    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+  });
+
+  it("with no expense row returned, the link is the plain Approvals URL and the send still happens", async () => {
+    mockDbState.txReturning = [];
+    sweepQueue();
+    const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, amountCents: 50_000 }));
+    const data = await res.json();
+    expect(res.status).toBe(201);
+    expect(data).not.toHaveProperty("id");
+    expect(data.status).toBe("pending");
+    expect(sentHtml()).toMatch(/href="[^"]*\/admin\/ledger\/approvals"/);
+    expect(sentHtml()).not.toContain("?txn=");
   });
 });

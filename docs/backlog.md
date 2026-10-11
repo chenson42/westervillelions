@@ -88,6 +88,7 @@ was deleted on the strength of this review alone.
 - B-105 — The reconciliation match route re-verifies the transaction under a lock
 - B-155 — Password reset drops the sign-in callback
 - B-158 — Approve and reject do not check what the approver saw
+- B-162 — The Approvals page offers Approve and Reject by an expense-leg-only recorder check
 
 **Later**
 - B-148 — Pin the aged-fund loader SQL
@@ -100,6 +101,9 @@ was deleted on the strength of this review alone.
 - B-157 — Approve and reject leave no audit row
 - B-161 — The pending-approval email goes to the person who recorded the entry
 - B-159 — Audited removal of a wrongly added co-signature
+- B-163 — `e2e/ledger-approvals-mobile.spec.ts` leaves "New portal user" email-queue rows
+- B-164 — Approvals copy pass
+- B-165 — `drizzle-kit push` is interactive because of a `ledger_entities` slug constraint name mismatch
 - B-114 — Fiscal-year close.
 - B-123 — Complete read-only year export.
 - B-118 — Donor merge.
@@ -411,6 +415,10 @@ was deleted on the strength of this review alone.
 - [ ] **B-158 — Approve and reject do not check what the approver saw.**
   (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 3; priority: should-do, medium — money governance)
   A pending entry's amount, payee and memo can be edited by a `ledger.record` holder (`PATCH /api/admin/ledger/transactions/[id]`) until it is approved, and the approve/reject request carries only the minute or reason. An approver can approve a different figure than the one on screen when they opened the dialog. Mirror reimbursement Mark Paid (DECISION-106): the dialog sends the `amountCents` and `updatedAt` it displayed, and `decideTransaction()` 409s with a typed `changed` code when either differs, naming "was edited". Small once the shared decide helper from Increment 1 exists.
+
+- [ ] **B-162 — The Approvals page offers Approve and Reject by an expense-leg-only recorder check.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, qa 2a observation 1 and qa 2b observations 3 and 4; priority: low)
+  `approvals/page.tsx` computes `isSelf` as `txn.recordedByUserId === currentUserId` (card ~line 237, table row ~269) on the expense leg only, while the decide and co-sign routes refuse the actor who recorded **either** leg. If only the income leg of a Transfer or Sweep was recorded by the viewer, the Pending card draws Approve and Reject and the route answers 403; and if a colleague approves first, the lost-race toast then says "You can add your approval too." to a person who can never co-sign. One root cause: select a `viewerRecordedEitherLeg` boolean in `getPendingApprovals()` (the decided mapper and the `?txn=` resolver already derive it from `cosignEligibility()` and the destination self-join) and feed it to `rowActions`; with that, the recorder never sees Approve and the toast branch is unreachable. Unreachable through the app today (both legs are recorded under one user), hence low.
 
 - [ ] **B-145 — Member RSVP and signup routes have no tests.**
   (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P1; priority: should-do, high; nominate api-developer for the route tests, full-stack-developer for the e2e)
@@ -1176,6 +1184,18 @@ was deleted on the strength of this review alone.
 - [ ] **B-159 — Audited removal of a wrongly added co-signature.**
   (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 2 addendum and DECISION-117; priority: low; build only on demand)
   Co-signatures (`ledger_txn_cosigns`, Increment 2b of the approvals pipeline) are append-only with no in-app removal, by design: a record that can be quietly removed is not a record. If a mistaken or unauthorized one ever needs to come off, add a `ledger.manage`-gated removal that requires a reason and writes a `ledger_audit_log` row (a new action in the corrections vocabulary, parsed by the compliance reader, B-132/B-115), never hand SQL (Workflow Rule 10). A co-sign changes no figure, so this is cosmetic unless someone's name is on an entry they did not approve. Do not build a soft-withdraw marker on the table itself; the removal is a hard delete plus the audit row.
+
+- [ ] **B-163 — `e2e/ledger-approvals-mobile.spec.ts` leaves "New portal user needs member record review" `email_queue` rows.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, qa 2a observation 2 and the 2b cleanup note; priority: trivial)
+  Two to four rows per run, all `blocked_non_production`. Delete them in `afterAll`, as `ledger-approvals-history.spec.ts` and `ledger-approvals-cosign.spec.ts` already do.
+
+- [ ] **B-164 — Approvals copy pass.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, 2a note N4, 2b ux deviation 2 and qa 2b observation 5; priority: low; take together if the club asks)
+  Four strings the club may want tuned: "Approved by You" (capital Y mid-sentence on the History label and the co-signer list); the per-name co-sign date having no year (an entry decided in December and co-signed in January reads "Dec ... Jan 3"); the decided-tab description "The most recent board decisions, newest first."; and the "Try again" link. No behaviour change.
+
+- [ ] **B-165 — `drizzle-kit push` is interactive because `ledger_entities` has a unique constraint named `ledger_entities_slug_unique` in `schema.ts` and `ledger_entities_slug_key` in the database.**
+  (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, database-admin 2a and 2b reports; priority: low; owner database-admin)
+  `pnpm build` runs push with `--force`, which answers the prompt, so deploys are unaffected. A plain `pnpm db:push` aborts at the prompt before printing any diff, so it cannot be used to prove that a new migration leaves no drift (it blocked that proof for migrations 0111 and 0112). Make the name agree in one direction (a guarded rename in a migration, or a rename in `schema.ts`) and confirm `drizzle-kit push` reports no changes. Count: 1 constraint.
 
 - [ ] **B-141 — Own-request paid-reimbursement rows on the register still show Correct / Add bank account.**
   (added 2026-10-02 from Phase 6 of `docs/work-log/2026-10-02-reimbursement-reconcilable.md`; DECISION-114)

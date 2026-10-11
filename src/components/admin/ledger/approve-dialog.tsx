@@ -6,7 +6,15 @@ import { useRouter } from "next/navigation";
 import type { ApprovalKind } from "@/lib/ledger-approval";
 import LedgerDialogShell from "./ledger-dialog-shell";
 import ApprovalDialogContext, { type ApprovalDialogContextData } from "./approval-dialog-context";
-import { approvalFailureAction, approveHint } from "./approval-dialog-logic";
+import {
+  approvalDialogTitle,
+  approvalFailureAction,
+  approvalSuccessMessage,
+  approvalEntryHref,
+  approveHint,
+  minuteHelper,
+  minuteRequiredMessage,
+} from "./approval-dialog-logic";
 
 interface ApproveDialogProps {
   transactionId: string;
@@ -71,7 +79,7 @@ export default function ApproveDialog({
   async function handleApprove() {
     const trimmed = boardMinute.trim();
     if (!trimmed && !existingBoardMinute) {
-      toast.error("A board-minute reference is required to approve a disbursement.");
+      toast.error(minuteRequiredMessage(noun));
       return;
     }
     if (trimmed.length > 500) {
@@ -96,11 +104,14 @@ export default function ApproveDialog({
           setOpen(false);
           setBoardMinute(existingBoardMinute ?? "");
         }
-        if (action.refresh) router.refresh();
+        // Lost to a colleague's approval: land on the entry, where the banner
+        // offers Add your approval. Otherwise just refresh the list.
+        if (action.showEntry) router.replace(approvalEntryHref(transactionId));
+        else if (action.refresh) router.refresh();
         return;
       }
 
-      toast.success("Disbursement approved.");
+      toast.success(approvalSuccessMessage("approve", noun));
       setOpen(false);
       setBoardMinute(existingBoardMinute ?? "");
       router.refresh();
@@ -121,7 +132,7 @@ export default function ApproveDialog({
       <LedgerDialogShell
         open={open}
         onOpenChange={setOpen}
-        title="Approve Disbursement"
+        title={approvalDialogTitle("approve", noun)}
         description={`${amount}${party ? `, ${party}` : ""}. Fund: ${context.fundText}.${
           context.memo ? ` Memo: ${context.memo}.` : ""
         } Recorded by ${context.recordedBy ?? "an unknown user"}.`}
@@ -155,7 +166,7 @@ export default function ApproveDialog({
           <p className="mt-1 text-xs text-gray-500">
             {existingBoardMinute
               ? "This item already cites a board motion (shown above). Leave it as-is to keep the original citation, or edit only to amend it."
-              : "Enter the board-meeting minute or motion reference that authorized this disbursement."}
+              : minuteHelper(noun)}
           </p>
         </div>
 

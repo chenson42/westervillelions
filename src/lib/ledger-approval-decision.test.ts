@@ -11,6 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 
@@ -79,6 +81,7 @@ vi.mock("@/lib/db", () => {
 import {
   conflictFromRow,
   decideTransaction,
+  lookupDeciderName,
 } from "./ledger-approval-decision";
 
 const A = "11111111-1111-4111-8111-111111111111";
@@ -97,6 +100,8 @@ function row(over: Record<string, unknown> = {}) {
     boardMinute: null as string | null,
     approvedByUserId: null as string | null,
     approvedAt: null as Date | null,
+    rejectedByUserId: null as string | null,
+    rejectedAt: null as Date | null,
     updatedAt: new Date("2026-10-09T12:00:00Z"),
     ...over,
   };
@@ -257,14 +262,34 @@ describe("decideTransaction — not pending (409)", () => {
     expect(res).toMatchObject({ status: 409, body: { decision: "approved", deciderName: null } });
   });
 
-  it("rejected: decision rejected, name null, decidedAt = updatedAt", async () => {
+  it("rejected with a stamp: names the rejector, decidedAt = rejectedAt", async () => {
+    const rej = new Date("2026-10-09T18:00:00Z");
+    st.lockQueue.push([
+      row({ status: "rejected", rejectedByUserId: RECORDER, rejectedAt: rej, updatedAt: new Date("2026-10-09T18:00:05Z") }),
+    ]);
+    st.limitQueue.push([{ name: "Pat Example" }]);
+    const res = await approve();
+    expect(res).toMatchObject({
+      status: 409,
+      body: { decision: "rejected", deciderName: "Pat Example", decidedAt: rej.toISOString(), decidedByViewer: false },
+    });
+  });
+
+  it("rejected, legacy (no stamp): name null, decidedAt = updatedAt, no name lookup", async () => {
     const upd = new Date("2026-10-09T18:00:00Z");
     st.lockQueue.push([row({ status: "rejected", updatedAt: upd })]);
     const res = await approve();
     expect(res).toMatchObject({
       status: 409,
-      body: { decision: "rejected", deciderName: null, decidedAt: upd.toISOString() },
+      body: { decision: "rejected", deciderName: null, decidedAt: upd.toISOString(), decidedByViewer: false },
     });
+  });
+
+  it("rejected by the actor: decidedByViewer true (a reject double-click)", async () => {
+    st.lockQueue.push([row({ status: "rejected", rejectedByUserId: ACTOR, rejectedAt: new Date() })]);
+    st.limitQueue.push([{ name: "Me" }]);
+    const res = await reject();
+    expect(res).toMatchObject({ status: 409, body: { decision: "rejected", decidedByViewer: true, deciderName: "Me" } });
   });
 
   it("posted with no approvedAt: decision null", async () => {
@@ -364,9 +389,10 @@ describe("decideTransaction — races", () => {
   it("reject then approve: the loser gets the rejected decision and no UPDATE", async () => {
     st.lockQueue.push([row()]);
     expect((await reject()).ok).toBe(true);
-    st.lockQueue.push([row({ status: "rejected", updatedAt: new Date() })]);
+    st.lockQueue.push([row({ status: "rejected", rejectedByUserId: ACTOR, rejectedAt: new Date(), updatedAt: new Date() })]);
+    st.limitQueue.push([{ name: "Rejector Name" }]);
     const loser = await approve(A, "Minute", OTHER);
-    expect(loser).toMatchObject({ ok: false, status: 409, body: { decision: "rejected", deciderName: null } });
+    expect(loser).toMatchObject({ ok: false, status: 409, body: { decision: "rejected", deciderName: "Rejector Name" } });
     expect(st.committed).toHaveLength(1);
     expect(st.committed[0].set.status).toBe("rejected");
     expect(st.committed[0].set).not.toHaveProperty("approvedByUserId");
@@ -395,6 +421,10 @@ describe("decideTransaction — reject", () => {
     expect((st.updates[0].set.rejectionReason as string).length).toBe(1000);
     expect(st.updates[0].set.status).toBe("rejected");
     expect(st.updates[0].set).not.toHaveProperty("approvedAt");
+    expect(st.updates[0].set).not.toHaveProperty("approvedByUserId");
+    expect(st.updates[0].set.rejectedByUserId).toBe(ACTOR);
+    expect(st.updates[0].set.rejectedAt).toBeInstanceOf(Date);
+    expect(st.updates[0].set.rejectedAt).toBe(st.updates[0].set.updatedAt);
     const q = dialect(st.updates[0].where);
     expect(q.params).toEqual(expect.arrayContaining([A, B, "pending"]));
   });
@@ -402,7 +432,14 @@ describe("decideTransaction — reject", () => {
 
 describe("conflictFromRow", () => {
   const viewer = ACTOR;
-  const base = { id: A, approvedByUserId: null, approvedAt: null, updatedAt: new Date("2026-10-09T00:00:00Z") };
+  const base = {
+    id: A,
+    approvedByUserId: null,
+    approvedAt: null,
+    rejectedByUserId: null as string | null,
+    rejectedAt: null as Date | null,
+    updatedAt: new Date("2026-10-09T00:00:00Z"),
+  };
   it("classifies approved, rejected and neither", () => {
     const when = new Date("2026-10-10T10:00:00Z");
     expect(conflictFromRow({ ...base, status: "posted", approvedAt: when, approvedByUserId: OTHER }, "Pat", viewer)).toMatchObject({
@@ -420,9 +457,68 @@ describe("conflictFromRow", () => {
       decidedAt: null,
     });
   });
+  it("rejected with a stamp: decidedAt is rejectedAt and the rejector is the viewer only for the rejector", () => {
+    const rej = new Date("2026-10-10T09:00:00Z");
+    const r = { ...base, status: "rejected", rejectedAt: rej, rejectedByUserId: viewer };
+    expect(conflictFromRow(r, "Me", viewer)).toMatchObject({ decidedAt: rej.toISOString(), decidedByViewer: true });
+    expect(conflictFromRow(r, "Me", OTHER)).toMatchObject({ decidedAt: rej.toISOString(), decidedByViewer: false });
+  });
+  it("rejected with no stamp falls back to updatedAt with a null name", () => {
+    expect(conflictFromRow({ ...base, status: "rejected" }, null, viewer)).toMatchObject({
+      decidedAt: base.updatedAt.toISOString(),
+      deciderName: null,
+      decidedByViewer: false,
+    });
+  });
+  it("an email-shaped rejector name becomes null", () => {
+    expect(
+      conflictFromRow({ ...base, status: "rejected", rejectedAt: new Date(), rejectedByUserId: OTHER }, "a@example.com", viewer).deciderName,
+    ).toBeNull();
+  });
   it("an email-shaped name becomes null", () => {
     expect(
       conflictFromRow({ ...base, status: "posted", approvedAt: new Date(), approvedByUserId: OTHER }, "a@example.com", viewer).deciderName,
     ).toBeNull();
+  });
+});
+
+describe("lookupDeciderName", () => {
+  const lookup = (r: Record<string, unknown>) =>
+    lookupDeciderName(
+      { select: () => dbSelect() } as never,
+      r as never,
+    );
+  let selects = 0;
+  const dbSelect = () => {
+    selects += 1;
+    return { from: () => ({ where: () => ({ limit: () => Promise.resolve(st.limitQueue.shift() ?? []) }) }) };
+  };
+  beforeEach(() => { selects = 0; });
+
+  it("returns the rejector for a rejected row", async () => {
+    st.limitQueue.push([{ name: "Rej" }]);
+    expect(await lookup(row({ status: "rejected", rejectedByUserId: OTHER }))).toBe("Rej");
+    expect(selects).toBe(1);
+  });
+  it("returns the approver for an approved row", async () => {
+    st.limitQueue.push([{ name: "App" }]);
+    expect(await lookup(row({ status: "posted", approvedAt: new Date(), approvedByUserId: OTHER }))).toBe("App");
+  });
+  it("issues no select for a pending row, a null id, or a posted row without approvedAt", async () => {
+    expect(await lookup(row())).toBeNull();
+    expect(await lookup(row({ status: "rejected" }))).toBeNull();
+    expect(await lookup(row({ status: "posted", approvedAt: new Date() }))).toBeNull();
+    expect(await lookup(row({ status: "posted", approvedByUserId: OTHER }))).toBeNull();
+    expect(selects).toBe(0);
+  });
+});
+
+describe("lock helper extraction (2b B2)", () => {
+  it("imports lockDecisionPair and has no inline row lock", () => {
+    const src = readFileSync(join(__dirname, "ledger-approval-decision.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(src).toContain("lockDecisionPair");
+    expect(src).not.toContain('.for("update")');
   });
 });

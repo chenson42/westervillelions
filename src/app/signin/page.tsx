@@ -5,6 +5,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
+import { safeCallbackPath } from "@/lib/safe-callback-path";
 
 // useSearchParams() needs a Suspense boundary above it, or Next's static-
 // shell prerendering pass fails the build (missing-suspense-with-csr-
@@ -25,7 +26,9 @@ function SignInForm() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/members";
+  // Computed at event time, never at render, so SSR and hydration cannot differ.
+  const getCallback = () =>
+    safeCallbackPath(searchParams.get("callbackUrl"), { origin: window.location.origin });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,7 +47,7 @@ function SignInForm() {
       // back!" for a bad password and then bounced the user to /signin.
       if (result?.ok && !result.error) {
         toast.success("Welcome back!");
-        router.push(callbackUrl);
+        router.push(getCallback());
         router.refresh();
       } else {
         toast.error("Invalid email or password");
@@ -58,7 +61,7 @@ function SignInForm() {
   };
 
   const handleGoogleSignIn = () => {
-    signIn("google", { callbackUrl });
+    signIn("google", { callbackUrl: getCallback() });
   };
 
   return (

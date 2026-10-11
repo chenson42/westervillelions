@@ -1,7 +1,7 @@
 # Approvals Page: Mobile Actions, Decision History, Email Deep Link — Work Log
 
 > **Slug:** `2026-10-10-approvals-mobile-and-history`
-> **Reserved IDs:** B-155, B-156, B-157, B-158; DECISION-116 — all filed (DECISION-116 as `Proposed`; B-158 filed by the orchestrator 2026-10-10 under Soon). Multi-approver addendum: DECISION-117 filed (Proposed) and B-159 filed 2026-10-10 (Phase 3 addendum); B-160 held (file only if the user answers Q8 that a posted approval needs a way to record dissent); B-161 used for the recorder-email item (filed by the orchestrator 2026-10-10, Later) unused
+> **Reserved IDs:** B-155, B-156, B-157, B-158; DECISION-116 — all filed (DECISION-116 as `Proposed`; B-158 filed by the orchestrator 2026-10-10 under Soon). Multi-approver addendum: DECISION-117 filed (Proposed) and B-159 filed 2026-10-10 (Phase 3 addendum); B-160 held (file only if the user answers Q8 that a posted approval needs a way to record dissent); B-161 filed by the orchestrator 2026-10-10 (Later) for the recorder-email item (the pending-approval email goes to the person who recorded the entry); B-162 to B-165 filed by tech-lead at ship (Ship filing section, end of this log). DECISION-116 and DECISION-117 are now Resolved.
 > **Surface:** (dashboard) admin — `/admin/ledger/approvals`, the pending-disbursement notification email, the Approve dialog
 > **Permission(s):** existing `ledger.approve` covers this (no new key)
 > **Estimated complexity:** medium
@@ -13,12 +13,12 @@
 
 | Phase | Owner | Status | Verdict | Date |
 |-------|-------|--------|---------|------|
-| 1 — Functional refinement | analyst | Complete; addendum (multiple approvers, Increment 2) complete, routes Increment 2 back through Phase 2 | READY WITH NOTES | 2026-10-10 |
-| 2 — Architectural review | architect | Complete; addendum (multiple approvers) complete: table `ledger_txn_cosigns`, predicate moved to `ledger-board-decision.ts`, Increment 2 split into 2a/2b | Approved with suggestions | 2026-10-10 |
-| 3 — Technical design | tech-lead | Complete; addendum (Increment 2a and 2b) complete: 2a not gated, 2b starts under the no-quorum default unless the user says "quorum" | Design complete; DECISION-116 (Proposed), B-155/156/157 filed; addendum: DECISION-117 (Proposed), B-159 filed, B-160 held, B-161 released | 2026-10-10 |
-| 4 — Implementation | Inc 1: api-developer → ux-developer; Inc 2: database-admin → api-developer → ux-developer | Inc 1 Phase 4 complete (api-developer + ux-developer); Inc 2 split per Phase 2 addendum R15: 2a (reject columns, History, deep link, safeCallbackPath) then 2b (co-sign; gated on the user's Q1 answer); both pending | — | 2026-10-10 |
-| 5 — Verification | qa | Inc 1 Phase 5 complete (O-1 closed: stale dev process, not a code defect); Inc 2 pending | Inc 1: PASS | 2026-10-10 |
-| 6 — Shipped vs intent | analyst | Inc 1 Phase 6 complete (push-ready; notes F1-F5 tracked); Inc 2 pending (its Phase 6 closes the pipeline) | Inc 1: SHIP WITH NOTES | 2026-10-10 |
+| 1 — Functional refinement | analyst | Complete for Increment 1 and 2a; addendum (multiple approvers, Increment 2b) complete | READY WITH NOTES (original and addendum) | 2026-10-10 |
+| 2 — Architectural review | architect | Complete; addendum (multiple approvers) complete: table `ledger_txn_cosigns`, predicate in `ledger-board-decision.ts`, Increment 2 split into 2a/2b | Approved with suggestions (original and addendum) | 2026-10-10 |
+| 3 — Technical design | tech-lead | Complete; addendum (2a and 2b) complete. DECISION-116 and DECISION-117 filed as Proposed (analyst Phase 6 recommends Resolved after the wording edits in the Phase 6 section); B-155 to B-159 and B-161 filed; B-160 held for Q8 | Design complete | 2026-10-10 |
+| 4 — Implementation | Inc 1: api-developer, ux-developer. 2a and 2b: database-admin, api-developer, ux-developer | Inc 1 complete (v1.89.0, `4730983`). 2a complete (migration 0111). 2b complete (migration 0112). 2a and 2b are in the working tree, uncommitted; push waits for `/pre-push` on the combined tree | Complete | 2026-10-10 |
+| 5 — Verification | qa | Inc 1 complete (O-1 closed: stale dev process). 2a complete (54-test spec). 2b complete (70-test spec, five concurrency passes) | Inc 1: PASS. 2a: PASS. 2b: PASS | 2026-10-10 |
+| 6 — Shipped vs intent | analyst | Inc 1 complete (shipped). 2a short confirmation complete. Closing Phase 6 for 2a and 2b complete: nothing blocks the push; tracked notes N1 to N10, four backlog drafts, post-deploy checks L2, L4, L9, F4; Q8 still with the user | Inc 1: SHIP WITH NOTES. 2a: CONFIRMED WITH NOTES. 2a + 2b: SHIP WITH NOTES | 2026-10-10 |
 
 ---
 
@@ -313,6 +313,8 @@ User's words: "yes, record who rejected going forward.  i also think we should a
 2. **Multiple approvers — NEW FLOW, routed back to Phase 1 for Increment 2** (CLAUDE.md "Scope is routed at the phase where it appears": a new flow → Phase 1). Orchestrator's recommended default, stated to the user and adopted unless they object: the first approval still posts the transaction (money controls unchanged); subsequent `ledger.approve` holders may add a co-signing approval that is recorded and shown in the history and the `?txn=` banner ("Approved by X; also Y, Z — add your approval"); no quorum. A quorum (N-of-M before posting) is a board governance change and is explicitly out unless the user asks for it.
 
 Increment 1 (Phase 5 in progress) is unaffected: its scope has no approval-history data model.
+
+- **2026-10-10, after the Increment 1 push.** User, in their own words: "ok continue with 2a and then continue with 2b. take it all the way to production." Read as: run 2a and 2b through Phase 4, 5 and 6, then `/pre-push` on the combined tree and commit and push to `main` without a further approval round. The quorum question was asked twice and not answered, so the no-quorum default (first approval posts; later approvals are informational co-signs) is now the recorded decision for 2b. No quorum objection as of this entry. Push still runs only after every pre-push gate is green.
 
 # Phase 1 addendum — multiple approvers (Increment 2) — 2026-10-10
 
@@ -2040,6 +2042,7 @@ Fixtures: five approvers on `board_member` (poster A, B, C, and a recorder who i
 
 - `docs/decisions.md`: **DECISION-117** filed, `Status: Proposed` (promotes to `Resolved` at Phase 6 of 2b after each factual sentence is re-read against QA's "Established" list). **DECISION-116's Status line gains "(item 1 amended by DECISION-117)"** in the same edit, because item 1 said the predicate is "used by both consumers" and its Impact list omitted the new module; the predicate now lives in `ledger-board-decision.ts` with three consumers (rule b).
 - `docs/backlog.md`: **B-159** filed (Later; ToC entry and body). **B-160 not filed (held** pending the user's answer to Q8). **B-161 released** unused.
+- **Correction (tech-lead, ship filing 2026-10-10):** the statement above that B-161 was released is wrong. B-161 was filed by the orchestrator (Later) for the recorder-email item and is in use; B-160 alone stays held.
 - Not touched: `package.json`, `docs/release-notes/`, `CLAUDE.md`, any code, any database, any email.
 - Release-time doc follow-ups for tech-lead (unchanged from the original filing record, plus one): a Key Patterns note that any new `callbackUrl` consumer goes through `safeCallbackPath()`; a line in the Approvals area on the decided-history tab and the informational co-sign (DECISION-116/117).
 
@@ -2438,3 +2441,930 @@ SHIP WITH NOTES. The reporter's situation is resolved: at 390px a board-only mem
 
 ### Release-notes blurb (for the orchestrator; user-facing only)
 The Approvals page now works on a phone. Board members opening a pending disbursement from the email link see each item as a card with large Approve and Reject buttons, instead of a table that hid them off the edge of the screen. The Approve and Reject windows now show the fund, memo and who recorded the entry, and Approve explains why it is greyed out until a board-minute reference is entered. If a colleague approves or rejects an item while you are looking at it, the window closes, the list refreshes and a message says who acted, and two board members can no longer both record an approval for the same item. If you recorded an entry yourself, the page says another board member must decide it instead of offering buttons that would not work. Notification emails for pending disbursements also now display payee and memo text safely.
+
+## Increment 1 shipped (orchestrator, 2026-10-10)
+
+User approved commit and push in their own words ("commit and push"). Commit `4730983` on `main` (v1.89.0), pushed to origin. The 2026-10-09 closing-balance work-log rode along as announced. User did not answer the quorum question in the same message; the no-quorum default from "Gating" stands and 2b stays unstarted. Increment 2a Phase 4 opens now with database-admin (T11 satisfied). Migration numbers re-derived at the schema step: newest on disk is `0110_treasurer_permission_baseline.sql`.
+
+## Phase 4 — Increment 2a (database-admin) — 2026-10-10
+
+**Owner:** database-admin
+**Status:** complete (schema step); see the tsc note under Tests and gates
+
+### Summary
+Added the two nullable rejection-attribution columns to `ledger_transactions` and the idempotent migration that matches them. Both migration replays against the local dev database succeeded, the live columns and FK match `schema.ts`, and the new static test is green. Typecheck now fails in two places that are the expected type fallout the design predicted; they belong to api-developer's step (d).
+
+### What I did
+- Re-derived the migration number: newest on disk was `0110_treasurer_permission_baseline.sql`, so the new file is **`0111`**.
+- `src/lib/db/schema.ts`: added `rejectedByUserId` (uuid, FK `users.id`, `ON DELETE SET NULL`) and `rejectedAt` (`timestamp`, no timezone, like `approvedAt`) directly after `rejectionReason`.
+- Created `drizzle/migrations/0111_ledger_rejection_attribution.sql`: two `ADD COLUMN IF NOT EXISTS`, then a `DO $$` block adding `ledger_transactions_rejected_by_user_id_users_id_fk` only when absent from `pg_constraint`, `ON DELETE SET NULL`. No index, no back-fill, no NOT NULL, no default.
+- Created `src/lib/ledger-approval-schema.test.ts` (5 tests; model `ledger-ack-donee-migration.test.ts`).
+- Applied to the local dev DB (`DATABASE_URL` from `.env.local` only; PROD_DATABASE_URL not touched; nothing under `scripts/` run).
+
+### Outputs
+- `src/lib/db/schema.ts` (two columns on `ledgerTransactions`)
+- `drizzle/migrations/0111_ledger_rejection_attribution.sql` (every statement idempotent; the repo grep for unguarded CREATE TABLE / ADD COLUMN / INSERT INTO / CREATE INDEX returns nothing)
+- `src/lib/ledger-approval-schema.test.ts`
+- Tables affected: `ledger_transactions`. No role bindings or seed rows.
+- Local apply: `export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate`
+
+### Tests and gates
+- `pnpm db:migrate` run 1: succeeded; `0111_ledger_rejection_attribution.sql` applied (columns created).
+- `pnpm db:migrate` run 2: succeeded; NOTICE "column rejected_at ... already exists, skipping" (idempotence proven).
+- Live check after replay: `rejected_by_user_id uuid NULL`, `rejected_at timestamp NULL`, no defaults; constraint `ledger_transactions_rejected_by_user_id_users_id_fk` present with `confdeltype = 'n'` (SET NULL).
+- `pnpm db:push` (no `--force`, non-TTY): did NOT reach a clean "no changes". It stopped on an interactive prompt about an unrelated, pre-existing drift: schema.ts wants `ledger_entities_slug_unique` but the dev DB has `ledger_entities_slug_key` (2 rows). Nothing in the diff output concerned `rejected_by_user_id` / `rejected_at`, and the live column and FK check above matches schema.ts. I did not run `--force` (it would auto-approve that unrelated change on dev). The orchestrator may want to look at that drift before the deploy build runs `push --force`; it is not caused by this increment (it exists on `main`).
+- `pnpm exec vitest run src/lib/ledger-approval-schema.test.ts`: 5/5 pass.
+- `pnpm exec tsc --noEmit`: **2 errors, both expected type fallout** (Phase 3 Data Model: "`getPendingApprovals()` ... must gain the two fields; typed fixtures stop compiling"): `src/lib/ledger-queries.ts` line ~3725 (`getPendingApprovals` return lacks `rejectedByUserId`, `rejectedAt`) and `src/app/(dashboard)/admin/ledger/donors/[id]/donor-detail-client.test.tsx` line 49 (fixture lacks the same two fields). Left untouched: the first is api-developer step (d); the second is a fixture api-developer/ux-developer adds `rejectedByUserId: null, rejectedAt: null` to.
+- Migration grep gate: empty.
+
+### Deviations from the design
+- None to the schema or SQL. The "tsc clean" gate and the "push reports no diff" check are not literally met for the two reasons above (expected fallout; unrelated pre-existing slug-constraint drift).
+
+### Open questions / handoff notes
+- **Migration filename for api-developer: `drizzle/migrations/0111_ledger_rejection_attribution.sql`.**
+- New columns on `ledger_transactions`: `rejectedByUserId` (uuid, nullable, FK users, set null) and `rejectedAt` (naive timestamp, nullable). Stamp both legs of a pair in the reject UPDATE; never reuse `approvedAt`.
+- api-developer must: add the two fields to `getPendingApprovals()` select list (clears the tsc error there) and to the donor-detail test fixture (clears the other).
+- Orchestrator: announce the dev-server restart (schema changed). Next agent: api-developer, step 2(a).
+
+### Orchestrator: dev-server restart after the 2a schema step (2026-10-10)
+
+The `:3000` dev server was stopped and restarted after migration `0111_ledger_rejection_attribution.sql` landed (log: scratchpad `dev-restart-2a.log`; replayed the migration a third time at start, 200 on `/`). Every live check from here runs against the restarted server.
+
+The `drizzle-kit push` prompt database-admin hit (`ledger_entities_slug_unique` expected, `ledger_entities_slug_key` live) is **pre-existing and not this diff**: `ledgerEntities.slug` has carried an unnamed `.unique()` since the Ledger landed, while its migration named the constraint `_key`. Every deploy since has run `push --force` over it without incident, so it is not a gate for this pipeline. Logged for the next code review rather than fixed here (a rename inside a feature pipeline is unrelated scope).
+
+## Phase 4 — Increment 2a (api-developer) — 2026-10-10
+
+**Owner:** api-developer
+**Status:** complete (step 2, items a to g plus the A9 helpers). ux-developer is next.
+
+### Summary
+Delivered the whole 2a server side: carrier additions, the board-decision predicates, reject attribution (both legs, 409 names the rejector), pending-row entity names, the approver-only History and deep-link queries, the callback guard with its three consumers, the expense-leg id on Transfer/Sweep create, and the email link plus sentence. tsc is clean, `pnpm test` is green (197 files, 3470 tests), lint shows only the one pre-existing warning (`budget-context-panel.tsx`, not touched). No page, dialog, `RowHighlighter` or component file was edited; the dialog-copy helpers exist but are not yet wired.
+
+### What I did
+- (a) `src/lib/ledger-approval.ts` (client-safe, no imports): `RECENT_DECISIONS_LIMIT`, `APPROVAL_TABS`/`ApprovalTab`/`parseApprovalTab`, `formatDecisionDateTime`, `formatApprovalDollars`, `approvalNounLabel`, `describePendingCount`, `DecidedApprovalRow`, `ApprovalTargetState`, `ApprovalBannerModel`, `buildApprovalBanner`; `describeApprovalFund` gained optional `entityName`/`partnerEntityName`; `describeApprovalConflict` gained the rejected-by-viewer row.
+- (b) `src/lib/ledger-board-decision.ts`: `boardApprovalPredicate`, `boardDecisionPredicate`, one private `postedBoardHalf()`; no runtime `db` import.
+- (c) `ledger-approval-decision.ts`: reject UPDATE stamps `rejectedByUserId` + `rejectedAt` (same `now` as `updatedAt`) on both legs, never `approvedAt`/`approvedByUserId`; `conflictFromRow` reads `rejectedAt ?? updatedAt` and `decidedByViewer` for the rejector; `lookupApproverName` became exported `lookupDeciderName` (separate select, no join). 409 strings and `ApprovalConflictBody` unchanged.
+- (d) `getPendingApprovals()` select list gained `rejectedByUserId`, `rejectedAt`; `PendingApprovalRow` gained `entityName`, `partnerEntityName` from one `ledger_entities` select into a Map. Fixed the two tsc errors database-admin left (the query and the donor-detail fixture).
+- (e) `src/lib/ledger-approval-queries.ts` (approver-only): `getRecentDecisions(viewerUserId)`, `resolveApprovalTarget(rawTxn, viewerUserId)`, one private `selectDecided`.
+- (f) `src/lib/safe-callback-path.ts`; `src/proxy.ts` now sets `callbackUrl` from `pathname + search`; signin and register compute `getCallback()` at event time.
+- (g) `transactions/route.ts`: Transfer/Sweep insert `.returning({ id, flow })`, 201 carries `id` (expense leg); both E-1 blocks use new `buildApprovalReviewUrl(id)`; `buildPendingApprovalEmailHtml` appends the 2a sentence unconditionally. Both `console.error` catches untouched; `auth()` + `hasFeature()` still first.
+- A9: dialog-copy helpers in `approval-dialog-logic.ts` (F1); F2 data, F3 formatter and `describePendingCount` are in the carrier and query (see above). F5.4 (h1 "Approvals", empty-state link) is page work and stays with ux-developer.
+
+### Contracts ux-developer consumes
+Import everything client-side from `@/lib/ledger-approval` (types and pure helpers) and `@/components/admin/ledger/approval-dialog-logic`.
+
+- **Banner:** `buildApprovalBanner(state: ApprovalTargetState): ApprovalBannerModel` where `ApprovalBannerModel = { tone: "info" | "success" | "neutral"; text: string; linkHref?: string; linkLabel?: string }`. `linkHref` is `/admin/ledger/approvals?tab=decided&txn=<row.id>` and `linkLabel` "See it under Recently decided" for `decided` states only. Plain text only; render as React text.
+- **`ApprovalTargetState`:** `{state:"not_found"} | {state:"pending"; rowId; kind; isOwn} | {state:"decided"; row: DecidedApprovalRow} | {state:"not_board_decision"; kind}`. Highlight id: `rowId` for pending, `row.id` for decided.
+- **`getRecentDecisions(viewerUserId): Promise<DecidedApprovalRow[]>`** (throws on DB failure; page must catch). `DecidedApprovalRow` = base `{ id, kind, decidedAt (ISO string), deciderName | null, deciderIsViewer, amountCents, txnDate, party, memo, fundName, partnerFundName, entityId, partnerEntityId, entityName, partnerEntityName, recorderName }` plus `{decision:"approved"; boardMinute: string}` or `{decision:"rejected"; deciderOnFile: boolean; rejectionReason: string | null}`. `entityName`/`partnerEntityName` are short names ("Club", "Foundation", falling back to the full name). No user id appears anywhere (test walks the keys).
+- **`resolveApprovalTarget(rawTxn: string, viewerUserId: string): Promise<ApprovalTargetState>`**: non-UUID returns `not_found` with no DB call; a DB failure throws (page wraps in its own try/catch).
+- **Page-only importer:** `ledger-approval-queries` must be imported only by `approvals/page.tsx` (scan test enforces).
+- **Pending rows:** `PendingApprovalRow` now has `entityName`, `partnerEntityName` (string | null) and `rejectedByUserId`/`rejectedAt`. Pass them to `describeApprovalFund({... entityName, partnerEntityName})`; a Sweep then reads "Charitable Fund (Foundation) → Activity Fund (Club)". For non-sweep kinds show `entityName` as secondary text yourself.
+- **Helpers:** `RECENT_DECISIONS_LIMIT`, `APPROVAL_TABS`, `ApprovalTab`, `parseApprovalTab(raw: string | string[] | undefined)`, `formatDecisionDateTime`, `formatApprovalDollars`, `approvalNounLabel`, `describePendingCount`; in dialog-logic: `approvalDialogTitle(verb, noun)`, `approvalSuccessMessage(verb, noun)`, `rejectPlaceholder(noun)`, `minuteHelper(noun)`, and one I added, `minuteRequiredMessage(noun)` (the `toast.error` string in `approve-dialog.tsx`). The dialogs still use their old strings until wired.
+- **Routes:** `POST /api/admin/ledger/transactions` Transfer/Sweep 201 is `{ id, transferGroupId, derivedFiscalYear, status }` (`id` = expense leg; omitted only if the insert returned no expense row). Approve/reject routes unchanged; a reject 409 now carries the rejector's name, and `decidedByViewer` is true for a rejector's double-click ("You already rejected this sweep.").
+
+### Tests (all passing)
+New files: `ledger-board-decision.test.ts` 7, `ledger-approval-queries.test.ts` 21, `safe-callback-path.test.ts` 25, `src/proxy.test.ts` 5. Extended: `ledger-approval.test.ts` 36, `ledger-approval-decision.test.ts` 36, `ledger-queries.test.ts` 107 (+2 for `getPendingApprovals`), `email-compose.test.ts` 21, `email-queue-view.test.ts` 11 (UUID `?txn=` left readable), `transactions/route.test.ts` 35 (+4: ordinary link, Sweep 201 id and link, under-threshold Transfer id, no-expense-row fallback), `approval-dialog-logic.test.ts` 16. Database-admin's `ledger-approval-schema.test.ts` 5 untouched. Full suite: 197 files, 3470 tests, 0 failures. Not mine (ux-developer): `row-highlighter.test.tsx`, `approval-history.test.tsx`.
+
+### Outputs (files)
+Created: `src/lib/ledger-board-decision.ts`, `src/lib/ledger-approval-queries.ts`, `src/lib/safe-callback-path.ts`, and their tests plus `src/proxy.test.ts`.
+Modified: `src/lib/ledger-approval.ts`, `src/lib/ledger-approval-decision.ts`, `src/lib/ledger-queries.ts`, `src/lib/email-compose.ts` (new `buildApprovalReviewUrl`), `src/app/api/admin/ledger/transactions/route.ts`, `src/proxy.ts`, `src/app/signin/page.tsx`, `src/app/register/page.tsx`, `src/components/admin/ledger/approval-dialog-logic.ts`, the test files above, and the donor-detail fixture. No migration added (0111 is database-admin's).
+
+### Deviations from the design
+1. **`buildApprovalReviewUrl()` added to `email-compose.ts`** (about 5 lines) so the two E-1 call sites do not repeat the app-URL plus path plus `?txn=` composition (the duplication rule). Under the absorb limit.
+2. **`minuteRequiredMessage(noun)`** added beside the four named dialog helpers, for the one remaining hard-coded "disbursement" toast. Under the absorb limit.
+3. **`describeApprovalConflict` has no `verb` parameter yet**: T5's verb argument is a 2b change and unused code in 2a.
+4. **Entity names use short names** (`shortName ?? name`) in both `getPendingApprovals()` and the History, so the Sweep text matches the design's "(Foundation)/(Club)" example.
+5. Register page: only the Google `signIn` uses the guard, per A6's summary (the post-register pushes are B-155).
+6. The importer scan in `ledger-approval-queries.test.ts` and the R9 assertion pass vacuously until `approvals/page.tsx` exists; they become strict when ux-developer adds the import.
+
+### Open questions / handoff notes
+- Next agent: **ux-developer** (page, tabs, banner, History, `RowHighlighter` `persistent`, F1 wiring through the new helpers, `ApprovalFundLabel` names, F5.4, `approval-history.test.tsx`).
+- Queue view: `redactQueuedEmailHtml` leaves `?txn=<uuid>` readable (test-pinned); L3 live check is qa's.
+- The `/members` redirect for open-redirect inputs on a password sign-in runs through `getCallback()` inside the submit handler; qa click-through 4 covers it live.
+- I did not touch the dev server, `docs/decisions.md`, `docs/backlog.md`, `package.json` or release notes.
+
+## Phase 4 — Increment 2a (ux-developer) — 2026-10-10
+
+**Owner:** ux-developer
+**Status:** complete. qa (Phase 5) is next.
+
+### Summary
+Built the 2a UI: the Approvals page now has Pending / Recently decided tabs, the `?txn=` banner and highlight, the History cards, `RowHighlighter` `persistent`, the F1 noun-correct dialog copy, entity names in `ApprovalFundLabel`, and the F3/F5.4 formatting. A live browser pass against seeded local rows found one real bug in api-developer's `resolveApprovalTarget` (see Deviation 1), which I fixed and pinned with a test.
+
+### What I did
+- `approvals/page.tsx`: `searchParams` Promise; order auth, `hasFeature`, `parseApprovalTab`, `Promise.all`, `resolveApprovalTarget` in its own try/catch (`console.error`, no banner), `getRecentDecisions` only on the decided tab in its own try/catch (`historyFailed`). `h1` "Approvals"; count line via `describePendingCount`; `formatDollars` deleted for `formatApprovalDollars`; pending empty state gained the "See recently decided" link-button; the threshold description and footer show on the Pending tab only (decided tab has its own one-line description).
+- New flat Server components: `approval-tabs.tsx` (`<nav>` of `<Link>`s, `aria-current`, 44px), `approval-banner.tsx` (`role="status"`, plain text, tone classes, 44px link), `approval-history.tsx` (one card per row at every width, also exports `deciderLabel`). New tiny `approval-highlight.ts` holds the shared `HIGHLIGHT_CLASSES`.
+- Highlight: `highlightId` is passed only when the target row is on the tab being rendered (pending list contains it, or the 25 contain it). Card, table row and History card server-render the ring with `tabIndex={-1}`; `bg-white` is swapped out (not stacked) when highlighted. `RowHighlighter` is mounted in `<Suspense fallback={null}>` with `persistent`.
+- `row-highlighter.tsx`: logic extracted to exported `findVisibleRow` and `runRowHighlight` (testable in the node env, since the repo has no jsdom). Default mode and both existing call sites unchanged; `persistent` scrolls and focuses the first visible `[data-row-id]` only.
+- F1: both dialogs use `approvalDialogTitle`, `approvalSuccessMessage`, `rejectPlaceholder`, `minuteHelper`, `minuteRequiredMessage`. F2: `ApprovalFundLabel` takes `entityName` (secondary text for every kind except sweep, whose text already names both books); card and table pass it; `describeApprovalFund` gets both entity names.
+
+### Outputs (files)
+Created: `src/components/admin/ledger/approval-tabs.tsx`, `approval-banner.tsx`, `approval-history.tsx`, `approval-highlight.ts`, `approval-history.test.tsx`, `approval-fund-label.test.tsx`, `row-highlighter.test.tsx`.
+Modified: `src/app/(dashboard)/admin/ledger/approvals/page.tsx`, `approval-card.tsx`, `approval-fund-label.tsx`, `approve-dialog.tsx`, `reject-dialog.tsx`, `row-highlighter.tsx` (all under `src/components/admin/ledger/`), `src/lib/ledger-approval-queries.ts` (bug fix), `src/lib/ledger-approval-queries.test.ts` (importer scan made strict, plus one new test).
+
+### Tests and gates
+- `pnpm exec tsc --noEmit` clean. `pnpm test`: 200 files, 3497 tests, 0 failures (was 197/3470; new: history 13, fund-label 4, row-highlighter 7, queries +1).
+- `pnpm lint`: 0 errors, only the pre-existing `budget-context-panel.tsx` warning. `pnpm build:only` passes. No `console.log`, no native dialogs. The two scan tests api-developer flagged are now strict (`importers` equals exactly the page) and pass.
+
+### Browser verification (local dev DB, e2e admin, Playwright headless; dev server untouched)
+Seeded 8 local rows tagged `UXTEST` (approved by other and by me with a very long unbroken minute, rejected with stamp and a 60-word reason, legacy rejected, pending not-own, pending own, a Foundation to Club Sweep pair). **Cleanup: all 8 deleted, 0 `UXTEST` rows remain.**
+- Pending tab: h1 "Approvals", tabs "Pending (3)" / "Recently decided", "3 items awaiting approval", Sweep card reads "Charitable Fund (Foundation) → Activity Fund (Club)", plain rows show "Club" as secondary text.
+- Decided tab at 390px: four cards, no horizontal scroll, long minute and reason wrap in full, "Approved by You", "Approved by {name}", "Rejected, decider not on file" with the legacy row dated by `updated_at`; Eastern times.
+- `?txn=` for every state (approved other/me, rejected other/legacy, pending not-own/own, sweep expense leg, sweep income-leg id resolving to the expense row): correct banner text, target focused, ring still present after 3.5 s, URL unchanged (no `router.replace`). A decided id viewed on the Pending tab shows the banner with the "See it under Recently decided" link. `?txn=not-a-uuid`, `'; select 1`, a 5,000-char value and an unknown UUID: HTTP 200, "We can't find that disbursement" banner, input not echoed in visible text. `?tab=bogus` falls to Pending.
+- Dialogs: Sweep Approve title "Approve Sweep"; Reject placeholder "Explain why this sweep is being rejected…".
+- Widths 390, 1024, 1279, 1280: no horizontal scroll; at 1024/1279 the card is the visible variant and at 1280 the table row is, and focus lands on the visible one. Next dev "1 Issue" badge is the pre-existing CSP-eval and logo-aspect console messages, not a hydration warning from this page.
+
+### Deviations from the design
+1. **Bug fix in api-developer's `resolveApprovalTarget` (about 8 lines, `ledger-approval-queries.ts`).** drizzle renders a top-level column of a single-table select unqualified, so inside the correlated subqueries (`FROM ledger_transactions d` / `v`) `${t.transferGroupId}` and `${t.id}` bound to the INNER table: `viewerRecorded` was always true (every pending banner said "You recorded this") and the partner lookup matched any income row (a plain disbursement was called a "transfer"). Mocked unit tests cannot see this; the live pass did. Fixed with hand-qualified `"ledger_transactions"."id"` / `"transfer_group_id"` and pinned by a source-scan test. Under the absorb limit; flagging for api-developer awareness. The History (`selectDecided`, which uses joins) was unaffected.
+2. `approval-highlight.ts` (shared class constant) and the exported `findVisibleRow`/`runRowHighlight` are small additions for dedupe and testability.
+3. The pending-tab description and footer are hidden on the decided tab; decided tab gets "The most recent board decisions, newest first." (new copy).
+4. The footnote always shows on a non-empty History (design wording), even with fewer than 25 rows.
+
+### Open questions / handoff notes for qa
+- Click through: `/admin/ledger/approvals` both tabs, each `?txn=` state, the Pending empty state link, 360/390/1024/1279/1280. Every `?txn=` check must run against real Postgres: the resolver bug above only showed there (qa click-through 3 and the discriminator fixtures cover it).
+- At 1280 the table row ring renders as gold top/bottom lines plus the tint (box-shadow on `<tr>`); acceptable, but look at it.
+- New copy for the club to refine: decided-tab description, "Try again" failure link, "Approved by You".
+- Page has two `h1`s (the admin layout's "Admin" plus the page's); pre-existing pattern, so qa selectors should use `h1.text-3xl`.
+- Not exercised live (needs two sessions or a failing query): double-click 409 "You already rejected", `historyFailed` card (covered statically by tests only), Google callback round trip.
+
+
+## Phase 5 — Verification — Increment 2a — 2026-10-10
+
+**Owner:** qa
+**Status:** complete (Increment 2a). Increment 2b is not in this tree and was not verified.
+**Scope:** Increment 2a only: reject attribution (migration 0111), Recently decided, the `?txn=` banner and highlight, the sign-in callback guard, the email deep link and the F1 to F3 / F5.4 follow-ups.
+**Tree measured:** `main` at `4730983` plus the uncommitted 2a working tree (40 entries in `git status --short` before qa; `git status` was byte-identical before and after `pnpm build:only` and after the coverage run). qa added one untracked file, `e2e/ledger-approvals-history.spec.ts`. No concurrent pipeline touched these files. Dev server :3000 (pid 1189, started 19:42 after the schema step) was not touched; its process environment carries neither `EMAIL_DEV_ALLOWLIST` nor a key, and `.env.local` has `RESEND_API_KEY=` blank and no allowlist.
+
+### Summary
+
+**Verdict: PASS** for Increment 2a. Every gate is green, every unit test the 2a design names exists and passes, and the live pass against real Postgres found no defect in the shipped tree: reject stamps both legs of a Transfer/Sweep pair with rejector and time and never touches `approvedAt`; Recently decided shows exactly the board decisions (25 cap, newest first, stable on ties, reimbursement-stamped and under-threshold-Sweep rows out); every `?txn=` state renders the right banner (the correlated-subquery fix the ux-developer made holds against real data); the signed-out deep link survives the password sign-in; the email carries `?txn=<expense-leg id>` and the one-approval sentence and the queue view leaves the UUID readable. Three items are recorded as not fully testable locally (see "Not testable here"): the Google round trip, the failed-history card, and a regression run against pre-fix code.
+
+### What I did
+
+**Gates (measured on the tree above)**
+
+| Gate | Result |
+|---|---|
+| `pnpm exec tsc --noEmit` | PASS (exit 0, no output; re-run after the last spec edit, still 0) |
+| `pnpm lint` | PASS: 0 errors, 1 warning, `src/components/admin/ledger/budget-context-panel.tsx:114` "unused eslint-disable directive" (pre-existing, not this diff). My own spec had one unused-variable warning mid-run; removed. |
+| `pnpm test` | PASS: **200 files, 3497 tests passed, 0 failed**, 4.0s (the ux-developer's count, reproduced). `admin-page-feature-gates.test.ts` is inside it. |
+| `pnpm build:only` | PASS: exit 0, compiled successfully, 125/125 static pages, 272 route lines, zero "warn" lines; :3000 stayed 200 throughout. |
+| Migration replay | `export $(grep -E "^DATABASE_URL=" .env.local \| xargs) && pnpm db:migrate`: "Migrations completed successfully"; the only 0111 output is two NOTICEs "column rejected_by_user_id / rejected_at ... already exists, skipping" (a no-op). Live FK: `FOREIGN KEY (rejected_by_user_id) REFERENCES users(id) ON DELETE SET NULL`; columns `rejected_by_user_id uuid`, `rejected_at timestamp without time zone`. |
+| Pre-push idempotence grep on `0111_ledger_rejection_attribution.sql` (`grep -nE "^\s*(CREATE TABLE \|ALTER TABLE [^ ]+ ADD COLUMN \|INSERT INTO \|CREATE INDEX )" ... \| grep -vE "IF NOT EXISTS\|ON CONFLICT\|WHERE NOT EXISTS"`) | empty. The FK sits inside a `pg_constraint`-guarded `DO $$` block. |
+| `e2e/ledger-approvals-history.spec.ts` (new; whole suite NOT run, the orchestrator runs it at pre-push) | PASS: **54/54** in 2.2 min, single worker. Run together with the Increment 1 spec `e2e/ledger-approvals-mobile.spec.ts`: **66/66** (54 + 12), 2.8 min, so Increment 1 behaviour still holds under the 2a tree. |
+
+**Unit tests the 2a design names: all present and passing** (verified by listing the 15 relevant files verbosely, 352 tests, 15/15 files; nothing missing). By file: `ledger-approval-schema.test.ts` 5 (idempotent ADD COLUMN, FK only inside the `pg_constraint` guard, FK name equals drizzle's derived name with SET NULL, both columns nullable no default, no NOT NULL / DEFAULT / UPDATE); `ledger-board-decision.test.ts` 7 (rejected branch, reimbursement exclusion, keyed on `approved_at` not the approver id, single definition, no runtime `db` import, R9 scan); `ledger-approval-decision.test.ts` (rejected-with-stamp names the rejector, legacy falls back to `updatedAt` with a null name, reject double-click `decidedByViewer`, approve-then-reject and reject-then-approve races, `lookupDeciderName` variants, the UPDATE `.set` carries `rejectedByUserId` and never `approvedAt`); `ledger-approval.test.ts` (`formatDecisionDateTime` Eastern and each side of a DST change, `parseApprovalTab`, `formatApprovalDollars`, `approvalNounLabel` / `describePendingCount`, `describeApprovalFund` with and without entity names, "You already rejected", every `buildApprovalBanner` row, no output contains "@"); `ledger-approval-queries.test.ts` 22 (importer allow-list, history query shape, row mapping including no `*UserId` key at any depth, `resolveApprovalTarget` for every state, non-UUID never touches the DB, failure rejects, plus the new source-scan pinning the hand-qualified subquery columns); `safe-callback-path.test.ts` 25 and `src/proxy.test.ts` 5; `route.test.ts` (Sweep 201 carries the expense-leg id, ordinary and Sweep emails link `?txn=`, an under-threshold Transfer still returns the id and sends nothing, no-expense-row fallback to the plain URL); `email-compose.test.ts` (sentence appended unconditionally, `buildApprovalReviewUrl`); `email-queue-view.test.ts` (UUID `?txn=` left readable); `approval-dialog-logic.test.ts` (titles, success messages, placeholder, helper per noun, no "disbursement" for Transfer/Sweep); `row-highlighter.test.tsx` 6 (default mode adds then removes the ring and strips `highlight`; `persistent` never mutates classes or the URL and picks the visible match); `approval-history.test.tsx` 13 and `approval-fund-label.test.tsx` 4; `ledger-queries.test.ts` (`getPendingApprovals` entity names, Sweep partner, rejection columns selected).
+
+**Manual click-through, dev server :3000, local dev DB.** Driven by Playwright against real Postgres (headless Chromium, the real credentials form, the real routes), written as the spec so it re-runs. Viewer is the e2e admin; other deciders are example.invalid fixture users who never sign in. Decision times are fixed in 2090 so the fixtures outrank anything else in the newest-25 list. Dev-DB state at start: 285 `ledger_transactions`, 0 pending, 0 rejected, 0 with `approved_at` (so the History is deterministic).
+
+| Flow | Result | Observed |
+|---|---|---|
+| Reject stamps both legs (L5, DB assert) | pass | Rejecting a pending Sweep from the card (390px): toast "Sweep rejected."; both legs `status = rejected`, `rejected_by_user_id` = the admin, `rejected_at` within 2 minutes of the click and **identical on both legs**, `approved_at` and `approved_by_user_id` NULL, reason stored in full (60 words). Recently decided shows **one** card for the pair: "Rejected by You", reason in full, "Foundation" and "Club" both named. |
+| Reject double-click, API rate (L5) | pass, **5/5** | Five fresh Sweeps, two simultaneous POSTs from one session each: always one 200 and one 409 `{code: not_pending, decision: rejected, decidedByViewer: true, deciderName: <the admin's display name>}`, no "@" in any body, both legs stamped by the winner, no approval stamp ever. |
+| "You already rejected" toast (UI) | pass | Dialog open on a pending Sweep, the same user rejects it through the API (the first click), then the dialog's Reject is clicked: the toast reads "You already rejected this sweep.", the dialog closes, and the second click wrote nothing (reason still the first click's). |
+| Recently decided: contents and order | pass | Nine decisions in exact newest-first order across approved, rejected, legacy and both entities: deleted-approver row (appears, "Approved by a board member"), approved by another ("Approved by QA History Board", $2,275.00, "Jun 8, 2090 at 12:00 PM", the 127-character unbroken minute in full), "Approved by You", rejected by another (60-word reason in full), "Rejected by You", legacy rejection with no stamp ("Rejected, decider not on file", dated by `updated_at`), an approved Transfer pair as **one** card dated "Jun 2, 2090 at 10:30 PM" (02:30Z is the previous evening in New York), a rejected Sweep pair as one card, a Foundation-entity row. No income-leg card. Footnote shows. |
+| Exclusions | pass | A reimbursement-paid row stamped `approved_at` + minute, an under-threshold Sweep with a creation-time minute and no `approved_at`, and a posted expense with no minute are all absent from the History. |
+| 25 cap, ties | pass | 26 approved rows (two per timestamp, explicit ids): exactly 25 cards, in (time desc, id desc) order, the oldest cut. |
+| `?txn=` banners, one fixture each (19 states) | pass | Pending not-own ("This is the disbursement from your email. It is waiting for a board decision."), pending own, pending Sweep and Transfer by expense-leg id, a pair whose **income leg alone** the viewer recorded ("You recorded this sweep, ..."), approved by someone else (full text with payee and Eastern time, "Only one approval is needed"), approved by the viewer, approved by a deleted account ("A board member"), rejected by someone else with the reason, rejected by the viewer, legacy rejection, approved Transfer and rejected Sweep by **both** the expense-leg and the income-leg id (income id resolves to its pair), a reimbursement-paid row, an under-threshold Sweep, a posted row with no decision (all three: "This entry did not need board approval, so there is nothing for you to do."), and a deleted id ("We can't find that disbursement. ..."). Decided states carry the "See it under Recently decided" link to `?tab=decided&txn=<id>`. HTTP 200 each; no banner contains "@"; no horizontal overflow at 390. |
+| The ux-developer's subquery bug, against real Postgres | pass | The plain pending row reads "the disbursement from your email" and never "transfer" or "sweep"; a pending row recorded by someone else never says "You recorded this". Both would have failed under the unqualified-column bug the ux-developer fixed. |
+| `?txn=` malformed | pass | `not-a-uuid`, `'; select 1 --`, a 5,000-character value, `<script>window.__pwned=1</script>`: HTTP 200, the not-found banner, the value not echoed in visible text, no script ran. `?tab=bogus` falls to Pending. |
+| Highlight (390 at 500px tall, and 1280) | pass | The last pending row in the list: scrolled (`scrollY > 0`), is `document.activeElement`, in the viewport, **ring-2 / ring-lions-gold still present after 3.5 s**, URL unchanged (no `router.replace`). A decided id on the Recently decided tab highlights its card (only one ringed element); a decided id on the Pending tab highlights nothing and shows the link. At 1280 the `<tr>` ring renders as the gold top and bottom lines plus the tint (`shots/highlight-1280.png`), acceptable as the ux-developer predicted. |
+| Approve from the card, banner survives refresh | pass | `?txn=<pending>`: approve from the card, toast "Disbursement approved."; after `router.refresh()` the banner changes to "You approved this ..." and the URL still carries `txn`; DB `posted`, `approved_by_user_id` = the admin, no rejection stamp. |
+| F1 to F3, F5.4 | pass | Sweep card reads "Activity Fund (Club) → Charitable Fund (Foundation)"; plain row shows "Club" as secondary text; dialog titles "Approve Sweep", "Approve Transfer", "Reject Sweep"; reject placeholder "Explain why this sweep is being rejected…"; no "isbursement" in a Sweep dialog; Cancel changes nothing. $2,275.00 on the 390 card, the 1280 table row and the History card, never "$2275.00". h1 reads "Approvals"; the Pending empty state offers "See recently decided", which opens the decided tab (needs 0 other pending rows; it ran, not skipped). |
+| Signed-out deep link, password | pass | `GET /admin/ledger/approvals?txn=<id>` signed out redirects to `/signin?callbackUrl=%2Fadmin%2Fledger%2Fapprovals%3Ftxn%3D<id>` (decodes to the exact path and query); the credentials form lands on the page with `txn` intact and the pending banner. |
+| Open-redirect checks | pass | `/signin?callbackUrl=` of `https://evil.example`, `//evil.example`, `/\evil.example`, `javascript:alert(1)`: each lands on `/members` (same origin) after a password sign-in. On `/signin` **and** `/register` the Google button hands NextAuth a same-origin callback: the `authjs.callback-url` cookie decodes to `localhost:3000/admin/ledger/approvals?txn=<id>` for the deep link and `localhost:3000/members` for `//evil.example` and `https://evil.example` (accounts.google.com navigation aborted in the test, so Google was never contacted). |
+| Email (L3) | pass | Real recordings through the route as the admin: an ordinary over-threshold expense, a same-fund Transfer (Administrative Checking to Petty Cash), and a Club Activity to Foundation Charitable Sweep. All three 201; the Transfer and Sweep 201 bodies carry `id` (the expense leg). Every queued approver row (each type queued to the approver set) contains `/admin/ledger/approvals?txn=<that id>` and "Only one board approval is needed. If a colleague has already acted, the link will show who."; **every row `blocked_non_production`, zero `sent`**. `/admin/email-queue` > View on the Transfer row: the sandboxed iframe's `srcdoc` contains `?txn=<uuid>` readable (not redacted) and the sentence. |
+| `ledger.approve`-less user | pass | A `budget_committee` user (ledger.view, no ledger.approve) opening `?tab=decided&txn=<id>` is redirected away from the page and the rendered text carries neither the decider's name nor the minute. |
+| Widths 360, 390, 1024, 1279, 1280 | pass | Banner, tabs and History cards (the longest minute and the 60-word reason) fit with no horizontal scroll at each; exactly one visible variant of a pending row (list item below 1280, `TR` at 1280); the banner box stays inside the viewport. Screenshots in `.../qa-2a/shots/`. |
+| Next dev "1 Issue" badge | pass | New test: Pending, Recently decided and both deep-link shapes load with zero console messages matching "hydrat" and zero uncaught page errors (the badge is the dev CSP `eval()` message, as in Increment 1). |
+| Dev server log | pass | Across all runs: no `Approvals:` console.error, no `[Ledger email]` failure, no HTTP 500; the only non-2xx are the expected 409s. |
+
+**Not testable here (recorded, not claimed):**
+- **L4, the Google round trip.** Needs a real Google account and `accounts.google.com`. Verified locally: the page hands NextAuth the right same-origin callback (cookie assertion above) and the signed-out redirect encodes it once. **Manual, owner: the user, before relying on the Google email-link path:** signed out, open an emailed-style link `/admin/ledger/approvals?txn=<a pending id>`, choose "Sign in with Google", confirm you land on the Approvals page with the banner, not `/members`. Not signed off by qa.
+- **The failed-history card.** Inducing a History-only query failure needs a code or schema change (every column the History selects is also read by the Pending query, so any database-level break takes Pending down with it). Static only: `approval-history.test.tsx` "renders the failure state with a reload link", `ledger-approval-queries.test.ts` "rejects when the query fails", and reading `page.tsx` confirms `getRecentDecisions` sits in its own try/catch that sets `historyFailed` and never touches the Pending render, and `resolveApprovalTarget` has its own try/catch that renders no banner.
+- **Pre-fix run of the regression tests.** I may not edit app code, so the banner and highlight tests were not run against the pre-fix `ledger-approval-queries.ts`. They are structurally false under the bug (a pending banner for a row recorded by someone else would say "You recorded this", and a plain row would be called a transfer), but "would fail" is argued, not observed.
+
+### Regression tests added
+
+All in `e2e/ledger-approvals-history.spec.ts` (new, qa-owned, 54 tests, seeds and cleans its own fixtures, example.invalid users, serial, real Postgres; also run beside the Increment 1 spec, 66/66):
+- `should show a pending banner that distinguishes a plain disbursement from a transfer — regression for the correlated-subquery partner lookup` and the 19 per-state `should show the right banner for ?txn= <state> — regression for the pending banner that always said "You recorded this"` tests: guard the unqualified-column bug the ux-developer fixed, which mocked unit tests could not see.
+- `should stamp BOTH legs of a Sweep with the rejector and time when rejected from the page, leave approvedAt null, and show it under Recently decided`, `should answer a reject double-click with a 409 toast that reads You already rejected this sweep`, `should answer 5 of 5 parallel same-user reject double-posts ... (live check L5)`: guard the unattributed rejection.
+- `should carry ?txn= through the sign-in redirect and land on the page with the banner after a password sign-in` and the four hostile `callbackUrl` tests plus the two Google-button cookie tests: guard the signed-out redirect dropping the query string and the open redirect.
+- `should show exactly the newest 25 decisions in (time desc, id desc) order when 26 exist, with equal timestamps stable`, `should list decisions newest first ...`, `should leave reimbursement-stamped, under-threshold-Sweep and no-minute rows out of Recently decided`.
+- `should queue approver emails whose link is ?txn=<expense-leg id> ... (live check L3)`, `should keep the You approved banner after approving from the card (router.refresh)`, scroll/focus/ring-after-3.5s at 390 and 1280, the five width tests, `should render ... with no hydration warning`, the gate test, and the empty-state test.
+- The first run of the spec failed one test (45 pass, 1 fail, 6 not run): my own test-order bug, the empty-state test deleted the pending fixtures before the sign-in test needed one; not a product defect. Moved the empty-state test to a final describe. A second run failed one Google-cookie assertion that read the cookie before the click had replaced it; fixed by polling for the expected value. Final: 54/54, run three times in a row green after the last edit (66/66 with the Increment 1 spec).
+- qa wrote no additional Vitest (the implementers delivered every named unit test).
+
+### Coverage on critical modules
+
+Whole suite (`vitest --coverage`, `src/lib/**`): 73.95% statements overall (target 70%). New and changed 2a modules: `ledger-board-decision.ts` 100 / 100, `ledger-approval-decision.ts` 97.5 / 92.6, `ledger-approval-queries.ts` 97.5 / 84.2, `ledger-approval.ts` 88.7 / 92.4, `safe-callback-path.ts` 90.6 / 96.6 (statements / branches). `events.ts` 94.9%, `permissions.ts` 100%, `members.ts` 86.8%, all unchanged by this diff and above target. UI components under `src/components` are outside the configured coverage include and are covered by the server-render tests and the e2e spec.
+
+### Feature-Gate Audit
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|---|---|---|---|
+| Page `/admin/ledger/approvals` (now also renders Recently decided and the `?txn=` banner) | yes, first (`redirect("/signin")`) | yes, before any query or `searchParams` use (`redirect("/admin/ledger")`) | `FEATURES.LEDGER_APPROVE`; no key widened, no nav change. History and banner data (names, minute, reason) are produced only by `ledger-approval-queries.ts`, imported solely by this page (source-scan test) |
+| `POST /api/admin/ledger/transactions/[id]/approve` | yes, 401 | yes, 403 | `FEATURES.LEDGER_APPROVE` (unchanged) |
+| `POST /api/admin/ledger/transactions/[id]/reject` | yes, 401 | yes, 403 | `FEATURES.LEDGER_APPROVE` (unchanged; now stamps the rejector) |
+| `POST /api/admin/ledger/transactions` (2a changes: Transfer/Sweep 201 `id`, email link and sentence) | yes, first, 401 | yes, 403 | `FEATURES.LEDGER_RECORD` (unchanged) |
+| `src/proxy.ts` | n/a (outer gate) | n/a | only the signed-out `callbackUrl` composition changed (`pathname + search` through `safeCallbackPath`); the derived admin rules are untouched, and the page keeps its own gate |
+| Server actions | none added or changed | n/a | n/a |
+
+Verified by reading each file, then by behaviour (a `ledger.view`-only user is redirected and sees nothing; signed-out is redirected with the query preserved). The 409 bodies carry display names only, never an email (asserted).
+
+### Cleanup (local dev DB; production untouched, `PROD_DATABASE_URL` never read, nothing under `scripts/` run, `RESEND_API_KEY` and `EMAIL_DEV_ALLOWLIST` never set)
+
+The spec's `afterAll` deletes every `QATEST E2E Approvals History` transaction, the fixture reimbursement, the three `example.invalid` users and their roles, and the email rows it created (only after confirming none was `sent`). It also ran a `beforeAll` cleanup. Final measured state after the last run: `ledger_transactions` 285 (as at start), 0 pending, 0 rejected, 0 with `approved_at`, **0 rows tagged `QATEST`**; `ledger_reimbursements` 0; `users` 53 (as at start), 0 `qa-history-*` users, 0 orphan `user_roles`; `ledger_audit_log` 826 (as at start; 2a writes no audit rows); `email_queue` 1221 (as at start). One leftover to report: running the Increment 1 spec twice left four "New portal user needs member record review" notices (all `blocked_non_production`; that spec does not clean the email queue); I deleted exactly those four. Visiting `/admin/email-queue` triggers the page's own lazy retention purge, so an `email_queue` count can drop for reasons that are not test cleanup; the count here matched the pre-run value exactly.
+
+### Observations (none blocking)
+
+1. **Card `isSelf` looks at the expense leg only.** For a Transfer/Sweep whose *income* leg alone the viewer recorded, the banner correctly says "You recorded this" (live fixture) while the page's `isSelf` (`txn.recordedByUserId === currentUserId`, expense leg) would still draw Approve and Reject, and the decide route would answer 403 under its either-leg rule. Not exercised in the UI, and unreachable through the app (the route records both legs under one user); only hand-edited data produces it. A one-line consistency follow-up if the orchestrator wants it; pre-existing page logic from Increment 1, not a 2a regression.
+2. Increment 1's spec (`ledger-approvals-mobile.spec.ts`) leaves two "New portal user" email rows per run; it could delete them in `afterAll` as the new spec does.
+3. New copy the club may want to refine (carried from the ux-developer): the decided-tab description "The most recent board decisions, newest first.", "Try again", "Approved by You", "You recorded this {noun}, so another board member needs to decide it." (it now says "disbursement", "transfer" or "sweep").
+4. At 1280 the row ring is gold top and bottom lines plus the tint, not a full ring (box-shadow on `<tr>`); looks fine in `shots/highlight-1280.png`.
+5. The `drizzle-kit push` `ledger_entities_slug_unique` vs `_key` drift database-admin hit is pre-existing and already logged by the orchestrator; not re-checked here.
+
+### Outputs
+
+- `e2e/ledger-approvals-history.spec.ts` (new)
+- Screenshots, logs, helper SQL wrapper: `/private/tmp/claude-501/-Users-cshenso-git-westervillelions/cc4e88df-e85f-4880-b31e-2ecb8a0c63d9/scratchpad/approvals-mobile-and-history/qa-2a/` (`shots/{decided-360,decided-390,decided-1024,decided-1279,decided-1280,highlight-390,highlight-1280}.png`, `unit-verbose.txt`, `build.log`, `e2e-run*.log`, `e2e-final.log`, `cov/coverage-summary.json`)
+- No application code edited, nothing committed; `docs/decisions.md`, `docs/backlog.md`, `package.json` and release notes untouched.
+
+### Open questions / handoff notes
+
+- **Next agent: analyst** for the short 2a confirmation (not the pipeline-closing Phase 6), then Increment 2b begins with database-admin per the Phase 3 addendum.
+- **Before the push that ships 2a:** the orchestrator's full `pnpm test:e2e` run covers this spec; the L4 Google round trip above is a manual check for the user, not something qa can sign off.
+- Proposed backlog text, if wanted (orchestrator files): "Approvals card `isSelf` should use the either-leg recorder rule the decide route enforces (observation 1)."
+
+**Verdict (Increment 2a): PASS**
+
+
+## Increment 2a — analyst confirmation — 2026-10-10
+
+**Owner:** analyst
+**Status:** complete (short confirmation; not the pipeline-closing Phase 6, which follows Increment 2b)
+
+**Verdict: CONFIRMED WITH NOTES.** Everything 2a was meant to deliver is in the tree and matches Phase 1 intent; the notes below are one hard sequencing constraint (N1) and small items.
+
+### What I did
+- Re-read Phase 1 (verbs, flows, the `?txn=` state table, the six answers, N1 to N12), the user decisions, the Phase 3 addendum's rulings and 2a sections, and the four 2a reports (database-admin, api-developer, ux-developer, qa PASS).
+- Read the shipped `approvals/page.tsx`, `approval-banner.tsx`, `approval-history.tsx` and `buildApprovalBanner()` in `src/lib/ledger-approval.ts`; re-ran the seven 2a test files that carry the contract (147 tests, all pass). No source, dev server, database, decisions, backlog, `package.json` or release-notes edits.
+
+### Verbs and `?txn=` states
+
+| Phase 1 item | Result | Note |
+|---|---|---|
+| Verb: tap the email link and land on the specific disbursement | delivered as intended | Email link is `?txn=<expense-leg id>` for ordinary, Transfer and Sweep (Transfer/Sweep 201 now returns the leg id, with a fallback to the plain URL). |
+| Verb: signed-out approver signs in and arrives at the disbursement (Flow 4, N3) | delivered as intended (password path); Google path not signed off | Proxy now uses `pathname + search`; one `safeCallbackPath()` guards proxy, signin and register. qa proved the password round trip and that `//evil`, `https://evil`, `/\evil`, `javascript:` land on `/members`. The Google round trip (L4) is a manual check for the user, see N2. |
+| Verb: open "Recently decided", see who/when/which minute (Flow 5, scope B) | delivered as intended | `?tab=decided`, cap 25, newest decision first, approved and rejected, pairs once, reimbursement-paid and under-threshold rows excluded, Eastern time, minute and reason in full (wrap, no tooltip), entity name per row, footnote with register/search links, empty and failure cards as specified. Wording difference: the cards read "Approved by You" with a capital Y mid-sentence (Phase 1 said "You approved..." in the banner only). Cosmetic. |
+| Verb: read "already approved by X" after a stale click (Flow 3) | delivered with a wording difference | Banner names the decider and Eastern time and links to the History row, as specified. The text still ends "Only one approval is needed, so there is nothing more to do." That is Phase 1 wording and the agreed 2a wording, but it is now contrary to the user's decision to allow multiple approvers. See N1. |
+| Verb: approver who recorded the item is told someone else must decide | delivered as intended | "You recorded this {noun}, so another board member needs to decide it." Noun is now kind-correct. Also correct when the viewer recorded only the income leg of a pair (qa fixture). |
+| Verb: Reject (Flow 2) now attributed | delivered as intended | Both legs stamped `rejected_by_user_id` and `rejected_at`, `approved_*` never touched (DB-asserted 5/5 under double-click); the 409 names the rejector and reads "You already rejected this sweep." for a double-click. |
+| State: pending, not own | delivered as intended | Text as specified; row ringed, scrolled, focused; ring survives past 3.5 s (the Phase 3 "persistent" fix to the 3-second strip). |
+| State: pending, own | delivered as intended | |
+| State: approved by someone else / by viewer | delivered with a wording difference | Same as above; "You approved this ..." survives `router.refresh()` as the free confirmation Phase 1 wanted. |
+| State: rejected (other / viewer / legacy) | delivered as intended | Legacy rejection with no stamp reads "This {noun} was rejected on {date}." Minor: if a typed reason already ends in a period the banner shows a doubled period (the template appends one). Not worth a tracked item. |
+| State: Transfer/Sweep by either leg id | delivered as intended | Income-leg id resolves to the pair (19 live states in qa's spec). |
+| State: posted, no board decision (reimbursement paid, under-threshold) | delivered as intended | |
+| State: deleted / malformed / hostile id | delivered as intended | 200, not-found banner, no 500, input never echoed, `<script>` inert. Wording says "disbursement" even for a deleted transfer id; unavoidable, nothing is known about it. |
+| State: viewer lacks `ledger.approve` | delivered as intended | Redirect to `/admin/ledger`; qa confirmed no name or minute leaks. |
+| Flow 6 empty Pending tab | delivered as intended | "Nothing is waiting for approval" plus the secondary-style "See recently decided" link-button (Inc 1 deferred this; now shipped). |
+| N10 `h1` "Approvals", tabs "Pending (n)" / "Recently decided", `?tab=` whitelisted | delivered as intended | |
+| Flow 5 failure: Pending survives a failed history query | delivered as intended (static proof only) | History fetch is in its own try/catch; qa could not induce a History-only failure locally. Code reading and tests are sufficient. |
+| N4 race-safe decision, N7 escaping, N5 email sentence | delivered as intended | Race and escaping shipped in Inc 1; the sentence ships in 2a (see N1). |
+| Inc 1 hand-offs F1 (noun-correct copy), F2 (entity names), F3 (thousands separator), F5.4 | delivered as intended | Verified live: "Approve Sweep", "$2,275.00" on card, table and History, Sweep card names both books. |
+
+Not delivered in 2a, by design (2b): co-sign ("add your approval"), "also approved by", the replaced race-lost-to-approval landing, and the removal of "Only one approval is needed". Nothing else from the 2a list is missing.
+
+### The user's concerns that 2a covers
+
+1. **No indication a transaction was already approved:** met. A stale-link click now shows who, when, and under which minute (banner), the empty Pending tab no longer says "All expenditures are approved", and the tab shows the decision on its own.
+2. **Does the link go to the specific transaction:** met. Yes, `?txn=<id>`, highlighted and focused if pending, otherwise a banner; survives sign-in on the password path. Google path pending the user's manual check.
+3. **A filter for already-decided transactions, last 25:** met, as a "Recently decided" tab (same page, URL-addressable) rather than a filter control, with a fixed cap of 25 and no pagination, as Phase 1 recommended and the user's words ("only a history of the last 25") asked.
+4. **Recording who rejected:** met going forward (the user said "yes, record who rejected going forward"). Zero legacy rejections exist in production, so "decider not on file" is a fallback branch no one will see today.
+
+### Notes
+
+- **N1 (hard constraint, not a defect in 2a): 2a must not be pushed without 2b.** The banner ("Only one approval is needed, so there is nothing more to do"), the email sentence ("Only one board approval is needed. If a colleague has already acted, the link will show who.") and the Inc 1 toast ("Only one approval is needed.") all state a rule the user has since decided to change. The user's instruction was "continue with 2a and then 2b, take it all the way to production", so this is the plan, but if 2b slips, the orchestrator should either hold the push or ship 2a with those three strings neutralised. Both Phase 3 and I recorded this; restating because it is the one way 2a alone would mislead 14 board members.
+- **N2: L4, the Google round trip, is an owner check before relying on the Google email-link path.** Signed out, open `/admin/ledger/approvals?txn=<a pending id>`, choose "Sign in with Google", confirm landing on the Approvals page with the banner, not `/members`. qa verified only that the right same-origin callback reaches NextAuth. Fold it into the same human glance as Inc 1's F4 (fine-pointer autofocus). It is a one-minute manual step, not a tracked item.
+- **N3: post-deploy count check (qa click-through 8).** After deploy the orchestrator reads, counts only, that Recently decided shows `board_approved_rows + rejected_expense_legs` rows (1 + 0 on 2026-10-10). That is the production sanity check on the discriminator.
+- **N4: copy the club may tune** (carried from ux-developer and qa; no action unless the club asks): "Approved by You", the decided-tab description "The most recent board decisions, newest first.", the "Try again" link. If 2b re-touches `deciderLabel()`, lowercase the viewer case to "Approved by you" or reword as "You approved" in the same edit (absorb-sized).
+
+### Proposed backlog text (drafts only; ID to be reserved by the orchestrator, nothing filed; B-160 is held for the dissent question and B-161 is used)
+
+**Proposed (ID to be reserved).** *Approvals card/table `isSelf` should use the either-leg recorder rule the decide route enforces.* The page computes `isSelf` as `txn.recordedByUserId === currentUserId` on the expense leg only, while the decide route refuses when the actor recorded either leg of a Transfer/Sweep pair. If only the income leg were recorded by the viewer, the card would offer Approve/Reject and the route would answer 403 (the `?txn=` banner already says "You recorded this" correctly). Unreachable through the app today (both legs are written under one user), so low priority; fix by selecting a `viewerRecordedEitherLeg` boolean in `getPendingApprovals()` (the resolver already computes it). Origin: this work-log, qa 2a observation 1.
+
+**Proposed (ID to be reserved, trivial).** *`e2e/ledger-approvals-mobile.spec.ts` leaves two "New portal user" `email_queue` rows per run.* Delete them in `afterAll`, as `ledger-approvals-history.spec.ts` does. Origin: qa 2a observation 2.
+
+### Release-note bullets for 2a (user-facing; for the v1.90 entry, to be combined with 2b's)
+
+- Opening a pending-approval email now takes you straight to that disbursement, transfer or sweep: it is highlighted on the Approvals page, and if a colleague has already decided it, a banner tells you who decided, when, and under which board minute instead of a bare "all approved" message. This also works when you have to sign in first.
+- A new "Recently decided" tab on Approvals lists the last 25 board decisions, approved or rejected, newest first, with the amount, payee, fund, who recorded it, who decided it, and the full board-minute reference or rejection reason.
+- Rejecting a disbursement, transfer or sweep now records who rejected it and when (from now on), and the Approvals page uses the right word for what you are approving, shows which book (Club or Foundation) a pending item belongs to, and writes amounts with thousands separators.
+
+(Do not reuse the phrase "only one approval is needed" in the v1.90 notes; 2b replaces it. Sign-in links now also refuse to send you to any address outside the site; that is worth one clause in the security line if the notes have one.)
+
+### Outputs
+- This work-log only (this section). No code, database, dev server, `docs/decisions.md`, `docs/backlog.md`, `package.json` or release-notes changes.
+
+### Open questions / handoff notes
+- Orchestrator: hold the push until 2b is through Phase 5 (N1); run the L4 and F4 human checks; run the N3 counts read-only after deploy.
+- 2b may begin (database-admin first, per the Phase 3 addendum). 2a's Phase 5 PASS covers the tree it was measured on (`4730983` plus the uncommitted 2a files).
+
+## Phase 4 — Increment 2b (database-admin) — 2026-10-10
+
+**Owner:** database-admin
+**Status:** complete
+
+### Summary
+Added the `ledger_txn_cosigns` table (schema.ts first, then migration 0112) exactly as the 2b data model specifies, and extended the schema test. Both migration replays succeeded on the local dev DB, the constraints on the live table match the design, and tsc and the schema test are green.
+
+### What I did
+- Re-derived the migration number: highest existing was 0111, so this is `0112`.
+- `schema.ts`: `ledgerTxnCosigns` directly after `ledgerTransactions` (id, txn_id notNull FK CASCADE, user_id nullable FK SET NULL, cosigned_at naive timestamp notNull defaultNow, `unique("ledger_txn_cosigns_txn_user_key").on(txnId, userId)`), plus `LedgerTxnCosign` type. No other index (design).
+- Wrote `drizzle/migrations/0112_ledger_txn_cosigns.sql`: `CREATE TABLE IF NOT EXISTS`, then one `DO $$` block with three `pg_constraint`-guarded `ADD CONSTRAINT`s (two FKs, one UNIQUE constraint). No seed, back-fill or role binding.
+- Extended `src/lib/ledger-approval-schema.test.ts` with a "migration 0112" describe (5 tests).
+
+### Outputs
+- `/Users/cshenso/git/westervillelions/src/lib/db/schema.ts` (table export name: `ledgerTxnCosigns`; type `LedgerTxnCosign`; columns `txnId`, `userId`, `cosignedAt`)
+- `/Users/cshenso/git/westervillelions/drizzle/migrations/0112_ledger_txn_cosigns.sql`
+- `/Users/cshenso/git/westervillelions/src/lib/ledger-approval-schema.test.ts`
+- Constraint names (all <= 63): `ledger_txn_cosigns_txn_id_ledger_transactions_id_fk` (51), `ledger_txn_cosigns_user_id_users_id_fk` (38), `ledger_txn_cosigns_txn_user_key` (31).
+
+### Tests and gates
+- Replay 1 and replay 2 of `pnpm db:migrate` (local dev DB): both ended "Migrations completed successfully", both listed `0112_ledger_txn_cosigns.sql`; the only noise is the usual "already exists, skipping" notices from older migrations.
+- Live table check (`pg_constraint` on the dev DB): pkey, both FKs with the specified ON DELETE rules, and `UNIQUE (txn_id, user_id)`, names as above.
+- `pnpm db:push` (no `--force`, non-TTY): aborted at the interactive prompt about the pre-existing `ledger_entities_slug_unique` (vs `ledger_entities_slug_key`) mismatch; nothing was applied. Because drizzle-kit raises that prompt before printing its statement list, it cannot itself prove "no cosigns diff". The no-diff evidence is instead: drizzle-derived constraint names equal the live names (pinned by the new test) and the live table shape matches schema.ts. The prompt is the only difference it reported.
+- `pnpm exec tsc --noEmit`: clean. `vitest run src/lib/ledger-approval-schema.test.ts`: 10/10 pass.
+- Idempotence grep (DROP, bare ADD COLUMN) on 0112: nothing.
+
+### Deviations from the design
+- None. (The test's "no data writes" check matches `INSERT`, `UPDATE`, `DELETE FROM` rather than a bare `DELETE`, since `ON DELETE` is legitimate in the FKs.)
+
+### Open questions / handoff notes
+- For api-developer: import `ledgerTxnCosigns` from `@/lib/db/schema`; `txnId` is the EXPENSE leg; use `INSERT ... ON CONFLICT DO NOTHING` on `(txnId, userId)` and pass `cosignedAt: new Date()` explicitly (T9). `userId` is nullable (deleted account); NULLs are distinct in the unique key.
+- Orchestrator: the dev server needs the restart announced (new table exists on the dev DB already). Per the design, do not push until 2b passes Phase 5. Next agent: api-developer.
+
+### Orchestrator: dev-server restart after the 2b schema step (2026-10-10)
+
+The `:3000` dev server was stopped and restarted after migration `0112_ledger_txn_cosigns.sql` landed (log: scratchpad `dev-restart-2b.log`). "User decisions" re-read before this step: the no-quorum decision stands, no later entry. Every live check from here runs against the restarted server. The `db:push` prompt is the same pre-existing `ledger_entities_slug` naming mismatch classified after the 2a schema step; database-admin's live `pg_constraint` check plus the schema test stand in for the push diff.
+
+## Phase 4 — Increment 2b (api-developer) — 2026-10-10
+
+**Owner:** api-developer
+**Status:** complete (B1 to B7). ux-developer is next.
+
+### Summary
+Delivered the whole 2b server side: the shared lock helper (and `decideTransaction()` refactored onto it with every existing assertion unedited), the co-sign carrier vocabulary, `cosignTransaction()`, the cosign route, the queries-module second query with the co-signer fields, the new banner states, and the B7 string replacements. `tsc` is clean; `pnpm test` is 202 files / 3596 tests, all passing (2a ended at 197 / 3470); `pnpm lint` shows only the pre-existing `budget-context-panel.tsx` warning; no `console.log`, no native dialogs; both E-1 `console.error` catches untouched. No page, dialog, history or banner component was edited.
+
+### What I did
+- **B2 (first, so B3 could use it).** `lockDecisionPair(tx, id, "update" | "share")` in `ledger-board-decision.ts`, moved verbatim from `decideTransaction()` (which now calls it with `"update"`; the file lost its inline lock and the unused `asc/or/sql` imports). The executor type is `import type { db }`, so the file still has no runtime `db` import. `ledger-approval-decision.test.ts`: zero existing assertions edited; one scan test appended.
+- **B1.** In `ledger-approval.ts`: `cosignEligibility`, `CosignIneligibleReason`, `CosignConflictCode/Body`, `CosignForbiddenBody`, `CosignCreatedBody`, `isCosignConflict`, `isCosignForbidden`, `CosignerView`, `formatApproverList`; `DecidedApprovalRow` approved member gained required `cosigners / canCosign / viewerHasCosigned / viewerRecorded`; `ApprovalBannerModel.action?: "cosign"`; `describeApprovalConflict(body, noun, verb = "approve")`.
+- **B3.** `src/lib/ledger-cosign.ts`, procedure exactly as designed (see deviations 1 and 2 for the two small choices).
+- **B4.** `POST /api/admin/ledger/transactions/[id]/cosign`, `auth()` then `hasFeature(user.id, LEDGER_APPROVE)` first, no body read, thin wrapper.
+- **B5.** `ledger-approval-queries.ts`: second statement for the returned approved ids (`inArray`, `ORDER BY cosigned_at, id`, LEFT JOIN `users`, skipped when empty, throws on failure); the main SELECT also reads `recorder`/`dest.recorded_by_user_id` and `approved_by_user_id` inside the module only; one `cosignEligibility()` call per approved row drives all three booleans.
+- **B6.** `buildApprovalBanner` approved branch rewritten to the 2b table (precedence recorded > poster > cosigned > eligible).
+- **B7.** The three "Only one approval is needed" strings are gone: banner (above), email sentence (`buildPendingApprovalEmailHtml`: "Only one board approval is needed to post this. If a colleague has already approved it, the link will show who, and you can add your approval too."), and the toast (`describeApprovalConflict`). `approvalFailureAction` now passes its `verb` to `describeApprovalConflict` (that is what makes the reject variant suffix-free; both dialogs already pass the verb, so they needed no edit).
+
+### Contracts ux-developer consumes
+
+**Route.** `POST /api/admin/ledger/transactions/{id}/cosign`; no body, no `Content-Type`. Gate: `auth()` then `ledger.approve`.
+
+| Status | Body | Carrier guard |
+|---|---|---|
+| 201 | `{ id, cosignedAt }` (`id` = the EXPENSE leg; `cosignedAt` ISO) | `CosignCreatedBody` |
+| 401 | `{ error: "Unauthorized" }` | none |
+| 403 | `{ error: "Forbidden" }` (NO `code`) | `isCosignForbidden` false |
+| 403 | `{ error, code: "recorded_by_you" }` | `isCosignForbidden` true |
+| 404 | `{ error, code: "not_found" }` | `ApprovalNotFoundBody` |
+| 409 | `{ error, code, at, deciderName }`, `code` in `not_approved`, `rejected`, `not_board_decision`, `already_approved`, `already_cosigned` | `isCosignConflict` |
+| 500 | `{ error: "Failed to add your approval" }` | none |
+
+`at` (ISO or null): `rejected` = `rejectedAt ?? updatedAt`; `already_approved` = the entry's `approvedAt`; `already_cosigned` = the caller's existing `cosigned_at`; otherwise null. `deciderName` is non-null only for `rejected` (the rejector via `displayDeciderName`; never an email). Branch on `code`, never on `error`. Sending the id of either Transfer/Sweep leg works; the response `id` is always the expense leg.
+
+**Imports (client-safe, from `@/lib/ledger-approval`):** `cosignEligibility`, `CosignConflictBody`, `CosignConflictCode`, `CosignForbiddenBody`, `CosignCreatedBody`, `isCosignConflict`, `isCosignForbidden`, `CosignerView`, `formatApproverList`. Not yet written (ux-developer's per the design): `approvalEntryHref`, `cosignRequest`, `cosignFailureAction`, and `ApprovalFailureAction.showEntry` in `approval-dialog-logic.ts`.
+
+**Row shape (approved members of `DecidedApprovalRow`, History and the `?txn=` banner share one mapper):**
+`cosigners: { name: string | null; cosignedAt: string /* ISO */; isViewer: boolean }[]` in time order (all of them, no cap; `name: null` = deleted account or email-shaped name), `canCosign`, `viewerHasCosigned`, `viewerRecorded` (all server-computed from the one `cosignEligibility()` result; `deciderIsViewer` is the poster). Rejected rows carry none of these. No user id on any returned object (test-walked). The History card list should render all names: `formatApproverList(row.cosigners)` (no `max`) returns `{ text, hiddenCount: 0 }`; use `text` as the "Also approved by:" content or map the entries yourself for the per-name dates ("Ann (Oct 10), Bo (Oct 11)"). Render the button only when `canCosign`.
+
+**`formatApproverList(entries, { max? })`** returns `{ text, hiddenCount }`. When `hiddenCount > 0`, `text` already ends in " and N others" (or "and 1 other") and items are comma-joined, so do not append anything (deviation 3).
+
+**Banner (`buildApprovalBanner`)** new approved-state outputs, `role="status"`, plain text:
+- eligible, no co-signs: success, "Approved by {P} on {date}. It has been posted. You can add your approval too.", `action: "cosign"`.
+- eligible, with co-signs: success, "Approved by {P} on {date}. Also approved by {list}. You can add your approval too.", `action: "cosign"`; the list is capped at 3 and `linkLabel` becomes "See everyone under Recently decided" when more exist (link target unchanged, `?tab=decided&txn=<id>`); otherwise the usual "See it under Recently decided".
+- poster: success, "You approved this {amount} {kind}{ to payee} on {date}. Also approved by {list}." (second sentence omitted when none), no action.
+- cosigned: success, "You added your approval on {date}. Approved by {P} on {date}. Also approved by {others}." (others exclude the viewer), no action.
+- recorder: neutral, "You recorded this {kind}, so another board member decides it. Approved by {P} on {date}. Also approved by {list}.", no action.
+- `{P}` is "You", the name, or "A board member". `action` is present only on the two eligible rows and only when `canCosign`. The dialog props the design lists (amountText, party, noun, fundText, memo, recorderName, boardMinute) all come from `row` on the `decided` state.
+
+**Toast text:** `describeApprovalConflict(body, noun, "approve")` ends "You can add your approval too."; with `"reject"` it is "{Name} already approved this {noun}." The approve dialog's navigate-to-`?txn=` branch (`showEntry`) is ux's.
+
+### Tests (all passing; 202 files, 3596 tests overall)
+- `ledger-board-decision.test.ts` 14 (lockDecisionPair: mode, ORDER BY id, NULL-subselect WHERE, row order; no-runtime-db scan now ignores `import type`; R9 scans for `ledger-cosign.ts` and the queries module).
+- `ledger-approval-decision.test.ts` 37 (existing unedited; +1 scan: imports `lockDecisionPair`, no inline `.for("update")`).
+- `ledger-cosign.test.ts` 29 (every bullet of the design list: leg normalisation incl. income-leg then expense-leg, double tap with `at`, either-leg recorder, poster `at`, deleted poster, pending/rejected/legacy/email-shaped name, predicate-false and lone-income and wrong-size sets, call order lock then predicate-on-expense-id then insert in one transaction, 404 and malformed id with the db untouched, `.for("share")` + ORDER BY, two users, ON CONFLICT target `(txn_id, user_id)`; scans: no `update(`/`delete(`, `boardApprovalPredicate(` present, `paidReimbursementExists(` absent, no queries import, table-identifier allow-list across `src`, `drizzle`, `scripts`, and "imported only by the cosign route").
+- `cosign/route.test.ts` 14 (401, 403 without `code`, gate order, 201, body ignored and session id used, body never read, `recorded_by_you` distinguishable, 404, the five 409 codes, 500 leaks nothing).
+- `ledger-approval.test.ts` 66 (+`cosignEligibility` table, `isCosign*`, `formatApproverList`, every B6 banner row, precedence, no "only one approval"/fraction/votes/@ in any output, `describeApprovalConflict` verbs).
+- `ledger-approval-queries.test.ts` 34 (+11: History statement and ordering free of the co-sign table, one second statement with IN and `cosigned_at, id`, skipped when empty/only rejected, throws when it fails, null-name co-signers, grouping, `canCosign` matrix incl. dest-leg recorder, deleted poster, one eligibility call per approved row, no user-id key at any depth, resolver parity).
+- `approval-dialog-logic.test.ts` 17 (+1 reject-verb no-suffix; one expected string changed to the new sentence), `email-compose.test.ts` 21 (2b sentence present, 2a sentence absent), `transactions/route.test.ts` (sentence constant updated).
+- Not mine, still the design's ux list: `approval-history.test.tsx` (co-signer line/button), `approval-dialog-logic.test.ts` `showEntry` / `approvalEntryHref` / `cosignRequest` / `cosignFailureAction`.
+
+### Outputs (files)
+Created: `src/lib/ledger-cosign.ts`, `src/lib/ledger-cosign.test.ts`, `src/app/api/admin/ledger/transactions/[id]/cosign/route.ts`, `.../cosign/route.test.ts`.
+Modified: `src/lib/ledger-board-decision.ts` (+test), `src/lib/ledger-approval-decision.ts` (+test), `src/lib/ledger-approval.ts` (+test), `src/lib/ledger-approval-queries.ts` (+test), `src/lib/email-compose.ts` (+test), `src/app/api/admin/ledger/transactions/route.test.ts` (sentence constant), `src/components/admin/ledger/approval-dialog-logic.ts` (one argument: `verb`) and its test. No schema, migration, dev-server, decisions, backlog, package.json or release-notes change.
+
+### Deviations from the design (all inside the absorb limit)
+1. **404 for a locked set that omits the requested id** and a few data-fault branches reuse `not_board_decision` exactly as B3 says; the one addition is that `conflict()` always fills `at`/`deciderName` with null so every 409 matches `CosignConflictBody`.
+2. **Rejector name** reuses `lookupDeciderName()` exported from `ledger-approval-decision.ts` (separate select, no join) rather than a second copy. It means `ledger-cosign.ts` imports the decision module (server-to-server, fine; it does not import the queries module).
+3. **`formatApproverList` with `hiddenCount > 0` returns text already ending "and N others"** (comma-joined items), instead of the banner appending it, because appending to the "A, B and C" join would read "A, B and C and 4 others". `hiddenCount` is still returned. Singular "and 1 other" when exactly one is hidden.
+4. **`approvalFailureAction` passes `verb`** to `describeApprovalConflict` (one argument in `approval-dialog-logic.ts`) so the Increment 1 toast and its reject variant are correct now; `showEntry` stays with ux-developer.
+5. `FOR SHARE` is mockable; no fallback to `"update"` was needed.
+
+### Open questions / handoff notes
+- Next agent: **ux-developer** (cosign dialog, banner button on `action === "cosign"`, History line and button, help line, `showEntry`/`approvalEntryHref`/`cosignRequest`/`cosignFailureAction`, approve dialog's `router.replace` branch).
+- The recorder who loses an approve race gets the "You can add your approval too." suffix although they can never co-sign (the 409 does not say who recorded). Only reachable if a recorder is shown Approve, which `isSelf` prevents except in the income-leg-only edge already filed as the either-leg backlog draft. If the `showEntry` branch is built, the banner it lands on is correct (recorder row), so no wrong action is offered.
+- qa: the L6/L7/L8 concurrency checks and the table-identifier scan are the live proofs of the lock claims; my unit tests cover them against a mock only. The predicate renders table-qualified columns in the co-sign select (rendered and checked with a scratch drizzle query; not committed).
+- I did not touch the dev server, `docs/decisions.md`, `docs/backlog.md`, `package.json`, release notes, `scripts/`, or any production setting.
+
+## Phase 4 — Increment 2b (ux-developer) — 2026-10-10
+
+**Owner:** ux-developer
+**Status:** complete (step 3 of the 2b order). qa is next.
+
+### Summary
+Built the whole 2b client surface: the `CosignDialog` island, the "Add your approval" control on approved History cards and on the `?txn=` banner (only when `canCosign`), the "Also approved by" line, the "You added your approval" and "You recorded this" states, the approve dialog's lose-the-race landing on `?txn=<id>`, the Recently decided help line, and every unit test the 2b design names for these files. The page stays a Server Component; the only new client code is the dialog. `tsc` clean, `pnpm test` 203 files / 3624 tests all passing (api-developer ended at 202 / 3596), `pnpm build:only` passes, `pnpm lint` shows only the pre-existing `budget-context-panel.tsx` warning.
+
+### What I did
+- **`approval-dialog-logic.ts`:** `ApprovalFailureAction.showEntry` (true only for verb `approve`, a typed 409, `decision === "approved"`, `!decidedByViewer`; false on every other branch including reject); `approvalEntryHref(id)`; `cosignRequest(id)` (bodiless POST, no headers); `cosignFailureAction(status, body, noun)` with one branch per row of the design table (typed refusals close, refresh, info toast, `already_cosigned` is success-shaped; 403 without `code`, 400, 5xx and network failure keep the dialog open; 404 closes with an error toast); `cosignDialogProps(row, amountText)` (strings only, no user ids, fund text via the existing `describeApprovalFund`); `cosignerItems()` (per-name short dates in Eastern time, the viewer as "You", unnamed collapsed to "a board member" / "N other board members"); the success, retry, not-found and help-line constants.
+- **`cosign-dialog.tsx` (new, client):** `LedgerDialogShell` dialog owning its trigger, secondary `border-2 border-lions-blue` 44px `rounded-lg` button (full width on a phone, `sm:w-auto`); body shows amount, payee, fund, memo, recorder, board minute on file read-only, and "Your name will be added to this entry. This does not change the books."; footer `flex-col-reverse` on a phone, Cancel and "Add my approval" both 44px; pending label "Adding…". Success toast "Your approval was added." then refresh.
+- **`approval-history.tsx`:** help line; "Also approved by:" line only when co-signers exist (all names, no cap); "You added your approval." and "You recorded this, so another board member decides it." lines; the button only when `canCosign`. Rejected cards carry none of it.
+- **`approval-banner.tsx`:** optional `cosign` prop; button rendered only when `model.action === "cosign"` and props are present, full width on a phone, below the text, above the link.
+- **`approvals/page.tsx`:** builds `bannerCosign` from the embedded approved row and passes it; nothing else changed.
+- **`approve-dialog.tsx`:** `router.replace(approvalEntryHref(transactionId))` when `action.showEntry`, else the existing refresh. The dialog's toast and `verb` handling were already right (api-developer). `reject-dialog.tsx` needed no edit (already passes `verb: "reject"`; the toast has no suffix).
+- **Copy polish (analyst's 2a cosmetic notes):** doubled period on a rejected banner fixed in `buildApprovalBanner` (trimmed reason; period appended only when it does not already end in `.`, `!` or `?`). See deviation 2 for the capitalisation note.
+
+### Outputs (files)
+Created: `src/components/admin/ledger/cosign-dialog.tsx`, `src/components/admin/ledger/approval-banner.test.tsx`.
+Modified: `src/components/admin/ledger/approval-dialog-logic.ts` (+test), `approval-history.tsx` (+test), `approval-banner.tsx`, `approve-dialog.tsx`, `src/app/(dashboard)/admin/ledger/approvals/page.tsx`, `src/lib/ledger-approval.ts` (+test; the doubled-period fix only).
+No schema, migration, route, query, dev-server, decisions, backlog, package.json, release-notes or `scripts/` change.
+
+### Tests and gates
+- `pnpm exec tsc --noEmit`: clean.
+- `pnpm test`: **203 files, 3624 tests, all passing** (+1 file, +28 tests over api-developer's 202 / 3596).
+- New or extended: `approval-dialog-logic.test.ts` (showEntry matrix, `approvalEntryHref` incl. encoding, `cosignRequest` no body and no headers, `cosignFailureAction` one case per design row plus unrecognised 409, `cosignerItems`, `cosignDialogProps`; the existing `toEqual` expectations gained `showEntry: false`, nothing else edited), `approval-history.test.tsx` (help line, line only with co-signers and never "None", all 13+ names and "You", button only when `canCosign`, already-added and recorded states without a button, rejected cards bare, no fraction/votes/email, 44px `rounded-lg`; fixtures gained the four new fields and a `next/navigation` + `sonner` mock), `approval-banner.test.tsx` (button only for `action: "cosign"` with props, none otherwise, plain-text rendering, trigger styling), `ledger-approval.test.ts` (no doubled period).
+- `pnpm build:only`: passes.
+- `pnpm lint`: 0 errors, 1 warning (pre-existing `budget-context-panel.tsx:114`).
+- No `console.log`, no `alert/confirm/prompt` in any file I touched; no `rounded-full`; no `lions-red`.
+
+### Browser verification (local dev DB via `DATABASE_URL`, e2e admin, headless Chromium against :3000)
+Fixtures: 9 transactions tagged `UXTEST` plus 15 `uxtest-*@example.invalid` users (one poster, one recorder, 13 co-signers), 20 co-sign rows. Script and screenshots are in the scratchpad `approvals-mobile-and-history/` (`verify2b.ts`).
+- **History at 390px:** eligible card shows the button; the viewer-as-poster card has none ("Approved by You"); the viewer-recorded card has none and says "You recorded this..."; the already-co-signed card has none and says "You added your approval." with "You (Jul 4)" in the list; the rejected card has none and no approvals line. Help line present. No horizontal scroll (390 and 360).
+- **Co-sign from a History card:** dialog opened (buttons 44px, copy as designed), toast "Your approval was added.", card re-rendered with "Also approved by: You (...)" and no button.
+- **Stale dialog:** a co-sign was inserted for the viewer after the dialog opened; clicking Add my approval returned 409 `already_cosigned`, the dialog closed, the info toast read "You already added your approval on Jul 9, 2090 at 11:00 AM.", the card refreshed to the added state.
+- **Banner:** thirteen co-signers reads "Approved by Pat Poster on ... Also approved by Ann ..., Bo ..., Cy ... and 10 others. You can add your approval too." with the button (308px wide at 390, 44px high) and the link "See everyone under Recently decided"; the History card for the same entry lists all 13 with no horizontal scroll at 360. Eligible-with-no-cosigns reads "It has been posted. You can add your approval too." Poster, recorder, already-co-signed and rejected banners show no button and the designed text. Co-sign from the banner: toast, banner re-rendered as "You added your approval on ...", no button.
+- **Lose the approve race:** Approve dialog open with a typed minute, colleague approval inserted, click Approve: dialog closed, URL became `/admin/ledger/approvals?txn=<id>`, banner offered Add your approval, toast "Pat Poster already approved this disbursement. You can add your approval too." The reject variant is covered by the logic test only (no click-through; qa step 4 drives it).
+- **Widths driven:** 390 and 360. Not driven: 1024 / 1279 / 1280 (the History is single-column cards at every width, so no layout branch changed).
+- **Cleanup:** deleted the `UXTEST` transactions and the fixture users in the script's `finally`. After cleanup: 0 `UXTEST` transactions, 0 fixture users, 0 co-sign rows on fixture transactions, 0 co-sign rows by fixture users (co-signs cascade with the transaction). No email was queued (all writes were direct DB inserts plus the three real co-sign routes; none send mail).
+
+### Deviations from the design (routed by size)
+1. **Added `cosignDialogProps(row, amountText)` and `cosignerItems(cosigners)` to `approval-dialog-logic.ts` (absorbed, ~60 lines, pure, tested).** The design lists the dialog's props but not where they are built; one helper keeps the banner and the History card on the same mapping. `cosignerItems` renders per-name dates ("Ann (Oct 11)") as the B6 History line specifies, so it does not call `formatApproverList` (that function has no per-name date and is still the banner's source).
+2. **Copy polish.** (a) Doubled period on a rejected banner: fixed. (b) "Approved by You" capitalisation mid-sentence: **not changed.** B6 defines `{P}` as "You" in the banner and the viewer reads "You" in `formatApproverList` and the tested History label; in every state where the banner can print it, "You" is already the sentence start or the poster branch ("You approved this ..."). The only mid-sentence "You" is the History label "Approved by You" and the list item "You (Oct 4)", both specified and tested. Raise if the analyst wants "you" lowercased there.
+3. **`cosignFailureAction` has no `showEntry` and no `successShaped` field.** `already_cosigned` is success-shaped by its info toast and its wording only; adding a field no consumer reads would be dead code.
+4. **Unrecognised 409 body on the cosign route** closes and refreshes with "This entry can no longer take your approval. It has been refreshed." (the design table had no row for it; mirrors the approve dialog's generic-409 branch).
+5. **Fund kind in the dialog** is derived from the noun (`disbursement` is `plain`, otherwise the noun) instead of a separate prop, so `CosignDialogProps` matches the design list exactly.
+6. **Help line sits at the top of the Recently decided list** (inside `ApprovalHistory`, shown when there are rows), not in the page header, so it disappears with the empty and failed states where it would mislead.
+
+### Open questions / handoff notes for qa
+- **Click through (390 and 360):** `/admin/ledger/approvals?tab=decided` as a board member: button only on entries you neither recorded, approved nor co-signed; add from a card and from `?txn=<id>`; the toast and the re-render; the 13-name wrap; poster, recorder (either leg of a Transfer/Sweep), already-co-signed and rejected rows show no button; Pending count, layout badge and sidebar unchanged.
+- **Lose-the-race:** approve variant lands on `?txn=` with the button; reject variant closes and refreshes with no suffix and no navigation (only unit-tested by me).
+- **Not browser-checked by me:** a Transfer/Sweep pair card and banner (the dialog fund line uses `describeApprovalFund`, unit-tested); the income-leg recorder case; 403 `recorded_by_you` and 404 toasts (unit-tested only); the concurrency checks L6 to L8 (yours).
+- The Next dev "1 Issue" badge is visible in the screenshots on both the History and the dialog; I did not open it, so qa should confirm it is not a hydration warning from this page (design click-through 9).
+- New copy the Lions Club may want to refine: "Add your approval", "Add my approval", "Your name will be added to this entry. This does not change the books.", "Your approval was added.", the help line "These are already posted. You can add your approval to any entry you did not record.", and the two states "You added your approval." / "You recorded this, so another board member decides it."
+- The recorder who loses an approve race still sees the "You can add your approval too." toast (api-developer's note); the `?txn=` banner it lands on is the recorder row, so no wrong action is offered.
+- Next agent: **qa** (Phase 5), then analyst Phase 6.
+
+
+## Phase 5 — Verification — Increment 2b — 2026-10-10
+
+**Owner:** qa
+**Status:** complete (Increment 2b)
+**Scope:** Increment 2b only: the `ledger_txn_cosigns` table (migration 0112), `lockDecisionPair()` and the `decideTransaction()` refactor onto it, `cosignTransaction()` and `POST /api/admin/ledger/transactions/[id]/cosign`, the second History query and the co-signer fields, the 2b banner states, the cosign dialog, the "Also approved by" line, the lost-approve-race landing on `?txn=`, and the three string replacements (banner, email sentence, toast).
+**Tree measured:** `main` at `4730983` plus the uncommitted 2a and 2b working tree (49 entries in `git status --short` before qa). Application code (`src/`, `drizzle/`) was **not modified by qa** (`find src drizzle -newer` returned nothing at the end); qa touched only `e2e/` (one new spec, one string in each of the two existing approval specs) and this work-log. Dev server :3000 (restarted by the orchestrator after the 2b schema step) was not touched; `.env.local` has `RESEND_API_KEY=` blank and no `EMAIL_DEV_ALLOWLIST`; nothing under `scripts/` was run; `PROD_DATABASE_URL` was never read.
+
+### Summary
+
+**Verdict: PASS** for Increment 2b. Every gate is green; every unit test the 2b design names exists and passes; the live pass against real Postgres found **no product defect**. The lock claims that the unit tests could only mock are proven live: two co-signers do not queue behind each other (`FOR SHARE`), a co-sign waits behind a `FOR UPDATE` holder, and the approve path still waits behind a `FOR SHARE` holder (so `decideTransaction()` kept its `FOR UPDATE` through the helper extraction). Leg normalisation holds under real concurrency: one person can never sign twice on a Transfer or Sweep, by either leg, sequentially or in parallel (L8, 20/20 per shape, 5 complete passes). A co-sign never changes `ledger_transactions` (whole-table digest before and after), the audit log or the email queue. The two existing approval specs needed four assertion updates for strings and banner rows the 2b design deliberately replaced (listed below), and pass 54/54 and 12/12 beside the new spec. The dev "1 Issue" badge is **not** a hydration warning: it is the dev-only CSP `eval()` console error, identical on the untouched `/admin` dashboard. Not signed off by qa and recorded as such: L9 (orchestrator, post-deploy) and the L4 Google round trip (carried from 2a, a manual check for the user).
+
+### What I did
+
+**Gates (measured on the tree above)**
+
+| Gate | Result |
+|---|---|
+| `pnpm exec tsc --noEmit` | PASS (exit 0, no output; re-run after the last spec edit, still 0) |
+| `pnpm lint` | PASS: 0 errors, 1 warning, `src/components/admin/ledger/budget-context-panel.tsx:114` "unused eslint-disable directive" (pre-existing, not this diff). The new spec and both edited specs lint clean. |
+| `pnpm test` (whole suite) | PASS: **203 files, 3624 tests passed, 0 failed**, 4.0 s (the ux-developer's count, reproduced; run again at the end, same). `admin-page-feature-gates.test.ts` is inside it. |
+| `pnpm build:only` | PASS: exit 0, "Compiled successfully", 125/125 static pages, **273** route lines (2a had 272: the one new route), zero "warn" lines, :3000 stayed 200 throughout. `git status` byte-identical before and after. |
+| Migration replay | `export $(grep -E "^DATABASE_URL=" .env.local \| xargs) && pnpm db:migrate`: "Migrations completed successfully", lists `0111_ledger_rejection_attribution.sql` and `0112_ledger_txn_cosigns.sql`, no error. A no-op for both (the table and all three constraints already exist). Live table check via `pg_constraint` / `information_schema`: `ledger_txn_cosigns_pkey`, `..._txn_id_ledger_transactions_id_fk` FK to `ledger_transactions(id)` **ON DELETE CASCADE**, `..._user_id_users_id_fk` FK to `users(id)` **ON DELETE SET NULL**, `ledger_txn_cosigns_txn_user_key UNIQUE (txn_id, user_id)`; columns exactly `id uuid default gen_random_uuid()`, `txn_id uuid NOT NULL`, `user_id uuid` (nullable), `cosigned_at timestamp NOT NULL default now()`. `drizzle-kit push` was **not** re-run: database-admin recorded that it aborts at the interactive prompt about the pre-existing `ledger_entities_slug_unique` naming mismatch before printing any statement list, so it cannot prove "no cosigns diff"; the evidence that stands is the live constraint names and shape above equal to the names `ledger-approval-schema.test.ts` derives from `schema.ts` (5 tests, passing). |
+| Idempotence grep on `0112_ledger_txn_cosigns.sql` (`CREATE TABLE`, `ADD COLUMN`, `INSERT INTO`, `CREATE INDEX` lines without `IF NOT EXISTS` / `ON CONFLICT` / `WHERE NOT EXISTS`) | empty. A second grep for `DROP`, `INSERT`, `UPDATE`, `DELETE FROM` also empty (`ON DELETE` in the two FKs is the only match of a bare `DELETE`). The three `ADD CONSTRAINT` statements each sit inside a `pg_constraint`-guarded `DO $$` block. |
+| `e2e/ledger-approvals-cosign.spec.ts` (new) with `ledger-approvals-history.spec.ts` (2a) and `ledger-approvals-mobile.spec.ts` (Increment 1) only; the full suite NOT run, the orchestrator runs it at pre-push | PASS: **136/136** in 9.7 min, single worker (70 new + 54 + 12). Five complete passes of the new spec, all green after the last fixes (see "Runs"). |
+
+**Unit tests the 2b design names: all present and passing.** Listed verbosely: 11 relevant files, **286 tests, 11/11 files, 0 failures** (`unit-verbose.txt`). Checked against the design by name: `ledger-approval-schema.test.ts` migration-0112 describe (5: FK names equal drizzle's within 63 chars and guarded in the SQL, unique is exactly `(txn_id, user_id)`, cascade / set null / nullable, exact columns, `CREATE TABLE IF NOT EXISTS` with guarded constraints and no data writes); `ledger-board-decision.test.ts` (`lockDecisionPair` update / share / order by id / the NULL-subselect WHERE / row order; R9 scans for `ledger-cosign.ts` and the queries module; no runtime `db` import); `ledger-approval-decision.test.ts` (existing assertions untouched, plus the "imports lockDecisionPair and has no inline row lock" scan); `ledger-cosign.test.ts` (29: every bullet of the design list including income-leg id inserts the expense id, same user via income then expense gets `already_cosigned` with the same `txnId`, double tap with `at`, either-leg recorder, posting approver, deleted poster, pending single and pair, rejected with and without the stamp, email-shaped name, predicate-false, lone income row, wrong-size set, call order lock then predicate then insert in one transaction, 404, malformed id never touching the db, `.for("share")` with ORDER BY, two users, ON CONFLICT target, and the table-identifier allow-list and importer scans); `cosign/route.test.ts` (14: 401, 403 with no `code`, body ignored, session id used, each result mapped, `recorded_by_you` distinguishable, auth before the helper); `ledger-approval.test.ts` (`cosignEligibility` table, `isCosignConflict` / `isCosignForbidden`, `describeApprovalConflict` verbs, `formatApproverList`, every 2b banner row, precedence, nothing contains "@", "of N" or "votes"); `ledger-approval-queries.test.ts` (History statement free of the co-sign table, one second statement with IN ordered `cosigned_at, id`, skipped when empty, throws on failure, null-name co-signers, `canCosign` matrix, one `cosignEligibility` call per approved row, no user-id key at any depth, resolver parity); `approval-dialog-logic.test.ts` (`showEntry` matrix, `approvalEntryHref` encoding, `cosignRequest` bodiless, `cosignFailureAction` one case per design row); `email-compose.test.ts` (2b sentence present, 2a absent); `approval-history.test.tsx` and `approval-banner.test.tsx`. **Nothing missing.** The `ledger-cosign.test.ts` identifier allow-list (R12) passes, and I re-grepped the tree myself: `ledgerTxnCosigns` / `ledger_txn_cosigns` appear only in `schema.ts`, `ledger-cosign.ts`, `ledger-approval-queries.ts`, the migration, the tests and `e2e/`.
+
+**Manual click-through, dev server :3000, local dev DB.** Driven by Playwright against real Postgres (headless Chromium, the real credentials form for every fixture user, the real routes), written as `e2e/ledger-approvals-cosign.spec.ts` so it re-runs. Fixtures: 10 board / budget-committee / treasurer users who sign in, 13 ghost co-signers, one deliberately distinctive co-signer name, 18 approved or decided entries including a Transfer and two Sweeps, a reimbursement-paid row, an under-threshold Sweep, a pending and a rejected entry; all `example.invalid`, memo prefix `QATEST E2E Approvals Cosign`, decision times in 2090 so they outrank everything in the newest-25 list. Dev-DB baseline at start: 285 `ledger_transactions`, 0 pending, 0 approved-stamped, 0 rejected, 0 `ledger_txn_cosigns`, 53 users, 1221 `email_queue`, 826 `ledger_audit_log`, 0 `ledger_reimbursements`, 70 `user_roles`.
+
+| Flow | Result | Observed |
+|---|---|---|
+| Banner by viewer, 21 viewer/entry combinations (checklist 1) | pass | Eligible admin on a plain approved entry: "Approved by QA Cosign Poster on Jun 20, 2090 at 12:00 PM. It has been posted. You can add your approval too." with the button. Thirteen co-signers: "Also approved by QA Ghost Signer 01, QA Ghost Signer 02, QA Ghost Signer 03 and 10 others." plus the link "See everyone under Recently decided". Posting approver: "You approved this ... Also approved by QA Zebrafinch Cosigner." no button. Already co-signed: "You added your approval on ... Approved by ... Also approved by ..." no button. Recorder: "You recorded this disbursement, so another board member decides it." no button. Rejected, reimbursement-paid, under-threshold Sweep and pending: no button (the last three read "did not need board approval" and "waiting for a board decision"). No banner contains "@", "votes", "of N" or "only one approval is needed". |
+| Transfer and Sweep pairs, by either leg id | pass | Admin recorded only the Transfer's **income** leg: "You recorded this transfer, so another board member decides it. Approved by ..." by the expense-leg id and the income-leg id, no button. The recorder of the Sweep's **income** leg only gets the same via the income-leg id; the recorder of its **expense** leg only gets "You recorded this sweep" ; a board member who recorded neither Transfer leg gets the button. An eligible admin sees the button on the Sweep by the expense-leg id and by the income-leg id. History shows one card per pair (the income id never renders a second card), with "Activity Fund (Club)" and "Charitable Fund (Foundation)". |
+| Button geometry at 360 and 390 | pass | Height >= 44 px, width >= 80% of the banner (about 308 px at 390), inside the viewport, no horizontal scroll. Dialog Cancel and "Add my approval" both >= 44 px at 360; the dialog fits. Screenshots `shots/banner-plain-{360,390}.png`, `dialog-360.png`. |
+| Add from the banner (checklist 2) | pass | Dialog shows amount, fund, memo, the minute on file read-only and "Your name will be added to this entry. This does not change the books."; clicking "Add my approval": toast "Your approval was added.", the banner re-renders "You added your approval on ...", no button. DB: exactly one row, user = the admin, `cosigned_at` within 2 minutes of the click. **The whole `ledger_transactions` md5 digest, the row's JSON, `email_queue`, `ledger_audit_log` counts, the Pending tab text and the Ledger overview's pending/approval lines (sidebar included) are byte-identical before and after.** (There is no layout or sidebar badge for approvals in this codebase; the only count is the Pending tab, which is unchanged.) |
+| Cancel | pass | Cancelling the dialog writes no row. |
+| Add from a Recently decided card | pass | Help line "These are already posted. You can add your approval to any entry you did not record." shown. After adding: "Also approved by: You (...)", "You added your approval.", no button; digest unchanged. On a **Sweep** card: dialog names both funds and the minute, the co-sign is keyed on the **expense** leg (one row), none on the income leg. |
+| Cards without the button | pass | Poster ("Approved by You"), recorder ("You recorded this, so another board member decides it."), existing co-signer ("You added your approval."), rejected (no "Also approved by", no state line), Transfer the admin half-recorded. A board member (recorder of the Sweep's expense leg) sees the Sweep with no button and the Transfer with one. |
+| Ordering | pass | A co-sign dated 2095 (newer than every decision on the page) added to an old entry leaves the list order identical: ordering stays on the posting decision time. |
+| Lose the approve race (checklist 4) | pass | Approve dialog open, a colleague approves through the route, click Approve: dialog closed, URL becomes `...?txn=<id>`, toast "QA Cosign Poster already approved this disbursement. You can add your approval too.", banner "Approved by QA Cosign Poster on ..." with the button; the loser's minute was discarded (DB keeps the colleague's); no co-sign row until the loser clicks "Add your approval", which then writes one for them. Same for a **Sweep**: "...already approved this sweep. You can add your approval too." and it lands on `?txn=<expense id>`. |
+| Lose the **reject** race | pass | Reject dialog open, a colleague approves, click Reject: dialog closed, toast "QA Cosign Poster already approved this disbursement." with **no** co-sign suffix, the URL is unchanged and carries no `txn`, the entry stays posted by the colleague, no rejection stamp, no co-sign row. |
+| Stale-dialog toasts (the 403 and 404 toasts, plus every typed 409), 7 cases | pass | Dialog open, then the row changed under it: recorder-became-you -> "You recorded this entry, so another board member needs to approve it."; deleted -> "We can't find that entry. It may have been deleted."; posting-approver-became-you -> "You approved this on ..."; co-sign added elsewhere -> "You already added your approval on Jan 1, 2091 at 7:00 AM."; back to pending -> "This entry is still waiting for its first approval."; rejected -> "QA Cosign Poster rejected this disbursement on Feb 1, 2091 at 7:00 AM, so it cannot take more approvals."; approval stamp removed -> "This entry did not need board approval." Each closes the dialog and writes no new row. |
+| Refusals, typed bodies (L10) | pass, **300/300 per pass** | 15 refusal kinds x 20 runs: pending 409 `not_approved`; rejected 409 `rejected` with `at` equal to the rejection time and `deciderName` "QA Cosign Poster"; reimbursement-paid, under-threshold Sweep by the expense leg and by the income leg 409 `not_board_decision`; recorder of a plain entry, recorder of only a Sweep income leg (by either leg id), recorder of only an expense leg by the income id, and an admin who recorded only a Transfer income leg (by either leg id) all 403 `recorded_by_you`; the posting approver 409 `already_approved` with `at` = `approved_at`; an existing co-signer 409 `already_cosigned`. **Zero rows written** (checked on every refused target), the table digest unchanged, no "@" in any body. |
+| 404, 401, 403 | pass | Malformed and unknown ids: 404 `not_found` (10/10). Signed out: 401. A `ledger.view`-only user (budget_committee) and a **treasurer outside the Board**: 403 with body exactly `{error: "Forbidden"}` (no `code`, so distinguishable from `recorded_by_you`); no row. |
+| 201 shape, body ignored | pass | 201 `{id: <expense leg>, cosignedAt: <ISO>}`; a body `{userId, txnId}` naming someone else and another entry is ignored: the row carries the session user and the named entry got nothing. |
+| Leg normalisation (L8, single) | pass | Income-leg id then expense-leg id by one user: 201 (body `id` = the expense leg) then 409 `already_cosigned` whose `at` equals the first `cosignedAt`; the income id again: 409; a second user: 201; two rows, both `txn_id` = the expense leg, none on the income leg. |
+| Lock dependency (checklist 6) | pass | `DELETE` and `PATCH` by an admin on a co-signed approved entry: 403, 403; on **either leg** of a co-signed approved Transfer: 403 each (4 requests); both legs and the co-sign survive. |
+| Visibility (checklist 7) | pass | The distinctive co-signer name and the ghost names appear on **none** of 14 pages as admin (`/admin/ledger`, the fund register, search for the fixture tag, reports, compliance, reconciliation, donors, reimbursements, budgeting, `/members`, `/members/finances`, `/members/financial-reports`, `/members/impact`, `/members/records`; all HTTP 200) nor in the CSV export for fiscal years 2026 and 2027 (which carried 38 of the fixture rows, so the check is not vacuous). They appear on the Approvals page. A `ledger.view`-only user and a Board-less treasurer are redirected away from `?tab=decided&txn=` and the rendered body carries no name and no minute. |
+| Deleted accounts | pass | A co-signer deleted: the row survives with `user_id` NULL; the card and the banner degrade to "Also approved by QA Cosign Two and a board member." and the deleted name is gone. A posting approver deleted (`approved_by_user_id` NULL, `approved_at` set): the banner reads "Approved by A board member on ...", the button shows, and a board member's co-sign returns 201. |
+| Email (checklist 8) | pass | A new over-threshold expense recorded through the real route: 23 queued approver rows, **every one `blocked_non_production`, zero `sent`**, each linking `?txn=<id>` and carrying "Only one board approval is needed to post this. If a colleague has already approved it, the link will show who, and you can add your approval too." and **not** "If a colleague has already acted, the link will show who." Co-signing queued no email (queue count unchanged across co-signs). |
+| 13 names at 360 (checklist 9) | pass | Banner and History card with thirteen co-signers: no horizontal scroll at 360; all 13 names on the card; "See everyone under Recently decided" navigates to `?tab=decided&txn=<id>`. Screenshots `shots/many-banner-360.png`, `many-card-360.png`. |
+| Widths 360, 390, 1024, 1279, 1280 | pass | Banner (with the button, >= 44 px), the card button (>= 44 px) and the Pending tab: no horizontal overflow at each width; exactly one visible variant per decided card. Screenshots `shots/decided-{360,390,1024,1279,1280}.png`. |
+| Dev "1 Issue" badge | pass (not a hydration warning) | Opened the badge on `/admin/ledger/approvals?tab=decided`: "Console Error: eval() is not supported in this environment. If this page was served with a `Content-Security-Policy` header, make sure that `unsafe-eval` is included. React requires eval() in development mode ...". **Identical on the untouched `/admin` dashboard** (the badge is in the screenshot there too), so it is the dev CSP `eval()` message site-wide, as noted in Increments 1 and 2a. A console capture across the banner, the Recently decided tab and both dialogs (open and cancelled) found only that error and an `<Image>` width/height warning for the layout logo; zero messages matching `hydrat`, `did not match` or `server rendered HTML`, zero uncaught page errors. |
+| Dev server log | pass | Across every run since the restart (3,499 co-sign POSTs in the dev log, qa's and the ux-developer's): no HTTP 500, no `Error adding co-sign`, no `Approvals:` or `[Ledger email]` console.error, no deadlock, no lock timeout, no canceling-statement. |
+
+**Concurrency and locking (the only live proof of the lock claims), counts per pass of the spec; five complete passes, 5/5 identical outcomes**
+
+| Check | Runs | Result |
+|---|---|---|
+| **L6** two different users co-sign one entry simultaneously | 20 per pass (100 total) | 20/20 two 201 and two rows, no 5xx, no deadlock or lock timeout; slowest pair 369 to 692 ms. The `decision` row JSON unchanged each run. |
+| L6b six different users at once | 10 per pass | 10/10 six 201 and six rows. |
+| **L7** one user double-POST | 20 per pass | 20/20 one 201, one 409 `already_cosigned` whose `at` equals the winner's `cosignedAt`, one row. Triple POST 10/10: one 201, two 409, one row. |
+| **L8** Sweep through both legs | 20 per shape per pass | Sequential income-then-expense 20/20 (201, 409); parallel same user via both legs 20/20 (one 201, one 409); two users via different legs 20/20 (two 201). **Every row keyed on the expense leg, zero on the income leg.** |
+| Co-sign racing a **reject** on a still-pending row | 20 per pass | 20/20: reject 200, co-sign 409, **zero rows ever inserted**; the row ends rejected by the rejector with `approved_at` NULL. The co-sign saw `not_approved` or `rejected` depending on who locked first (e.g. 11 / 9, 18 / 2 across passes). |
+| Co-sign racing the **first approval** | 20 per pass | 20/20 consistent: the approve is always 200 with the approver's minute stamped; the co-sign is either 409 `not_approved` (no row) or 201 after the approval commits (exactly one row). Observed refused 13 to 18, recorded 2 to 7. Never a row without an approval, never torn. |
+| Two approvers racing + a co-sign | 20 per pass | 20/20: exactly one 200 and one 409 `not_pending`; the stored approver is the winner; the co-sign 201 or 409 and the row count agrees. The approve/reject path is unchanged by the helper extraction. |
+| **Lock probe 1** (a transaction holds `FOR UPDATE` on the entry) | 1 per pass | The co-sign request did **not** complete while held (1.8 s), then returned 201 on release: blocked 2,038 to 2,079 ms. A co-sign takes a lock that conflicts with `decideTransaction()`'s `FOR UPDATE`. |
+| **Lock probe 2** (a transaction holds `FOR SHARE` on a pending entry) | 1 per pass | The **approve** request did not complete while held, then returned 200 on release (1,956 to 1,967 ms): `decideTransaction()` still takes `FOR UPDATE` after the extraction. |
+| **Lock probe 3** (a transaction holds `FOR SHARE` on an approved entry) | 1 per pass | A co-sign completed in 334 to 410 ms **while it was held**: co-signers do not queue behind each other (the design's "thirteen taps do not queue"). |
+
+**Existing specs: assertions updated for the designed replacements (qa-owned specs; no product code touched).** The two pre-existing approval specs failed on exactly these, each a string or banner row the 2b design replaces (Phase 3 addendum ruling 3, B6, B7), not a regression:
+1. `ledger-approvals-mobile.spec.ts:329` (Increment 1, the lost-race toast): `... Only one approval is needed.` -> `... You can add your approval too.`
+2. `ledger-approvals-history.spec.ts`, banner "approved by someone else": the fixture is **recorded by the viewing admin**, so under the 2b precedence (recorded first) the banner is now the recorder row, "You recorded this disbursement, so another board member decides it. Approved by QA History Board on Jun 8, 2090 at 12:00 PM." The eligible-viewer variant is covered by the new spec.
+3. Same file, "approved by an account since deleted": the same fixture shape, now "You recorded this disbursement, ... Approved by A board member on Jun 9, 2090 at 12:00 PM."
+4. Same file, the email test's sentence constant: the 2a sentence -> the 2b sentence.
+The other four "approved by" banner tests in that spec (approved by the viewer, the approved Transfer by both leg ids, and so on) pass unchanged.
+
+**Runs, and failures along the way (all test bugs of mine, none a product defect):** run 1 of the new spec failed one test (a `main` locator that resolves to two elements; changed to `body`); the next pass was 67/67. A later combined run failed one test because my new ordering test reused a fixture another test later asserted on (test-order bug, mine; moved to its own fixture). Complete green passes of the new spec: 67/67, 67/67 (inside 133/133 with the two existing specs), 67/67, 69/69 (inside 135/135), 70/70 (inside 136/136, the final).
+
+### Regression tests added
+
+All in `e2e/ledger-approvals-cosign.spec.ts` (new, qa-owned, 70 tests, seeds and cleans its own fixtures, example.invalid users, serial, real Postgres):
+- `should answer 201 with the expense-leg id and write one row, changing nothing in the books`, the banner and card tests that compare the whole `ledger_transactions` digest, `email_queue` and `ledger_audit_log` counts before and after — **guards against** a co-sign leaking into the books or sending mail (DECISION-116: a co-sign writes only `ledger_txn_cosigns`).
+- `L8: a Sweep co-signed through both legs ...` and `should key a Sweep co-sign on the expense leg ...` — **guards against** one person signing once per leg of a pair (regression for the unique key not covering the leg).
+- `L6`, `L6b`, `L7`, and the three lock probes — **guards against** a lock-mode regression (a co-sign taking `FOR UPDATE` and queuing co-signers, or `decideTransaction()` losing `FOR UPDATE` in the extraction), which mocked tests cannot see.
+- `a co-sign racing a reject on a still-pending row never inserts`, `a co-sign racing the first approval is either refused or recorded after the approval, never torn`, `two approvers racing the first approval while a third co-signs ...` — **guards against** a co-sign slipping in around a decision.
+- `should refuse every ineligible target with its typed body and write no row (live check L10, 20/20 runs each)`, the 401 / 403 / 404 tests, the `ignore a request body` test.
+- `should land the approve loser on ?txn= with the co-sign offered and the new toast ...`, the Sweep variant, and `should close the reject loser's dialog with the plain toast, no co-sign suffix and no navigation` — **guards against** the lost race leaving the person with "Only one approval is needed." and no next step.
+- Seven stale-dialog toast tests, 21 banner-by-viewer tests, the widths, 13-name, ordering, visibility, deleted-account, lock-dependency and email tests.
+- Assertion updates in `e2e/ledger-approvals-history.spec.ts` and `e2e/ledger-approvals-mobile.spec.ts` (four strings, above).
+- qa wrote no additional Vitest (the implementers delivered every named unit test).
+- **Not run against pre-fix code:** the new behaviour has no pre-fix code to run against (a new table and route). The negative controls that exist are structural: with no leg normalisation the L8 sequential case would return two 201s, and a co-sign that took `FOR UPDATE` would fail lock probe 3. "Would fail" for those is argued from the assertions, not observed (I may not edit app code to break it).
+
+### Coverage on critical modules
+
+Whole suite (`vitest --coverage`, `src/lib/**`): **74.4%** statements overall (target 70%), 72.7% branches. Statements / branches: `ledger-cosign.ts` **90.9 / 87.2**, `ledger-board-decision.ts` **100 / 100**, `ledger-approval-queries.ts` **98.1 / 86.7**, `ledger-approval.ts` **94.0 / 96.6**, `ledger-approval-decision.ts` 97.5 / 92.6. Unchanged by this diff and above target: `events.ts` 94.9%, `permissions.ts` 100%, `members.ts` 86.8%. Uncovered lines in `ledger-cosign.ts` are the exhaustive-`never` default and the defensive paths the live run exercises (not counted by Vitest, since e2e is a separate runner). UI components are outside the configured coverage include and are covered by the server-render tests and the e2e spec.
+
+### Feature-Gate Audit
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|---|---|---|---|
+| `POST /api/admin/ledger/transactions/[id]/cosign` (new) | yes, first statement, 401 | yes, second statement, 403 with no `code` | `FEATURES.LEDGER_APPROVE`; verified by reading `route.ts`, then by behaviour: signed out 401, `ledger.view`-only 403, Board-less treasurer 403 (`{error: "Forbidden"}` each) |
+| Page `/admin/ledger/approvals` (now renders co-signers, the button and the Add-your-approval banner) | yes, first (`redirect("/signin")`) | yes, before any query or `searchParams` use (`redirect("/admin/ledger")`) | `FEATURES.LEDGER_APPROVE`; co-signer names come only from `ledger-approval-queries.ts`, imported solely by this page (source-scan test, and my own grep of the table identifier) |
+| `POST .../[id]/approve` and `.../[id]/reject` | unchanged, not modified by this diff (absent from `git status`) | unchanged | `FEATURES.LEDGER_APPROVE`; behaviour re-proved by the race tests and lock probe 2 |
+| `src/proxy.ts` | n/a (outer gate) | n/a | The only change in the tree is 2a's `callbackUrl` composition; **no hand-written rule was added**, `src/lib/permissions.ts` and `ADMIN_NAVIGATION` are untouched (no nav entry added, none widened), the derived rules are as they were, and the page keeps its own gate |
+| Server actions | none added or changed | n/a | n/a |
+
+The bulk-PII question for this feature: the new data is co-signer names, visible only to `ledger.approve` holders on the Approvals page (page gate) and nowhere else (14-page and CSV check above); no email addresses appear in any body (asserted).
+
+### Cleanup (local dev DB; production untouched, `PROD_DATABASE_URL` never read, nothing under `scripts/` run, `RESEND_API_KEY` and `EMAIL_DEV_ALLOWLIST` never set)
+
+The spec's `afterAll` deletes every `QATEST E2E Approvals Cosign` transaction (co-signs cascade), the fixture reimbursement, the 24 `example.invalid` users and their roles, and the email rows it created (only after confirming none was `sent`); it also runs a `beforeAll` cleanup. Final measured state: `ledger_transactions` **285** (as at start), **0 pending**, **0 rejected**, 0 with `approved_at`, **0 rows tagged `QATEST` or `E2E QA`**; `ledger_txn_cosigns` **0**; `ledger_reimbursements` 0; `users` **53** (as at start), **0** `qa-cosign-*`, `qa-history-*` or `qa-approvals-*` users, `user_roles` 70 (as at start, 0 orphans); `ledger_audit_log` 826 (as at start; co-signs write no audit row); `email_queue` **1221** (as at start) after I deleted the "New portal user needs member record review" notices the Increment 1 spec leaves behind (all `blocked_non_production`, none `sent`; 3 after the first runs, 4 after the last, every one created by my runs): its `afterAll` does not clean the email queue, as noted in 2a. The whole-table `ledger_transactions` md5 digest equals its value at the start (`6318cbf9...`). The Increment 1 and 2a specs' own cleanup also ran clean.
+
+### Observations (none blocking)
+
+1. **Stray file in the tree: `src/components/admin/ledger/approval-history.tsx.bak`** (untracked, present since 2a, not touched by qa). It must not be committed; the orchestrator should delete it before `/pre-push`.
+2. **The dev-server log line "The destination stream closed early" is a test-teardown artifact, not an app error.** It appeared 5 to 8 times per pass, only after a stale-dialog test's `router.refresh()`. Established: running just those seven tests twice, with a plain `networkidle` wait before closing the page gave **5 of 7** log lines and with an extra 3 s settle gave **0 of 7**; the spec now settles those tests. Believed (not separately proven): the browser closing mid-stream while Next streams the refreshed RSC payload. There is no 5xx, no application frame (digest only, ignore-listed frames), and every assertion passes.
+3. **The recorder who loses an approve race still sees the "You can add your approval too." toast** although they can never co-sign (api-developer's note, ux-developer's note). Not reproducible through the UI here: Approve is not drawn for the recorder, except the income-leg-only edge below. The `?txn=` banner it would land on is the recorder row, so no wrong action is offered. Left as is.
+4. **Carried from 2a: the pending card's `isSelf` checks the expense leg only**, while the decide and co-sign routes use the either-leg rule. For a pair whose **income** leg alone the viewer recorded, the Pending card would still draw Approve (the route answers 403). 2b's own surfaces (the banner, the History card, the button) all use `cosignEligibility()` and are correct for that shape (proved above for both a Transfer and a Sweep, by either leg id). The either-leg backlog text proposed in 2a still stands.
+5. **New copy the club may want to refine** (from the ux-developer's list, seen live and fine): "Add your approval" / "Add my approval", "Your name will be added to this entry. This does not change the books.", "Your approval was added.", the help line, and "Approved by You" capitalisation mid-sentence in the History label (specified and tested as is).
+6. A co-sign racing the first approval is, by design and as observed, either refused (`not_approved`) or recorded just after the approval commits; a person who clicks Add your approval a few milliseconds early sees the "still waiting for its first approval" toast, which is correct.
+
+### Not testable here (recorded, not claimed)
+
+- **L9** (post-deploy: the count of `ledger.approve` holder accounts whose normalised display name duplicates another holder's): orchestrator, counts only. Not run and not signed off by qa.
+- **L4, the Google round trip** (carried from 2a): needs a real Google account. Manual, owner: the user, before relying on the Google email-link path: signed out, open `/admin/ledger/approvals?txn=<a pending id>`, choose "Sign in with Google", confirm you land on the Approvals page with the banner, not `/members`.
+- **`drizzle-kit push` no-diff**: not re-run (see the migration row above); the live constraint names, shape and the schema test stand in for it, as the orchestrator and database-admin recorded.
+
+### Outputs
+
+- `e2e/ledger-approvals-cosign.spec.ts` (new, 70 tests)
+- `e2e/ledger-approvals-history.spec.ts` (new in 2a, three assertion updates for 2b), `e2e/ledger-approvals-mobile.spec.ts` (one assertion update)
+- Screenshots, logs, helper SQL wrapper: `/private/tmp/claude-501/-Users-cshenso-git-westervillelions/cc4e88df-e85f-4880-b31e-2ecb8a0c63d9/scratchpad/approvals-mobile-and-history/qa-2b/` (`shots/{banner-plain-360,banner-plain-390,dialog-360,many-banner-360,many-card-360,decided-{360,390,1024,1279,1280},badge_admin,issue_*}.png`, `unit-verbose.txt`, `build.log`, `e2e-run2.log`, `e2e-all3-final2.log`, `e2e-cosign-run3.log`, `cov/coverage-summary.json`, `devlog-*.txt`)
+- No application code edited, nothing committed; `docs/decisions.md`, `docs/backlog.md`, `package.json` and release notes untouched.
+
+### Open questions / handoff notes
+
+- **Next agent: analyst** for the closing Phase 6 (Increments 1, 2a, 2b together; SHIP IT closes the pipeline). Items for the analyst to weigh: observations 3 and 4 (the recorder toast suffix and the expense-leg-only `isSelf`), and the copy list in observation 5.
+- **Before the push:** the orchestrator deletes the stray `approval-history.tsx.bak`, runs the full `pnpm test:e2e` (about 13 minutes; it includes these three specs) and `/pre-push`, and runs L9 post-deploy (reads only). Do not push until 2b's Phase 6 SHIP IT. The migration number `0112` was re-derived by database-admin; a second pipeline adding a migration would collide.
+- Proposed backlog text, if wanted (orchestrator files): "Approvals card `isSelf` should use the either-leg recorder rule the decide and co-sign routes enforce (2a observation 1; confirmed again in 2b observation 4)." And: "Increment 1 spec `ledger-approvals-mobile.spec.ts` should delete the `New portal user needs member record review` email rows its sign-ins queue (qa-owned, trivial)."
+
+**Verdict (Increment 2b): PASS**
+
+---
+
+# Phase 6 — Shipped vs Intent (analyst) — Increments 2a and 2b — 2026-10-10
+
+**Owner:** analyst
+**Status:** complete
+**Scope:** the pipeline-closing verdict for Increments 2a and 2b together. Increment 1 closed earlier today (SHIP WITH NOTES, shipped as v1.89.0, commit `4730983`); 2a got its short confirmation (CONFIRMED WITH NOTES). Read-only: no source, database, dev server, decisions, backlog, `package.json` or release-notes edits. Nothing here was filed.
+
+## VERDICT
+
+**SHIP WITH NOTES.** Nothing is fix-before-push and nothing reopens a phase. Everything the Phase 1 addendum asked for is in the tree, qa passed both increments on real Postgres with concurrency counts, and the stale "only one approval is needed" strings are gone from the product. The notes below are tracked follow-ups: two small backlog items that qa observed, two stale lines in the decision log that must be corrected before DECISION-116 and DECISION-117 move to Resolved, four post-deploy measurements that only a human or the orchestrator can take, and one question (Q8) that is still the user's. The one residual intent risk is Q1 (see "The user's statements").
+
+## ONE-LINE TAKE
+
+> A board member who arrives second, from the email or from Recently decided, sees who approved and who else added their name, can add their own with one tap and a confirm on a 360px phone, and cannot alter the books by doing so; rejections now say who rejected; and the one thing the user may have meant but we did not build is a quorum.
+
+## What I did
+
+- Re-read the Origin, my Phase 1 and the multiple-approver addendum (user verbs, Pass 4, Pass 5, the nine answers, Q1 to Q8), "User decisions" including the latest entry, the Phase 2 and 3 addenda (R8 to R15, T1 to T11, gating), my 2a confirmation, and every 2b report (database-admin, api-developer, ux-developer, qa).
+- Read the shipped `ledger-cosign.ts`, the second query and eligibility mapper in `ledger-approval-queries.ts`, `cosign-dialog.tsx`, `approval-dialog-logic.ts` (`cosignerItems`), the decide helper's check order, and the pending-email sentence.
+- Re-ran the contract tests: 41 files, **931 tests, all passing** (the cosign, approval, queries, board-decision, decision, schema, email-compose and admin-gate files, the transactions route tests, and everything under `src/components/admin/ledger`). I did not re-run tsc, the build or e2e; qa's gates stand (tsc, lint, 203 files / 3624 tests, `pnpm build:only`, 70-test cosign spec, five full concurrency passes).
+- Grepped the non-test tree for the three stale strings ("Only one approval is needed", "nothing more to do", "has already acted"): none remain outside tests that assert their absence. The stray `approval-history.tsx.bak` qa flagged is already gone (`find src e2e drizzle` for `*.bak`/`*.orig` is empty).
+- Checked `docs/backlog.md` for the reserved IDs (below).
+
+## The user's statements, honoured?
+
+**"yes, record who rejected going forward": honoured.** Reject stamps `rejected_by_user_id` and `rejected_at` on both legs of a pair in the same pinned UPDATE, never touches `approved_*` (DB-asserted; 5/5 simultaneous double-click runs in 2a; unchanged by the 2b lock refactor, which qa re-proved with the approve-vs-reject races). It shows as "Rejected by {Name}" in Recently decided, in the `?txn=` banner, and in the loser's toast ("You already rejected this sweep."). "Going forward" is literal: no back-fill, and a legacy unstamped rejection reads "decider not on file" (the Phase 1 fallback). Production had 0 rejected rows on 2026-10-10, so nobody will see that fallback today. Still open and deliberately so: neither approve nor reject writes `ledger_audit_log` (B-157).
+
+**"i also think we should allow multiple people approve": honoured under the recorded no-quorum reading, and only under it.** Delivered: after one board member approves and the entry posts, any other `ledger.approve` holder who did not record it can add a recorded, append-only, no-effect-on-the-books approval, from the banner or from a Recently decided card, with the list visible to approvers. Not delivered, by design: any rule that requires a second approval before an entry posts. The question "did you mean quorum?" was put to the user twice and never answered; the user then said "take it all the way to production", which the orchestrator recorded as proceeding on the default. I treat that as authorisation to ship, not as confirmation of the reading. **Recommended wording in the push summary to the user, one line:** "'Allow multiple people to approve' shipped as: the first approval posts the entry and others can add their name afterward; if you meant two approvals required before it posts, say so, that is a separate piece of work." That is the cheapest moment to catch a miss; the shipped schema is additive (one table), so a quorum later is a new Phase 1 and a new migration, not an undo.
+
+## Verb-by-verb: the Phase 1 addendum against what shipped
+
+Surface for every row: admin, `ledger.approve` holder.
+
+| Phase 1 addendum verb | Result | Detail |
+|---|---|---|
+| Open the email link and learn the entry is already approved, by whom, and who else | **delivered** | Banner "Approved by {P} on {date}. Also approved by {A}, {B}, {C} and N others." with "See everyone under Recently decided" past three names. qa drove 21 viewer/entry combinations, including thirteen co-signers at 360px, no horizontal scroll. No banner contains "@", "votes", a fraction of the board or "only one approval". |
+| Add my approval to an approved entry (banner and each approved History card) | **delivered** | Secondary `rounded-lg` 44px button (full width on a phone), `LedgerDialogShell` dialog showing amount, payee, fund (Sweep names both books), memo, recorder, and the minute on file read-only; Cancel / Add my approval; toast "Your approval was added."; page refreshes. One addition over Phase 1, and a good one: "Your name will be added to this entry. This does not change the books." Co-sign writes exactly one row; qa's whole-table digest of `ledger_transactions`, the audit-log and email-queue counts are byte-identical before and after. |
+| See everyone who has approved, with dates (History card) | **delivered with difference** | The card lists every co-signer in time order as "Also approved by: Ann (Oct 11), You (Oct 12)". The per-name date is month and day only, no year (`cosignerItems`/`shortDate`); the "Approved by {P} · {date time}" line above it carries the full date. Cosmetic, in the copy follow-up. |
+| See that I already approved, and when | **delivered with difference** | Banner: "You added your approval on {full date}. Approved by {P}..." with no button. Card: "You added your approval." and the date only inside the list item ("You (Jul 4)"). Same cosmetic gap. |
+| See "you recorded this, so you cannot approve it" | **delivered with difference** | Reads "You recorded this {noun}, so another board member decides it." (Phase 1 said "cannot approve it"); neutral tone, no button, on the banner and the card, and correct for a recorder of only the income leg of a Transfer or Sweep, by either leg id (qa fixtures). The **pending** card still tests the expense leg only (qa observation 4; pre-existing; unreachable through the app; follow-up A). |
+| Lose the approve race and be offered to add mine | **delivered** | Dialog closes, URL becomes `?txn=<id>`, toast "{Name} already approved this {noun}. You can add your approval too.", banner with the button, the typed minute discarded. Verified for a plain disbursement and a Sweep (lands on the expense-leg id). Refinement beyond Phase 1 (T5): losing a **reject** to an approval closes with "{Name} already approved this {noun}." and neither navigates nor suggests approving; qa drove it live. One flaw, below (qa observation 3). |
+| Withdraw my approval | **not delivered, by design** | Append-only (Q5). B-159 holds the audited removal. |
+| `ledger.view`-only, Board-less treasurer, anonymous, no-role member: nothing new | **delivered** | Route 403 with no `code` for a `ledger.view`-only user and a Board-less treasurer, 401 signed out; page redirects them; co-signer names appear on none of 14 other pages nor in the CSV export (38 fixture rows in range, so not vacuous). |
+
+Flows, failure paths. **C1** (banner): every row of the Phase 1 failure table has a typed branch, and qa drove seven stale-dialog cases live (recorder-became-you, deleted, poster-became-you, co-signed elsewhere, back-to-pending, rejected, stamp-removed), each closing the dialog, writing no row and showing the specified sentence. Network and 5xx keep the dialog open: unit-tested only (`cosignFailureAction`), not driven live; acceptable, the branch is one line and mirrors Approve. **C2** (History card): delivered, including the Sweep card keyed on the expense leg. **C3** (lose the race): delivered. **C4** (pair): one row per pair, either leg id resolves, recorder rule reads both legs: delivered (L8, below). **C5** (poster and recorder views): delivered, with the precedence recorded > poster > co-signed > eligible, which Phase 1 did not state but is the right order.
+
+**Tabs and badges.** Pending is still exactly `status = 'pending'`; no "needs your approval too" queue; the Pending count is unchanged by a co-sign (qa compared the tab text and the overview lines before and after). The Recently decided help line ("These are already posted. You can add your approval to any entry you did not record.") shipped, inside the list so it disappears with the empty and failure cards. Ordering stays on the posting decision time (qa added a co-sign dated 2095; the list order did not move).
+
+**Email.** No email on a co-sign (queue count unchanged across co-signs). The pending-approval sentence is now "Only one board approval is needed to post this. If a colleague has already approved it, the link will show who, and you can add your approval too." qa saw it in 23 queued rows, all `blocked_non_production`, none sent, each linking `?txn=<id>`. The 2a sentence is gone. Because the push is one combined commit, the Phase 1 constraint "the sentence ships in the same delivery as the co-sign UI" holds.
+
+## Phase 1 edge cases and adversarial items: closed and remaining
+
+| Item | Status | Closed by |
+|---|---|---|
+| Two co-signs racing, different users | **closed** | Share locks do not conflict: L6 20/20 per pass, five passes (100/100); six users at once 10/10 per pass; slowest pair under 700 ms; no deadlock or lock timeout in 3,499 POSTs. |
+| Same user twice (double tap, two devices) | **closed** | Unique key plus `ON CONFLICT DO NOTHING`: L7 20/20 per pass (100/100), triple POST 10/10 per pass, always one 201, 409 `already_cosigned` whose `at` equals the winner's time, one row. |
+| One person signing once per leg of a Transfer/Sweep (R8's trap) | **closed** | Writer normalises to the expense leg inside the lock; L8 sequential 20/20, parallel same-user 20/20, two users 20/20, five passes; every row on the expense leg, none on the income leg. |
+| Posting approver co-signing their own approval | **closed** | `cosignEligibility()` compares `approved_by_user_id`; typed 409 `already_approved` with the approval time; unit and L10. |
+| Refusals on pending, rejected, reimbursement-paid, under-threshold Sweep, lone income row | **closed** | One `boardApprovalPredicate`; L10 15 kinds x 20 runs = 300/300 per pass, zero rows written, typed bodies, no "@". |
+| Recorder of either leg | **closed** (route, banner, card, button) / **remains** (pending card) | 403 `recorded_by_you` on all four leg shapes (live); `isSelf` on the Pending card is expense-leg only (follow-up A). |
+| Co-sign after Delete / PATCH | **closed** | The existing `approvedAt` guards: DELETE and PATCH on a co-signed approved entry, and on both legs of a co-signed Transfer, answer 403; entries and co-sign survive. Pinned by a live test. |
+| Co-sign on a row moved cross-entity | **closed, not re-driven** | `moveBlockKind()` refuses approved rows and Transfer/Sweep legs (existing, tested in `ledger-transaction-lock.test.ts`); no new code touches it. qa did not drive a move against a co-signed entry; I accept that because the co-sign table stores no entity, fund or amount. |
+| Signer names leaking to `ledger.view` surfaces | **closed** | Separate table; identifier scan allows only `schema.ts`, `ledger-cosign.ts`, `ledger-approval-queries.ts`, the migration, `e2e/**` and tests (I re-ran the grep: exactly those); queries module is page-only; 14 pages and the CSV checked live; no user id on any returned object (test-walked). |
+| Posting approver or co-signer account deleted | **closed** | `ON DELETE SET NULL`; banner "Approved by A board member", button still shown, a different member's co-sign returns 201; deleted co-signers collapse to "a board member" / "N other board members". Live. |
+| Incomplete signer list reading as the whole list | **closed** | The second query throws on failure, so the tab shows its failure card (unit-tested; not inducible live, same as the 2a History failure card). |
+| Impersonation, enumeration | **closed** | Route reads no body (a body naming another user and entry is ignored, live); malformed and unknown ids both 404 (10/10). |
+| Open redirect | **closed** | The lose-the-race `router.replace` target is built from the dialog's own transaction id by `approvalEntryHref`, never from user input; `safeCallbackPath()` from 2a covers the sign-in path. |
+| Co-sign racing the first approval or a reject | **closed** | 20/20 per pass: never a row without an approval, never torn; the loser of a reject race writes no row. Lock probes: a co-sign waits behind a `FOR UPDATE` holder (about 2.0 s), `decideTransaction()` still waits behind a `FOR SHARE` holder (about 1.96 s), a co-sign completes in 334 to 410 ms while another `FOR SHARE` is held. |
+| One person, two accounts | **remains (accepted residual)** | Uniqueness is per account. Sizing count L9 is still to be taken post-deploy by the orchestrator. |
+| A mistaken co-sign cannot come off | **remains (accepted)** | B-159, on demand. |
+| No way to record disagreement | **remains** | Q8, with the user. |
+| Google round trip of the encoded `?txn=` (L4) | **remains** | Manual, user. Believed, unmeasured. |
+| Pending-card Approve drawn for an income-leg-only recorder; lost-race toast offering co-sign to that same person | **remains** | Follow-up A. Only reachable with hand-edited data; the server refuses (403) and the page they land on is correct. |
+
+**DECISION-117 item 3's open sentence ("co-sign rows are used for display and the unique-conflict path only; Phase 6 re-reads both modules"): re-read, holds, with one clarification.** In `ledger-cosign.ts` the table is touched only by the `INSERT ... ON CONFLICT DO NOTHING` and, on conflict, a read of the caller's own `cosigned_at` for the toast; the file contains no write to `ledger_transactions`. In `ledger-approval-queries.ts` the table is read for names and dates, and the co-signers' user ids are fed to `cosignEligibility()` to decide whether the Add button is drawn. That is display gating, not authorisation: the route re-evaluates and the unique key is the authority. Nothing reads the existence or the count as a permission. The decision text should name the button-gating use (see the DECISION section).
+
+## Open questions, status
+
+| Q | Status |
+|---|---|
+| Q1 quorum or add-your-name | Never answered. Shipping on the recorded no-quorum default, with the user's "take it to production". Add the one-line check to the push summary (above). Nothing shipped makes a later quorum harder than the data model allows (additive table), but it would be a new Phase 1. |
+| Q2 to Q7 (labels, no minute, names shown, no withdrawal, treasurer unchanged, no email or badge) | Defaults adopted in Phase 1 and shipped as written. Q6 verified live: a Board-less treasurer gets 403. Q7 verified: queue count unchanged across co-signs. |
+| **Q8** dissent on a posted approval | **Still with the user, not answered, not changed by anything shipped.** The shipped list makes the asymmetry a little more visible (names of those who agreed appear on the card and the banner), so the guardrails matter and are present: no counts or fractions anywhere (test-pinned), nothing labelled "votes", and the help line says these entries are "already posted". That is a reason to ask Q8 once more after deploy, not a reason to build anything. **B-160 stays unfiled (held).** File it only if the user says a posted approval needs a way to record disagreement; otherwise it is simply never filed. |
+
+## Edge cases (Phase 6 checklist)
+
+| Check | Result |
+|---|---|
+| Empty state | **pass.** No co-signs renders no "Also approved by" line (never "None"); Pending empty state and Recently decided empty and failure cards from 2a stand. |
+| Failure microcopy | **pass.** Every refusal has a human sentence keyed on a typed `code`, never on English; no raw error or email reaches the page (asserted in the unit and e2e tests). Live network-failure keep-open is unit-only. |
+| Permission gate | **pass.** `auth()` then `hasFeature(LEDGER_APPROVE)` are the first statements in the route and the page; no new key, no nav or proxy change; `admin-page-feature-gates.test.ts` green in my run. |
+| Mobile 360 | **pass.** Banner button and card button at least 44px, 13 names wrap, dialog fits, no overflow at 360, 390, 1024, 1279, 1280. Not checked on a real phone (post-deploy glance). |
+| Brand | **pass.** Secondary `rounded-lg` buttons, `rounded-2xl` cards, `role="status"` banner, Radix `LedgerDialogShell`, no native dialog, no `rounded-full` on buttons, no `lions-red`. |
+| OAuth vs password, access-pending, Google Group sync | **pass / not applicable.** The route needs only a session with `ledger.approve`; the Google email-link round trip is L4. |
+
+## Notes (each becomes a tracked follow-up; nothing blocks the push)
+
+1. **N1 DECISION wording, before the status flips (tech-lead).** Specified under "DECISION status", below. One of the edits corrects a claim that did not happen: DECISION-117's Impact says a "no-diff `drizzle-kit push`" was recorded; database-admin and qa both recorded that push aborts at a pre-existing prompt and cannot prove it.
+2. **N2 Post-deploy measurements (orchestrator reads, user glances).** L2, L9, L4, F4; list below. None can fail the build; each closes a believed claim.
+3. **N3 Ask Q8 once, after deploy.** Orchestrator, with the Q1 one-liner.
+4. **N4 (backlog A)** Pending-card `isSelf` is expense-leg only, and the lost-race toast offers co-sign to a recorder. One root cause, two symptoms.
+5. **N5 (backlog B)** The Increment 1 e2e spec leaves "New portal user" email rows.
+6. **N6 (backlog C)** Copy pass: "Approved by You" capitalisation mid-sentence, per-name dates with no year, "Try again", the decided-tab description.
+7. **N7 (backlog D)** The `ledger_entities_slug_unique` versus `ledger_entities_slug_key` drift makes `drizzle-kit push` interactive and unusable as a no-diff proof.
+8. **N8 Docs housekeeping.** The work-log header "Reserved IDs" line is garbled ("B-161 used for the recorder-email item ... unused") and the Phase 3 addendum says "B-161 released", but `docs/backlog.md` has **B-161 filed** (the recorder-email item, Later). See "Reserved IDs".
+9. **N9 CLAUDE.md at release (tech-lead, already on the filing record).** The "Disbursement approvals (v1.89, DECISION-116)" bullet says "sit `pending` until **one** approver posts them", which stays true; add that later approvers may add an informational co-sign (v1.90, DECISION-117, never a control), and the `safeCallbackPath()` Key Patterns note.
+10. **N10 Pre-push mechanics (orchestrator).** One `/pre-push` on the combined 2a plus 2b tree, including the full serial `pnpm test:e2e` (about 13 minutes; it includes the three approval specs). Migrations 0111 and 0112 are the only new ones; nothing else in the tree adds a migration. The `.bak` is already gone.
+
+### Reserved IDs
+
+B-155, B-156, B-157, B-158 filed. B-159 filed. **B-161 is filed** (recorder receives the pending email; Later), so it is not released, whatever the Phase 3 addendum line says. **B-160 is the only reserved ID unused, and it is held** for Q8. No ID in the reserved list remains free. The next free number in `docs/backlog.md` appears to be **B-162**; the orchestrator should confirm before reserving B-162 to B-165 for the four drafts below.
+
+### Proposed backlog text (drafts only; IDs to be reserved by the orchestrator; nothing filed; count: 4)
+
+**Proposed A (ID to be reserved; low; home: Soon next to B-158, or Later).** *The Approvals page offers Approve and Reject by an expense-leg-only recorder check.* `approvals/page.tsx` computes `isSelf` as `txn.recordedByUserId === currentUserId` (card at line ~237, table row at ~269) on the expense leg only, while the decide and co-sign routes refuse the actor who recorded **either** leg. If only the income leg of a Transfer or Sweep was recorded by the viewer, the Pending card draws Approve and Reject and the route answers 403; and if a colleague approves first, the lost-race toast then says "You can add your approval too." to a person who can never co-sign. One root cause: select a `viewerRecordedEitherLeg` boolean in `getPendingApprovals()` (the decided mapper and the `?txn=` resolver already derive it from `cosignEligibility()`/the dest self-join) and feed it to `rowActions`; with that, the recorder never sees Approve and the toast branch is unreachable. Unreachable through the app today (both legs are recorded under one user), so low. Origin: this work-log, qa 2a observation 1, qa 2b observations 3 and 4.
+
+**Proposed B (ID to be reserved; trivial; Later).** *`e2e/ledger-approvals-mobile.spec.ts` leaves "New portal user needs member record review" `email_queue` rows.* Two to four per run, all `blocked_non_production`. Delete them in `afterAll` as `ledger-approvals-history.spec.ts` and `ledger-approvals-cosign.spec.ts` do. Origin: qa 2a observation 2, 2b cleanup note.
+
+**Proposed C (ID to be reserved; low; Later).** *Approvals copy pass.* Four strings the club may want tuned, to take together if it asks: "Approved by You" (capital Y mid-sentence on the History label and the co-signer list), the per-name co-sign date having no year (an entry decided in December and co-signed in January reads "Dec ... Jan 3"), the decided-tab description "The most recent board decisions, newest first.", and the "Try again" link. No behaviour change. Origin: this work-log, 2a note N4, 2b ux deviation 2, qa 2b observation 5.
+
+**Proposed D (ID to be reserved; low; Later; owner database-admin).** *`drizzle-kit push` is interactive because `ledger_entities` has a unique constraint named `ledger_entities_slug_unique` in `schema.ts` and `ledger_entities_slug_key` in the database.* `pnpm build` runs push with `--force`, which answers the prompt, so deploys are unaffected, but a plain `pnpm db:push` aborts at the prompt before printing any diff, so it cannot be used to prove that a new migration leaves no drift (it blocked that proof for migrations 0111 and 0112). Make the name agree in one direction (a guarded rename in a migration, or rename in `schema.ts`) and confirm `drizzle-kit push` reports no changes. Count: 1 constraint. Origin: database-admin 2a and 2b reports.
+
+**B-160 (held, unchanged):** *Record dissent on a posted approval.* File only if the user answers Q8 "yes, we need to record disagreement". Draft text is in the Phase 2 addendum.
+
+## DECISION status (for tech-lead; I do not edit `docs/decisions.md`)
+
+`docs/decisions.md` uses `Resolved | Superseded | Under review`; there is no "Accepted". **Recommendation: both move from `Proposed` to `Resolved` at push, once these edits are made. None of them changes what was built.**
+
+**DECISION-117** (Status -> `Resolved`):
+1. *Context.* Replace "and the user has not objected" with: "The question was put to the user twice and not answered; on 2026-10-10 the user said 'ok continue with 2a and then continue with 2b. take it all the way to production', and the no-quorum reading was recorded as the decision for 2b. It is the adopted default, not an explicit confirmation of 'no quorum'."
+2. *Item 3, the "Believed, not mechanically enforced" sentence.* Replace with the Phase 6 re-read: in `ledger-cosign.ts` the table is written only by the `INSERT ... ON CONFLICT DO NOTHING` and read only to return the caller's own earlier `cosigned_at`; in `ledger-approval-queries.ts` it is read for names and dates and its user ids feed `cosignEligibility()` to decide whether the Add button is drawn (display gating; the route and the unique key are the authority). Nothing reads the existence or count of rows as a permission. State that this remains a human re-read, not a scan.
+3. *Item 5.* Replace "Observed by live checks L6 and L7; until then the two-co-signer behaviour is the documented Postgres semantics, not a measurement" with the measurement: L6 100/100 (five passes of 20), six simultaneous users 50/50, L7 100/100, and three lock probes (a co-sign blocked about 2.0 s behind a `FOR UPDATE` holder; an approve blocked about 1.96 s behind a `FOR SHARE` holder; a co-sign completed in 334 to 410 ms while another `FOR SHARE` was held). Keep "an FK check takes an implicit key-share lock" as believed, unmeasured.
+4. *Residuals.* Record L8 (20/20 per shape, five passes) and L10 (300/300 per pass); leave **L9 as "pending, orchestrator, post-deploy"** and append the count when it arrives; add to "must be revisited before any quorum": the pending-email sentence "Only one board approval is needed to post this" and the banner text "It has been posted", both of which state the no-quorum rule.
+5. *Impact.* Replace "two replays and a no-diff `drizzle-kit push` recorded" with "two replays and a live `pg_constraint` check of names, rules and columns recorded; `drizzle-kit push` could not be used as the no-diff proof because it aborts at the pre-existing `ledger_entities_slug` prompt (backlog D)". Fix `Depends on DECISION-116 items 1 and 4` to items 1 to 4 if desired (the lock-marker rationale is item 2, the helper is item 3); optional.
+
+**DECISION-116** (Status -> `Resolved (item 1 amended by DECISION-117)`):
+1. *Item 1 as amended by DECISION-117 stands.* The amendment already says the predicate has three consumers; no further change to "one approver posts" is needed. That phrase lives in the Context, Item 3 and the CLAUDE.md bullet, not in item 1's text.
+2. *Item 3, last sentence.* Add: "'Who decided' means who posted or rejected the entry. Later co-signatures (DECISION-117) are endorsements, not decisions, and are listed separately."
+3. *Residual on `redactQueuedEmailHtml()` and `?txn=`.* Change "Believed until the pinned test ... runs; L3 observes it" to "Observed 2026-10-10 (2a qa, L3): the queue view shows `?txn=<uuid>` readable."
+4. *Residual on the race (L1).* Add "Observed 6/6 in Increment 1; after the `lockDecisionPair()` extraction the approve-vs-approve and approve-vs-reject races re-ran 20/20 per pass, five passes (2b)."
+5. *Open measurements, kept honest:* **L2** (History count equals `board_approved_rows + rejected_expense_legs` after deploy) is pending the orchestrator; **L4** (the encoded `?txn=` surviving the Google round trip) remains **believed, unmeasured** until the user runs it. Because L4 is a belief about a sign-in path, say so in the Status line or the residual rather than letting `Resolved` imply it was measured. The password path, the hostile-callback checks and the Google-button cookie assertions were measured in 2a.
+
+## v1.90 release-notes draft (user-facing only; for the orchestrator or tech-lead to place; no file lists)
+
+> ### Feature: Add your approval
+>
+> **Value:** When a disbursement, transfer or sweep needs a board decision, the first approval still posts it, exactly as before. Now other board members can add their approval afterward, so the record shows who on the board agrees. Adding your approval is a record only: it does not change the books, and it never holds anything up.
+>
+> **Changes:**
+> - On the Approvals page, the "Recently decided" list shows "Also approved by" with each board member's name and date, and an "Add your approval" button on any entry you did not record, approve or already sign.
+> - The link in the approval email shows the same thing: who approved, who else has added their approval, and a button to add yours.
+> - If you press Approve a moment after a colleague, your window closes, a message says who approved first, and you land on the entry where you can add your approval.
+> - Your name is added once per entry; for a transfer or sweep, one approval covers both sides.
+>
+> ### Enhancement: See what the board has decided, and follow the email to the exact entry
+>
+> - A new "Recently decided" tab lists the last 25 approvals and rejections, newest first, with the amount, payee, fund, who recorded the entry, who decided it, and the full board-minute reference or rejection reason.
+> - The link in the approval email opens the exact disbursement, transfer or sweep: if it is waiting, it is highlighted; if a colleague already decided it, a note says who and when. This also works when you have to sign in first.
+> - Rejections now record who rejected the entry and when, from now on.
+> - Transfers and sweeps are named as such on their buttons and messages, sweeps show which book (Club or Foundation) each side belongs to, and dollar amounts show thousands separators.
+> - The notification email tells recipients what to expect when a colleague has already approved.
+>
+> ### Security: Sign-in links stay on this site
+>
+> Sign-in and registration links now refuse to send anyone to an address outside the club's site.
+>
+> #### Permissions
+>
+> | Feature key | Required for |
+> |-------------|--------------|
+> | `ledger.approve` | Unchanged: the Approvals page, Approve, Reject, Add your approval. |
+
+(Phrases deliberately avoided: "only one approval is needed", "votes", "2 of N". "Coming next" from v1.89 is now delivered and should not be repeated.)
+
+## Manual post-deploy checks
+
+For the user:
+1. **L4, Google round trip (carried from 2a).** Signed out, open `/admin/ledger/approvals?txn=<a pending id>` (or the link in the next real approval email), choose "Sign in with Google", and confirm you land on the Approvals page with the entry highlighted, not on `/members`.
+2. **F4, the two things headless QA could not see.** On a laptop, open Approve: the cursor should already be in the minute field. On a real phone, open Approvals (and, once one exists, a Recently decided card and the "Add your approval" dialog) and confirm the buttons are on screen and the keyboard does not cover the context.
+3. **Q8, and the Q1 one-liner,** in the same message: others can add their name after it posts; is it acceptable that there is no way to record disagreement?
+
+For the orchestrator (reads only, counts only, `branchId` passed explicitly, nothing personal copied into the repo; I did not run any of this):
+4. **Migrations applied.** The build runs both; confirm the Approvals page loads and Recently decided renders without error. Expect `ledger_txn_cosigns` to hold **0** rows until someone adds an approval.
+5. **L2.** Re-run the Phase 1 Verify-First block; expect Recently decided to show `board_approved_rows + rejected_expense_legs` (1 + 0 on 2026-10-10) cards. This is the production check that the board-decision discriminator matches the real data.
+6. **L9, sizing the per-account residual:**
+
+```sql
+WITH holders AS (
+  SELECT DISTINCT u.id,
+         lower(regexp_replace(btrim(u.name), '\s+', ' ', 'g')) AS norm_name
+  FROM users u
+  JOIN user_roles ur ON ur.user_id = u.id
+  JOIN role_features rf ON rf.role_id = ur.role_id
+  JOIN features f ON f.id = rf.feature_id
+  WHERE f.name = 'ledger.approve' AND u.is_active = TRUE
+    AND u.name IS NOT NULL AND btrim(u.name) <> ''
+)
+SELECT count(*) AS approve_holder_accounts,
+       count(*) FILTER (WHERE norm_name IN
+         (SELECT norm_name FROM holders GROUP BY norm_name HAVING count(*) > 1)) AS accounts_sharing_a_display_name
+FROM holders;
+```
+
+Paste the two counts under "Production facts (orchestrator, 2026-10-10)". Zero is the expected result; any non-zero is a fact to tell the user, not a defect (the residual is accepted).
+
+## Phase 6 — Shipped vs Intent — Increments 2a and 2b — 2026-10-10 (standard handoff)
+
+**Owner:** analyst
+**Status:** complete
+
+### Summary
+SHIP WITH NOTES. Both of the user's statements are honoured under the recorded reading: rejections record who rejected going forward, and after the first approval posts an entry, other board members can add their names, informationally, from the email link or Recently decided. The only intent risk is that the user may have meant a quorum; the question went unanswered and the push summary should restate it in one line. No flow regressed, every Phase 1 edge and adversarial item is closed by code or a live count except four named residuals, and the two qa observations fold into one small backlog item.
+
+### What I did
+- Compared every Phase 1 addendum verb, flow, edge case and adversarial probe with the shipped code and qa's live counts; re-read the two modules DECISION-117 item 3 asked me to; re-ran 41 test files (931 tests, green); grepped for the stale strings and the stray `.bak`; checked the reserved IDs against `docs/backlog.md`.
+- Drafted four backlog items, the DECISION-116 and DECISION-117 status edits, the v1.90 notes and the post-deploy checks.
+
+### Outputs
+- This work-log only (this section; Per-Phase Status table). No code, database, dev server, `docs/decisions.md`, `docs/backlog.md`, `package.json`, release-notes or email changes. Nothing committed.
+
+### Open questions / handoff notes
+- **Orchestrator:** confirm the next free backlog number and reserve IDs for backlog A to D; the stale Reserved IDs header line (B-161 is used); run `/pre-push` with the full e2e; take L2 and L9 after deploy; send the user the Q1 one-liner, the Q8 question and the L4/F4 glance together.
+- **Tech-lead:** apply the DECISION-116 and DECISION-117 edits above, then set both to `Resolved`; at release add the CLAUDE.md bullet and Key Patterns note; place the v1.90 draft with `/release-notes`.
+- **User:** Q8 (dissent on a posted approval) decides whether B-160 is ever filed.
+
+
+## Ship filing (tech-lead, 2026-10-10)
+
+**Owner:** tech-lead
+**Status:** complete (docs and version only; no code, database, dev server or commit)
+
+Filed after the analyst's Phase 6 (SHIP WITH NOTES) for Increments 2a and 2b, applying her DECISION status recommendation and her drafts. Increment 1 shipped earlier today as v1.89.0 (4730983).
+
+### Decisions
+- **DECISION-117** `Proposed` -> `Resolved (2026-10-10; L9 pending, orchestrator, post-deploy)`. Edits applied: Context states the quorum question went unanswered twice and the no-quorum default is the recorded decision from "take it all the way to production" (adopted default, not an explicit confirmation); item 3 carries the Phase 6 re-read of `ledger-cosign.ts` and `ledger-approval-queries.ts` and says it remains a human re-read, not a scan; item 5 carries the measured results (L6 100/100, six users 50/50, L7 100/100, three lock probes) with the FK key-share lock kept as believed, unmeasured; residuals record L8 (20/20 per shape, five passes) and L10 (300/300 per pass), L9 pending, and the quorum-revisit scope now names the pending-email sentence and the "It has been posted" banner; Impact no longer claims a no-diff `drizzle-kit push` (replaced by the `pg_constraint` check and the backlog-D reason); "Depends on DECISION-116 items 1 to 4".
+- **DECISION-116** `Proposed (item 1 amended by DECISION-117)` -> `Resolved (item 1 amended by DECISION-117; L2 pending, orchestrator, post-deploy; L4 believed, unmeasured, user run pending)`. Edits applied: item 3 clarifies "who decided" means who posted or rejected, co-signatures listed separately; the `?txn=` queue-view residual is now observed (2a qa, L3); L1 residual gains the post-refactor counts (6/6 in Increment 1, then 20/20 per pass, five passes); the L4 residual says `Resolved` does not imply it was measured, and records what 2a did measure.
+- I did not re-run the "Established" re-read myself beyond the analyst's Phase 6 re-read; each factual edit above is the analyst's wording.
+
+### Backlog (`docs/backlog.md`; highest ID in the file was B-161; B-160 still held for Q8 and unused)
+- **B-162** (Soon) The Approvals page offers Approve and Reject by an expense-leg-only recorder check (analyst draft A).
+- **B-163** (Later) `e2e/ledger-approvals-mobile.spec.ts` leaves "New portal user" `email_queue` rows (draft B).
+- **B-164** (Later) Approvals copy pass (draft C).
+- **B-165** (Later, database-admin) `drizzle-kit push` is interactive because of the `ledger_entities` slug constraint name mismatch (draft D).
+- ToC updated (Soon: B-162; Later: B-163 to B-165). Correction recorded: the header `Reserved IDs:` line (line 4) is fixed, and the Phase 3 addendum's filing record gains a correction line, because B-161 was filed by the orchestrator (recorder-email item, Later) and is in use. The Phase 3 addendum's note that B-158's body and ToC sit in different tiers no longer applies: both are under Soon.
+
+### Release notes and version
+- New `docs/release-notes/v1.90.md` with entry **1.90.0 — 2026-10-10**: Feature (Add your approval; permissions table `ledger.approve`; New Routes `POST /api/admin/ledger/transactions/[id]/cosign`, `?tab=decided`, `?txn=`), Enhancement (Recently decided, email deep link, rejection attribution, email wording), Defect Fix (noun, fund and thousands-separator polish), Security (sign-in links stay on this site). User-facing only, no file lists, never the phrase "only one approval is needed". `→ [v1.90](v1.90.md)` added at the bottom of `v1.89.md`. `package.json` version `1.89.0` -> `1.90.0`.
+
+### CLAUDE.md
+- The Key Features bullet is now "Disbursement approvals (v1.89–v1.90, DECISION-116/117)" and carries the 2a/2b facts: rejection stamps and `approvedAt` untouched; `lockDecisionPair()` and `boardDecisionPredicate` as the single helpers; `ledger_txn_cosigns` informational and append-only, written only by `cosignTransaction()` through the cosign route; the no-quorum strings to change with any quorum; approver-only queries module; `safeCallbackPath()` for every `callbackUrl` consumer; the `drizzle-kit push` prompt (B-165). One bullet; no Key Patterns edit (the `safeCallbackPath()` note lives in the bullet).
+
+### Treasury User's Guide (`/admin/ledger/guide`)
+- **The guide does document approvals** (section 5, "Reimbursements & Approvals", `src/components/admin/ledger/guide/reimbursements-section.tsx` lines ~56 to 70): it describes the Approvals queue and the Approve-permission gate, and does not mention the Recently decided tab or adding your approval. **Not updated in this pass because the task forbids edits under `src/`.** Needs a small copy addition (one sentence on the Recently decided tab, one on "Add your approval" being a record only) by an implementer; orchestrator to route it. Guide wording to supply: "The Approvals page also has a Recently decided tab listing the last 25 decisions. After an entry posts, other board members can add their approval from there or from the email link; this is a record only and does not change the books."
+
+### Left for the orchestrator
+- Post-deploy: L2 and L9 counts (append to DECISION-116/117 residuals and to "Production facts"), L4 and F4 glances (user), Q1 one-liner and Q8 (decides whether B-160 is ever filed).
+- `/pre-push` on the combined tree; commits are the orchestrator's (nothing committed here).
+
+### Orchestrator: Treasury User's Guide copy (2026-10-10)
+
+Absorbed deviation (6 lines, copy only, no schema, no API): added the paragraph tech-lead drafted in the Ship filing section to `src/components/admin/ledger/guide/reimbursements-section.tsx` after the Approvals-queue paragraph (Recently decided tab; adding your approval is a record only). No e2e spec visits `/admin/ledger/guide`, so the edit landed while the full suite ran. tsc and eslint re-run clean on the file; `pnpm build:only` re-run after the e2e suite finishes, before the commit.
+
+## Pre-push gates for Increments 2a + 2b (orchestrator, 2026-10-10)
+
+Measured on `4730983` plus the full uncommitted 2a + 2b tree (57 changed/untracked files), dev server restarted after migration 0112, logs in scratchpad `prepush-2/`.
+
+| Gate | Result |
+|------|--------|
+| Typecheck | PASS |
+| Lint | PASS (0 errors; the pre-existing `budget-context-panel.tsx:114` warning) |
+| Unit tests | PASS — 203 files, 3624 tests |
+| Production build | PASS — 125/125 pages; re-run after the guide copy edit, PASS |
+| E2E (full suite, serial) | PASS — 356 passed, 1 skipped, 21.8 min |
+| Schema and migrations | 0111 and 0112 in `drizzle/migrations/`, idempotence grep empty, both replay as no-ops; `drizzle-kit push` prompts only on the pre-existing `ledger_entities_slug` name drift (B-165) |
+| Dependency CVE audit (`--prod --audit-level=high`) | PASS (exit 0); 1 low + 1 moderate advisory, not blocking |
+| Personal data sweep (`--untracked`) | clean (email, phone, address); no `.env*` tracked |
+| Native dialogs / console.log | none in production paths (only `<script>alert(1)</script>` fixtures in tests) |
+| Release notes + version | `docs/release-notes/v1.90.md` 1.90.0, `package.json` 1.90.0, CLAUDE.md updated, guide updated |
+
+Ready to push: yes. Authorization: the user's "take it all the way to production" (User decisions, 2026-10-10). Phase 6: SHIP WITH NOTES (notes filed as B-162..B-165; Q8/B-160 held). Post-deploy checks for the user: L4 Google round trip with `?txn=`, F4 autofocus glance, L9 read-only production counts.
