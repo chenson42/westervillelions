@@ -38,6 +38,7 @@ was deleted on the strength of this review alone.
 - B-111 — Treasurer permission baseline: bind or split `ledger.manage`, fix two gating mismatches.
 
 **Soon**
+- B-166 — Santa's Workshop production sign-up page at `/santas-workshop`
 - B-145 — Member RSVP and signup routes have no tests
 - B-146 — Public forms and the v1.83.0 junk-guard wiring have no route or e2e coverage
 - B-147 — Unit-test the DB-bound permission resolver (carried since 2026-05-18 and 2026-06-24)
@@ -91,6 +92,8 @@ was deleted on the strength of this review alone.
 - B-162 — The Approvals page offers Approve and Reject by an expense-leg-only recorder check
 
 **Later**
+- B-167 — Santa's Workshop family tracking and volunteer check-in (event phase 2)
+- B-168 — Santa's Workshop memory book builder and paperless delivery (event phase 3)
 - B-148 — Pin the aged-fund loader SQL
 - B-149 — Reimbursement lifecycle e2e, including Mark Paid under deny-by-default email
 - B-150 — Commit e2e for the discard-session and close/match account-mismatch guards
@@ -411,6 +414,11 @@ was deleted on the strength of this review alone.
 ---
 
 ## Soon
+
+- [ ] **B-166 — Santa's Workshop production sign-up page at `/santas-workshop`.**
+  (added 2026-10-11 from `docs/work-log/2026-10-11-santas-workshop-signup.md`, Phase 6 follow-up; priority: should-do, time-boxed to the event: drop-off Fri Dec 11, proposed, not agreed)
+  Replaces the 404 reserved by DECISION-118. Zeffy ticket form with the custom questions the chair confirms (one ticket per stuffy; verify with a Zeffy test form whether questions repeat per ticket), opened in the existing modal embed on phones with an "open in a new tab" fallback and a ticket-appropriate iframe title (`ZeffyEmbed` hard-codes "Donation form powered by Zeffy"). Date-driven Before/Open/After computed in Eastern time from one module, manual Full flip. Entity-correct copy: ticket, never donation, never tax-deductible. Add an `events` row for Dec 11-13, sitemap entry, Open Graph card (1200x630 and 1:1), remove `noindex`, delete the "no page.tsx at /santas-workshop" assertion, vanity redirect `santasworkshop.westervillelions.org` (temporary redirect to the fixed canonical URL; establish who controls DNS), QR pinned only after the vanity address is verified live. Decide whether to keep or delete `/santas-workshop/preview` and its sample-data module.
+  **Blocked on:** (1) the treasurer's answer to which Zeffy account issues the form, the Club's or the Foundation's. It decides where the money lands and what the page may say; do not default it. (2) The chair's checklist answers (work-log section 4): dates and Friday windows with IHOP (2, 3), the cap and tickets per order (4), which preschools are listed and whether IHOP is named (8), the form fields including the photo-sharing and "not responsible for loss or damage" boxes, wording to the treasurer and insurer (9), the privacy promise "stuffies only, never the children" (10), and the title (11).
 
 - [ ] **B-158 — Approve and reject do not check what the approver saw.**
   (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 3; priority: should-do, medium — money governance)
@@ -1144,6 +1152,16 @@ was deleted on the strength of this review alone.
 ---
 
 ## Later
+
+- [ ] **B-167 — Santa's Workshop family tracking and volunteer check-in (event phase 2).**
+  (added 2026-10-11 from `docs/work-log/2026-10-11-santas-workshop-signup.md`, Phase 6 follow-up; priority: only if the chair says yes to the tracking card; depends on B-166)
+  Per-family capability link (opaque high-entropy token, identical response for unknown and expired, rate limited), conductor roster with search and check-in that tolerates a weak signal in a restaurant lobby, photo station, a volunteer gate decided by whether volunteers have accounts (a new `FEATURES` key via `/add-permission`, or a short-lived link or PIN for non-members, rejected server-side not by hiding links), care-note text escaped and length-capped, retention of any family data decided up front. No email from the site unless a separate durable-send pipeline is opened.
+  **Blocked on the chair's answers (work-log section 4):** whether to hand each family a QR tracking card at check-in with no email, and whether photos go live during Saturday or all at once that evening (5); who may collect on Sunday (6); and whether the conductor and photo helpers have club accounts or include spouses and youth who do not (7).
+
+- [ ] **B-168 — Santa's Workshop memory book builder and paperless delivery (event phase 3).**
+  (added 2026-10-11 from `docs/work-log/2026-10-11-santas-workshop-signup.md`, Phase 6 follow-up; priority: only after B-167; depends on B-167)
+  Per-stuffy book from the scene photos, Save as PDF, Share link, how long the club keeps the photos, a printed keepsake card and print-on-request for families without a phone, stuffy-only photos with the share opt-in respected.
+  **Blocked on the chair's answers (work-log section 4):** printed, paperless, or paperless plus a printed keepsake card (1); the tracking card and when photos go live (5); how a parent reaches the memory book and who may collect on Sunday (6); and whether the club can keep the "stuffies only, never the children" promise on Saturday (10).
 
 - [ ] **B-148 — Pin the aged-fund loader SQL.**
   (added 2026-10-02 from the 7-day test-coverage review, `docs/reviews/2026-10-02-test-coverage.md`, gap P4; priority: should-do, medium; the loader is the actual input behind the 2026-10-01 aged-fund bug report)

@@ -73,6 +73,7 @@ src/
 │   ├── mission/           # Mission & service areas
 │   ├── events/            # Public events calendar
 │   ├── programs/          # Service programs
+│   ├── santas-workshop/preview/  # Unlisted prototype: noindex, no nav or sitemap entry, fictional data (DECISION-118); /santas-workshop itself is a 404 until B-166
 │   ├── donate/            # Donation page (Zeffy embedded donation forms, EIN + impact band)
 │   ├── privacy/           # Public privacy policy
 │   ├── contact/           # Contact information
@@ -154,6 +155,7 @@ docs/
 - **Events:** Public events calendar and past events, with per-occurrence and full-series "Add to Calendar" (.ics) download
 - **Donate:** Zeffy donation forms embedded per campaign
 - **Contact:** Contact form, meeting info, social media links
+- **Unlisted prototypes (DECISION-118):** a clickable prototype for a stakeholder to confirm look and workflow ships at a `/<name>/preview` route, with the final URL left a 404 so an early QR code fails loudly. `metadata.robots` noindex in the preview layout, never an entry in `robots.ts` (robots.txt is public and would advertise the URL), `sitemap.ts` or navigation; a banner on every screen; sample data in one module (`sample-data.ts`) and real proposals such as dates, price and cap in `event-facts.ts`; source-scan tests pin it. The first is Santa's Workshop (`/santas-workshop/preview`, v1.91); the real page is B-166.
 
 ### Member Portal
 - **Login:** Google OAuth (via Google for Nonprofits) + password authentication

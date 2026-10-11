@@ -28,6 +28,29 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-118: An unlisted prototype ships at a preview route with `noindex`, fictional data and a banner; the final URL stays a 404
+
+**Status:** Resolved (2026-10-11; promoted at Phase 6 after re-reading each sentence against QA's "Established" list; the "Unmeasured" paragraph still stands)
+**Date:** 2026-10-11
+**Design:** `docs/work-log/2026-10-11-santas-workshop-signup.md` (Phase 1 analyst draft, Phase 2 orchestrator skip, Phase 3 tech-lead).
+
+**Context:** The site deploys only through `main`, so any prototype the chair is shown on a phone is publicly reachable by definition. The Santa's Workshop prototype exists to confirm look, feel and workflow with the event chair before anything real is built. The production page will live at `/santas-workshop`, which a QR code or poster may point at before the production page exists.
+
+**Decision:**
+1. The prototype lives at `/santas-workshop/preview` (and sub-routes). `/santas-workshop` has **no** `page.tsx` and returns 404 until the production page ships.
+2. `noindex` is set with `metadata.robots = { index: false, follow: false }` in the preview layout, with no `alternates.canonical`, and a prototype-specific title and Open Graph title so a shared link does not look like the real page. The path is **not** added to `robots.ts` (robots.txt is public, so a `disallow` advertises the URL and stops crawlers from reading the `noindex`), to `sitemap.ts`, or to any navigation.
+3. Every screen carries a prototype banner. The sample families are fictional and held in one module (`sample-data.ts`); the proposed dates, price and cap live separately in `event-facts.ts` and are the user's real proposals, labelled "proposed", not fictional. The prototype imports nothing from the database, auth or email layers, uses no browser storage, and its own code issues no `fetch` (the root layout's existing session call, `/api/auth/session`, still runs on this page exactly as on `/about`).
+4. These properties are pinned by source-scan unit tests (`preview-unlisted.test.ts`, `sample-data.test.ts`), not by review, because `layout.tsx` (imports `next/font`) and `sitemap.ts` (imports `@/lib/db`) cannot be imported under Vitest's `node` environment (precedent: `admin-page-feature-gates.test.ts`).
+5. The landing state (before/open/full/after) is client state, never a URL parameter, so no user-controlled value is reflected into the page.
+
+**Rationale:** Reachability cannot be prevented on this host; it can be made harmless. A 404 at the final URL means an early-printed QR code fails loudly instead of landing on sample data. Fictional-by-construction data (enforced by a test) is what makes "unlisted, not private" acceptable on a public repository. The cost is a few source-scan tests and a deliberate absence of a route.
+
+**Unmeasured:** that search engines honour `noindex` promptly and that no external page links to the preview URL are *believed, unmeasured*; there is no money, permission or credential invariant in play, so no Phase 5 live check is assigned beyond confirming the `robots` meta tag is emitted.
+
+**Impact:** New files under `src/app/santas-workshop/preview/` and `src/components/santas-workshop/` only; no schema, API, permission or dependency. Revisit when the production page is built (B-166): remove `noindex`, add the sitemap entry, delete the "no `src/app/santas-workshop/page.tsx`" test assertion, and delete or keep the preview as a reference.
+
+---
+
 ## DECISION-117: A second approval is an informational co-signature, never a control
 
 **Status:** Resolved (2026-10-10; L9 pending, orchestrator, post-deploy)
