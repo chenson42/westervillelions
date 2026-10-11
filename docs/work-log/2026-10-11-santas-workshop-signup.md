@@ -1055,3 +1055,10 @@ Measured on `c20ff24` plus the uncommitted prototype tree (logs in scratchpad `p
 | Release notes + version | `docs/release-notes/v1.91.md` 1.91.0, `package.json` 1.91.0, CLAUDE.md updated |
 
 Ready to push: yes, pending the user's approval to commit and push (Workflow Rule 1). Phase 6: SHIP WITH NOTES; N1 fixed before commit; N2 (real-phone check of the pinned bar) and the chair's checklist stay with the user.
+
+## Deployed (orchestrator, 2026-10-11)
+
+- User approved with "push". Committed as `c6c7f6b` (v1.91.0) and pushed to `main`; Vercel status `success` at 19:46 ET.
+- Live checks: `https://westervillelions.org/santas-workshop/preview` 200 with `<meta name="robots" content="noindex, nofollow">`; `https://westervillelions.org/santas-workshop` 404; `robots.txt` carries no santas-workshop line. The local dev server on :3000 serves the same route.
+- Treasurer question (checklist item 12) answered by the user the same evening: **the form lives on the Club's Zeffy account.** Money that belongs to the Foundation goes into the Club Activity fund and is swept to the Foundation afterward. Recorded on B-166; the production build is no longer blocked on it, only on the chair's checklist.
+- Still with the user: forward the link to the chair after flipping the landing page to "Before it opens"; the 30-second real-phone scroll check of the pinned Reserve bar (N2); the chair's checklist items 1-11.
