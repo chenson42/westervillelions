@@ -3368,3 +3368,7 @@ Measured on `4730983` plus the full uncommitted 2a + 2b tree (57 changed/untrack
 | Release notes + version | `docs/release-notes/v1.90.md` 1.90.0, `package.json` 1.90.0, CLAUDE.md updated, guide updated |
 
 Ready to push: yes. Authorization: the user's "take it all the way to production" (User decisions, 2026-10-10). Phase 6: SHIP WITH NOTES (notes filed as B-162..B-165; Q8/B-160 held). Post-deploy checks for the user: L4 Google round trip with `?txn=`, F4 autofocus glance, L9 read-only production counts.
+
+## Deployed (orchestrator, 2026-10-10 evening)
+
+Commit `ae0e210` (v1.90.0) pushed to `main`; Vercel deployment for that sha reports `success` (GitHub commit status). Read-only production check after the deploy (counts and booleans only, nothing written): `ledger_txn_cosigns` exists; both rejection columns present on `ledger_transactions`; co-sign rows 0; board-approved rows 1; rejected 0; pending 0. That is the L9 expectation (1 + 0) — Recently decided should show exactly one row. Remaining manual checks for the user: L4 Google round trip with `?txn=`, F4 autofocus glance, Q8 (dissent) answer for B-160.
