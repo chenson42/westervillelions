@@ -659,3 +659,9 @@ Measured on the final tree (logs in scratchpad `prepush-7/`), with no file edite
 | Release notes + version | `docs/release-notes/v1.92.md` 1.92.0, `package.json` 1.92.0, CLAUDE.md, DECISION-119 Resolved, B-169..B-171 filed |
 
 This section was appended after the run (docs only). User authorized the push ("and then push").
+
+## Deployed (orchestrator, 2026-10-12)
+
+- Commits `60abe33` (Santa's Workshop docs) and `13bac62` (v1.92.0) pushed to `main`; Vercel status `success` at 10:23 ET.
+- Live checks: `https://westervillelions.org/whitecane` 307 to `/white-cane?utm_source=poster&utm_medium=qr&utm_campaign=whitecane&utm_content=fourthfriday` (R1 recorded); `/white-cane` 200, title names the club once, inline iframe src is the Zeffy embed for `white-cane-2026-westerville-lions-club`, Foundation receipt line present, Open Graph image is `/images/white-cane/og.jpg`; `/donate` now lists the White Cane 2026 card (the rebuild refreshed the hourly cache, B-171 still open).
+- Still with the user: the production homepage announcement linking to `/white-cane` (turns on the hero button); BF-2 (funded projects, goal) and BF-3 (Uptown Westerville's answer on the poster); R3 (a real iPhone scan of the printed proof and the Facebook in-app browser). DECISION-119's "Unmeasured" paragraph can drop R1 now.
