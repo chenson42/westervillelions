@@ -1062,3 +1062,24 @@ Ready to push: yes, pending the user's approval to commit and push (Workflow Rul
 - Live checks: `https://westervillelions.org/santas-workshop/preview` 200 with `<meta name="robots" content="noindex, nofollow">`; `https://westervillelions.org/santas-workshop` 404; `robots.txt` carries no santas-workshop line. The local dev server on :3000 serves the same route.
 - Treasurer question (checklist item 12) answered by the user the same evening: **the form lives on the Club's Zeffy account.** Money that belongs to the Foundation goes into the Club Activity fund and is swept to the Foundation afterward. Recorded on B-166; the production build is no longer blocked on it, only on the chair's checklist.
 - Still with the user: forward the link to the chair after flipping the landing page to "Before it opens"; the 30-second real-phone scroll check of the pinned Reserve bar (N2); the chair's checklist items 1-11.
+
+## Sent to the chair (user, 2026-10-11 evening)
+
+The user emailed the chair the preview link with four questions that gate the start of the real build and a set of stated defaults for the rest. Recorded here because the defaults narrow the section 4 checklist and B-166/B-167 should start from them.
+
+**Questions that gate the real build:** IHOP confirmed for Fri Dec 11 to Sun Dec 13; registration opens Sun Nov 8; 60 stuffies at $15, up to 3 per order, no waitlist; which preschools go in the dropdown.
+
+**Stated defaults (pending the chair's objection):**
+- Two Friday windows (5:30 to 6:15, 6:15 to 7:00), Sunday pickup 1 to 3 PM; families per window and Sunday at IHOP still to confirm. Overnight storage Friday and Saturday is a new open question.
+- Train-ticket QR card at drop-off opens the journey and later the memory book; the same link goes in the email confirmation as the lost-card backup (new, from the outside review).
+- Photos published in one batch Saturday evening, not live (checklist item 5 resolved toward the batch option).
+- Memory book paperless plus a printed keepsake card (checklist item 1, the recommended middle option).
+- Pickup: card plus the conductor confirming the parent's name on the order (new, replaces "whoever holds the card").
+- Stuffies only, never children, stated on the page.
+- Dry run with 5 to 10 stuffies before the weekend (new).
+- Title stays "A Visit to Santa's Workshop"; tickets on the Club's Zeffy account; registration language to be reviewed before go-live (covers the loss-or-damage box and the insurer wording from item 9).
+- Volunteer accounts (item 7) asked as-is.
+
+**Form fields as described to the chair:** parent contact, stuffy's name and description, optional care note and note to Santa, photo-sharing permission. The email did not mention the child's first name, which the prototype asks for as required. The outside review suggested dropping it or making it optional; the real build should treat it as optional at most, and the memory book copy must read well without it.
+
+**Design notes from the outside review carried to B-167:** the identifying tag must be visible to the photographer but kept out of the finished frame, because a photo attached to the wrong stuffy is hard to detect afterward.
