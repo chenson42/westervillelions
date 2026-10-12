@@ -152,6 +152,14 @@ export const FEATURES = {
   // Outbound email queue: view and retry (DECISION-115). Narrower than
   // ADMIN_USERS, which can grant itself `admin`; never bind admin.* to treasurer.
   EMAIL_QUEUE_MANAGE: "email_queue.manage",
+
+  // Santa's Workshop photo event (B-167, DECISION-121 to 125): sessions, Zeffy
+  // registrations and parent contacts, worker access, photo review, frame
+  // export, purge. Holders see about 100 families' names, emails and mobiles, so
+  // it is bound to admin and board_member only (migration 0114); never
+  // treasurer, member, or an admin.* key. Crew (volunteers) do not use this key:
+  // they authenticate with a per-session code.
+  SANTAS_WORKSHOP_MANAGE: "santas_workshop.manage",
 } as const;
 
 // Type for feature names
@@ -176,6 +184,7 @@ export const FEATURE_CATEGORIES = {
   CLUB_FILES: "club_files",
   SYNC_LOG: "sync_log",
   EMAIL_QUEUE: "email_queue",
+  SANTAS_WORKSHOP: "santas_workshop",
 } as const;
 
 // Helper to get features by category
@@ -253,6 +262,9 @@ export const FEATURE_DESCRIPTIONS: Record<FeatureName, string> = {
 
   [FEATURES.EMAIL_QUEUE_MANAGE]:
     "View the outbound email queue and retry failed messages. Password-reset links and temporary passwords are hidden",
+
+  [FEATURES.SANTAS_WORKSHOP_MANAGE]:
+    "Manage the Santa Workshop photo event: sessions, Zeffy registrations and parent contacts, worker access, photo review and publishing, frame export, and data purge",
 };
 
 // Default role names (should match database seed data)
@@ -546,6 +558,15 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         icon: "💰",
         keywords: ["donations", "zeffy", "fundraising", "donate page", "causes"],
         requiredFeature: FEATURES.CAMPAIGNS_MANAGE,
+      },
+      {
+        name: "Santa's Workshop",
+        href: "/admin/santas-workshop",
+        icon: "🎅",
+        keywords: ["stuffies", "stuffed animals", "sessions", "registrants", "zeffy", "ihop", "christmas"],
+        // The single key (DECISION-082: the proxy derives its /admin/santas-workshop*
+        // admission from this entry, so the page and every API route gate on the same key).
+        requiredFeature: FEATURES.SANTAS_WORKSHOP_MANAGE,
       },
       {
         name: "Announcements",

@@ -20,9 +20,9 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-10-12 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions (one precondition: Phase 1 addendum) | 2026-10-12 |
 | 3 — Technical design | tech-lead | Complete | Design complete; implementers named (database-admin, then api-developer, then ux-developer, per slice; worktree + Neon branch) | 2026-10-12 |
-| 4 — Implementation | TBD by tech-lead | Pending | — | — |
-| 5 — Verification | qa | Pending | — | — |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 4 — Implementation | database-admin (schema done), api-developer (server done), ux-developer (Slice 1 UI done) | Complete (Slice 1); qa next | — | 2026-10-12 |
+| 5 — Verification | qa | Complete (Slice 1); re-verified twice (D1 to D3, then N1 to N3) | **PASS** (first run FAIL on D1/D2/D3, all fixed; tree: HEAD `6343fa6` + uncommitted Slice 1 diff in worktree) | 2026-10-12 |
+| 6 — Shipped vs intent | analyst | Slice 1 complete; Slices 2 to 5 pending | Slice 1: **SHIP WITH NOTES** (N1 to N3 before Nov 8; N4 with Slice 2; N5 gate) | 2026-10-12 |
 
 ---
 
@@ -1335,92 +1335,618 @@ The design is above. Nineteen rulings amend Phase 1/2 where code, the Zeffy spec
 - **Measure, do not assume:** S1, S2a, S2b, S3 and live checks L1 to L13 settle every item marked believed or unmeasured above.
 - **Orchestrator:** file DECISION-121 to 125 after the sibling finishes (reserve 125); apply the CLAUDE.md, spec and backlog edits listed above at the right moments; announce `:3000` restarts; set the purge reminder; update the Reserved IDs line.
 
+
+### Phase 3 addendum: session edit page (tech-lead, 2026-10-12)
+
+**Trigger:** the ux-developer's Slice 1 deviation 4 (no edit surface), confirmed by the e2e run: drop-off window labels must equal the Zeffy buyer answers (normalized), and a label mistyped at creation cannot be fixed. This closes a hole in the page list above; it adds no schema and no route.
+
+**Ruling 1, route.** A separate page, `/admin/santas-workshop/[sessionId]/edit`, not inline on the overview. The overview stays a status dashboard; the edit form is long and has unsaved state. It reuses `session-form.tsx` in an edit mode, calls the existing `PATCH /api/admin/santas-workshop/sessions/[id]`, and is linked from the overview and the session nav. The page does `auth()` then `hasFeature()` then `redirect("/access-pending")` before any query (already covered by `admin-page-feature-gates`). A purged session shows a read-only notice (the server already answers `409 session_purged`).
+
+**Ruling 2, what is editable.**
+- *Editable now:* `name`; `dropoffDate`, `photoDate`, `pickupDate`; `windows` (label, start, end; add a window; remove a window nobody chose); `crewClosesOn`; `purgePersonalOn`, `purgePublicOn`. The form sends **only changed fields** (so a second admin's unrelated edit is not overwritten) and disables Save when nothing changed.
+- *Frozen, shown as plain text with "fixed once created":* `kind`, `slug` (and ids and tokens). The edit-mode form renders no input for them; the server validator already rejects them (`immutable_field`).
+- *Not on this page:* campaign, rates and question map (Connect page); status, worker code, pause (Slice 2 overview cards); `storageQuotaBytes` (photos page) and the frame settings (frames page): each is added by the slice that consumes it, so no dead controls ship.
+- *Window ids are never shown or edited.* An existing window keeps its id through label, time and order edits; a new window gets a fresh id. Removing a window a registrant chose stays the existing `409 window_in_use` (message in plain words: "Registrants chose this window; change its label instead").
+- *Dates once registrants exist:* **allow, with a note**, no refusal. Nothing a registrant stored references a date (orders reference a window id only), so a date edit cannot orphan data. The server's `validateSessionDates` on the merged row remains the only gate. The page shows, when status is not `draft`, "The public page and the Zeffy form text carry these dates too; update them separately." (the facts live in three places; this page edits only the session). Changing `pickupDate` does **not** silently move `crewClosesOn` or the two purge dates; a button "Recalculate worker access and removal dates from pickup day" (client-side `defaultRetention()`) fills them for the admin to review before saving.
+
+**Ruling 3, what a label change does to existing orders (the part that matters).** `PATCH` stays a plain configuration write: it does **not** recompute anything. Stored orders keep their `window_id`/`window_label_raw` and stuffies keep their `unmapped_window` attention code until the explicit, existing **Remap** runs (`remapRow` re-maps from stored raw answers using the session's *current* windows). After a save that changed any window label, the page says "Registrants are not updated until you run Remap" with a button that calls the existing reprocess route in the same loop the Connect page uses (`runRemapLoop`), and reports the result with the existing `remapSummary`. Consequences, stated on the page: renaming a label to match the stored answers clears `unmapped_window` for those registrants; renaming a label so it no longer matches turns previously matched registrants back to `unmapped_window` (nothing is lost, the raw answer is stored; renaming back and re-running Remap restores them). A flag the admin had dismissed resets when the reason set changes (Slice 1 deviation 4). No new preview endpoint: the effect is reversible and non-destructive, so a count-before-save is not worth an API change. To make the fix one click, the page lists **"Answers that matched no window"** (distinct normalized `window_label_raw` of this session's orders with a null window id, with counts, at most 10) as chips that copy the answer into the label field. That list is read directly by the Server Component through one small read function added to `session-queries.ts` (about 15 lines; no route, no schema; absorbed by whoever builds the page, like deviation 1). Purged orders have a null raw answer and are excluded.
+
+**Confirmation of the three Phase 4 UI deviations.**
+1. `RegistrantDto.unmatched`: **confirmed.** Admin DTO only; it must never reach `crew-contract.ts` (`crew-contract-no-contact.test.ts` already bans the identifiers a crew DTO may hold). The caps (10 pairs, 300 characters) stand.
+2. `unmapped_window` label: **confirmed, with one wording addition** once the edit page exists: append "Fix the label under Edit session, then run Remap." so the message names the remedy.
+3. Practice as the new-session default: **confirmed.** Because `kind` is immutable, the submit button must state the kind it creates ("Create practice session" / "Create real session") so creating the real session on Nov 8 is a deliberate click. Recommended, under 5 lines, absorbed.
+
+**Tests (named).**
+- *Unit, ux-developer:* `session-edit-patch.test.ts` (the patch builder returns only changed fields; returns nothing when unchanged; never includes `kind` or `slug` even if present in form state; existing windows keep their ids through label and time edits; new windows get fresh ids; removed windows are reported; "Recalculate" fills `crewClosesOn` and both purge dates from `defaultRetention`); `unmatched-window-answers.test.ts` (groups null-window orders by normalized raw answer with counts; excludes matched orders and purged nulls; caps at 10; treats text as plain data); `admin-ui.test.ts` additions (`window_in_use` message names the remedy; the `unmapped_window` label ends with the remedy; the post-save message appears only when a label changed); `admin-ui-source.test.ts` addition (the edit page gates before queries; edit mode renders no input named `kind` or `slug`; no `dangerouslySetInnerHTML`).
+- *Server, confirm present or add (api-developer file, small):* in `session-queries.test.ts`, a label change on a window that orders reference succeeds (same id) and removal of an in-use window returns `window_in_use`; in `remap.test.ts`, renaming to a label equal to the stored raw answer sets `windowId` and clears `unmapped_window`, renaming to a non-matching label nulls `windowId` and adds `unmapped_window`, and renaming back restores it.
+- *e2e, `e2e/santas-workshop-session-edit.spec.ts`:* create a practice session with a mistyped window label; connect the fixture campaign and map questions; post a signed order whose window answer is the correct label and see `unmapped_window` on the registrant; open Edit, see the chip with its count, click it, Save, run Remap, and the flag is gone and the window shows; edit the label to a wrong value, Remap, and the flag returns (reversible), then restore it; removing a window in use shows the plain-words error and saves nothing; `kind` and `slug` are text not inputs; changing name and dates is reflected on the overview; a member without the key is bounced from `/edit`; 360 px has no horizontal scroll.
+
+**Implementer:** **ux-developer** (route and PATCH exist; the one added read function is a few lines in an api-developer file and is absorbed with a note). No loop-back to Phase 1 or 2: no new permission, schema or dependency. Qa re-runs the new spec with the Slice 1 specs.
+
 ---
 
 # Phase 4 — Implementation
 
+## Phase 4 — Implementation (schema step, Slice 1 steps 1 and 2) — 2026-10-12
+
+**Owner:** database-admin
+**Status:** complete (schema and permission only; no routes, no UI, no `src/lib/zeffy/`)
+
+### Summary
+All eight tables from the Phase 3 Data Model are in `schema.ts` and created by migration `0113`, and `santas_workshop.manage` is added by `0114` and bound to `admin` and `board_member`. `drizzle/run-migrations.mjs` ran twice cleanly and `drizzle-kit push` (twice) proposes nothing for any `sw_`/`zeffy_` object; `tsc`, `lint` (0 errors) and `pnpm test` (219 files, 3758 tests) pass. Nothing committed.
+
 ## Files Created
 
-- `path/to/file` — purpose
+- `drizzle/migrations/0113_santas_workshop_tables.sql` — `sw_sessions`, `sw_orders`, `sw_stuffies`, `sw_stuffy_events`, `sw_photos`, `zeffy_events`, `sw_session_log`, `sw_crew_attempts`; 24 indexes (incl. all partial unique ones); 17 FKs, each in a `pg_constraint`-guarded `DO` block with drizzle's derived name (longest 48 chars). Numbers re-derived at start (`ls | sort | tail -3` showed `0112`).
+- `drizzle/migrations/0114_santas_workshop_permission.sql` — feature insert (`WHERE NOT EXISTS`), two `CROSS JOIN ... NOT EXISTS` binds (`admin`, `board_member`), guarded description `UPDATE`.
+- `src/lib/santas-workshop/session-schema.test.ts` — the named `session-schema.test.ts` (names <= 63 chars, FK names equal drizzle's, every schema index present in SQL with uniqueness and WHERE, one-current-portrait index in both places, no `bytea`/`check(`/`pgEnum`/`CHECK`/`CREATE TYPE`, only `CREATE TABLE IF NOT EXISTS`/guarded FKs/`IF NOT EXISTS` indexes, no `@`, no DML).
+- `src/lib/santas-workshop/permission-migration.test.ts` — key/category, description byte-identical to `FEATURE_DESCRIPTIONS`, exactly two binds, no treasurer/member/`admin.*`.
 
 ## Files Modified
 
-- `path/to/file` — what changed
+- `src/lib/db/schema.ts` — `bigint` import; eight tables, types `SwSession`, `NewSwSession`, `SwOrder`, `SwStuffy`, `SwStuffyEvent`, `SwPhoto`, `ZeffyEvent`. Exports: `swSessions`, `swOrders`, `swStuffies`, `swStuffyEvents`, `swPhotos`, `zeffyEvents`, `swSessionLog`, `swCrewAttempts`.
+- `src/lib/permissions.ts` — `FEATURES.SANTAS_WORKSHOP_MANAGE`, `FEATURE_CATEGORIES.SANTAS_WORKSHOP`, `FEATURE_DESCRIPTIONS` entry.
+- `src/lib/default-role-bundles.test.ts` — B2 now also forbids the key on `treasurer`; new describe: held by exactly `admin` and `board_member`, not `treasurer`/`member`.
+- `.gitignore` — `.santas-workshop-store/`. (No fixture or Drive folder entries: the design lists none.)
 
 ## Schema Changes
 
-- [Tables / columns added, or "none"]
-- Migration file: `drizzle/migrations/NNNN_*.sql` (idempotent)
+- Tables affected: the eight above (all new; no existing table touched).
+- Migrations: `0113`, `0114`. Every statement is idempotent (`CREATE TABLE/INDEX IF NOT EXISTS`, guarded FK blocks, `WHERE NOT EXISTS` seed and binds, `IS DISTINCT FROM`-guarded UPDATE). No seed rows beyond the permission, no personal data.
+- Role bindings: `santas_workshop.manage` -> `admin`, `board_member` (canonical idiom; `default-role-bundles.test.ts` parses them). Existing board members must sign out and in after deploy.
+- **Idempotence proof** (on the pipeline's own Neon branch): `pnpm db:migrate` run twice: first run created the tables and the permission, second run reported success (only the pre-existing "already exists, skipping" notices from earlier migrations). Branch state afterwards: 8 tables, `ux_sw_photos_current` definition equals the design's, feature bound to exactly `admin` and `board_member`. `drizzle-kit push` run repeatedly: no statement naming a `sw_`/`zeffy_` table, index or FK after the first run (see deviation 3 for the one cosmetic exception).
+- Local apply: `pnpm exec dotenv -e .env.local -- pnpm db:migrate`, then `pnpm db:push`.
 
 ## Implementer Notes
 
-[Tradeoffs taken, anything that diverged from the design and why.]
+**Deviations from the design (routed by size; all under ~30 lines, no new API, no new flow):**
+1. **Nav entry not added.** Step 2 says "then ... the nav". An `ADMIN_NAVIGATION` entry for `/admin/santas-workshop` before that page exists would fail `admin-page-feature-gates` and ship a dead link; the entry (single key, Engagement group) goes in with the first admin page (ux-developer, Slice 1 sessions admin). Absorbed.
+2. **`superseded_by_photo_id` and `frame_exported_photo_id` have no FK** (the design lists them as plain columns; a self-FK on `sw_photos` would also block purge ordering). Kept as plain `uuid`. Absorbed.
+3. **Array defaults in drizzle-kit push.** `text[] NOT NULL DEFAULT '{}'` (`sw_sessions.zeffy_ticket_rate_ids`, `sw_stuffies.attention_codes`) makes `push` re-emit `SET DEFAULT '{}'` every run. This is the identical pre-existing behavior of `ledger_donors.emails` (0077) and `social_requests.platforms`; it is a no-op re-set, tried the `sql\`'{}'::text[]\`` spelling and it did not remove it, so I kept the project's `.default([])` convention. Not a blocker; B-165-class noise.
+4. **Pre-existing `push` prompts (B-165 family).** Besides `ledger_entities_slug_unique`, `push` also prompts for `dues_settings_fiscal_year_unique`, and re-proposes dropping and re-adding ten FKs whose names exceed 63 characters (Postgres truncates them). Neither involves this increment. Every truncate prompt was answered with the default "No, add the constraint without truncating the table"; never the destructive option. Recommend adding both to B-165.
+5. **Branch verification wording.** The Neon pooled host is an endpoint id (`ep-divine-boat-...`), it does not contain the branch id `ama2ubpx`. Note: `neonctl connection-string --branch-id <id>` is silently ignored and returns the **production** endpoint; the branch id must be passed as the positional argument (`neonctl connection-string br-steep-cake-ama2ubpx ...`). I caught this before any write (the first string matched the `PROD_DATABASE_URL` host), discarded it, and verified the final host differs from both production and the shared dev endpoint. The worktree `.env.local` has `DATABASE_URL`/`DB_URL` on the branch, no `PROD_DATABASE_URL`, `RESEND_API_KEY=` empty, `EMAIL_DEV_ALLOWLIST` unset. No dev server was started.
+6. The design's `session-schema.test.ts` line "PATCH validator rejects `kind` and `slug`" is not deliverable here (no validator exists yet); it moves to api-developer with the sessions route. The `permissions.test.ts` "nav entry carries the single key" assertion moves with the nav entry (deviation 1).
+
+### Open questions / handoff notes (for api-developer)
+- Tables and import names are listed under Files Modified. Dates are `date` columns (strings). `sw_photos.id` has no default (client-supplied idempotency key). `sw_sessions.kind` has no default and no update path; `slug` and `collage_token` have unique indexes; `crew_closes_on`, `purge_*_on`, `storage_quota_bytes` are NOT NULL with no DB default (the create route must supply them).
+- Relationships: every `sw_*` child cascades from `sw_sessions`; `sw_stuffies` -> `sw_orders` cascade; `sw_stuffy_events`/`sw_photos` -> `sw_stuffies` cascade; `zeffy_events.session_id` is `SET NULL`; user-id columns are `SET NULL`.
+- A pinned write that loses a race on `ux_sw_photos_current` / `ux_sw_stuffies_tag` / `ux_sw_stuffy_events_idem` raises `23505`; the design's handlers map those.
+- Vocabulary tuples (`as const`) belong in the client-safe carriers you create; the schema stores plain text.
+- The nav entry and its `admin-page-feature-gates` coverage land with the first admin page.
+- Next agent: **api-developer** (Slice 1: `src/lib/zeffy/`, consumer, mapper/apply, webhook route, sessions admin routes). Orchestrator: the shared dev database has not been migrated by this step; the branch has.
+
+## Phase 4 — Implementation (API, Slice 1 server step) — 2026-10-12
+
+**Owner:** api-developer
+**Status:** complete for Slice 1's server side (no UI, no nav entry, no email, nothing committed)
+
+### Summary
+Zeffy registrations now flow end to end on the pipeline's own Neon branch: a signed `payment.completed` posted to `/api/zeffy/webhook` created one order and three stuffies (with the admin-mapped question text, a "needs attention" flag on the unmatched question, photo consent opt-in), a redelivery was a no-op, a refund-style `payment.updated` failed with `no_api_key` (retryable, as designed) and a bad or missing signature got one identical 400. The reusable `src/lib/zeffy/` module, the one write path `applyPaymentSnapshot()`, Sync, Remap, Reprocess (payment and event), the sessions admin API and the client-safe carrier are in place. Gates: `tsc` clean, `pnpm lint` 0 errors (one pre-existing warning, `budget-context-panel.tsx`), `pnpm test` 237 files / 4061 tests green, `pnpm build:only` passes.
+
+### What I did
+- `src/lib/zeffy/` (nothing workshop-specific; a test pins it): `config.ts` (the only env reads: webhook secret, API key, dev allowlist, booleans for the checklist), `signature.ts` (raw-byte HMAC, repeated `v1`, 300 s tolerance both ways, length check before `timingSafeEqual`), `types.ts`, `snapshot.ts` (whitelist projection, `itemKey()` with the `ITEM_KEY_STRATEGY` switch for the S2 outcome, `isPaymentSnapshot`), `client.ts` (bearer, `listPayments` campaign required by type and at runtime, `getPayment` -> `{ gone: true }` on 404, `listCampaigns`/`getCampaign`, 700 ms spacing, `Retry-After`, dev allowlist deny-by-default, no key or body in any message), `event-outcomes.ts`, `events-queries.ts` (DB `ZeffyEventStore`, recent events, last-event times), `webhook-handler.ts` (framework-free verify -> claim -> dispatch -> HTTP), `embed-url.ts` (`toEmbedUrl` moved from `components/campaigns/zeffy-url.ts`, four importers updated, no shim), `redact.ts`, `test-helpers.ts`, fixtures.
+- Workshop side: `question-fields.ts`, `payment-mapper.ts` (pure; also the derived refund helpers `refundOpen` / `workerRefundBadge` / `partialRefundFlag`), `payment-apply.ts` (advisory lock first, stale-snapshot refusal, import-owned columns only, never deletes, `markPaymentDeleted`), `zeffy-consumer.ts` (+ `fetchAndApply` shared with Reprocess), `zeffy-reprocess.ts`, `sync.ts` + `sync-cursor.ts`, `remap.ts`, `session-input.ts` (validators, `defaultSessionDraft()` from `WORKSHOP_2026`, `defaultRetention`), `session-queries.ts`, `session-checklist.ts`, `session-log.ts`, `admin-http.ts`, `storage-status.ts`, `tokens.ts`, `state-machine.ts` (tuple only), `session-vocabulary.ts`, `admin-contract.ts` (carrier).
+- Routes and scripts: webhook route, twelve admin routes, `scripts/spike-zeffy.ts` (dry run, redacts, writes `__fixtures__/spike-redacted.json` only with `--write`), `scripts/zeffy-webhook-fixture.ts` (signs and posts to localhost only).
+- Live smoke on `:3101` against the branch DB (host `ep-divine-boat-...`, checked in code before any write; test rows deleted afterwards): unmapped campaign -> `ignored_unmapped`; mapped three-ticket order -> 1 order + 3 stuffies, correct flags, event row `processed` with a stored snapshot; redelivery -> `duplicate: true`; id-only `payment.updated` with no API key -> 500 + `failed`/`no_api_key`; bad signature and missing signature -> 400 `bad_request`; admin route unauthenticated -> 401. Server stopped.
+
+### Outputs
+**Webhook** `POST /api/zeffy/webhook` (no `auth()`; the signature is the authentication; node runtime, force-dynamic): 200 `{ ok: true, outcome, duplicate? }`, 400 `{ error: "bad_request" }` (one identical body for oversize, bad or stale signature, malformed JSON, bad envelope), 500 `{ error: "not_configured" | "failed" }`.
+
+**Admin** (`/api/admin/santas-workshop/...`; `auth()` then `hasFeature(session.user.id, FEATURES.SANTAS_WORKSHOP_MANAGE)` from `@/lib/permissions-server` are the first two statements; `Cache-Control: no-store`; error body `{ error, code: AdminErrorCode, field? }`; 401 `unauthorized`, 403 `forbidden`, bad uuid 404):
+
+| Method and path | Request | Response |
+|---|---|---|
+| `GET sessions` | | `SessionListResponse` (`sessions: SessionListItem[]`, `storage: StorageStatus`) |
+| `POST sessions` | `CreateSessionRequest` | 201 `SessionResponse`; 409 `slug_taken` |
+| `GET sessions/[id]` | | `SessionOverview` (counts by state/window, `needsAttention`, `refundsOpen`, last event times, `lastSyncAt`, `zeffyConfig` booleans, `checklist`) |
+| `PATCH sessions/[id]` | `UpdateSessionRequest` | `SessionResponse`; 400 `immutable_field` for `kind`/`slug`; 409 `window_in_use`, `session_purged` |
+| `GET zeffy/campaigns` | | `ZeffyCampaignsResponse`; 503 `zeffy_not_configured`; non-production lists only allowlisted campaigns |
+| `PUT sessions/[id]/zeffy` | `ConnectCampaignRequest` | `ConnectCampaignResponse` (`verified: false` when Zeffy could not be asked); 409 `campaign_in_use`; 404 `campaign_not_found`; 400 `unknown_rate` |
+| `GET sessions/[id]/zeffy/questions` | | `QuestionsResponse` (question TEXT only, counts, current field) |
+| `PUT sessions/[id]/zeffy/question-map` | `SaveQuestionMapRequest` | `SaveQuestionMapResponse` (`attentionWouldChange`); 400 `duplicate_mapping` |
+| `POST sessions/[id]/zeffy/reprocess` | `RemapRequest` | `RemapResponse` (local Remap, batches of 200, post `cursor` back until `done`) |
+| `POST sessions/[id]/zeffy/sync` | `SyncRequest` (`cursor?`) | `SyncResponse`; `maxDuration = 60`; `retryAfterMs` on a Zeffy rate limit (normal, not an error); 409 `not_mapped` |
+| `POST sessions/[id]/zeffy/payments/[paymentId]/reprocess` | | `ReprocessResult`; 409 `session_mismatch`, 404 `payment_unknown`, 503 `zeffy_not_configured` |
+| `GET sessions/[id]/zeffy/events?limit=` | | `ZeffyEventsResponse` (no payload, `hasPayload` only; `lastValidEventAt` any campaign) |
+| `POST zeffy/events/[eventId]/reprocess` | | `ReprocessResult`; 404 `event_not_found` |
+| `GET sessions/[id]/stuffies?state=&q=&flag=&page=` | | `RegistrantsResponse` (read-only, parent contact included, 50 per page) |
+
+- **Carrier (client-safe, import types and vocabularies from here only):** `src/lib/santas-workshop/admin-contract.ts` (exports `SESSION_KINDS`, `SESSION_STATUSES`, `ZEFFY_EVENT_OUTCOMES`, `STUFFY_STATES`, `ATTENTION_CODES`, `ADMIN_ERROR_CODES`/`AdminErrorCode`, `REGISTRANT_FLAGS`, `QUESTION_FIELDS`, all DTOs). Also client-safe and meant for the forms: `session-input.ts` (`defaultSessionDraft()`, `validateCreateSession`, `validateUpdateSession`, `validateWindows`, `validateConnectCampaign`, `validateQuestionMap`, `defaultRetention`), `question-fields.ts` (`normalizeQuestionText`, field catalog), `payment-mapper.ts` (`displayStuffyName(name, orderSize)` -> "Unnamed stuffy, order of N"), `state-machine.ts`. `admin-routes-gate.test.ts` fails if any of these pulls in db, `node:`, `next/server` or `process.env`. Consumers grepped for this pass (`grep -rln` of the carrier, `session-input` and `payment-mapper` under `src/components` and `src/app`): the only importers are the admin route handlers; no client component consumes the carrier yet, so nothing to convert.
+- **Schema/migrations:** none added by me (0113/0114 untouched). **Env vars read:** `ZEFFY_WEBHOOK_SECRET`, `ZEFFY_API_KEY`, `ZEFFY_DEV_CAMPAIGN_ALLOWLIST` (all via `src/lib/zeffy/config.ts`).
+- **Unit tests named for Slice 1, all written and passing:** `zeffy/signature`, `snapshot`, `client`, `webhook-handler`, `fixtures-no-pii`, `consumer-injection` + `secrets-not-logged` + `webhook-route-source` + test-helpers scan (`zeffy-module-source.test.ts`); `santas-workshop/question-fields`, `payment-mapper`, `payment-apply`, `zeffy-consumer` (refund notification -> fetch, unmapped campaign, ordering), `session-input` (PATCH rejects `kind`/`slug`; the line the schema step deferred), `session-checklist`, `admin-routes-gate` (every admin route's first two statements, plus carrier client-safety), and extras: `sync`, `remap`, `zeffy-reprocess`, `session-queries`, `redact`.
+- Decisions: none filed (proposed text below).
+
+### Deviations from the design (routed by size)
+Absorbed (each under ~30 lines, no schema, no new flow):
+1. **`GET /sessions/[id]` checklist** has `storage_tested` and `worker_code` as `info` placeholders and `StorageStatus` is a constant `{ configured: false }` until Slice 2 supplies the photo store; the contract fields exist now.
+2. **Extra map key `ignored`** (an admin-seen question deliberately not mapped), so a generic buyer question can clear "needs attention" for every registrant; without it only per-stuffy dismissal existed. Listed in `QUESTION_MAP_KEYS`.
+3. **`snapshot_at` is written on an identical re-apply** (only that column; `updated_at` untouched), because Sync's stale-detection depends on every apply stamping it. The design's "writes nothing" is true for every other column.
+4. **A dismissed attention flag resets when the set of reasons changes** (apply and Remap), so a new problem is not hidden by an old dismissal.
+5. **Connect proceeds unverified** (`verified: false`, title as typed) when Zeffy cannot be asked (no API key, or dev allowlist), so e2e specs can map a fixture campaign. With a key it validates the campaign and rate ids.
+6. **`getPayment` returns `{ gone: true } | { gone: false, outOfScope: true } | { gone: false, outOfScope: false, payment }`** (the design named only `{ gone: true }`; the dev allowlist needs the middle case).
+7. **`src/app/santas-workshop/public-page.test.ts` (increment 1's test) narrowed:** it scanned all of `src/lib/santas-workshop/` and so failed on the server code this increment must put there (db, `fetch`). It now scans the five public-page lib modules (`clock`, `facts`, `format`, `public-facts`, `state`) plus the app and components folders. The increment-1 owner should know; the rule it enforces on the public page is unchanged.
+8. **`toEmbedUrl` moved** to `src/lib/zeffy/embed-url.ts` (design item, four importers updated; `git mv` left the rename staged in this worktree's index).
+Not delivered here, by design (later slices or ux-developer): the `ADMIN_NAVIGATION` entry and admin pages (`admin-page-feature-gates` would fail on a nav entry without its page), `POST sessions/[id]/status`, crew code, photo store, `storage/test`, `zeffy-replay.ts` script, e2e specs.
+Residual noted: a Zeffy rate limit raised mid-page by the per-payment-fetch fallback re-applies that page on resume (idempotent; counts can double for that page).
+
+### QA fixes (api-developer, after the first QA FAIL)
+- **D2:** `recentEvents()` (`src/lib/zeffy/events-queries.ts`) now filters on `session_id` OR the campaign id (`sessionEventsFilter()`), so a failed id-only `payment.updated`/`deleted` (session set, campaign NULL) is listed and can be Reprocessed; one OR over one table lists an event once after a retry fills `campaign_id`. It accepts a session object or, as the Connect page already calls it, a bare campaign id, which it resolves to the owning session, so the page needed no edit. The events route passes the session. Test `events-queries.test.ts` renders the SQL (hermetic mock; it asserts the OR arms and parameters, not row contents; row-level behaviour is for QA's live check).
+- **D3:** `redact.test.ts` input address is now `someone@mail.example.test`; the redactor assertions still require it gone. PII grep from `/pre-push` prints nothing.
+- **(a)** `ZEFFY_API_BASE_URL` override via `apiBaseUrl()` in `src/lib/zeffy/config.ts`, honoured only when `NODE_ENV !== "production"`; client tests cover honoured, ignored in production, blank default. (b) `additional_donation` mixed with tickets: new mapper test shows one stuffy and the order `amount_cents` keeping the full total (the extra donation is not stored as a separate column).
+- Re-run: `tsc` clean, lint 0 errors (same pre-existing warning), `pnpm test` 245 files / 4156 tests green.
+
+### Open questions / handoff notes
+- **Next agent: ux-developer** for the Slice 1 admin UI: `src/app/(dashboard)/admin/santas-workshop/` (`page.tsx` list + storage banner slot, `new/page.tsx` using `defaultSessionDraft()`, `[sessionId]/page.tsx` overview and checklist, `[sessionId]/connect/page.tsx` for campaign picker -> rate marking -> question assignment -> Sync/Remap/events with Reprocess, `[sessionId]/registrants/page.tsx` read-only), plus the `ADMIN_NAVIGATION` entry (Engagement group, single key `FEATURES.SANTAS_WORKSHOP_MANAGE`) in the same pass as the first page. Copy rules: "Emailed" language does not apply; show "Zeffy is limiting requests, continuing..." for `retryAfterMs`; ConfirmDialog on Connect showing the campaign title; the Sync loop posts `cursor` back until `done`; a worker never sees `parentEmail`/`parentPhone` (admin DTO only). Name rendering: use `displayStuffyName`. Refund display: `refund: "refunded" | "partial_flag" | "none"` is already derived server-side.
+- **Orchestrator:** (a) while stopping my `:3101` server I ran `pkill -f "next dev"`, which is broader than I intended; no `next` process is running now and `:3000` is not listening. I cannot tell whether a `:3000` server was running before, so if it was, it needs a restart (mine to own). (b) Add `ZEFFY_WEBHOOK_SECRET`, `ZEFFY_API_KEY`, `ZEFFY_DEV_CAMPAIGN_ALLOWLIST` to Vercel/`.env.local` as listed under "For the orchestrator"; the webhook fails closed (500 `not_configured`) without the secret and `updated`/`deleted` handling needs the key. (c) S2a still needs the user's practice form and a real purchase; run `scripts/spike-zeffy.ts --campaign <id>` (dry run first), then decide `ITEM_KEY_STRATEGY` and the consent-affirmative set (`CONSENT_AFFIRMATIVE`, fails safe to "no").
+- Proposed DECISION/backlog text: none new beyond the filed 121 to 125.
+
+## Phase 4 — Implementation (UI, Slice 1 client step) — 2026-10-12
+
+**Owner:** ux-developer
+**Status:** Complete (Slice 1); qa next. Nothing committed. Slices 2 to 5 UI (status buttons, worker code card, photos, frames, purge/reset, manual add, registrant actions) are not in this step.
+
+### Summary
+The Slice 1 admin UI is in place on the pipeline worktree: the `ADMIN_NAVIGATION` entry (Engagement group, single key `FEATURES.SANTAS_WORKSHOP_MANAGE`), and five pages under `/admin/santas-workshop`: sessions list, new session, session overview with the go-live checklist, Connect (Zeffy form, question map, Sync, Remap, recent events with Reprocess) and a read-only registrants list. Gates on the worktree: `tsc` clean, `pnpm lint` 0 errors (the one pre-existing `budget-context-panel.tsx` warning), `pnpm test` 240 files / 4121 tests green, `pnpm build:only` passes, 10 of 10 new Playwright tests pass against `:3101`, test rows cleaned (verified: 0 leftover sessions, events, users).
+
+### What I did
+- Nav entry in `src/lib/permissions.ts` (after Events); pages call `auth()` then `hasFeature(session.user.id, FEATURES.SANTAS_WORKSHOP_MANAGE)` and `redirect("/access-pending")` in their own bodies, each before any query.
+- Server Components fetch via `session-queries` / `events-queries` directly (no HTTP hop); client islands (`'use client'`) only for the new-session form, the Connect panel, the question-map editor, the Sync/Remap panel and the events list. They call the admin API through `callAdmin()` and import types and vocabularies from `admin-contract.ts` only.
+- Pure logic, unit-tested, lives in `src/lib/santas-workshop/admin-ui.ts`: exhaustive `adminErrorMessage(code)` (a new `AdminErrorCode` breaks `tsc`), labels for states/statuses/attention codes/event outcomes, `runSyncLoop` (posts the cursor back until `done`; `retryAfterMs` waits and shows "Zeffy is limiting requests, continuing..."), `runRemapLoop`, `syncSummary`/`remapSummary`, question-map editing (`assignQuestion`, one field per string, the `ignored` key), `parseRegistrantFilters`/`registrantsHref`, Eastern instant formatting, slug helpers.
+- New session form: pre-filled from `defaultSessionDraft()` (the `WORKSHOP_2026` constant), kind radios with plain-language consequences and "fixed once created", client validation with the server's own `validateCreateSession`, windows editor; server error codes (for example `slug_taken`) shown in plain words.
+- Connect: "Find forms in Zeffy" (only offered when the API key is set), rate checkboxes, a by-hand entry for when Zeffy cannot be asked, and a `ConfirmDialog` that names the campaign title (and warns when replacing a connected form that already has registrants). `verified: false` shows an amber "saved without Zeffy confirming" note.
+- Registrants: cards below `xl`, a real `<table>` at `xl+` from the same fragments (the approvals-page lesson: the admin sidebar clips a wide table until 1280px). Search, stage and flag filters (GET form), pagination, needs-attention reasons, refund badge, consent flag, state, tag last four, parent contact (admin only), and the raw unmatched question and answer text for attention rows. All buyer and Zeffy text is a plain React text node (source scan forbids `dangerouslySetInnerHTML`).
+
+### Outputs
+New:
+- `src/app/(dashboard)/admin/santas-workshop/page.tsx`, `new/page.tsx`, `[sessionId]/page.tsx`, `[sessionId]/connect/page.tsx`, `[sessionId]/registrants/page.tsx`
+- `src/components/admin/santas-workshop/`: `badges.tsx`, `styles.ts`, `session-nav.tsx`, `session-form.tsx`, `connect-panel.tsx`, `question-map-editor.tsx`, `sync-panel.tsx`, `events-list.tsx`, `registrants-table.tsx`, `admin-ui-source.test.ts`
+- `src/lib/santas-workshop/admin-ui.ts` (+ `admin-ui.test.ts`), `unmatched-answers.ts` (+ test)
+- `e2e/santas-workshop-admin-gate.spec.ts` (member bounced, admin sees nav and page, board member can open), `e2e/santas-workshop-webhook-to-roster.spec.ts` (create session in the UI, duplicate slug, Connect through the dialog, bad/missing signature 400 and nothing stored, unmapped campaign stores no payload, signed 3-ticket order becomes 3 registrants, redelivery adds none, raw text and `<b>` rendered as text, assign questions in the UI, Remap clears attention, search, 360 px no horizontal scroll on every page)
+Modified: `src/lib/permissions.ts` (nav entry), `src/lib/permissions.test.ts` (the "nav entry carries the single key" and derived-proxy-rule assertions the database-admin deferred), `src/lib/santas-workshop/admin-contract.ts` and `session-queries.ts` (deviation 1).
+
+### Deviations from the design (routed by size)
+Absorbed (each under ~30 lines, no schema, no new API route):
+1. **`RegistrantDto.unmatched`** added to the carrier and filled by `toRegistrantDto()` through the new pure `unmatchedAnswers()` for needs-attention rows only (capped at 10 pairs, 300 characters each). Phase 1 requires the raw unmatched text to be visible on attention rows and the DTO had no field for it. This edits two api-developer files; api-developer should know. `toRegistrantDto` gained an optional fourth-argument default, so the existing test is untouched.
+2. **`unmapped_window` label** reads "Drop-off window answer matches none of this session's windows (labels must match the form)", because the mapper matches the buyer's answer to a window label exactly (normalized); a mismatch is invisible in the unmatched-text box (the question IS mapped).
+3. **Default kind on the new-session form is Practice** (the first session should be a dry run); the admin can switch and the radios state the consequences.
+Needs routing (not done, scope beyond this step):
+4. **No session edit page (resolved, see "Session edit page" below).** `PATCH /sessions/[id]` exists and its rules are tested, but the design's page list has no edit surface, so a window label, a date or the retention dates cannot be corrected after creation. Because window labels must match the Zeffy form's answers exactly, this is a real gap the first time a label differs. A new page: back to Phase 3 (or a ruling that the new-session form is enough because the labels follow `formatTimeRange`, the same format the public page uses).
+5. **No status buttons, worker code card or practice reset** on the overview (their API routes are Slice 2 and later); the status is shown read-only. The checklist items for storage and worker code render the API's `info` placeholders.
+
+### Session edit page (Phase 3 addendum, built 2026-10-12)
+Built per the tech-lead's addendum: `/admin/santas-workshop/[sessionId]/edit` (page body does `auth()` then `hasFeature()` then `redirect("/access-pending")` before any query; a purged session shows a read-only notice), linked from the overview ("Edit session") and the session nav tab. `session-form.tsx` now has `mode="edit"`; the edit form sends only changed fields (`buildSessionPatch`, which cannot carry `kind`/`slug`), disables Save when nothing changed, shows kind and slug as text under "Fixed once created", preserves window ids through label/time edits (new windows get a fresh id), shows the not-draft note about the public page and Zeffy text, and has a "Recalculate worker access and removal dates from pickup day" button that fills the three dates for review without saving. After a save that changed a window label the page says "Registrants are not updated until you run Remap" with a "Run Remap now" button (the same `runRemapLoop`). "Answers that matched no window" are chips (count is orders) that copy the answer into the label of the window edited last. `window_in_use` now reads "Registrants chose this window; change its label instead of removing it."; the `unmapped_window` label ends "Fix the label under Edit session, then run Remap."; the new-session button reads "Create practice session" / "Create real session".
+
+- **Absorbed note (api-developer file):** `listUnmatchedWindowAnswers(id)` (about 8 lines, no route, no schema) added to `session-queries.ts`, grouping through the pure `unmatched-window-answers.ts`.
+- **New files:** `session-edit-patch.ts`, `unmatched-window-answers.ts`, `[sessionId]/edit/page.tsx`, `e2e/santas-workshop-session-edit.spec.ts`, `session-update.test.ts` (updateSession: label change on an in-use window succeeds, in-use removal is `window_in_use` and writes nothing).
+- **Tests:** unit `session-edit-patch.test.ts`, `unmatched-window-answers.test.ts`, `admin-ui.test.ts` additions, `admin-ui-source.test.ts` (six pages gated before queries; edit form has no kind/slug input), `remap.test.ts` (rename to the stored answer sets the window and clears `unmapped_window`; rename away flags; rename back restores). e2e (7 tests): mistyped label, flagged, chip, Save, Remap clears, wrong label flags again, restore; in-use removal refused with nothing saved; kind/slug are text; name and dates reach the overview and Recalculate proposes without saving; 360 px. The gate spec also covers `/edit`.
+- **Gates (worktree):** `tsc` clean; `pnpm lint` 0 errors (same one old warning); `pnpm test` 243 files / 4143 tests green; `pnpm build:only` passes; 17 Santa's Workshop Playwright tests (gate 3, webhook-to-roster 7, session-edit 7) pass on `:3101`; no leftover rows; server stopped by PID. Existing spec `santas-workshop-webhook-to-roster.spec.ts` updated for the new button label.
+- Deviation 4 above (no edit page) is now resolved by this page. Remaining limitation: a registrant-affecting label edit shows the Remap notice only in the session that saved it; leaving the page and returning shows the chips again (until Remap runs), which is the cue.
+
+### Post-QA fix (D1, 2026-10-12)
+The overview's Schedule card printed the weekday twice ("Friday, Friday, Dec 18"): `formatLongDate()` already leads with the weekday and the page prepended `formatWeekday()`. The card is now its own component, `src/components/admin/santas-workshop/schedule-card.tsx`, which uses `formatLongDate()` alone; `schedule-card.test.tsx` renders it and asserts each weekday appears exactly once (and no "Day, Day" pair). Re-run: `tsc` clean, `pnpm lint` 0 errors (only the old `budget-context-panel.tsx` warning), Santa's Workshop unit tests 24 files / 368 tests green. The e2e date check (`/Dec\w* 27/`) is unaffected. D2 and D3 are the api-developer's.
+
+### Post-Phase-6 fixes (N1 to N3, 2026-10-12)
+UI only; no schema, no route, nothing in `src/lib/zeffy/` touched. The Sync response already carries `counts.skipped` (`admin-contract.ts`).
+- **N1:** `syncSummary()` now always names skipped payments ("M payments skipped because their ticket rate is not marked as the stuffy ticket. Review under Connect.") and never prints "Everything matches Zeffy" when any were skipped (it says "Synced N orders; nothing needed changing." instead).
+- **N2:** after a successful Connect, `connectSuccessNote(verified, apiKeySet)` adds "Run Sync now: payments made before connecting are only picked up by Sync" with a real **Run Sync now** button (same `runSyncLoop`, progress and `syncSummary` outcome shown inline). Without an API key it explains instead of offering a button that cannot work.
+- **N3:** failed (and every) event with an `errorCode` now shows a sentence from `EVENT_CODE_SENTENCES` (for example `no_api_key`: "Zeffy could not be asked for this payment because the API key is not set. Set it and press Reprocess.") with the raw code in a small "Code for support" line. The contract types `errorCode` as a plain string, not an enum, so `zeffy-event-codes.test.ts` scans the three producing sources and fails when a produced code has no sentence, or when the map holds a code nothing produces. Adding a server code now requires adding its sentence.
+- Tests: `admin-ui.test.ts` (skipped > 0 and = 0, the Connect prompt with and without a key, the `no_api_key` sentence and fallback), `zeffy-event-codes.test.ts`. Gates: `tsc` clean, Santa's Workshop tests green, `pnpm lint` 0 errors (old warning only). No servers started.
+
+### Open questions / handoff notes
+- **Next agent: qa (Phase 5).** Start the app with `ZEFFY_WEBHOOK_SECRET=whsec_devexample PORT=3101 pnpm dev` (the made-up secret must match the e2e process), then `ZEFFY_WEBHOOK_SECRET=whsec_devexample PLAYWRIGHT_BASE_URL=http://localhost:3101 pnpm test:e2e e2e/santas-workshop-admin-gate.spec.ts e2e/santas-workshop-webhook-to-roster.spec.ts`. The webhook spec skips (does not fail) without a `whsec_dev` secret.
+- **e2e environment finding (not caused by this work):** `pnpm exec dotenv -e .env.local -- node scripts/create-test-user.mjs` stored a bcrypt hash the sign-in rejected (CredentialsSignin; dotenv-cli expands `$` sequences in `E2E_ADMIN_PASSWORD_HASH`). On this worktree's Neon branch I reset that one user's password from `E2E_ADMIN_PASSWORD` directly so the admin specs could sign in. Anyone re-running `create-test-user.mjs` on a branch may hit the same thing.
+- **What a reviewer should click through:** `/admin/santas-workshop` (empty state, then a card per session; the red storage banner slot is wired but the API reports no cause yet); New session (kind radios, the three pre-filled windows, add/remove a window, a duplicate short name); the overview (checklist marks, counts, links into filtered registrants); Connect (campaign by hand with the confirm dialog; with an API key set, "Find forms in Zeffy", rates, and a form already connected to another session being disabled); the question map (assign, Ignore, Save and re-read, the "N registrants will change" line); Sync and Remap buttons and the Reprocess buttons on events; registrants at 360 px and at 1280 px (cards versus table), search, the three filters, pagination past 50.
+- **Not exercised here:** Sync, "Find forms in Zeffy" and per-event Reprocess against a real Zeffy (no API key in the pipeline environment); the loops are covered by `admin-ui.test.ts` with injected network calls. Phase 5 should run Sync once an API key and the practice form exist (S2a).
+- **New copy the club may want to refine:** the kind descriptions on the new-session form, the Connect confirm text, every error string in `adminErrorMessage`, the sync summary sentence ("N registrations found that the live feed had missed, now added"), attention labels, and the empty states.
+- **Accessibility:** question rows use a visually hidden label naming the question; checklist marks carry screen-reader text ("Done", "To do", "Needs a look") rather than colour alone; progress is an `aria-live` region; touch targets are 44 px.
+- Proposed DECISION/backlog text: none new.
 
 ---
 
 # Phase 5 — Verification (qa)
 
-**Date:** YYYY-MM-DD
+**Date:** 2026-10-12
 **Verified by:** qa
+**Scope:** Slice 1 only (schema `0113`/`0114`, permission and nav, `src/lib/zeffy/`, webhook, consumer/mapper/apply, sessions admin: list, new, overview and checklist, Connect with question map, Sync/Remap/Reprocess, registrants read-only, edit page from the Phase 3 addendum). Slices 2 to 5 are not built and not judged here.
+**Tree state measured:** `git rev-parse HEAD` = `6343fa6a2ebb49766d2ecb58605a09477f5b1ce3` (v1.93.0) plus the **uncommitted Slice 1 diff in the pipeline worktree** (about 104 files: 12 modified, 1 staged rename `zeffy-url.ts` -> `zeffy/embed-url.ts`, the rest untracked). Nothing committed. Worktree `.claude/worktrees/agent-a3dae9b276243994d`; database = the pipeline's own Neon branch (host `ep-divine-boat-...`, checked in code before every write by a guard that refuses any other host; `PROD_DATABASE_URL` absent, `RESEND_API_KEY` empty, `EMAIL_DEV_ALLOWLIST` unset). The shared dev DB and production were not touched.
 
-## Type Check
+## VERDICT: FAIL
 
-`pnpm exec tsc --noEmit`: PASS / FAIL
+Three defects, each small, each reproduced; everything else passes. A single red item is a red build, so Slice 1 goes back to its implementers. None is a design flaw; no escalation to tech-lead.
 
-## Production Build
+| # | Defect | Owner | Where | Fix size |
+|---|--------|-------|-------|----------|
+| D1 | Schedule card on the session overview prints the weekday twice: "Friday, Friday, Dec 18", "Saturday, Saturday, Dec 19", "Sunday, Sunday, Dec 20". | ux-developer | `src/app/(dashboard)/admin/santas-workshop/[sessionId]/page.tsx` lines 128 to 130 | one-line (drop `formatWeekday(...)`, or use `formatShortDate`) |
+| D2 | **Failed id-only events are invisible on the Connect page, so the one recovery button cannot be pressed for them.** The "Recent Zeffy events" list is `recentEvents(campaignId)` = `WHERE campaign_id = X`. A `payment.updated`/`payment.deleted` (a refund notification) whose first processing fails has `campaign_id = NULL` (it is only learned from the fetched snapshot) even though `session_id` is set. | api-developer | `src/lib/zeffy/events-queries.ts` `recentEvents()` (line 114 to 133), plus the Connect page that calls it | small (also match `session_id = <this session>`; the route takes a session id already) |
+| D3 | `src/lib/zeffy/redact.test.ts:9` contains `real.person@gmail.com` (plus "Realname", "9 Real Road"). It is synthetic, but it is a personal-domain address and **the `/pre-push` PII grep fails on it**; CLAUDE.md "No Personal Data" says tests use `example.com`/`example.invalid`. | api-developer | `src/lib/zeffy/redact.test.ts` line 9 (and the `not.toMatch(/real\.person\|gmail\|...` assertion on line 19) | one-line each |
 
-`pnpm build:only`: PASS / FAIL
+**Established vs believed.**
+- D1 *established*: seen in the screenshot of the live page and in source (`formatLongDate()` in `src/lib/santas-workshop/format.ts` already returns "Friday, Dec 18"; the page prepends `formatWeekday()`). The public page uses `formatLongDate` alone, which is why it is right there.
+- D2 *established* two ways: (a) on the Connect page after firing `payment.updated` and `payment.deleted` at a mapped payment with no API key, both rows existed in `zeffy_events` with `outcome=failed`, `error_code=no_api_key`, `session_id` set, `campaign_id` NULL, and the page listed only the events that carried a campaign id; (b) after the stubbed refund notification succeeded, the same row gained `campaign_id` and appeared. *Believed (not exercised):* when Zeffy later retries the same event and it succeeds the row self-heals, so the harm is confined to the window where a notification is failing, which is exactly when an admin wants the button.
+- D3 *established*: `git grep --untracked -InE "...@(gmail|...)\.[a-z.]+"` from the pre-push skill returns that one line and nothing else in the repo.
+- I do not offer a root-cause theory beyond these three; there is no sweep to recommend (the format helper is used correctly elsewhere; `recentEvents` has one caller).
 
-## Dev-Server Smoke Test
+## Gates
 
-`pnpm dev` against `.env.local` reaches the routes without runtime error: PASS / FAIL
-Notes: [...]
+| Gate | Result | Detail |
+|------|--------|--------|
+| `pnpm exec tsc --noEmit` | **PASS** | exit 0, 15.5 s |
+| `pnpm lint` | **PASS** | 0 errors, 1 pre-existing warning (`budget-context-panel.tsx:114`, unused eslint-disable) |
+| `pnpm test` | **PASS** | 243 files, **4143 / 4143** passed, 0 failed, 3.9 s |
+| `pnpm build:only` | **PASS** | exit 0, no warnings; 294 route rows. Present: `/admin/santas-workshop`, `/new`, `/[sessionId]`, `/[sessionId]/connect`, `/[sessionId]/edit`, `/[sessionId]/registrants` (all `ƒ`), 12 `/api/admin/santas-workshop/**` routes, `/api/zeffy/webhook`, and `/santas-workshop` (static, 5m). |
+| Migrations, `pnpm db:migrate` x2 on the branch | **PASS** | both runs exit 0 and their logs are **identical** after stripping timings; the only `0113`/`0114` output is 31 "relation ... already exists, skipping" notices (8 tables incl. `zeffy_events`, 23 indexes); the 17 guarded FKs and the `0114` statements are silent. `pnpm dev` replayed them a third time at server start with no error. *Not independently re-proved:* the first-run "creates everything" case, because the branch already held the objects from the database-admin's run; that proof is theirs (their log, "Idempotence proof"). |
+| Pre-push unguarded-statement grep on `0113`/`0114` | **PASS** | `0113`: no hits; 17 `ADD CONSTRAINT`, each behind a `pg_constraint` guard (18 mentions incl. one comment). `0114`: the 3 `INSERT INTO` hits are line-grep false positives; each is inside a `DO $$` block with `WHERE NOT EXISTS` on the following lines (read in full). |
+| `santas_workshop.manage` bindings (read-only SQL) | **PASS** | bound to exactly `admin` and `board_member`; `budget_committee`, `member`, `notetaker`, `treasurer`, `volunteer` have it = false. |
+| `getAdminProtectionRules()` | **PASS** | returns `{ segment: "santas-workshop", requiredFeatures: ["santas_workshop.manage"] }` (single key). |
+| Playwright Slice 1 specs vs `:3101` | **PASS** | `santas-workshop-admin-gate` 3, `santas-workshop-webhook-to-roster` 7, `santas-workshop-session-edit` 7: **17 / 17 passed, 0 skipped**, 1.3 min, serial, `ZEFFY_WEBHOOK_SECRET=whsec_devexample`. No rows left behind (0 sessions/orders/stuffies/users added). |
+| Feature-gate audit | **PASS** | below |
+| PII / secrets / house rules | **FAIL on D3 only** | below |
 
-## Manual Click-Through
+### Unit tests Phase 3 names for Slice 1 and the addendum, confirmed by name in the verbose run
+All present and green: `zeffy/signature` (13: valid, one-byte tamper, no `v1`, non-hex/wrong-length without throwing, 301 s past and future, 299 s accepted, repeated `v1`, non-integer `t`, raw bytes, length-before-`timingSafeEqual`, replay inside tolerance), `zeffy/snapshot` (9), `zeffy/client` (15: bearer, campaign required before any request, `next_cursor`, spacing, `Retry-After`, dev allowlist refuses without a request, other campaigns discarded, 404 -> `{gone:true}`, key never in a message), `zeffy/webhook-handler` (19: 400 matrix incl. oversize and identical bodies, processed/failed/received duplicates, retryable 500, permanent 200, unmapped = null payload, missing secret 500), `question-fields` (normalization and consent tables), `payment-mapper` (three-ticket order, donations never stuffies, unmarked rate, unmatched question, unnamed stuffy, consent matrix, window match/unmatch, fallback scope, two strings one field, 5,000+ truncation, HTML verbatim, pending/failed, refund derivations incl. Keep-then-bigger-refund), `payment-apply` (22: lock first, stale refused, identical re-apply writes only `snapshot_at`, no worker-owned column in any `.set()`, `not_in_order_now`, `session_mismatch`, `markPaymentDeleted`), `zeffy-consumer` (incl. refund notification fetches then applies, 404 flags, no Zeffy call during apply), `session-input` (PATCH rejects `kind`/`slug`), `session-checklist`, `session-schema` (14), `permission-migration` (5), `permissions.test.ts` nav-entry (2) and `default-role-bundles.test.ts`, `zeffy/fixtures-no-pii`, source scans `admin-routes-gate`, `zeffy-module-source` (`consumer-injection`, `secrets-not-logged`, test-helpers import ban, `webhook-route-source`), plus `sync`, `remap`, `zeffy-reprocess`, `session-queries`, `redact`.
+Addendum: `session-edit-patch` (7), `unmatched-window-answers` (3), `admin-ui` window-copy tests ("window_in_use names the remedy and unmapped_window ends with it"; "post-save Remap notice appears only when a label changed"), `admin-ui-source` (six pages gate before queries; edit form has no `kind`/`slug` input and sends changed fields only; no raw HTML, no native dialogs), `session-update` (3), `remap` (rename to stored answer clears `unmapped_window`; rename away flags; rename back restores).
+Not in this slice by design: `state-machine.test.ts` (only the tuple exists; transitions are Slice 2).
+Weaker than the design wording (not defects): "call-order assertion" that the Zeffy HTTP call is outside the transaction is met by the `zeffy-consumer` test "the Zeffy call is never made while apply is running" plus the `payment-apply` source scan, not by a call-order spy in `payment-apply` itself.
+
+### Coverage (v8, `src/lib/**`)
+`permissions.ts` **100 / 100 / 100** (stmts/branch/lines; target 100); `events.ts` 94.9 / 88.4 / 96.3 (target 90); `members.ts` 86.8 / 70.8 / 85.3 (target 80); overall `src/lib` 75.2 / 73.6 / 76.5 (target 70). New: `zeffy/signature` 100, `webhook-handler` 93, `client` 84, `snapshot` 88; `payment-mapper` 98.7, `payment-apply` 93.8, `session-input` 94.4, `zeffy-consumer` 85.9, `sync` 85.7. Low by nature (DB-bound, exercised by e2e and my live run): `session-queries` 20.9, `remap` 42.9 (the DB loop), `zeffy/events-queries` 0, `admin-http` 0, `session-log` 50.
+
+### Feature-gate audit (read from the route files, then exercised)
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct `FEATURES.*` key? |
+|-----------------|-------------------|----------------------------|----------------------------|
+| `GET/POST /api/admin/santas-workshop/sessions` | yes (first statement) | yes (second) | `SANTAS_WORKSHOP_MANAGE` |
+| `GET/PATCH .../sessions/[id]` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `GET .../sessions/[id]/stuffies` (parent name, email, mobile) | yes | yes | `SANTAS_WORKSHOP_MANAGE` (admin + board only; this is the bulk-PII route and the key is the narrow one) |
+| `GET .../zeffy/events`, `GET .../zeffy/questions` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `PUT .../zeffy`, `PUT .../zeffy/question-map` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `POST .../zeffy/sync`, `.../zeffy/reprocess`, `.../zeffy/payments/[paymentId]/reprocess` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `GET .../zeffy/campaigns`, `POST .../zeffy/events/[eventId]/reprocess` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| 6 admin pages (list, new, overview, connect, registrants, edit) | yes, in the page body | yes | `SANTAS_WORKSHOP_MANAGE`, then `redirect("/access-pending")` before any query (scan-tested, and read) |
+| `POST /api/zeffy/webhook` | **deliberately none** (the signature is the authentication; route has no `auth` import, scan-tested) | n/a | n/a |
+
+Exercised, not inferred: 14 admin route/method combinations and 6 pages as (a) anonymous: 14 x 401, pages 307 -> `/signin`; (b) a signed-in `member`: 14 x 403, pages 307 -> `/access-pending`; (c) a signed-in user whose role holds `admin.dashboard` + `events.edit` but **not** the workshop key (temporary role `qa_dash_only`, the sharpest negative case): 14 x 403, pages 307 -> `/access-pending`. Mutations in (b) and (c) were real requests (create session, PATCH name, PUT campaign) and changed nothing (verified by row counts). The temporary role and both users were deleted afterwards.
+
+## Manual click-through
+
+Environment: `PORT=3101 pnpm dev`, own branch DB, e2e admin signed in through the real credentials form, fixtures posted with `scripts/zeffy-webhook-fixture.ts` (the shipped script) and my own signed-POST helper using the same `signZeffyBody`. Desktop 1280/1440 and 360 px (screenshots in `<scratchpad>/santas-workshop-sessions/`).
 
 | Flow | Result | Notes |
 |------|--------|-------|
-| [user flow] | [pass / fail] | [observation] |
+| List, empty state | pass | "No sessions yet. Create a practice session first to try the whole flow, then the real one." Nav entry "Santa's Workshop" under ENGAGEMENT. |
+| New session | pass | Default kind Practice; button reads **"Create practice session"**; windows pre-filled "4:00 to 5:00 PM / 5:00 to 6:00 PM / 6:00 to 7:00 PM"; toast "Session created."; lands on the overview. |
+| Overview and go-live checklist | **fail (D1)** otherwise pass | Eight rows with states and remedies ("Missing: API key.", "Not yet mapped: Stuffy name, Snack choice, Drop-off window."), counts, zeffy card (webhook secret Set / API key Not set, booleans only). Doubled weekday on the Schedule card (D1). |
+| Connect by hand + confirm dialog | pass | Dialog names the campaign title and says "You typed this form in by hand, so it will be saved without Zeffy checking it."; amber "saved, but Zeffy could not be asked" note. |
+| Fixture webhook, 3-ticket order | pass | 200 `processed`; 1 order + 3 stuffies; event stored with a whitelisted snapshot. |
+| Redelivery (same event id) | pass | 200 `{"duplicate":true}`; still 1 order, 3 stuffies. |
+| Unmapped campaign | pass | 200 `ignored_unmapped`, `payload` NULL, no `session_id`, nothing stored. (First attempt returned 500 because my fixture reused a payment id already stored under the practice session, so the consumer correctly took the known-payment refetch path and failed `no_api_key`; with an unseen payment id it is `ignored_unmapped`. My input, not a defect.) |
+| Bad signature | pass | wrong secret, missing header, malformed header: 3 x 400 `{"error":"bad_request"}`, no row written. |
+| Id-only `payment.updated` / `payment.deleted`, no API key | pass | 500 `{"error":"failed"}`; row `failed`/`no_api_key`; redelivering the same event id re-ran it (`attempts` 1 -> 2). Also 500 for an *unknown* payment (needs the fetch). |
+| Registrants: 3 stuffies, raw unmatched text, consent flag | pass | Before mapping: three "Unnamed stuffy, order of 3" cards with reasons and the raw question/answer pairs ("Stuffy's name * : Mister Whiskers" ...). After mapping: names, "What it is", Snack, Note to Santa; "Photo sharing OK" only for the "Yes" ticket, "No photo sharing" for "No thank you" and for absent. Cards at 360 px (no horizontal scroll), real `<table>` at 1440. |
+| Question map UI incl. `ignored` | pass | 10 selects, "Ignore: the club does not need this" chosen for "Anything else we should know?"; Save and re-read: "Every question is matched or ignored." |
+| Remap and Reprocess microcopy | pass | "Re-read 3 registrants; 3 changed." / "0 changed." / "Reprocessed: Failed, will retry." / "Reprocessed: Processed." The failed-event message does not say why (the row chip says `no_api_key`); cosmetic. |
+| Edit page flow (addendum) | pass | Chip "5:00 PM – 6:00 PM (1 order)" -> label -> Save: "Saved. Registrants are not updated until you run Remap. ..." with "Run Remap now": before 3 flagged, Remap "3 changed", after 0 flagged and window shows; reversed (label "5:00 to 6:00 PM") -> Remap -> 3 flagged again; restored -> 0 flagged. |
+| In-use window removal | pass | "Registrants chose this window; change its label instead of removing it." Nothing saved (labels unchanged after reload). |
+| `kind` / `slug` frozen | pass | no inputs; "Fixed once created: Kind Practice, Short name ..."; API `PATCH kind` and `slug` -> 400 `immutable_field`. |
+| Recalculate proposes without saving | pass | editing pickup to 12-27 then the button moved `crewClosesOn` to 12-28 and personal purge to 2027-01-26; after reload all dates were the saved ones. |
+| 360 px, all six pages | pass | `scrollWidth == clientWidth == 360` on every page; no element wider than the viewport; no console errors (an earlier hydration warning in the admin sidebar was an artifact of Playwright's screenshot caret hiding; with no screenshots, existing pages and all new pages log nothing). |
+| Permission gate | pass | see audit above. |
 
-## Regression Notes Added (bug fixes)
+### Stubbed-Zeffy phase (clearly **not** real Zeffy)
+Zeffy's API base is hard-coded, so the notification -> fetch path needs a key. I restarted my server with a QA preload (`<scratchpad>/.../fake-zeffy.cjs`, `NODE_OPTIONS=--require`) that answers `fetch()` to `api.zeffy.com` **only**, from a JSON file, with a fake key `fake-dev-key` and `ZEFFY_DEV_CAMPAIGN_ALLOWLIST=campaign-practice-01,campaign-second-02`. No network call to Zeffy was made, no real credential used. It proves our code's behavior against the documented shapes; it does not prove Zeffy's actual shapes.
 
-- [work-log entry name — guards against: brief description]
+| Check | Result | Notes |
+|-------|--------|-------|
+| "Find forms in Zeffy" | pass | lists the two allowlisted forms, **not** "White Cane" (filtered by the allowlist); the connected form and its rate preselected; the form already connected to another session is disabled ("already connected to another session"). |
+| Full refund via `payment.updated` (id only) | pass | the earlier failed event, redelivered, fetched the payment and went `processed`/`applied` (`attempts` 3); order `refund_status=full, refunded_cents=4500`; all three stuffies show **Refunded**; overview "Open refunds 1". |
+| Partial refund | pass | all three show "Partly refunded ($15.00)"; open refunds 1; no per-stuffy removal. |
+| Refund reversed | pass | open refunds 0, badges gone. |
+| `payment.deleted` -> 404 on fetch | pass | `payment_deleted = true`; derived "Refunded" badge on all three. |
+| Sync from Zeffy | pass | "1 registration found that the live feed had missed, now added; 1 updated; 1 no longer in Zeffy (flagged for review); 1 with a refund that differed (flagged for review). 0 already up to date." New order from `sync` with 2 stuffies; the order absent from the list was fetched, 404, flagged deleted; "Last Sync" updated; `sync_run` audit row holds counts only. |
+| Reprocess payment | pass | owning session `processed/applied`; wrong session 409 `session_mismatch`; unseen payment 404 `payment_unknown`. |
+| Connect against the allowlist | pass | unknown rate id 400 `unknown_rate`. Nonexistent or non-allowlisted campaign: 200 with `verified:false` because the dev allowlist means Zeffy "cannot be asked" (design deviation 5); with no allowlist (production) the code path is `404 campaign_not_found` (read at `session-queries.ts:358`, **deferred**, below). |
 
-## Verdict
+## Adversarial results (webhook and admin)
 
-[PASS | FAIL]
+| Probe | Result |
+|-------|--------|
+| Body 1.2 MB, validly signed | 400 `bad_request`, no row |
+| Body 300 KB (over the 256 KB cap), validly signed | 400 |
+| Non-JSON validly signed / unsigned; empty body; `[]`; `null` | 6 x 400, identical bodies, no rows |
+| Validly signed with `t` = 1 h ago, 1 h ahead | 2 x 400 |
+| Validly signed with `t` = 299 s ago | accepted by the signature check (reached the consumer) |
+| Replayed event id (processed / failed) | processed: 200 `duplicate:true`, consumer not re-run; failed: re-run (`attempts` increments) |
+| `payment.created`, `contact.updated` | 200 `ignored_type`, ids only (the `contact.*` row stores the contact id in the `payment_id` column; cosmetic) |
+| One campaign to two sessions | 409 `campaign_in_use`, "That Zeffy form is already connected to another session" |
+| Buyer text `<script>`, `<img onerror>`, `<svg onload>` in answer, question text and parent name; `=HYPERLINK(...)` | rendered as literal text on registrants, Connect (question list) and overview; `window.__pwn` never set; 0 injected elements; 0 native dialogs. |
+| Tampered `cursor` on Sync / Remap (object with SQL text, string) | 400 `invalid_input`, tables intact |
+| Non-uuid / unknown session id | 404 |
+| Hostile `q`, `page`, `state`, `flag` on registrants | 200 empty list |
+| Create with bad slug, non-JSON body | 400 with field named |
+| A payment whose item ids repeat another payment's | `db_error` 500 (retryable) from the `(session, item key)` unique index; my fixture's fault (real Zeffy item ids are unique); noted only because the event row says `db_error` with no further reason and the server logs nothing. |
+
+House rules: **no `console.log`** in any new non-test file; one `console.error` (`admin-http.ts:60`, logs error name and code only, never a body or key); **no `window.alert/confirm/prompt`** (the one `confirm(` hit is a local function name in `connect-panel.tsx`); no `dangerouslySetInnerHTML`; **nothing sends email** (no `sendEmail`/`sendBulk`/`email_queue` reference in any new file; `email_queue` count on the branch was 1362 before and after my session, all recent rows `blocked_non_production`, `RESEND_API_KEY` empty). **Personal data:** only D3. Fixtures use `example.invalid` and "Pat Exampleton"; the migrations, scripts, e2e specs and fixtures are clean; no phone or street pattern anywhere.
+
+## Cleanup and process
+Rows I created were deleted and the branch re-measured against my baseline: `sw_sessions` 0, `sw_orders` 0, `sw_stuffies` 0, `sw_session_log` 0, `users` 53, `roles` 7, `user_roles` 72, `email_queue` 1362 (all as before). `zeffy_events` holds 1 row, `smoke-2` (`failed`/`no_api_key`), which **predates my run** (api-developer's smoke test left it; I did not delete another agent's row). My `:3101` servers (two, the second with the preload) were stopped by PID; no process of the worktree remains; the main tree's `:3000` was never touched. `create-test-user.mjs` was not run. Nothing committed.
+
+## Deferred to post-deploy (needs a real Zeffy key or a deployed host); none of these is recorded as a pass
+1. **Signature format against real Zeffy.** Our tests and fixtures sign with our own `signZeffyBody`, so they prove self-consistency, not that `Zeffy-Signature: t=...,v1=...` / HMAC over `"{t}.{rawBody}"` matches what Zeffy sends. Step: in Zeffy Settings > Integrations > Webhook register the production URL, use "send test event" (or buy a ticket on the practice form) and confirm the `zeffy_events` row is `processed`, not a 400. (S2b; also DECISION-123 "Unmeasured".)
+2. **SW-L8 on the deployed route**: with the real secret, repeat the matrix I ran locally (forged signature, stale `t`, replayed event id) against the production host and record counts of 400s and duplicate no-ops. Local counts for comparison: 3 forged-signature 400s, 2 stale-`t` 400s, 7 malformed/oversize 400s, 2 duplicate no-ops.
+3. **Set `ZEFFY_API_KEY` before registering the webhook URL.** Observed locally: with no key, every id-only `payment.updated` for a payment we have never seen returns 500, and the webhook is organization-wide, so White Cane and any other form's refund/edit events would 500 and be retried by Zeffy for 3 days. (Not a code defect; a deploy-order requirement to put in the runbook.)
+4. **S2a spike**: `pnpm exec tsx scripts/spike-zeffy.ts --campaign <practice id>` (dry run first) with the real key; decide `ITEM_KEY_STRATEGY` and `CONSENT_AFFIRMATIVE`; confirm `Item.id` stability across an order edit, whether list responses carry `items[]`/`questions[]`, what a partial refund does to `items[]`, the real question strings and checkbox shape, whether a $0 ticket fires `payment.completed`.
+5. **Real Connect**: with the key and no allowlist, "Find forms in Zeffy" lists the real campaigns; a nonexistent campaign id returns `404 campaign_not_found`; a wrong rate id returns `400 unknown_rate`; Sync against the practice form reports sensible counts and respects the 100/min limit.
+6. **After deploy, `0114` reaches existing board members only after sign-out/in** and about 60 s of server permission cache: confirm the nav entry appears for a real board member.
+7. **Deploy log**: `pnpm build` runs `drizzle-kit push --force` against production (B-165 prompts are known); confirm no statement names a `sw_`/`zeffy_` object after the first deploy.
+8. **Session edit on a real form**: the buyer's drop-off answer text (not my fixture's) joins to a window label; confirm the chip appears with real text and the default labels ("4:00 to 5:00 PM") are what the club puts on the Zeffy form.
+SW-L1 to L7 and L9 to L13 belong to Slices 2 to 5 and are not applicable yet.
+
+## Other observations (not defects)
+- The Phase 3 test list asks for a payment-apply call-order spy; the equivalent evidence is described above.
+- `e2e/santas-workshop-admin-gate.spec.ts` covers the `member` role and one API route; my broader gate matrix (three identities, 14 routes, 6 pages) is manual. Consider extending the spec to loop the routes; not required.
+- The admin layout renders a `<main>` inside `<main id="main-content">` (pre-existing, outside this feature); Playwright's strict `main` locator trips on it.
+- Registrants table wraps a long email mid-word at 1440 px ("parent.one@example.inva / lid"); cosmetic.
+- Pre-existing: one `smoke-2` row in `zeffy_events` on the branch.
+
+## Regression tests added
+None added by qa: no code defect was fixed in this phase (FAIL hands back). When D1, D2 and D3 are fixed the implementers should add, per "failing test first": D1 a render/format assertion on the overview schedule line (no repeated weekday); D2 a `recentEvents` test where an id-only event with `session_id` set and `campaign_id` NULL is returned for that session; D3 nothing new (the pre-push grep is the guard).
+
+## Phase 5 — Verification — 2026-10-12
+
+**Owner:** qa
+**Status:** complete (verdict FAIL, handed back)
+
+### Summary
+Slice 1 **FAILS** on three small defects (D1 doubled weekday on the overview, D2 failed refund-notification events hidden from the Connect page's Reprocess list, D3 a personal-domain test address that the pre-push PII grep rejects). Everything else passes: typecheck, lint, 4143 unit tests, production build, migrations idempotent on re-run, 17/17 Playwright, both gates on all 12 admin routes and 6 pages with three identities, the full webhook adversarial matrix, hostile text inert, refund/Sync/Remap/Reprocess behavior including against a stubbed Zeffy API. Real-Zeffy items are listed as deferred, not passed.
+
+### What I did
+- Read the whole work-log and DECISION-121/123/125; ran every gate; confirmed the named unit tests by name; read the 12 routes and 6 pages for gates and exercised them as anonymous, member and dashboard-only users.
+- Drove the admin UI at desktop and 360 px; fired the fixture script and a signed-POST helper for the full webhook matrix; ran a stubbed-Zeffy phase for refunds, Sync and Find forms.
+- Cleaned every row I created, stopped both servers by PID, recorded tree state.
+
+### Outputs
+- `docs/work-log/2026-10-12-santas-workshop-sessions-and-workers.md` (this section, Per-Phase Status row). No code changed. Temp scripts and screenshots in `<scratchpad>/santas-workshop-sessions/`.
+
+### Open questions / handoff notes
+- **Next agent: the original implementers.** D1 -> **ux-developer**; D2 and D3 -> **api-developer**. Then qa re-runs `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test`, `pnpm build:only`, the three specs, the pre-push PII grep, and re-checks D1 on the overview and D2 on the Connect page (fire a `payment.updated` at a mapped payment with no API key and see the failed row listed with its Reprocess button). Analyst Phase 6 waits for a PASS.
+- Orchestrator: item 3 of the deferred list (set `ZEFFY_API_KEY` before registering the webhook) belongs in the deploy runbook; item 1 needs the user to register the webhook against a deployed host.
+
+---
+
+## Phase 5 re-verification (after the D1/D2/D3 fixes) — 2026-10-12
+
+**Owner:** qa · **Status:** complete · **Verdict: PASS** (Slice 1)
+
+**Tree state measured:** `HEAD` = `6343fa6a2ebb49766d2ecb58605a09477f5b1ce3` (v1.93.0) plus the **uncommitted Slice 1 diff in the pipeline worktree** (82 entries in `git status`: the first-run diff plus the QA fixes: `schedule-card.tsx` + test, `events-queries.ts` + test, `redact.test.ts`, `config.ts`/`client.ts` base-URL override, mapper test). No migration changed since the first run. Branch `ep-divine-boat` only; nothing committed.
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| `pnpm exec tsc --noEmit` | PASS | exit 0 |
+| `pnpm lint` | PASS | 0 errors, the same single old warning |
+| `pnpm test` | PASS | **245 files, 4156 / 4156** passed (was 243 / 4143) |
+| `pnpm build:only` | PASS | exit 0, no warnings, 294 route rows; the same 20 workshop/zeffy rows (6 pages, 12 admin routes, webhook, `/santas-workshop`) |
+| Playwright Slice 1 specs on `:3101` | PASS | gate 3 + webhook-to-roster 7 + session-edit 7 = **17 / 17**, 0 skipped, 1.3 min; no rows left |
+| PII grep (pre-push recipe: personal-domain emails over the whole repo, phones, street addresses) | PASS | **prints nothing** (D3 fixed: `redact.test.ts` now uses `someone@mail.example.test`, and its assertion still requires the redactor to remove it) |
+| New tests confirmed by name | PASS | `schedule-card.test.tsx` (each weekday once); `events-queries.test.ts` `sessionEventsFilter` (5: session OR campaign, failed id-only event matched by the `session_id` arm, listed once after a retry, never another session's ids, no-campaign session); `client.test.ts` `ZEFFY_API_BASE_URL override` (3: honoured outside production, **ignored in production**, default when blank); `payment-mapper.test.ts` "additional_donation items stay on the order total and never produce a stuffy, mixed with tickets" |
+
+### The three targeted live checks
+- **D1 PASS.** Overview Schedule card, read from the DOM: `Drop-off = Friday, Dec 18`, `Photos = Saturday, Dec 19`, `Pickup = Sunday, Dec 20` (each weekday once).
+- **D2 PASS, both halves.**
+  - *Failed, no API key* (server started with `ZEFFY_API_KEY=` forced empty): after a signed `payment.completed` for a mapped payment, a signed id-only `payment.updated` and `payment.deleted` for it both returned 500 and were stored `failed`/`no_api_key` with `campaign_id` NULL. Connect's "Recent Zeffy events" listed **both** with "Failed, will retry", the `no_api_key` code and a **Reprocess** button (3 buttons incl. the processed `completed`). The id-only `payment.updated` for a payment of *no* session was correctly not listed.
+  - *Successful retry via the local stub* (`ZEFFY_API_BASE_URL=http://127.0.0.1:3199`, fake key): pressing Reprocess on the failed `payment.updated` row gave "Event reprocessed."; the row became `processed`/`applied`, gained `campaign_id`, order `refund_status=full, refunded_cents=4500`, and the list showed it **exactly once** (one `payment.updated` row, one `payment.deleted` row). A signed redelivery of the failed `payment.deleted` event re-ran it (`processed`) and the next redelivery was `duplicate:true`; the events API returned 3 events with unique ids.
+- **D3 PASS.** The grep above prints nothing.
+
+### Things I want on the record
+1. **A `ZEFFY_API_KEY` is now present in the worktree `.env.local`** (it was not there during my first run; the file is dated after it). I did not print it and never let it be used. In a non-production process the Zeffy client refuses every call unless the campaign is in `ZEFFY_DEV_CAMPAIGN_ALLOWLIST`, and checks the allowlist before any request in all four methods, so with the key present and no allowlist my first re-verify server answered id-only events `ignored_unmapped`/`out_of_scope` without contacting Zeffy (this is the deny-by-default doing its job, and it is why the no-key case had to be reproduced by forcing the variable empty). For the stub phase I forced `ZEFFY_API_KEY=fake-dev-key` into the process environment (which wins over `.env.local`) **and** pointed the base URL at `127.0.0.1:3199`; the stub logged every request's bearer: 2 requests, both `FAKE-OK`, none `UNEXPECTED`. Coordinator: if that key is real, it is a production credential in a dev file (the `RESEND_API_KEY` incident shape); keep `ZEFFY_DEV_CAMPAIGN_ALLOWLIST` unset-or-practice-only locally, or remove it.
+2. **Correction to my first report's email claim.** I wrote that `email_queue` was 1362 "before and after". That baseline was taken after my own e2e and fixture sign-ins, so it did not prove "no mail". The accurate statement: the specs' disposable member/board users, and my two fixture users, trigger the existing "New portal user needs member record review" notice on first sign-in. Four such rows were created by QA runs (two per e2e run, ids `c103aa5d-...`, `814f12d6-...`, `90298c70-...`, `8e47a15d-...`), all `status=blocked_non_production`, `sent_at` NULL, addressed to the club domain, with `RESEND_API_KEY` empty: nothing was delivered. That is existing sign-in behaviour, not workshop code (no new file references `sendEmail`/`email_queue`). I deleted those four rows (count now 1360).
+3. `e2e/santas-workshop-webhook-to-roster.spec.ts` "sync is blocked with a clear reason..." is key-agnostic (it passed with and without a key present). Fine; it just does not assert the no-key text.
+4. All deferred post-deploy items from the first report stand unchanged (real signature format, SW-L8 on the deployed route, `ZEFFY_API_KEY` before registering the webhook, S2a spike, real Connect `404 campaign_not_found`, board sign-out/in, deploy log, real window text).
+
+### Cleanup
+Session, order, stuffies, log rows and every `qa*` `zeffy_events` row deleted; branch re-measured: `sw_sessions` 0, `sw_orders` 0, `sw_stuffies` 0, `sw_session_log` 0, `zeffy_events` 1 (`smoke-2`, which predates me), `users` 53, `roles` 7, `user_roles` 72. Servers stopped by PID (dev `:3101` x3 over the session, stub `:3199`); `:3101` and `:3199` free; no process of the worktree remains; `:3000` (pid 14545, the main tree) was never touched. No commit.
+
+### Verdict
+**PASS.** D1, D2 and D3 are fixed and verified live; every gate is green on the tree state above; no new defect found. **Phase 6 next** (analyst), carrying the deferred post-deploy list.
+
+---
+
+## Re-verification 2 (N1 to N3) — 2026-10-12
+
+**Owner:** qa · **Verdict: PASS** (Slice 1 stays PASS). Tree state: `HEAD` `6343fa6a2ebb49766d2ecb58605a09477f5b1ce3` plus the uncommitted Slice 1 diff in the pipeline worktree (83 `git status` entries: the earlier diff plus the N1 to N3 UI changes in `admin-ui.ts`, `connect-panel.tsx`, `zeffy-event-codes.test.ts` and the updated tests). Branch `ep-divine-boat` only; no commit.
+
+| Gate | Result |
+|------|--------|
+| `pnpm exec tsc --noEmit` | PASS |
+| `pnpm lint` | PASS (0 errors, the same one old warning) |
+| `pnpm test` (full) | PASS: 246 files, **4189 / 4189** |
+| `pnpm build:only` | PASS: exit 0, no warnings, 294 route rows, the same 20 workshop/webhook rows |
+| Playwright Slice 1 specs on `:3101` (server with `ZEFFY_API_KEY=` forced empty) | PASS: **17 / 17**, 0 skipped |
+| PII grep (pre-push recipe) | PASS: prints nothing |
+
+### The three live checks
+- **N1 PASS.** Local stub (`ZEFFY_API_BASE_URL=http://127.0.0.1:3199`, fake key, dev allowlist) returned one succeeded payment on the connected form whose ticket `rate_id` (`rate-other`) was not marked. Sync, pressed both from the inline prompt and from "Sync from Zeffy", read: "Synced 0 orders; nothing needed changing. 1 payment skipped because its ticket rate is not marked as the stuffy ticket. Review under Connect." The phrase "Everything matches Zeffy" was absent. Control with an empty stub list: "Everything matches Zeffy. 0 already up to date." (the all-clear still appears when nothing was skipped). No order or stuffy was created for the skipped payment.
+- **N2 PASS.** With a key: after "Connect this form" and the confirm dialog, the note read "Connected. Zeffy confirmed the form and its ticket rates. Run Sync now: payments made before connecting are only picked up by Sync." with one working **Run Sync now** button; pressing it ran Sync inline and showed the outcome above in the same panel. Without a key (server with the variable forced empty): the note read "Saved, but Zeffy could not be asked to confirm the form ... Payments made before connecting are only picked up by Sync, which needs the Zeffy API key. Set it, then run Sync." and there were 0 buttons.
+- **N3 PASS.** A signed id-only `payment.updated` for a mapped payment with no key: the Connect events list showed "Zeffy could not be asked for this payment because the API key is not set. Set it and press Reprocess." then "Code for support: no_api_key", "Failed, will retry" and a Reprocess button; the processed `payment.completed` row read "Registrations were added or updated." / "Code for support: applied".
+
+### Surprises
+1. **My stub was incomplete on the first try, not the code.** The standalone stub server lacked the `GET /api/v1/campaigns/{id}` route (my earlier preload version had it), so Connect's verification got a 599 and the page correctly showed "Zeffy could not be reached. Try again in a minute." I fixed the stub and re-ran; every N2/N1 result above is from the re-run. Worth knowing only because it shows Connect fails closed and says so in plain words when Zeffy errors.
+2. The worktree `.env.local` still holds a `ZEFFY_API_KEY` (see Re-verification 1, item 1). I never let it be used: the server was started with the variable forced empty (no-key checks, e2e) or forced to `fake-dev-key` with the base URL pointing at the local stub (stub log: every request `bearer=FAKE-OK`, none unexpected).
+3. The gate spec's two disposable users again each triggered the existing "New portal user needs member record review" notice (2 `blocked_non_production` rows, ids `9b75281c-...` and `ead6c74f-...`). Existing sign-in behaviour, not workshop code; deleted. `email_queue` is back to 1360.
+
+### Cleanup
+Session, orders, stuffies and `qa*` event rows deleted; branch re-measured: `sw_sessions` 0, `sw_orders` 0, `sw_stuffies` 0, `sw_session_log` 0, `zeffy_events` 1 (`smoke-2`, predates me), `users` 53, `roles` 7, `user_roles` 72, `email_queue` 1360. Dev server (`:3101`, twice) and stub (`:3199`) stopped by PID; both ports free; no worktree process remains; `:3000` (pid 14545) untouched. Phase 6 notes N4 and N5 remain open as the analyst filed them; the deferred post-deploy list is unchanged.
 
 ---
 
 # Phase 6 — Shipped vs Intent (analyst)
 
+Later slices get their own heading below this one. Slice 1 is judged alone.
+
+## Phase 6 — Slice 1 — 2026-10-12
+
+**Scope judged:** schema `0113`/`0114`, the `santas_workshop.manage` permission and nav entry, `src/lib/zeffy/`, `POST /api/zeffy/webhook`, the workshop consumer/mapper/`applyPaymentSnapshot()`, and the sessions admin (list, new, overview with the go-live checklist, Connect with the question map, Sync/Remap/Reprocess, registrants read-only, the session edit page from the Phase 3 addendum). **Out of scope, not gaps:** worker screens, crew code, photos and the `PhotoStore`, collage, frames, family page, purge/reset, status buttons, manual add, refund Keep/Withdraw, attention dismissal (Slices 2 to 5).
+
+**Tree state measured:** worktree HEAD `6343fa6` (v1.93.0) plus the uncommitted Slice 1 diff. Method: the whole work-log, then the shipped code (`src/lib/zeffy/`, the consumer, mapper, apply, sync, checklist, admin pages/components/routes, both migrations, the e2e specs), then a re-run of 35 test files / 673 tests over the Santa's Workshop, Zeffy, permissions, role-bundle and admin-gate suites (all green). I started no server and made no Zeffy call: the live evidence is QA's (17/17 e2e, the stubbed-Zeffy phase, the adversarial matrix), which I read and spot-checked against the code. **Everything below that depends on Zeffy's real payload shape is verified only against our own fixtures and a stub** (QA's own wording), and I carry it as unmeasured.
+
 ## VERDICT
 
-[SHIP IT | SHIP WITH NOTES | NEEDS REWORK]
+**SHIP WITH NOTES.** Slice 1 delivers what Phase 1 and the addendum promised for ingestion and session setup, the permission model is right, and the failure paths that matter (forged delivery, replay, out-of-order refund, unmapped campaign, hostile text) are covered and were exercised. Three small items (N1 to N3) should land before Nov 8 because they sit on the setup and Friday-Sync path; one hard condition (N4) is that manual add and the refund/attention actions arrive with Slice 2; one measurement gate (N5) must close before registration opens. None reopens a phase.
 
 ## ONE-LINE TAKE
 
-> [The shipped feature in one honest sentence.]
+> The club can now create a Santa's Workshop session, connect the real Zeffy form, and watch each ticket arrive as a stuffy within seconds of payment, with anything it could not understand flagged instead of dropped, refunds marked instead of deleted, and a Sync button as the safety net for a webhook that dies silently; what it cannot yet do is anything a volunteer touches.
 
 ## What's Working
 
-- [Specific. The flow that works well and why.]
+- **The org-wide webhook is treated as hostile and shared.** Every White Cane gift reaches the endpoint; an unmapped campaign is logged by ids and time only (`payload` NULL, no `session_id`) and nothing is stored. A signed forged/stale/oversize/malformed delivery gets one identical 400 and no row. QA reproduced both; the code agrees (`webhook-handler.ts` keeps a payload only when a session id is set).
+- **Retry semantics are right where it counts.** Dedupe applies to terminal outcomes only, so a delivery that failed (database or Zeffy fetch) re-runs on Zeffy's retry instead of being swallowed. QA saw `attempts` climb 1 to 3 on one event id and then `duplicate: true`.
+- **One write path.** Webhook, Sync and Reprocess all call `applyPaymentSnapshot()`: advisory lock on the payment, stale-snapshot refusal (a days-late retry cannot un-refund), import-owned columns only, never a delete. Re-apply is idempotent (QA: redelivery adds no stuffy).
+- **Refund is derived, not stored per stuffy** (Phase 3 ruling 7). Full refund, partial refund, reversed refund and a payment that 404s each behaved as specified in QA's stubbed phase; a partial refund flags the order only and never removes a stuffy.
+- **"Needs attention" does what Phase 1 asked.** An unmatched question or an unmapped required field keeps the stuffy and shows the raw question and answer to the admin (capped, rendered as text; `<script>`/`<img onerror>` rendered inert in QA). The question map accepts several strings per field and an `ignored` key, and Remap re-applies it locally with no Zeffy call.
+- **The setup path is a real gate, not a hope.** The overview checklist names what is missing in plain words ("Not yet mapped: Stuffy name, Snack choice, Drop-off window."), shows webhook secret and API key as booleans only, and carries the last-event row and the drop-off-morning Sync row.
+- **The edit page closes the one hole the first design left** (a mistyped drop-off label that cannot be fixed): chips of "answers that matched no window" with counts, Save, then an explicit Remap, reversible in both directions (QA walked rename, flag returns, restore).
+- **Permission model is correct and tested twice.** One key, bound to `admin` and `board_member` only (verified by read-only SQL on the branch), nav entry derived into the proxy rule, every page and all 12 admin routes call `auth()` then `hasFeature()` in their own body, and QA exercised 14 routes and 6 pages as anonymous, plain member, and a user holding `admin.dashboard` + `events.edit` but not the key.
+- **The page is quiet about what it does not do.** Nothing in the slice sends email (no `sendEmail`/`sendBulk`/`email_queue` reference in any new file), no native dialog, no `console.log`, no `dangerouslySetInnerHTML`, one `console.error` that logs a name and code only. Cards `rounded-2xl`, buttons `rounded-lg`; the only `rounded-full` items are chips (badges, the window-answer chips at 44 px with a focus ring) and a decorative checklist mark, all allowed by the chip rule.
 
 ## Intent-vs-Shipped Diff
 
-- Phase 1 said: [X]. Shipped: [Y]. Verdict: [matches | acceptable drift | regression]
+Phase 1 addendum, Flow A and the go-live gate:
+
+- **Registration arrival within about 30 s of payment.** Phase 1 said the stuffy is on the worker's list at the next refresh, with "Updated 12 s ago". Shipped: the stuffy exists in the database as soon as the signed delivery is processed inline (the response is sent last); the admin sees it on the registrants page on reload. The worker list and its freshness line are Slice 2. Delivery latency from Zeffy is **unmeasured** (S2b). Verdict: **matches for the server half; worker half deferred by design.**
+- **Payment before mapping: logged by id only, recovered by Sync.** Shipped exactly: `ignored_unmapped`, ids and time, no payload; Sync lists the mapped campaign's succeeded payments and adds what is missing (QA: "1 registration found that the live feed had missed, now added"). Phase 1 also said the Connect step shows "N earlier payments exist in Zeffy. Sync to bring them in." Shipped: the Sync panel sits on the same page, but the Connect success note does not prompt it (it only says so in the unverified case). Verdict: **acceptable drift**, tightened by N2.
+- **Unmatched question becomes needs-attention with raw text, taggable.** Shipped: stuffy created, flagged, raw pairs shown to the admin, assigned through the map, cleared by Remap. "Taggable" and the worker line "Details being checked" belong to Slice 2; nothing in the mapper can block tagging. Verdict: **matches.**
+- **Drop-off window that matches no session window.** Shipped: `unmapped_window` with a message that names the remedy ("Fix the label under Edit session, then run Remap."), chips on the edit page, and a "No matching window" row with an explanation on the overview. Verdict: **matches (better than Phase 1: the remedy is one click).**
+- **Refund is a flag, never a delete, derived from the order, never blocks a hand-over.** Shipped as the derived model of Phase 3 ruling 7; the worker badge and hand-over rules are Slice 2 consumers of `workerRefundBadge()`. The admin can see "Refunded"/"Partly refunded ($15.00)" and the open-refund count but **cannot yet resolve** (Keep/Withdraw). Verdict: **matches; resolution deferred (N4).**
+- **Manual add is a required fallback.** Phase 1 made it required; Phase 3 scheduled it with Slice 2 (target Nov 20). **Not in Slice 1.** Is that acceptable before Nov 8? **Yes, on one condition.** Its job is the door on Dec 18 (Zeffy or its API down, a receipt shown, a comp), plus comps and offline sales between Nov 8 and the slice landing. No volunteer touches the roster before Slice 2, real registrants are not needed for tagging until about Dec 1, and a comp recorded in Zeffy itself arrives through the webhook like any payment. The condition: it ships in Slice 2, not later, and until then comps and walk-ups are kept on a paper list. A Zeffy-recorded offline payment with no custom answers will arrive "Unnamed stuffy" with no edit surface (ruling 16: withdraw and re-add) until Slice 2.
+- **Go-live checklist.** Phase 1: connected, N rates marked, all questions mapped, last event, secret set. Shipped: all of those plus two `info` placeholder rows (storage tested, worker code) that say "arrives with the worker screens", and the Friday row. Verdict: **matches.** The amber rule differs slightly (see N6).
+- **A dead webhook is silent, so the Friday-morning Sync is on the checklist.** Shipped: "Drop-off morning Sync" is `info` until Dec 18, `todo` from Dec 18 until a Sync on or after that day, and the last-event row turns amber after 24 quiet hours while registrants exist and drop-off has not passed. Nothing prompts anyone to open the page that morning; that is a human reminder (orchestrator, below). Verdict: **matches.**
+- **Sync reports "in Zeffy but missing here / gone / refund differs".** Shipped for new, changed, gone, refund-differs. **Not shipped:** payments Sync *skipped* (not succeeded, no marked ticket rate, session mismatch) are counted in `skipped` and never shown, and the summary can read "Everything matches Zeffy" with skips present. If the club ever sells a second ticket rate that nobody marked, the Friday safety net would say all is well. Verdict: **regression against intent, small** (N1).
+- **Reprocess an event or payment; failed events are visible and recoverable.** Shipped, including QA's D2 fix (a failed id-only `payment.updated`, stored with no campaign id, now lists on Connect and can be reprocessed). The row shows the machine code (`no_api_key`) rather than a sentence (N3). Verdict: **acceptable drift.**
+- **Edit-page addendum** (editable fields, frozen kind and slug, window ids preserved, no silent recompute, Remap prompt after a label change, Recalculate button, "answers that matched no window" chips, button names the kind it creates). Verdict: **matches**, each point verified by QA's session-edit spec.
+- **Permission model** (`santas_workshop.manage`; admin + board_member; proxy derived from `ADMIN_NAVIGATION`; pages and routes gate themselves; webhook has no `auth()` by design and a source scan pins that). Verdict: **matches.**
+
+Phase 3 rulings (only those that touch Slice 1; the rest are later slices):
+
+| # | Ruling | Verdict |
+|---|---|---|
+| 3 | Dedupe on terminal outcomes only | accept; QA reproduced the retry |
+| 4 | Question match key is normalized text; type interprets, scope falls back | accept |
+| 5 | `zeffy_item_key` via `itemKey()`, default `item.id` | accept; **unmeasured** (S2a) |
+| 6 | No CHECK, no enum; text plus tuples plus partial unique indexes | accept; schema test pins it |
+| 7 | Refund derived from the order | accept (differs from the addendum in storage only, not in what anyone sees) |
+| 15 | All tables in one front-loaded migration pair | accept; idempotent on a second run, `push` proposes nothing for `sw_`/`zeffy_` objects |
+| 16 | No admin edit of Zeffy-sourced stuffy fields | accept, with the Slice 2 dependency on manual add noted above |
+| 18 | Question strings are learned from stored payments (Connect, then a purchase or Sync, then map, then Remap) | accept; it makes the test purchase a hard step of the setup order |
+| 1, 2, 8 to 14, 17, 19 | dependencies, encrypted code, hidden portraits, camera, Drive, crew revert, pickup check | not in Slice 1; judged with their slices |
+
+Phase 4 deviations: **database-admin** 1 (nav with the first page), 2 (no FK on the two photo pointer columns), 3 (array-default `SET DEFAULT` noise in `push`, same as `ledger_donors.emails`), 5 (branch verification) accepted; 4 (extra `push` prompts: `dues_settings_fiscal_year_unique` and ten FK names over 63 characters; every truncate prompt answered "No") accepted and goes to B-165 (N8); 6 (validator test moved) accepted. **api-developer** 1 to 8 accepted: the `info` placeholders, the extra `ignored` map key, `snapshot_at` stamped on an identical re-apply (needed for Sync's stale detection), dismissal reset when the reasons change, Connect proceeding unverified when Zeffy cannot be asked, `getPayment`'s out-of-scope variant, `toEmbedUrl` moved with four importers, and `ZEFFY_API_BASE_URL` (honoured only outside production, tested). Item 7 (narrowing increment 1's `public-page.test.ts` to five named lib modules) is accepted for now with a follow-up (N10). **ux-developer** 1 to 3 accepted (the `unmatched` DTO field stays admin-only, the window message names its remedy, practice is the default kind and the button states the kind); deviations 4 and 5 resolved by the edit page and by Slice 2. **QA fixes** D1 (weekday printed twice), D2, D3 verified fixed.
+
+## What an admin sees on the morning of Nov 8
+
+Admin menu, Engagement, "Santa's Workshop": a card for the real session (Real, Draft badges; stuffies, need-attention and "last Zeffy event 4 min ago" figures; an amber "No Zeffy form connected yet" if the Connect step was skipped). The overview opens on the go-live checklist (every row done except two grey placeholders and the Friday row), then four count tiles (Stuffies with the order count, Need attention, Open refunds, Withdrawn), "By stage" and "By drop-off window" lists, the schedule, and a Zeffy card with the form title, last event, last Sync and two Set/Not set lines. Each first order appears on reload as one card per stuffy with name, what it is, snack, note to Santa, consent flag, window, and the parent's contact (admin only). Anything odd carries an amber reason with the raw text. **What they cannot do yet:** activate the session, see a worker code, add a registrant by hand, resolve a refund or dismiss a flag. The session stays Draft; nothing about that blocks ingestion, which QA confirmed.
+
+The one thing that will look wrong if setup was skipped: every first order is "Unnamed stuffy, order of N" with several amber reasons until the question map is assigned and Remap run. That is why a test purchase and the mapping belong **before** Nov 8 (deploy checklist, steps 8 and 9).
 
 ## Edge Cases
 
-- Empty state: [pass | fail | not applicable]
-- Failure microcopy: [pass | fail]
-- Permission gate: [pass | fail]
-- Mobile (360px): [pass | fail]
+- Empty state (no sessions; session with no registrants; no events yet; no unmatched answers): **pass.** Sentences are specific ("Create a practice session first to try the whole flow, then the real one.", "After the Zeffy form is connected, each ticket sold appears here as a stuffy.").
+- A campaign mapped to no session: **pass.** `ignored_unmapped`, ids only, 200, nothing stored; the admin sees nothing, by design (see the verification note in deploy step 7).
+- A campaign mapped to the wrong session or twice: **pass.** 409 `campaign_in_use` in plain words; the Connect dialog names the form title; a payment already stored under another session fails `session_mismatch` rather than moving.
+- A three-ticket order: **pass** (QA: 1 order, 3 stuffies, redelivery adds none). Rests on one unmeasured premise: that Zeffy returns one `ticket` item per attendee, not one item with a quantity. The OpenAPI document supports it (`Item.contact_id` is "the attendee, tickets only"; per-ticket `questions`), and nothing in the code reads a quantity. S2a settles it with a two-ticket purchase.
+- A refunded order (full, partial, reversed, payment deleted): **pass** against stubbed Zeffy. Resolution actions not yet built (N4).
+- Zeffy failure microcopy: **pass with a note.** Admin-facing sentences are human ("Zeffy could not be reached. Try again in a minute.", "Zeffy is limiting requests, continuing...", "Nothing already read was lost: run Sync again."). The events list prints the raw code beside a failed row (`no_api_key`), which is a code, not a stack trace, but not a sentence (N3). No path leaks a payload, a key or a stack trace; the webhook's only public answers are `ok`, `bad_request`, `not_configured` and `failed`.
+- Hostile buyer text (HTML, `=HYPERLINK`, emoji, 5,000-character notes): **pass** (stored capped, rendered as React text, truncation visible via the `truncated` reason).
+- Permission gate: **pass** (anonymous 401/307, plain member 403/`/access-pending`, near-miss role 403/`/access-pending`, admin and board member allowed). Board members need a sign-out/in after deploy because the nav and the proxy read the JWT.
+- Mobile (360 px): **pass** per QA on all six pages (`scrollWidth == clientWidth == 360`), registrants as cards below `xl` and a table at `xl+`. One cosmetic: a long email wraps mid-word at 1440 px.
+- Brand and dialogs: **pass.** `ConfirmDialog` on Connect; no native dialog anywhere.
+- PII in the repository: **pass.** My grep over every new and modified non-doc file for personal-domain addresses, phone shapes and key/secret shapes prints nothing; fixtures use `example.invalid` and a unit test pins that.
 
-## Follow-Ups (if SHIP WITH NOTES)
+## Follow-Ups (SHIP WITH NOTES)
 
-- [Concrete, actionable. Each gets its own work-log entry.]
+Each becomes its own work-log entry. **N1 to N3 should land before Nov 8; N4 with Slice 2; N5 is a gate, not a code item.**
 
-## Red Flags (if NEEDS REWORK)
+**N1 — Sync must show what it skipped (small, api + ux, before Nov 8).**
+Proposed backlog text: *B-nnn Sync from Zeffy hides skipped payments. `SyncCounts.skipped` is collected (payment not succeeded, no marked ticket rate, session mismatch, purged) but `syncSummary()` never shows it and says "Everything matches Zeffy" even when payments were skipped. Show "N payments in Zeffy were not turned into stuffies" with the reasons split (no marked ticket rate is the one that matters: an unmarked second rate would otherwise sell tickets that never reach the roster), and never print "Everything matches" when skipped > 0. Test: a Sync over a fixture with one unmarked-rate payment prints the skip line.*
 
-- [Specific. What has to change before this ships.]
+**N2 — Prompt Sync right after Connect (copy, before Nov 8).**
+Proposed backlog text: *B-nnn After a successful Connect (verified or not), the note should say "Run Sync now to bring in any payments made before this form was connected" and link to the Sync panel; the registrants card on the overview should say so while a form is connected, no Sync has run and no event has arrived. Phase 1's "N earlier payments exist" count is optional (one `listPayments` page).*
+
+**N3 — Say why an event failed, in words (small, ux, before Nov 8).**
+Proposed backlog text: *B-nnn Map the event error codes (`no_api_key`, `zeffy_unauthorized`, `zeffy_unavailable`, `zeffy_rate_limited`, `db_error`, `session_mismatch`, `session_not_found`, `bad_payment`, `no_campaign`, `consumer_error`) to one sentence each beside the "Failed, will retry" chip, and make "Reprocessed: Failed" repeat the reason. `no_api_key` should say the API key is missing on the server and that Zeffy will keep retrying for three days.*
+
+**N4 — Slice 2 commitments carried from Phase 1 (hard condition).**
+Proposed backlog text: *B-167 Slice 2 must include, and Phase 6 will check for: manual add registrant (admin, phone-usable, flagged `manual`, reason required, in history), refund Keep/Withdraw, per-stuffy attention dismissal, status buttons (draft, active, paused, closed), worker code card, and Test storage. Until it ships, comps and walk-ups are tracked on paper. Target Nov 20; the latest tolerable date is the week of Dec 1, when tagging starts.*
+
+**N5 — Measurement gate before registration opens (not code unless a result differs).**
+Proposed backlog text: *B-167 S2a/S2b close-out, due before Sun Nov 8: with a practice purchase of two tickets in one order, confirm (a) the first real delivery verifies (Connect page "Last event of any kind" fills in), (b) `Item.id` is stable and unique and there is one ticket item per attendee, (c) `status` is `succeeded` for a paid order and what it becomes after a refund, (d) the real question strings and the checkbox/select answer shapes, and set `CONSENT_AFFIRMATIVE` to the real "yes" text (today an unrecognised answer fails safe to "no photo sharing", which silently under-includes families who opted in), (e) a buyer edit fires `payment.updated` and the id-only payload shape, (f) whether a $0 or 100%-discount ticket fires `payment.completed`, (g) delivery latency, (h) the drop-off options on the Zeffy form spell exactly the session window labels. A result that differs is a one-constant change (`ITEM_KEY_STRATEGY`, `CONSENT_AFFIRMATIVE`) or a window-label edit, not a redesign.*
+
+**N6 — Make the quiet-feed amber mean "no recent sales" (low).**
+Proposed backlog text: *B-nnn The "no event in 24 hours" amber fires whenever any order exists, so it will sit amber for weeks as sales taper and teach the chair to ignore it. Key it to a sale in the last N days, and add the same amber to the sessions list card (Phase 3 asked for the list).*
+
+**N7 — Copy a question map from another session (low).**
+Proposed backlog text: *B-nnn On Connect, offer "Copy matches from <other session>" so moving from the practice form to the real one does not mean re-assigning about ten selects by hand.*
+
+**N8 — Housekeeping backlog.**
+Proposed backlog text: *(a) Add to B-165: `drizzle-kit push` also prompts for `dues_settings_fiscal_year_unique` and re-proposes ten foreign keys whose names exceed 63 characters; every truncate prompt must be answered No. (b) Record that `neonctl connection-string --branch-id <id>` is silently ignored and returns the production endpoint (the branch id is positional); the database-admin caught it before any write. (c) `e2e` `create-test-user.mjs` through `dotenv-cli` expands `$` in `E2E_ADMIN_PASSWORD_HASH`, so the stored bcrypt hash is wrong. (d) The admin layout nests a `<main>` inside `<main id="main-content">`. (e) A long email wraps mid-word in the registrants table at 1440 px. (f) The `contact.*` webhook rows store the contact id in the `payment_id` column.*
+
+**N9 — Runbook items for the orchestrator (not backlog).**
+Set a reminder for **Friday Dec 18, morning: open the session page and run Sync before the doors open** (nothing will prompt it). Record in the club runbook: set `ZEFFY_API_KEY` before registering the webhook URL (without it every id-only event for an unseen payment 500s and is retried for three days; the webhook is organization-wide, so White Cane edits would do the same); rotating the webhook secret invalidates the old one instantly, so update Vercel, redeploy, then Sync to close the gap; Zeffy is believed to allow one webhook URL per organization (unmeasured), so dev and preview never see real events.
+
+**N10 — Keep the public page's no-database guarantee after the narrowing (low).**
+Proposed backlog text: *B-nnn `public-page.test.ts` now scans five named lib modules plus the two app/component folders because B-167 put server code in `src/lib/santas-workshop/`. Slice 2 adds `/santas-workshop/crew`, `/c` and `/f` under the scanned app folder, which will trip the public-page rules. Replace the folder walks with an import-graph check rooted at `src/app/santas-workshop/page.tsx` (it may import only the public modules; crew/collage/family routes get their own rules).*
+
+## Deploy checklist for Slice 1 (in order)
+
+**Answering the question put to me: connect the real campaign `1d4e4e1e-aa31-43ec-aa46-ca859c843b7e` straight to a REAL session, never to a practice session first.** Reasons, all from the code: a campaign maps to at most one session and Slice 1 has no disconnect, so a form connected to a practice session cannot be moved; a session's kind is immutable; real families' orders would then live inside a practice session, which is the one kind Slice 5 can wipe in one click ("Reset practice session"). Rehearse on a **separate practice Zeffy form** (a copy of the real one, same question text and drop-off options) connected to a practice session. If the club will not build a practice form, skip the rehearsal session and do the test purchase on the real form: the chair buys one ticket and refunds it, and the refunded row stays in the real session as a "Refunded" stuffy until Slice 2 can withdraw it.
+
+1. **Before the push (orchestrator).** The worktree is uncommitted on `6343fa6`; the main tree has its own uncommitted edits (the real `zeffyShareUrl` in `facts.ts`, backlog, spec, and a different copy of this work-log). Reconcile the two work-log copies by hand (main has the orchestrator blocks and placeholder phases, the worktree has the Phase 4 to 6 text). Stage by pipeline. Run `/pre-push` on the combined tree. Release notes and the version bump are the orchestrator's.
+2. **Check Zeffy's sales window on the real form.** The public page only embeds the form from Nov 8, but the share link is already in the main-tree diff and Zeffy's own sales window is the real control. If the form can sell before you Connect, do step 9 first or expect to run Sync after it.
+3. **Vercel production env:** `ZEFFY_API_KEY` and `ZEFFY_WEBHOOK_SECRET` are present (the secret must be the one Zeffy currently shows; regenerating it kills the old one at once). Leave `ZEFFY_DEV_CAMPAIGN_ALLOWLIST` and `ZEFFY_API_BASE_URL` **unset** in production.
+4. **Push to main.** The build runs `db:migrate` (`0113` eight tables, `0114` the permission) then `drizzle-kit push --force`. Read the deploy log: expect the known B-165 prompts forced through, and no statement that names a `sw_` or `zeffy_` object.
+5. **Confirm the schema (orchestrator, read-only, explicit `branchId`).** Counts only: the eight tables exist; `santas_workshop.manage` is bound to exactly `admin` and `board_member`.
+6. **Board members sign out and back in**, then wait about 60 seconds (the nav and the proxy read the JWT). Confirm one real board member sees "Santa's Workshop" under Engagement and that a plain member is bounced.
+7. **Register or check the webhook** in Zeffy (Settings, Integrations, Webhook): URL `<production origin>/api/zeffy/webhook`; the three subscribed types that matter are `payment.completed`, `payment.updated`, `payment.deleted` (others are acknowledged and ignored). If the URL was registered before this deploy, expect a burst of retried events right away; all should be `ignored_unmapped`. **Verify the signature format:** create the first session, open Connect, and look at "Last event of any kind from Zeffy". It fills in only after a delivery passed the signature check (unmapped events are not listed per form, so this line is the only proof). If it stays empty while Zeffy shows failed deliveries, the format or the secret differs: fix that before anything else, because Sync is not a substitute for a working webhook.
+8. **Rehearse on the practice form.** Create it in Zeffy (copy of the real form); create a practice session (the form defaults to Practice and the button reads "Create practice session"); Connect it, marking the stuffy rate; make a two-ticket test purchase (100 percent discount code or the smallest real charge; whether a $0 ticket fires `completed` is S2b, unknown) and a full and a partial refund; see the registrants, the unmapped questions, assign them, Remap; check the drop-off chips on the edit page; run Sync. Run `scripts/spike-zeffy.ts --campaign <practice id>` locally (dry run first, id allowlisted in your own `.env.local` only), then settle N5.
+9. **Real session.** Create it with the button that reads "Create real session"; compare its window labels with the real form's drop-off options (they must match after trimming and case; edit if not); Connect `1d4e4e1e-aa31-43ec-aa46-ca859c843b7e`, check the dialog shows "A Visit to Santa's Workshop", mark only the stuffy rate; **run Sync immediately** (it recovers any payment made before connecting); assign the questions as on practice and Remap. The checklist should then show every row done except the two grey placeholders and the Friday row.
+10. **Nov 5 to 7.** Re-read the checklist, the Connect events list and the registrant cards once with the chair; confirm "Last event" is recent and "Need attention" is zero for the test order.
+11. **Nov 8.** Watch the first real orders arrive. **Dec 18 morning:** Sync before the doors open (N9).
+
+## Release-notes paragraph (no version number, no file list)
+
+Santa's Workshop now has its own area in the admin menu. Admins and board members can set up a session, connect it to the club's Zeffy ticket form, and watch registrations appear on their own as families buy tickets, one entry for each stuffy with its drop-off window, snack choice and notes from the form. Anything the form said that the club has not matched up yet is flagged for a look instead of being lost, refunds are marked rather than removed, and a Sync button catches anything that was missed. A go-live checklist shows what is still to do before registration opens, and a session's dates and drop-off windows can be corrected at any time.
+
+## CLAUDE.md edits for the orchestrator
+
+1. **Environment Variables** (after `TURNSTILE_...`):
+   - `ZEFFY_WEBHOOK_SECRET` - `whsec_...` from Zeffy Settings, Integrations, Webhook. Verifies `POST /api/zeffy/webhook`; unset makes the endpoint fail closed (500 `not_configured`). Production only; dev uses a made-up `whsec_dev...`.
+   - `ZEFFY_API_KEY` - bearer key generated by the Zeffy organization owner. Needed for `payment.updated`/`payment.deleted` handling (those events carry only an id), Sync, Reprocess and the form picker. **Set it before registering the webhook URL.**
+   - `ZEFFY_DEV_CAMPAIGN_ALLOWLIST` - comma-separated Zeffy campaign ids a **non-production** process may read; unset means no Zeffy call. A dev server holding the production key can therefore never pull real parents' data. Never list a donation form.
+   - `ZEFFY_API_BASE_URL` - test-only override of the Zeffy API host; honoured only when `NODE_ENV` is not `production`.
+2. **Integrations -> Zeffy** (append; and change the last sentence of the cards bullet to "Zeffy's Cloudflare 403s server-side fetches of `www.zeffy.com` pages; the supported server path is the API below"): 
+   - **API and webhooks (v1.94, DECISION-123):** `src/lib/zeffy/` is a workshop-agnostic module (signature check, hand-typed payload subset and the whitelist `toSnapshot()`, a rate-limited client whose `listPayments` requires a campaign id, the `zeffy_events` log, `toEmbedUrl()`). `POST /api/zeffy/webhook` has no `auth()`: the `Zeffy-Signature` HMAC over the raw bytes is the authentication. It is **organization-wide** (White Cane gifts arrive too), so a payment whose campaign no session maps is logged by ids and time only and **nothing is stored**. `payment.updated`/`deleted` carry only an id, so the consumer fetches the payment and applies the fetched snapshot; a snapshot older than the stored one is refused. Dedupe is on terminal outcomes only, so a failed event re-runs on Zeffy's retry. Registrants are written only by `applyPaymentSnapshot()` (webhook, Sync, Reprocess). Zeffy is believed to allow one webhook URL per organization (unmeasured, S2b), so dev and preview never receive real events; rotating the secret invalidates the old one at once (update Vercel, redeploy, then Sync).
+3. **Gotchas**, replace the Zeffy line: "**Zeffy:** embedded donation forms are iframes (CSP `frame-src` must allow `https://www.zeffy.com`); `www.zeffy.com` 403s server-side fetches, `api.zeffy.com` with `ZEFFY_API_KEY` is the supported path; the webhook is organization-wide and stores nothing for an unmapped campaign". Add: "`neonctl connection-string --branch-id` is ignored and returns the production endpoint; pass the branch id positionally and compare the host."
+4. **Project Structure:** under `api/` add `zeffy/webhook/  # signed Zeffy webhook (no auth(); the signature is the auth)` and `admin/santas-workshop/  # sessions, Connect, question map, Sync, Reprocess, registrants`; under `lib/` add `zeffy/  # generic Zeffy module` and `santas-workshop/ (now also server code: consumer, mapper, apply, sync, session queries)`; under `components/admin/` add `santas-workshop/`. The admin tree line on line 90 gains `santas-workshop` after `social-requests`.
+5. **Key Features -> Santa's Workshop (new bullet, after the sign-up page bullet):** "**Santa's Workshop sessions and Zeffy ingestion (v1.94, B-167 Slice 1, DECISION-123):** `/admin/santas-workshop` under `santas_workshop.manage` (bound to `admin` and `board_member`; never `treasurer`, `member` or an `admin.*` key; the holders read about 100 families' names, emails and mobiles). A session (`practice` or `real`, immutable) carries its own dates, windows, the connected Zeffy campaign, the stuffy ticket rate ids and a per-session question map (normalized question text to field, several strings per field, plus `ignored`). Connect, then a purchase or Sync, then assign questions, then Remap. Needs attention is a flag with the raw text, never a drop; refund state is derived from the order, never stored per stuffy; Sync and Remap never touch worker-owned columns. The drop-off window answer joins to the session's window labels, so the labels must equal the Zeffy form's options (the edit page lists answers that matched none). One campaign maps to at most one session and Slice 1 cannot disconnect it; never connect a real form to a practice session. Worker screens, photos, collage, frames and the family page are Slices 2 to 5."
+6. **Line 162** (sign-up page bullet), last sentence: replace "Sessions, workers, photos and the collage are B-167 (DECISION-121 to 125)." with "Slice 1 of B-167 (sessions admin and Zeffy ingestion) has shipped; workers, photos, the collage, frames and the family page follow (DECISION-121 to 125)."
+7. **Database Migrations note:** `drizzle-kit push` also prompts for `dues_settings_fiscal_year_unique` and re-proposes ten FKs with names over 63 characters (B-165 family); answer No to every truncate prompt.
+
+### Phase 6 handoff (Slice 1)
+
+**Owner:** analyst
+**Status:** complete (Slice 1 only; Phase 6 stays open for Slices 2 to 5)
+
+### Summary
+SHIP WITH NOTES for Slice 1. Ingestion, the sessions admin, Connect, the question map, Sync/Remap/Reprocess, the edit page and the permission model match Phase 1; the safety properties were exercised by QA and hold in the code. Three small items (N1 to N3) belong before Nov 8, manual add and the refund/attention actions must arrive with Slice 2 (N4), and the Zeffy-shape measurements (N5) gate registration opening.
+
+### What I did
+- Read the whole work-log in order, then the shipped server, UI, migrations and specs; re-ran 35 files / 673 tests; PII and secret-shape grep over new and modified non-doc files (clean).
+- Walked each addendum flow, each applicable Phase 3 ruling and each Phase 4 deviation; found the Sync `skipped` blind spot (N1) by reading `countApplyResult` against `syncSummary`.
+- Answered the deploy questions: real campaign to a real session; manual add deferral acceptable on a condition; what the admin sees on Nov 8.
+
+### Outputs
+- This section of `docs/work-log/2026-10-12-santas-workshop-sessions-and-workers.md` in the pipeline worktree and its Per-Phase Status row. No code, CLAUDE.md, decisions or backlog file touched; nothing committed.
+
+### Open questions / handoff notes
+- Orchestrator: merge the two work-log copies; apply the CLAUDE.md edits above when Slice 1 ships; set the Dec 18 morning Sync reminder; file N1 to N10 (proposed text above); N1 to N3 are small enough for one ux/api pass before Nov 8.
+- User: build the practice Zeffy form (or decide to rehearse on the real form); confirm the real form's sales window and that its drop-off options spell the three window labels; the consent question's exact "yes" wording (N5d).
+- The worktree `.env.local` holds a real `ZEFFY_API_KEY` (QA flagged it); keep `ZEFFY_DEV_CAMPAIGN_ALLOWLIST` limited to the Santa's Workshop and practice campaigns.

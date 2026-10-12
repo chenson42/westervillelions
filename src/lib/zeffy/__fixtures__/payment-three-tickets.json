@@ -1,0 +1,100 @@
+{
+  "id": "00000000-0000-4000-8000-0000000000a1",
+  "object": "payment",
+  "created": 1760000000,
+  "amount": 4500,
+  "eligible_amount": 0,
+  "currency": "usd",
+  "status": "succeeded",
+  "type": "online",
+  "refund_status": "none",
+  "refunds": [],
+  "dispute": null,
+  "contact": null,
+  "payment_method": { "type": "card", "brand": "example", "last4": "0000" },
+  "buyer": {
+    "email": "parent.one@example.invalid",
+    "first_name": "Pat",
+    "last_name": "Exampleton",
+    "is_corporate": false,
+    "company_name": null,
+    "address": { "line1": "1 Example Street", "city": "Exampleville", "postal_code": "00000", "country": "US" }
+  },
+  "discount": null,
+  "campaign_type": "ticketing",
+  "campaign_id": "campaign-practice-01",
+  "campaign_category": "event",
+  "buyer_questions": [
+    { "question": "Parent mobile number", "type": "phone", "answer": "mobile-on-file" },
+    { "question": "Which drop-off window?", "type": "single_select", "answer": "5:00 PM – 6:00 PM" },
+    { "question": "I understand the stuffies stay overnight", "type": "checkbox", "answer": true }
+  ],
+  "items": [
+    {
+      "id": "item-0001",
+      "object": "item",
+      "type": "ticket",
+      "amount": 1500,
+      "currency": "usd",
+      "recurrence_interval": null,
+      "rate_id": "rate-stuffy",
+      "rate_title": "Stuffy visit",
+      "parent_rate_id": null,
+      "parent_rate_title": null,
+      "contact_id": null,
+      "questions": [
+        { "question": "Stuffy's name *", "type": "text", "answer": "Biscuit" },
+        { "question": "What is your stuffy?", "type": "text", "answer": "A brown bear with a blue ribbon" },
+        { "question": "Snack choice", "type": "single_select", "answer": "Cookies and milk" },
+        { "question": "Note to Santa", "type": "text", "answer": "Biscuit has been very good." },
+        { "question": "Care notes", "type": "text", "answer": "" },
+        { "question": "May we share a photo of your stuffy?", "type": "single_select", "answer": "Yes" }
+      ],
+      "tribute": null
+    },
+    {
+      "id": "item-0002",
+      "object": "item",
+      "type": "ticket",
+      "amount": 1500,
+      "currency": "usd",
+      "recurrence_interval": null,
+      "rate_id": "rate-stuffy",
+      "rate_title": "Stuffy visit",
+      "parent_rate_id": null,
+      "parent_rate_title": null,
+      "contact_id": null,
+      "questions": [
+        { "question": "Stuffy's name *", "type": "text", "answer": "<b>Sir Hops-a-Lot</b>" },
+        { "question": "What is your stuffy?", "type": "text", "answer": "A rabbit" },
+        { "question": "Snack choice", "type": "single_select", "answer": "Fruit" },
+        { "question": "May we share a photo of your stuffy?", "type": "single_select", "answer": "No thank you" }
+      ],
+      "tribute": null
+    },
+    {
+      "id": "item-0003",
+      "object": "item",
+      "type": "ticket",
+      "amount": 1500,
+      "currency": "usd",
+      "recurrence_interval": null,
+      "rate_id": "rate-stuffy",
+      "rate_title": "Stuffy visit",
+      "parent_rate_id": null,
+      "parent_rate_title": null,
+      "contact_id": null,
+      "questions": [
+        { "question": "Stuffy's name *", "type": "text", "answer": "Mister Whiskers" },
+        { "question": "Snack choice", "type": "single_select", "answer": "Cookies and milk" },
+        { "question": "Anything else we should know?", "type": "text", "answer": "Afraid of the dark." }
+      ],
+      "tribute": null
+    }
+  ],
+  "occurrence_id": null,
+  "receipt_url": "https://example.invalid/receipt/a1",
+  "recurring": null,
+  "fund": null,
+  "metadata": {}
+}

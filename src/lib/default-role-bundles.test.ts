@@ -135,7 +135,11 @@ describe("default role bundles parsed from migrations", () => {
 
   it("B2: the treasurer bundle holds no admin.* key, club_files.manage or welcome_packet.manage", () => {
     const forbidden = [...bundle("treasurer")].filter(
-      (f) => f.startsWith("admin.") || f === FEATURES.CLUB_FILES_MANAGE || f === FEATURES.WELCOME_PACKET_MANAGE,
+      (f) =>
+        f.startsWith("admin.") ||
+        f === FEATURES.CLUB_FILES_MANAGE ||
+        f === FEATURES.WELCOME_PACKET_MANAGE ||
+        f === FEATURES.SANTAS_WORKSHOP_MANAGE,
     );
     expect(forbidden).toEqual([]);
   });
@@ -146,5 +150,16 @@ describe("default role bundles parsed from migrations", () => {
 
   it("negative control: the satisfaction check fails for a bundle missing the key", () => {
     expect(satisfies(new Set(["ledger.view"]), [...BUDGET_WRITE_FEATURES])).toBe(false);
+  });
+});
+
+describe("santas_workshop.manage default bindings (migration 0114)", () => {
+  it("is held by admin and board_member, and by no other seeded role", () => {
+    const holders = [
+      ...new Set(parsed.binds.filter((b) => b.feature === FEATURES.SANTAS_WORKSHOP_MANAGE).map((b) => b.role)),
+    ].sort();
+    expect(holders).toEqual(["admin", "board_member"]);
+    expect(bundle("treasurer").has(FEATURES.SANTAS_WORKSHOP_MANAGE)).toBe(false);
+    expect(bundle("member").has(FEATURES.SANTAS_WORKSHOP_MANAGE)).toBe(false);
   });
 });

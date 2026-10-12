@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, date, jsonb, unique, index, uniqueIndex, primaryKey, varchar, customType, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, bigint, date, jsonb, unique, index, uniqueIndex, primaryKey, varchar, customType, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // Users table for authentication
@@ -2498,3 +2498,304 @@ export const clubFileUploadChunks = pgTable(
 
 export type ClubFileUploadChunk = typeof clubFileUploadChunks.$inferSelect;
 export type NewClubFileUploadChunk = typeof clubFileUploadChunks.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Santa's Workshop sessions, Zeffy ingestion, worker screens, photos
+// (B-167, increment 2; DECISION-121 to 125; migration 0113).
+//
+// Prefix `sw_` keeps derived FK names under Postgres' 63-character limit
+// (session-schema.test.ts iterates every name). No pgEnum and no CHECK: status
+// columns are text + a TypeScript tuple in the carrier module, per the project
+// convention; integrity that matters is partial unique indexes. Dates are `date`
+// columns read as YYYY-MM-DD strings and compared as Eastern wall-clock strings
+// (DECISION-005), never through UTC. No bytes live in these tables: photo bytes
+// are in the PhotoStore (Drive), `sw_photos` holds opaque keys only.
+// ---------------------------------------------------------------------------
+
+// One event run (practice or real). `kind` is immutable (no update path).
+export const swSessions = pgTable(
+  "sw_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    slug: text("slug").notNull(), // [a-z0-9-]{3,40}, immutable
+    name: text("name").notNull(),
+    kind: text("kind").notNull(), // 'practice' | 'real', immutable
+    status: text("status").notNull().default("draft"), // 'draft' | 'active' | 'closed' | 'purged'
+    dropoffDate: date("dropoff_date").notNull(),
+    photoDate: date("photo_date").notNull(),
+    pickupDate: date("pickup_date").notNull(),
+    // [{ id, label, start: 'HH:MM', end: 'HH:MM' }], Eastern wall-clock
+    windows: jsonb("windows")
+      .$type<{ id: string; label: string; start: string; end: string }[]>()
+      .notNull()
+      .default([]),
+    crewClosesOn: date("crew_closes_on").notNull(), // inclusive Eastern date
+    zeffyCampaignId: text("zeffy_campaign_id"),
+    zeffyCampaignTitle: text("zeffy_campaign_title"),
+    zeffyTicketRateIds: text("zeffy_ticket_rate_ids").array().notNull().default([]),
+    questionMap: jsonb("question_map").$type<Record<string, string[]>>().notNull().default({}),
+    crewCodeEnc: text("crew_code_enc"), // AES-256-GCM v1.<nonce>.<ct>.<tag>
+    crewCodeVersion: integer("crew_code_version").notNull().default(1),
+    crewPaused: boolean("crew_paused").notNull().default(false),
+    collageToken: text("collage_token").notNull(), // 128-bit base64url
+    collagePublishedAt: timestamp("collage_published_at", { withTimezone: true }),
+    storageFolderKey: text("storage_folder_key"),
+    storageQuotaBytes: bigint("storage_quota_bytes", { mode: "number" }).notNull(),
+    frameArtKey: text("frame_art_key").notNull().default("plain"),
+    frameFilePrefix: text("frame_file_prefix").notNull().default(""),
+    framePartSize: integer("frame_part_size").notNull().default(100),
+    purgePersonalOn: date("purge_personal_on").notNull(),
+    purgePublicOn: date("purge_public_on").notNull(),
+    personalPurgedAt: timestamp("personal_purged_at", { withTimezone: true }),
+    publicPurgedAt: timestamp("public_purged_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ux_sw_sessions_slug").on(t.slug),
+    uniqueIndex("ux_sw_sessions_collage_token").on(t.collageToken),
+    // One Zeffy campaign, one session.
+    uniqueIndex("ux_sw_sessions_zeffy_campaign")
+      .on(t.zeffyCampaignId)
+      .where(sql`${t.zeffyCampaignId} IS NOT NULL`),
+  ],
+);
+
+// One Zeffy payment (or a manual add). Buyer contact data: crew never sees it.
+export const swOrders = pgTable(
+  "sw_orders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => swSessions.id, { onDelete: "cascade" }),
+    zeffyPaymentId: text("zeffy_payment_id"), // null for manual
+    source: text("source").notNull(), // 'webhook' | 'sync' | 'manual'
+    paymentStatus: text("payment_status"),
+    buyerFirstName: text("buyer_first_name"),
+    buyerLastName: text("buyer_last_name"),
+    buyerEmail: text("buyer_email"),
+    buyerPhone: text("buyer_phone"),
+    amountCents: integer("amount_cents"),
+    refundStatus: text("refund_status").notNull().default("none"), // 'none' | 'partial' | 'full'
+    refundedCents: integer("refunded_cents").notNull().default(0),
+    paymentDeleted: boolean("payment_deleted").notNull().default(false),
+    refundResolutionCents: integer("refund_resolution_cents"),
+    refundResolvedAt: timestamp("refund_resolved_at", { withTimezone: true }),
+    refundResolvedByUserId: uuid("refund_resolved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    windowId: text("window_id"),
+    windowLabelRaw: text("window_label_raw"),
+    buyerAnswers: jsonb("buyer_answers").$type<unknown[]>().notNull().default([]),
+    acknowledged: boolean("acknowledged"),
+    snapshotAt: timestamp("snapshot_at", { withTimezone: true }),
+    manualReason: text("manual_reason"),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ux_sw_orders_payment")
+      .on(t.zeffyPaymentId)
+      .where(sql`${t.zeffyPaymentId} IS NOT NULL`),
+    index("ix_sw_orders_session").on(t.sessionId),
+  ],
+);
+
+// One stuffy. State vocabulary lives in the carrier module:
+// 'registered' | 'tagged' | 'checked_in' | 'portrait_taken' | 'picked_up'.
+export const swStuffies = pgTable(
+  "sw_stuffies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => swSessions.id, { onDelete: "cascade" }),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => swOrders.id, { onDelete: "cascade" }),
+    zeffyItemKey: text("zeffy_item_key"),
+    name: text("name"),
+    description: text("description"),
+    childFirstName: text("child_first_name"),
+    snack: text("snack"),
+    noteToSanta: text("note_to_santa"),
+    careNote: text("care_note"),
+    photoConsent: boolean("photo_consent").notNull().default(false),
+    rawAnswers: jsonb("raw_answers").$type<unknown[]>().notNull().default([]),
+    attentionCodes: text("attention_codes").array().notNull().default([]),
+    needsAttention: boolean("needs_attention").notNull().default(false),
+    attentionDismissedAt: timestamp("attention_dismissed_at", { withTimezone: true }),
+    state: text("state").notNull().default("registered"),
+    taggedAt: timestamp("tagged_at", { withTimezone: true }),
+    checkedInAt: timestamp("checked_in_at", { withTimezone: true }),
+    portraitAt: timestamp("portrait_at", { withTimezone: true }),
+    pickedUpAt: timestamp("picked_up_at", { withTimezone: true }),
+    tagCode: text("tag_code"), // opaque sticker text, trimmed, <= 200 chars
+    familyToken: text("family_token").notNull(), // 128-bit base64url
+    frameNumber: integer("frame_number"),
+    frameExportedPhotoId: uuid("frame_exported_photo_id"),
+    withdrawnAt: timestamp("withdrawn_at", { withTimezone: true }),
+    withdrawnByUserId: uuid("withdrawn_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    withdrawnReason: text("withdrawn_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ux_sw_stuffies_item")
+      .on(t.sessionId, t.zeffyItemKey)
+      .where(sql`${t.zeffyItemKey} IS NOT NULL`),
+    uniqueIndex("ux_sw_stuffies_tag")
+      .on(t.sessionId, t.tagCode)
+      .where(sql`${t.tagCode} IS NOT NULL`),
+    uniqueIndex("ux_sw_stuffies_family_token").on(t.familyToken),
+    uniqueIndex("ux_sw_stuffies_frame")
+      .on(t.sessionId, t.frameNumber)
+      .where(sql`${t.frameNumber} IS NOT NULL`),
+    index("ix_sw_stuffies_session_state").on(t.sessionId, t.state),
+    index("ix_sw_stuffies_order").on(t.orderId),
+  ],
+);
+
+// Append-only history of every stuffy write (precedent: proposalDecisions).
+export const swStuffyEvents = pgTable(
+  "sw_stuffy_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => swSessions.id, { onDelete: "cascade" }),
+    stuffyId: uuid("stuffy_id")
+      .notNull()
+      .references(() => swStuffies.id, { onDelete: "cascade" }),
+    // 'transition' | 'revert' | 'tag_bound' | 'tag_replaced' | 'tag_moved_in' | 'tag_moved_out'
+    // | 'pickup_check' | 'refund_continue' | 'withdraw' | 'manual_add'
+    kind: text("kind").notNull(),
+    fromState: text("from_state"),
+    toState: text("to_state"),
+    tagCode: text("tag_code"),
+    prevTagCode: text("prev_tag_code"),
+    actorKind: text("actor_kind").notNull(), // 'crew' | 'admin'
+    deviceId: text("device_id"), // 22-char random, or 'admin'
+    codeVersion: integer("code_version"),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    idempotencyKey: uuid("idempotency_key"),
+    clientTakenAt: timestamp("client_taken_at", { withTimezone: true }),
+    note: text("note"), // capped 500; nulled at the personal purge
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ix_sw_stuffy_events_stuffy").on(t.stuffyId, t.createdAt),
+    uniqueIndex("ux_sw_stuffy_events_idem")
+      .on(t.sessionId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
+    index("ix_sw_stuffy_events_prev_tag")
+      .on(t.sessionId, t.prevTagCode)
+      .where(sql`${t.prevTagCode} IS NOT NULL`),
+    index("ix_sw_stuffy_events_device").on(t.sessionId, t.createdAt),
+  ],
+);
+
+// Photo metadata only. NO bytes, no bytea: bytes live in the PhotoStore (Drive),
+// reachable only through photo-access.ts. `id` is the client-generated idempotency key.
+export const swPhotos = pgTable(
+  "sw_photos",
+  {
+    id: uuid("id").primaryKey(), // no default: the client's photo id
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => swSessions.id, { onDelete: "cascade" }),
+    stuffyId: uuid("stuffy_id").references(() => swStuffies.id, { onDelete: "cascade" }), // null for group photos
+    kind: text("kind").notNull(), // 'check_in' | 'portrait' | 'group'
+    storageKind: text("storage_kind").notNull().default("drive"),
+    storageKey: text("storage_key"),
+    thumbStorageKey: text("thumb_storage_key"),
+    contentType: text("content_type"),
+    byteSize: integer("byte_size"),
+    thumbByteSize: integer("thumb_byte_size"),
+    width: integer("width"),
+    height: integer("height"),
+    sha256: text("sha256"),
+    takenAt: timestamp("taken_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deviceId: text("device_id"),
+    recordedByUserId: uuid("recorded_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    supersededByPhotoId: uuid("superseded_by_photo_id"),
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    hiddenByUserId: uuid("hidden_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    publishedAt: timestamp("published_at", { withTimezone: true }), // group photos: set by the publish batch
+    purgedAt: timestamp("purged_at", { withTimezone: true }),
+  },
+  (t) => [
+    // One current portrait and one current check-in photo per stuffy, enforced by the database.
+    uniqueIndex("ux_sw_photos_current")
+      .on(t.stuffyId, t.kind)
+      .where(sql`${t.kind} IN ('check_in', 'portrait') AND ${t.supersededAt} IS NULL`),
+    index("ix_sw_photos_session_kind").on(t.sessionId, t.kind),
+    index("ix_sw_photos_device").on(t.sessionId, t.deviceId, t.createdAt),
+    index("ix_sw_photos_stuffy").on(t.stuffyId),
+  ],
+);
+
+// Inbound Zeffy webhook log (generic, organization-wide; deliberately no sw_ prefix).
+// Unmapped campaigns store ids and times only (payload null).
+export const zeffyEvents = pgTable(
+  "zeffy_events",
+  {
+    id: text("id").primaryKey(), // the Zeffy event id
+    type: text("type"),
+    version: text("version"),
+    paymentId: text("payment_id"),
+    campaignId: text("campaign_id"),
+    sessionId: uuid("session_id").references(() => swSessions.id, { onDelete: "set null" }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    // 'received' | 'processed' | 'ignored_unmapped' | 'ignored_type' | 'invalid' | 'unsupported_version' | 'failed'
+    outcome: text("outcome").notNull().default("received"),
+    errorCode: text("error_code"), // a code, never payload text
+    attempts: integer("attempts").notNull().default(1),
+    payload: jsonb("payload").$type<Record<string, unknown>>(), // whitelisted PaymentSnapshot, mapped campaigns only
+  },
+  (t) => [
+    index("ix_zeffy_events_campaign_received").on(t.campaignId, t.receivedAt.desc()),
+    index("ix_zeffy_events_payment").on(t.paymentId),
+    index("ix_zeffy_events_received").on(t.receivedAt),
+  ],
+);
+
+// Admin-action audit for a session: counts and ids only, never names or contact data.
+export const swSessionLog = pgTable(
+  "sw_session_log",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => swSessions.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    kind: text("kind").notNull(),
+    detail: jsonb("detail").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("ix_sw_session_log_session").on(t.sessionId, t.createdAt.desc())],
+);
+
+// DB-backed throttle for crew code entry. Failures only; never a raw IP in scope_key.
+export const swCrewAttempts = pgTable(
+  "sw_crew_attempts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    scopeKey: text("scope_key").notNull(), // 'ip:<16 hex of HMAC>' or 'sess:<uuid>'
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("ix_sw_crew_attempts_scope").on(t.scopeKey, t.createdAt)],
+);
+
+export type SwSession = typeof swSessions.$inferSelect;
+export type NewSwSession = typeof swSessions.$inferInsert;
+export type SwOrder = typeof swOrders.$inferSelect;
+export type SwStuffy = typeof swStuffies.$inferSelect;
+export type SwStuffyEvent = typeof swStuffyEvents.$inferSelect;
+export type SwPhoto = typeof swPhotos.$inferSelect;
+export type ZeffyEvent = typeof zeffyEvents.$inferSelect;

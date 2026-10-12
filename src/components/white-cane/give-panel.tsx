@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { toEmbedUrl } from "@/components/campaigns/zeffy-url";
+import { toEmbedUrl } from "@/lib/zeffy/embed-url";
 import { ZEFFY_FORM_URL, type CampaignState } from "./campaign-facts";
 
 const FOCUS = "focus:outline-none focus:ring-2 rounded";

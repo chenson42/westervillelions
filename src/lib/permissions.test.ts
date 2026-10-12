@@ -437,3 +437,19 @@ describe("getAdminProtectionRules", () => {
     expect(membersRule.requiredFeatures.some((f) => notetakerFeatures.includes(f))).toBe(false);
   });
 });
+
+describe("Santa's Workshop nav entry (DECISION-082)", () => {
+  const items = ADMIN_NAVIGATION.flatMap((g) => g.items).filter((i) => i.href === "/admin/santas-workshop");
+
+  it("exists exactly once and carries the single key, not a list", () => {
+    expect(items).toHaveLength(1);
+    expect(items[0].requiredFeature).toBe(FEATURES.SANTAS_WORKSHOP_MANAGE);
+  });
+
+  it("derives a proxy admission rule for its URL space from that one key", () => {
+    const rules = getAdminProtectionRules();
+    const rule = rules.find((r) => r.segment === "santas-workshop");
+    expect(rule).toBeDefined();
+    expect(rule?.requiredFeatures).toEqual([FEATURES.SANTAS_WORKSHOP_MANAGE]);
+  });
+});

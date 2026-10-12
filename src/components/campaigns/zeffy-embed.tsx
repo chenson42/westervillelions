@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { toEmbedUrl } from "./zeffy-url";
+import { toEmbedUrl } from "@/lib/zeffy/embed-url";
 
 export function ZeffyEmbed({
   zeffyLink,
