@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { toEmbedUrl } from "@/components/campaigns/zeffy-url";
+import { toEmbedUrl } from "@/lib/zeffy/embed-url";
 import type { WorkshopFacts } from "@/lib/santas-workshop/facts";
 import { CONTACT_LINK_LABEL, FORM_CLOSED_LEAD, NEW_TAB_LABEL, NOSCRIPT_TEXT, NOT_READY_HEADLINE, NOT_READY_LEAD, SIGNUP_FRAME_TITLE, ZEFFY_TIP_NOTE, type WorkshopCopy } from "./copy";
 

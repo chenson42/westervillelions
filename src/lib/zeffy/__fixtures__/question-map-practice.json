@@ -1,0 +1,11 @@
+{
+  "stuffy_name": ["stuffy's name"],
+  "stuffy_description": ["what is your stuffy"],
+  "snack": ["snack choice"],
+  "note_to_santa": ["note to santa"],
+  "care_note": ["care notes"],
+  "photo_consent": ["may we share a photo of your stuffy"],
+  "buyer_phone": ["parent mobile number"],
+  "dropoff_window": ["which drop-off window"],
+  "acknowledgment": ["i understand the stuffies stay overnight"]
+}

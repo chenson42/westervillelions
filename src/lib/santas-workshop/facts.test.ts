@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toEmbedUrl } from "@/components/campaigns/zeffy-url";
+import { toEmbedUrl } from "@/lib/zeffy/embed-url";
 import { WORKSHOP_2026, validateWorkshopFacts, type WorkshopFacts } from "./facts";
 import { formatDateRange, formatLongDate, formatShortDate, formatTimeRange, weekdayIndex } from "./format";
 

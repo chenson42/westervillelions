@@ -15,10 +15,13 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const isCode = (f: string) => /\.(ts|tsx)$/.test(f) && !/\.test\.(ts|tsx)$/.test(f);
+// Increment 2 (B-167) adds server code (db, routes' helpers) to src/lib/santas-workshop, so
+// only the modules the public page imports are held to the public-page rules.
+const PUBLIC_LIB = ["clock", "facts", "format", "public-facts", "state"].map((n) => `src/lib/santas-workshop/${n}.ts`);
 const PUBLIC_FILES = [
   ...walk("src/app/santas-workshop"),
   ...walk("src/components/santas-workshop"),
-  ...walk("src/lib/santas-workshop"),
+  ...PUBLIC_LIB,
 ].filter(isCode);
 
 // `banned.ts` is a test table of patterns, not page code.
