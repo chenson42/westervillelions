@@ -87,7 +87,7 @@ src/
 │   ├── forgot-password/, reset-password/  # Password reset flow
 │   ├── access-pending/    # Landing for authenticated users with no usable role
 │   ├── (dashboard)/       # Admin portal (authenticated)
-│   │   └── admin/         # Admin functions (users, roles, permissions, members, events, groups, campaigns, announcements, programs, membership, dues, ledger, club-files, documents, minutes, subscriptions, suggestions, testimonials, email-queue, sync-log, security, release-notes, contact, welcome-packets, proposals, social-requests)
+│   │   └── admin/         # Admin functions (users, roles, permissions, members, events, groups, campaigns, announcements, programs, membership, dues, ledger, club-files, documents, minutes, subscriptions, suggestions, testimonials, email-queue, sync-log, security, release-notes, contact, welcome-packets, proposals, social-requests, santas-workshop)
 │   ├── members/           # Member portal (authenticated — auth() per page)
 │   │   ├── events/        # Internal events & per-occurrence RSVP
 │   │   ├── events/past/   # Past events list
@@ -106,11 +106,13 @@ src/
 │   │   ├── financial-reports/  # Monthly Statement of Financial Condition (read-only, print-friendly; any linked member)
 │   │   └── finances/      # "Club Finances" hub — fans out to impact/ and financial-reports/ (DECISION-074)
 │   ├── api/               # API routes
+│   │   ├── zeffy/webhook/ # signed Zeffy webhook (no auth(); the signature is the auth)
+│   │   └── admin/santas-workshop/  # sessions, Connect, question map, Sync, Reprocess, registrants
 │   ├── robots.ts          # robots.txt
 │   └── sitemap.ts         # sitemap.xml
 ├── components/            # React components
 │   ├── ui/                # shadcn/ui primitives + ConfirmDialog
-│   ├── admin/             # Admin-only compositions
+│   ├── admin/             # Admin-only compositions (incl. santas-workshop/)
 │   ├── public/            # Public marketing surfaces
 │   ├── members/, events/, campaigns/, home/, join/, layout/  # Surface-specific
 │   └── (top-level forms)  # contact-form, newsletter-form, membership-application-form, suggestion-box-*
@@ -122,6 +124,8 @@ src/
 │   ├── permissions-server.ts  # Server-side permission helpers
 │   ├── email.ts           # sendEmail() + email_queue helpers
 │   ├── events.ts          # Event helpers
+│   ├── zeffy/             # Generic Zeffy module: signature check, client, snapshot, events log
+│   ├── santas-workshop/   # Facts + state for the public page, and server code (consumer, mapper, apply, sync, session queries)
 │   ├── members.ts         # Member helpers
 │   ├── google-groups.ts   # Google Group sync
 │   └── utils.ts           # General utilities
@@ -159,7 +163,8 @@ docs/
 - **Contact:** Contact form, meeting info, social media links
 - **Unlisted prototypes (DECISION-118):** a clickable prototype for a stakeholder to confirm look and workflow ships at a `/<name>/preview` route, with the final URL left a 404 so an early QR code fails loudly. `metadata.robots` noindex in the preview layout, never an entry in `robots.ts` (robots.txt is public and would advertise the URL), `sitemap.ts` or navigation; a banner on every screen; sample data in one module (`sample-data.ts`) and real proposals such as dates, price and cap in `event-facts.ts`; source-scan tests pin it. The first was Santa's Workshop (`/santas-workshop/preview`, v1.91), retired by DECISION-120 when the real page shipped in v1.93 (the preview path now 307s to it); the pattern stays valid for future prototypes.
 - **White Cane campaign page (v1.92, DECISION-119):** `/white-cane` is reused every year. Everything that changes lives in `src/components/white-cane/campaign-facts.ts` (Zeffy share link, the annual month-day window `opens 09-15 / start 10-15 / end 10-31`, goal, funded projects, the `RECEIPT_VARIANT` selector); the page makes no database query and is statically generated (`revalidate = 300`). State is `closed` outside the window (Eastern month-day compared as a string, never a UTC `Date`), `pre-form` with no Zeffy URL, else `live`; it closes Nov 1 and reopens Sep 15 with no deploy. The form is embedded inline as a plain iframe (no Zeffy script, no CSP change; `toEmbedUrl()` in `campaigns/zeffy-url.ts` is the one share-link-to-embed converter, shared with the `/donate` modal). `RECEIPT_VARIANT` is the only switch that may print "tax-deductible" or the EIN (`foundation`, matching `/donate`). The poster QR encodes `/whitecane`, a `permanent: false` (307) redirect carrying year-free UTM tags, so the printed code never changes and can be repointed (browsers cache a 308 indefinitely). The homepage hero's White Cane button is on only while the page is `live` AND an active homepage announcement links to `/white-cane`, so admins switch it at `/admin/announcements`. The poster source and render script are `docs/marketing/white-cane-poster/` and `scripts/render-white-cane-poster.mjs`. B-170 covers the post-campaign "where it went" line.
-- **Santa's Workshop sign-up page (v1.93, DECISION-120):** `/santas-workshop` is a static, database-free Server Component page. Everything that changes lives in the typed `WORKSHOP_2026` constant in `src/lib/santas-workshop/facts.ts` behind an async loader (dates, windows, price, `registrationOpens`, `lastSignupDay`, `zeffyShareUrl`, `collagePath`); state is `before | open | closed | after` from the Eastern date string (`src/lib/eastern-date.ts`, shared with White Cane), so it changes with no deploy. The Zeffy ticket form is an inline iframe shown only in `open` with a non-empty URL; **Zeffy's own sales window is the control**, the page state is cosmetic. Copy is ticket, never donation or tax-deductible, never scarcity words: `banned.ts` holds the patterns and unit tests scan every string and the metadata. `/santasworkshop` and `/santas-workshop/preview/*` are 307 redirects. `SANTAS_WORKSHOP_NOW` (development only) clocks the page to any state. Sessions, workers, photos and the collage are B-167 (DECISION-121 to 125).
+- **Santa's Workshop sign-up page (v1.93, DECISION-120):** `/santas-workshop` is a static, database-free Server Component page. Everything that changes lives in the typed `WORKSHOP_2026` constant in `src/lib/santas-workshop/facts.ts` behind an async loader (dates, windows, price, `registrationOpens`, `lastSignupDay`, `zeffyShareUrl`, `collagePath`); state is `before | open | closed | after` from the Eastern date string (`src/lib/eastern-date.ts`, shared with White Cane), so it changes with no deploy. The Zeffy ticket form is an inline iframe shown only in `open` with a non-empty URL; **Zeffy's own sales window is the control**, the page state is cosmetic. Copy is ticket, never donation or tax-deductible, never scarcity words: `banned.ts` holds the patterns and unit tests scan every string and the metadata. `/santasworkshop` and `/santas-workshop/preview/*` are 307 redirects. `SANTAS_WORKSHOP_NOW` (development only) clocks the page to any state. Slice 1 of B-167 (sessions admin and Zeffy ingestion) has shipped; workers, photos, the collage, frames and the family page follow (DECISION-121 to 125).
+- **Santa's Workshop sessions and Zeffy ingestion (v1.94, B-167 Slice 1, DECISION-123):** `/admin/santas-workshop` under `santas_workshop.manage` (bound to `admin` and `board_member`; never `treasurer`, `member` or an `admin.*` key; the holders read about 100 families' names, emails and mobiles). A session (`practice` or `real`, immutable) carries its own dates, windows, the connected Zeffy campaign, the stuffy ticket rate ids and a per-session question map (normalized question text to field, several strings per field, plus `ignored`). Connect, then a purchase or Sync, then assign questions, then Remap. Needs attention is a flag with the raw text, never a drop; refund state is derived from the order, never stored per stuffy; Sync and Remap never touch worker-owned columns. A campaign maps to one session and cannot be disconnected in Slice 1, so the real campaign connects to a **real** session only; rehearse on a separate practice form. Nothing prompts the Friday-morning Sync before doors open; it is on the go-live checklist and the chair's calendar.
 
 ### Member Portal
 - **Login:** Google OAuth (via Google for Nonprofits) + password authentication
@@ -205,7 +210,8 @@ Two rules follow from this:
 - Donation platform for the `/donate` page — one card per row in the `campaigns` table
 - Each card opens a Zeffy donation form in a modal via `ZeffyEmbed` (`src/components/campaigns/zeffy-embed.tsx`), which iframes `https://www.zeffy.com/embed/…`
 - The CSP `frame-src` in `next.config.ts` must whitelist `https://www.zeffy.com`, or the browser blocks the iframe with "This content is blocked"
-- Campaign cards show the campaign's stored `image` when one is set and no picture otherwise (no brand fallback since v1.92; every card carries its title). Cards stretch to equal height per grid row. Zeffy's Cloudflare 403s server-side fetches, so do not scrape Zeffy at request time.
+- Campaign cards show the campaign's stored `image` when one is set and no picture otherwise (no brand fallback since v1.92; every card carries its title). Cards stretch to equal height per grid row. Zeffy's Cloudflare 403s server-side fetches of `www.zeffy.com` pages; the supported server path is the API below.
+- **API and webhooks (v1.94, DECISION-123):** `src/lib/zeffy/` is a workshop-agnostic module (signature check, a hand-typed payload subset and the whitelist `toSnapshot()`, a rate-limited client whose `listPayments` requires a campaign id, the `zeffy_events` log, `toEmbedUrl()`). `POST /api/zeffy/webhook` has no `auth()`: the `Zeffy-Signature` HMAC over the raw bytes is the authentication. It is **organization-wide** (White Cane gifts arrive too), so a payment whose campaign no session maps is logged by ids and time only and **nothing is stored**. `payment.updated`/`deleted` carry only an id, so the consumer fetches the payment and applies the fetched snapshot; a snapshot older than the stored one is refused. Dedupe is on terminal outcomes only, so a failed event re-runs on Zeffy's retry. Registrants are written only by `applyPaymentSnapshot()` (webhook, Sync, Reprocess). One Zeffy organisation serves both the Club and the Foundation and pays out to the Club's bank; every online dollar lands in Public Funds first and the Foundation's share is swept (B-172). Docs: https://api.zeffy.com/api/docs.
 
 ### Resend
 - Outbound transactional email via `sendEmail()` in `src/lib/email.ts`
@@ -238,6 +244,10 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 - `EMAIL_DEV_ALLOWLIST` - Comma-separated addresses a **non-production** process may email. Unset or empty means nothing sends. Club distribution lists are refused even if listed. See *Outbound Email Is Deny-By-Default Outside Production*.
 - `TURNSTILE_SECRET_KEY` / `NEXT_PUBLIC_TURNSTILE_SITE_KEY` - Cloudflare Turnstile (optional)
 - `SANTAS_WORKSHOP_NOW` - **Development only.** A full ISO instant that clocks the Santa's Workshop page to any of its four states for QA and the chair (e.g. `2026-11-10T12:00:00Z` shows it open). Read only when `NODE_ENV !== "production"`; never from the URL. Unset (the default) uses the real clock.
+- `ZEFFY_WEBHOOK_SECRET` - `whsec_...` from Zeffy Settings → Integrations → Webhook. Verifies `POST /api/zeffy/webhook`; unset makes the endpoint fail closed (500 `not_configured`). Production only; dev uses a made-up `whsec_dev...`.
+- `ZEFFY_API_KEY` - bearer key generated by the Zeffy organization owner. Needed for `payment.updated`/`payment.deleted` handling (those events carry only an id), Sync, Reprocess and the form picker. **Set it before registering the webhook URL.**
+- `ZEFFY_DEV_CAMPAIGN_ALLOWLIST` - comma-separated Zeffy campaign ids a **non-production** process may read; unset means no Zeffy call. A dev server holding the production key can therefore never pull real parents' data. Never list a donation form.
+- `ZEFFY_API_BASE_URL` - test-only override of the Zeffy API host; honoured only when `NODE_ENV` is not `production`.
 - `GOOGLE_GROUPS_CLIENT_ID` - OAuth client ID used by `src/lib/google-groups.ts` for Group sync
 - `GOOGLE_GROUPS_CLIENT_SECRET` - OAuth client secret for Group sync
 - `GOOGLE_GROUPS_REFRESH_TOKEN` - Refresh token used by Group sync (domain-wide delegation)
@@ -261,7 +271,7 @@ SELECT 'Admin', 'Administrator role'
 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Admin');
 ```
 
-The build pipeline runs `pnpm db:migrate` (SQL migrations) then `drizzle-kit push --force` (sync `src/lib/db/schema.ts` to the live DB).
+The build pipeline runs `pnpm db:migrate` (SQL migrations) then `drizzle-kit push --force` (sync `src/lib/db/schema.ts` to the live DB). Locally `drizzle-kit push` prompts on the `ledger_entities_slug_unique` and `dues_settings_fiscal_year_unique` name drift and re-proposes ten foreign keys whose names exceed 63 characters (B-165); answer No to every truncate prompt.
 
 ## Key Patterns
 
@@ -421,7 +431,8 @@ Public page subtitles use a gold eyebrow label with `uppercase tracking-widest t
 
 - **Blue/gold theme:** Primary color is `lions-blue`, accent is `lions-gold` — do not use red (`lions-red` is undefined and renders transparent)
 - **Google OAuth:** Requires Google for Nonprofits account setup
-- **Zeffy:** Embedded donation forms are iframes — CSP `frame-src` in `next.config.ts` must allow `https://www.zeffy.com`, and Zeffy 403s server-side fetches (no request-time scraping)
+- **Zeffy:** embedded forms are iframes (CSP `frame-src` must allow `https://www.zeffy.com`); `www.zeffy.com` 403s server-side fetches, `api.zeffy.com` with `ZEFFY_API_KEY` is the supported path; the webhook is organization-wide and stores nothing for an unmapped campaign
+- **`neonctl connection-string --branch-id <id>` is silently ignored and returns the PRODUCTION endpoint.** Pass the branch id positionally (`neonctl connection-string <branch-id> --project-id … --pooled`) and compare the host before any write (caught by the database-admin on 2026-10-12 before anything ran)
 - **CSP `script-src` needs `'wasm-unsafe-eval'`:** the in-browser HEIC receipt-upload fallback (DECISION-039) instantiates WebAssembly, which Chrome/Firefox refuse without this token. v1.75.0 dropped it as hardening and silently broke iPhone receipt uploads for five days (fixed in v1.76.1). See the inline comment above `script-src` in `next.config.ts` before touching that line again — note the comment there still cites the superseded DECISION-038.
 - **Mobile-first:** Ensure all pages are mobile-responsive
 - **Migrations re-run on every deploy:** Every SQL statement must be idempotent

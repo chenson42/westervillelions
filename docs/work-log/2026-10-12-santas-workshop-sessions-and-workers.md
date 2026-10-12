@@ -1424,3 +1424,9 @@ Notes: [...]
 ## Red Flags (if NEEDS REWORK)
 
 - [Specific. What has to change before this ships.]
+
+## Orchestrator note (2026-10-12): dev-server collision
+
+The api-developer's `pkill -f "next dev"` (meant for its own `:3101` server in the worktree) also killed the main tree's `:3000` server. No pipeline had a live check running on it at the time. The orchestrator restarted a plain `pnpm dev` on `:3000` from the main tree. Collision count for this pipeline: 1. Rule reminder for later agents: stop your own server by its PID (`kill $(lsof -tiTCP:3101 -sTCP:LISTEN)`), never by pattern.
+
+**Zeffy facts (orchestrator, 2026-10-12):** the user generated the organisation API key (stored in `.env.local` of the main tree and the pipeline worktree as `ZEFFY_API_KEY`; never in the repo). A read-only `GET /api/v1/campaigns` succeeded (HTTP 200). Campaign ids (not personal data): **A Visit to Santa's Workshop** = `1d4e4e1e-aa31-43ec-aa46-ca859c843b7e` (ticketing, active) — this is the id for Connect; White Cane 2026 = `b175c706-ad80-4eac-96d1-6beb8ddc15bb` (donation form); the general donate form = `39232196-d844-430f-9b5f-394dd940e07b`; a meeting raffle and a memberships form also exist. The S2a spike can now run against the real API once a test purchase exists.

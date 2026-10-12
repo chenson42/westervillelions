@@ -161,9 +161,12 @@ describe("WorkshopPage", () => {
     expect(text).not.toMatch(/\bfull\b|sold out|capacity/i);
   });
 
-  it("after has no img, iframe, form or register link; a collage link only when collagePath is set", () => {
+  it("after has no iframe, form or register link (art images only); a collage link only when collagePath is set", () => {
     const html = render("after", withUrl);
-    expect(html).not.toMatch(/<(img|iframe|form)\b/);
+    expect(html).not.toMatch(/<(iframe|form)\b/);
+    for (const m of html.matchAll(/<img\b[^>]*\bsrc="([^"]*)"/g)) {
+      expect(decodeURIComponent(m[1]), "after-state images are art slots only").toContain("/images/santas-workshop/");
+    }
     expect(html).not.toContain("#signup");
     expect(html).not.toContain("/santas-workshop/c/");
     const withCollage = render("after", { ...withUrl, collagePath: "/santas-workshop/c/abc" });
@@ -179,11 +182,13 @@ describe("WorkshopPage", () => {
     expect(render("closed", withUrl, "2026-12-17T17:00:00Z")).not.toContain("Today");
   });
 
-  it('renders with no art supplied: no "Art slot" or "Placeholder" text and no image', () => {
+  it('renders with art supplied: no "Art slot" or "Placeholder" text, and every image is an art-slot file', () => {
     for (const s of WORKSHOP_STATES) {
       const html = render(s, withUrl);
       expect(html, s).not.toMatch(/art slot|placeholder/i);
-      expect(html, s).not.toContain("<img");
+      for (const m of html.matchAll(/<img\b[^>]*\bsrc="([^"]*)"/g)) {
+        expect(decodeURIComponent(m[1]), s).toContain("/images/santas-workshop/");
+      }
     }
   });
 

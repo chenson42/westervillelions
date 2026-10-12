@@ -52,7 +52,7 @@ export const WORKSHOP_2026: WorkshopFacts = {
   ],
   pickup: { start: "13:00", end: "15:00" },
   place: { name: "IHOP", town: "Westerville" },
-  zeffyShareUrl: "",
+  zeffyShareUrl: "https://www.zeffy.com/en-US/ticketing/a-visit-to-santas-workshop",
   beneficiaries: {
     names: ["Central Ohio Diabetes Association", "Ohio Lions Pediatric Cancer Foundation"],
     sentence:

@@ -36,7 +36,14 @@ const DIR = "/images/santas-workshop";
  * is missing.
  */
 export const SUPPLIED: ReadonlySet<ArtSlotId> = new Set<ArtSlotId>([
-  // "hero-scene",
+  "hero-scene",
+  "train",
+  "track-tile",
+  "step-dropoff",
+  "step-photos",
+  "step-pickup",
+  "story-art",
+  "og",
 ]);
 
 function icon(id: ArtSlotId, label: string): ArtSlotSpec {
@@ -45,8 +52,8 @@ function icon(id: ArtSlotId, label: string): ArtSlotSpec {
     label,
     aspect: "1:1",
     pixels: "256x256",
-    notes: "Simple SVG icon, works on a light card. Transparent background.",
-    path: `${DIR}/${id}.svg`,
+    notes: "Simple icon, works on a light card. Transparent PNG (SVG also accepted).",
+    path: `${DIR}/${id}.png`,
     src: null,
     alt: "",
     decorative: true,
@@ -72,7 +79,7 @@ const RAW_SLOTS: readonly ArtSlotSpec[] = [
     aspect: "3:1",
     pixels: "900x300",
     notes: "Side view, facing right, transparent background (SVG preferred). Replaces the drawn train.",
-    path: `${DIR}/train.svg`,
+    path: `${DIR}/train.png`,
     src: null,
     alt: "A small steam train with three cars",
     decorative: true,
@@ -83,7 +90,7 @@ const RAW_SLOTS: readonly ArtSlotSpec[] = [
     aspect: "10:1",
     pixels: "1200x120",
     notes: "A seamless horizontal tile of rails and ties. Optional; the page draws a CSS track.",
-    path: `${DIR}/track-tile.svg`,
+    path: `${DIR}/track-tile.png`,
     src: null,
     alt: "",
     decorative: true,
@@ -97,7 +104,7 @@ const RAW_SLOTS: readonly ArtSlotSpec[] = [
     aspect: "1:1",
     pixels: "512x512",
     notes: "A friendly character or emblem beside the story. Transparent background.",
-    path: `${DIR}/story-art.svg`,
+    path: `${DIR}/story-art.png`,
     src: null,
     alt: "",
     decorative: true,

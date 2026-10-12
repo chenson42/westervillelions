@@ -68,3 +68,6 @@ scripts/render-welcome-packet.sh
 .env*.bak
 .env.local.*
 *.env.bak
+
+# Agent git worktrees (never commit them)
+.claude/worktrees/
