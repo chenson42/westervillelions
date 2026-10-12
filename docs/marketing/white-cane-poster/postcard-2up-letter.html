@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>White Cane postcards, two per letter sheet</title>
+<style>
+  @page { size: 8.5in 11in; margin: 0; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { width: 8.5in; height: 11in; position: relative; overflow: hidden; }
+  iframe { position: absolute; left: 1.25in; width: 6in; height: 4in; border: 0; display: block; }
+  .a { top: 1.25in; } .b { top: 5.75in; }
+  /* crop marks just outside each card's corners */
+  .mark { position: absolute; background: #999; }
+  .h { width: 0.3in; height: 1px; } .v { width: 1px; height: 0.3in; }
+</style></head>
+<body>
+  <iframe class="a" src="postcard-4x6.html"></iframe>
+  <iframe class="b" src="postcard-4x6.html"></iframe>
+  <!-- card A: top 1.25 bottom 5.25; card B: top 5.75 bottom 9.75; left 1.25 right 7.25 -->
+  <div class="mark h" style="left:0.85in;top:1.25in"></div><div class="mark h" style="left:7.35in;top:1.25in"></div>
+  <div class="mark h" style="left:0.85in;top:5.25in"></div><div class="mark h" style="left:7.35in;top:5.25in"></div>
+  <div class="mark h" style="left:0.85in;top:5.75in"></div><div class="mark h" style="left:7.35in;top:5.75in"></div>
+  <div class="mark h" style="left:0.85in;top:9.75in"></div><div class="mark h" style="left:7.35in;top:9.75in"></div>
+  <div class="mark v" style="left:1.25in;top:0.85in"></div><div class="mark v" style="left:7.25in;top:0.85in"></div>
+  <div class="mark v" style="left:1.25in;top:9.85in"></div><div class="mark v" style="left:7.25in;top:9.85in"></div>
+  <div class="mark v" style="left:1.25in;top:5.35in"></div><div class="mark v" style="left:7.25in;top:5.35in"></div>
+</body></html>

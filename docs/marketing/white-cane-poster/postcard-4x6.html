@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>White Cane postcard, 6 x 4</title>
+<style>
+  @page { size: 6in 4in; margin: 0; }
+  html, body { margin: 0; padding: 0; }
+  body { width: 6in; height: 4in; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: #1a1a1a; background: #f6efe2; overflow: hidden; display: flex; flex-direction: column; }
+  .art { width: 6in; height: 1.1in; flex: none; background: url("art.png") center 62% / cover no-repeat; }
+  .band { flex: none; background: #003F87; color: #fff; padding: 0.09in 0.3in 0.1in; }
+  .eyebrow { color: #F9B222; font-size: 7pt; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; margin: 0 0 0.03in; }
+  h1 { font-size: 15.5pt; line-height: 1.08; margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+  .body { flex: 1; display: flex; gap: 0.22in; padding: 0.12in 0.3in 0; align-items: flex-start; }
+  .copy { flex: 1; }
+  .copy p { font-size: 7.8pt; line-height: 1.3; margin: 0 0 0.06in; }
+  .copy .when { font-weight: 800; color: #003F87; font-size: 8.8pt; }
+  .copy .fine { font-size: 5.6pt; color: #4a4a4a; line-height: 1.3; margin-top: 0.05in; }
+  .qr { width: 1.35in; flex: none; text-align: center; }
+  .qr img { width: 1.35in; height: 1.35in; display: block; background: #fff; border: 0.05in solid #fff; border-radius: 0.06in; box-shadow: 0 2px 8px rgba(0,0,0,.12); box-sizing: border-box; }
+  .qr .scan { font-weight: 800; font-size: 7.5pt; margin: 0.05in 0 0.01in; color: #003F87; }
+  .qr .url { font-family: Menlo, Consolas, monospace; font-size: 5.3pt; margin: 0; }
+  .foot { flex: none; margin: 0 0.3in 0.12in; display: flex; align-items: center; justify-content: space-between; border-top: 1.5px solid #F9B222; padding-top: 0.06in; }
+  .foot img { height: 0.28in; }
+  .foot .tag { font-size: 6.2pt; color: #003F87; font-weight: 700; text-align: right; line-height: 1.3; }
+</style></head>
+<body>
+  <div class="art" role="img" aria-label="Illustration of a white cane with a red band on a brick sidewalk in autumn"></div>
+  <div class="band">
+    <p class="eyebrow">White Cane Safety Day &middot; October 15</p>
+    <h1>In Ohio, drivers must yield to a white cane.</h1>
+  </div>
+  <div class="body">
+    <div class="copy">
+      <p>Lions painted the first cane white in 1930 so a blind pedestrian could be seen. Nearly a century later, the Westerville Lions Club still raises money for sight.</p>
+      <p class="when">Give online. Scan, choose an amount, done.</p>
+      <p>Every gift supports the Lions&rsquo; sight projects, right here in central Ohio.</p>
+      <p class="fine">Gifts are received by the Westerville Lions Club Foundation, a 501(c)(3) nonprofit, and are tax-deductible as allowed by law. EIN 32-0467239.</p>
+    </div>
+    <div class="qr">
+      <img src="qr.png" alt="QR code for westervillelions.org/whitecane">
+      <p class="scan">Scan to give</p>
+      <p class="url">westervillelions.org/whitecane</p>
+    </div>
+  </div>
+  <div class="foot">
+    <img src="logo.png" alt="Westerville Lions">
+    <div class="tag">Serving Westerville since 1928<br>westervillelions.org</div>
+  </div>
+</body></html>
