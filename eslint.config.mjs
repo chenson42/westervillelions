@@ -21,6 +21,9 @@ const config = [
       "out/**",
       "build/**",
       "dist/**",
+      // Agent git worktrees live inside the repo directory; linting them doubles the
+      // file set and ran ESLint out of heap on 2026-10-12 (exit 134, not a lint failure).
+      ".claude/worktrees/**",
     ],
   },
   ...coreWebVitals,
