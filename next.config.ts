@@ -29,7 +29,13 @@ const securityHeaders = [
       // wasn't re-checked. 'wasm-unsafe-eval' is deliberately used here instead of
       // restoring 'unsafe-eval': it permits WebAssembly compilation ONLY, and still
       // forbids eval() of JavaScript strings, so v1.75.0's hardening is kept.
-      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://challenges.cloudflare.com https://www.googletagmanager.com",
+      //
+      // Development only: React's dev tooling (Next 16 devtools, callstack reconstruction
+      // for server errors) calls eval() and logs a console error on every page when the
+      // policy forbids it. React never uses eval() in production builds, so the token is
+      // added only under `next dev` and the production policy above stays exactly as
+      // hardened in v1.75.0.
+      `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""} https://challenges.cloudflare.com https://www.googletagmanager.com`,
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https: lh3.googleusercontent.com",
       "font-src 'self'",
