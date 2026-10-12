@@ -182,14 +182,19 @@ export default function AnnouncementForm({
               Link URL <span className="text-gray-500">(optional)</span>
             </label>
             <input
-              type="url"
+              type="text"
+              inputMode="url"
               id="linkUrl"
               name="linkUrl"
               value={formData.linkUrl}
               onChange={handleChange}
-              placeholder="https://example.com"
+              placeholder="https://example.com or /white-cane"
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
+            <p className="mt-1 text-xs text-gray-500">
+              An active announcement linking to <code>/white-cane</code> also turns on the White Cane
+              button in the homepage hero while that campaign page is open (mid-September through October 31).
+            </p>
           </div>
 
           {/* Link Label */}

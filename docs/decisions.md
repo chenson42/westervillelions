@@ -28,6 +28,26 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-119: Poster QR codes encode a short temporary-redirect URL; a campaign page takes its facts from one code module and never reads the database
+
+**Status:** Resolved (2026-10-11, Phase 6 SHIP WITH NOTES; the "Unmeasured" paragraph stays until R1 on the deployed URL, R2 and R3 are recorded in the work-log)
+**Date:** 2026-10-11
+**Design:** `docs/work-log/2026-10-11-white-cane-page.md` (Phase 1 analyst, Phase 2 orchestrator skip, Phase 3 tech-lead).
+
+**Decision:**
+1. A printed QR code encodes `https://westervillelions.org/whitecane`, a `next.config.ts` redirect with `permanent: false` (HTTP 307) to `/white-cane?utm_source=poster&utm_medium=qr&utm_campaign=whitecane2026&utm_content=fourthfriday`. The UTM tags live in the destination, not the code.
+2. The campaign page imports its Zeffy link, window, goal, funded projects and receipt-wording variants from `src/components/white-cane/campaign-facts.ts` (model: `santas-workshop/event-facts.ts`). The page makes no database query and is statically generated with `revalidate = 300`. No `campaigns` row is required; one may be added later in the admin UI only to list the campaign on `/donate`.
+3. Lifecycle state is `ended` when the Eastern calendar date (a string from `Intl.DateTimeFormat` parts) is after the window end, `pre-form` when the Zeffy URL is empty, otherwise `live`. The window start does not gate the Give button.
+4. `ZeffyEmbed` is not modified by this pipeline; the plain new-tab link is the accessible path (focus fix is B-169).
+
+**Rationale:** A 307 is used because the poster is printed once and the target must stay repointable; browsers and scanner apps cache a 308 indefinitely (believed from HTTP semantics, not measured here). Config over a route file because the redirect list already exists and a route handler adds code with nothing to gain. Independence from the database means the page renders on a congested night with no query and cannot be broken by an admin edit; the cost is that changing the Zeffy link needs a deploy, which is fine for a once-a-year page and worth revisiting if the club runs several campaigns a year. A 5-minute revalidate means the thank-you state appears up to 5 minutes after midnight Eastern on Nov 1 (believed, unmeasured; Phase 5 check R2).
+
+**Unmeasured:** that Next applies config redirects before `src/proxy.ts` (Phase 5 check R1 records the 307 and the tags on the deployed URL; the proxy matches no protected pattern for this path either way), and how Apple Pay behaves inside an iOS in-app browser iframe (Phase 5 check R3).
+
+**Impact:** One redirect entry, one sitemap line, a `src/components/white-cane/` folder and `src/app/white-cane/page.tsx`. No schema, permission, dependency or email change.
+
+---
+
 ## DECISION-118: An unlisted prototype ships at a preview route with `noindex`, fictional data and a banner; the final URL stays a 404
 
 **Status:** Resolved (2026-10-11; promoted at Phase 6 after re-reading each sentence against QA's "Established" list; the "Unmeasured" paragraph still stands)

@@ -62,6 +62,14 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       {
+        // Poster QR short URL. Temporary (307) so the target can be repointed
+        // after printing; the UTM tags live here, not in the printed code.
+        source: "/whitecane",
+        destination:
+          "/white-cane?utm_source=poster&utm_medium=qr&utm_campaign=whitecane&utm_content=fourthfriday",
+        permanent: false,
+      },
+      {
         source: "/contact",
         destination: "/connect",
         permanent: true,

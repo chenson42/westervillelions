@@ -38,6 +38,8 @@ was deleted on the strength of this review alone.
 - B-111 — Treasurer permission baseline: bind or split `ledger.manage`, fix two gating mismatches.
 
 **Soon**
+- B-171 — Campaign saves do not refresh the cached `/donate` page for up to an hour
+- B-169 — `ZeffyEmbed` moves focus into the dialog on open and returns it on close
 - B-166 — Santa's Workshop production sign-up page at `/santas-workshop`
 - B-145 — Member RSVP and signup routes have no tests
 - B-146 — Public forms and the v1.83.0 junk-guard wiring have no route or e2e coverage
@@ -92,6 +94,7 @@ was deleted on the strength of this review alone.
 - B-162 — The Approvals page offers Approve and Reject by an expense-leg-only recorder check
 
 **Later**
+- B-170 — White Cane page after the campaign: where-it-went line, roll forward, optional `/donate` card
 - B-167 — Santa's Workshop family tracking and volunteer check-in (event phase 2)
 - B-168 — Santa's Workshop memory book builder and paperless delivery (event phase 3)
 - B-148 — Pin the aged-fund loader SQL
@@ -415,11 +418,20 @@ was deleted on the strength of this review alone.
 
 ## Soon
 
+- [ ] **B-171 — Campaign saves do not refresh the cached `/donate` page for up to an hour.**
+  (added 2026-10-12 from `docs/work-log/2026-10-11-white-cane-page.md`, go-live section; priority: should-do, small)
+  `/donate` is statically generated with `revalidate = 3600`, and the campaigns admin (create, edit, activate, reorder) never calls `revalidatePath("/donate")`, so an admin who adds a campaign sees nothing on the live page for up to an hour and assumes the save failed (it happened with the White Cane 2026 row on 2026-10-12; the row was correct). Fix: call `revalidatePath("/donate")` (and `/campaigns` if it reads the same table) after every campaign write; keep the hourly revalidate as the backstop. Also tell the admin on the save toast that the public page updates within a minute.
+
+- [ ] **B-169 — `ZeffyEmbed` moves focus into the dialog on open and returns it on close.**
+  (added 2026-10-11 from `docs/work-log/2026-10-11-white-cane-page.md`, Phase 3 ruling 2; priority: should-do before next year's White Cane campaign)
+  `src/components/campaigns/zeffy-embed.tsx` is shared by `/donate` and `/white-cane`. The dialog has `aria-modal`, an accessible name and Escape, but does not move focus into the dialog on open or return it to the trigger on close, so a screen-reader user who taps Give stays on the page behind the modal. The White Cane page (a blindness fundraiser) carries a plain "open the form in a new tab" link as the accessible path meanwhile. A change to the shared component reopens Phase 2 for `/donate`; under ~30 lines expected.
+
 - [ ] **B-166 — Santa's Workshop production sign-up page at `/santas-workshop`.**
   (added 2026-10-11 from `docs/work-log/2026-10-11-santas-workshop-signup.md`, Phase 6 follow-up; priority: should-do, time-boxed to the event: drop-off Fri Dec 11, proposed, not agreed)
   Replaces the 404 reserved by DECISION-118. Zeffy ticket form with the custom questions the chair confirms (one ticket per stuffy; verify with a Zeffy test form whether questions repeat per ticket), opened in the existing modal embed on phones with an "open in a new tab" fallback and a ticket-appropriate iframe title (`ZeffyEmbed` hard-codes "Donation form powered by Zeffy"). Date-driven Before/Open/After computed in Eastern time from one module, manual Full flip. Entity-correct copy: ticket, never donation, never tax-deductible. Add an `events` row for Dec 11-13, sitemap entry, Open Graph card (1200x630 and 1:1), remove `noindex`, delete the "no page.tsx at /santas-workshop" assertion, vanity redirect `santasworkshop.westervillelions.org` (temporary redirect to the fixed canonical URL; establish who controls DNS), QR pinned only after the vanity address is verified live. Decide whether to keep or delete `/santas-workshop/preview` and its sample-data module.
   **Zeffy account (answered by the user 2026-10-11):** the form lives on the **Club's** Zeffy account; proceeds land in the Club Activity fund, and anything owed to the Foundation is swept there afterward (the existing Sweep pair, over-threshold approval as usual). So the copy is ticket, never donation, never tax-deductible, and no cross-entity Move is involved.
-  **Blocked on:** the chair's checklist answers (work-log section 4): dates and Friday windows with IHOP (2, 3), the cap and tickets per order (4), which preschools are listed and whether IHOP is named (8), the form fields including the photo-sharing and "not responsible for loss or damage" boxes, wording to the treasurer and insurer (9), the privacy promise "stuffies only, never the children" (10), and the title (11).
+  **Defaults the user stated to the chair on 2026-10-11 (build from these unless the chair objects):** QR train-ticket card at drop-off, with the same link in the email confirmation as the lost-card backup; photos published in one batch Saturday evening, not live; memory book paperless plus a printed keepsake card; pickup requires the card plus the conductor confirming the parent's name on the order; child's first name optional at most, and the memory book copy must read well without it; a dry run with 5 to 10 stuffies before the weekend. Overnight storage Friday and Saturday is an open operational question (not a software one).
+  **Blocked on:** the chair's answers to the four gating questions (IHOP dates, Nov 8 opening, 60 at $15 up to 3 per order, preschool list) and the rest of the checklist (work-log section 4): dates and Friday windows with IHOP (2, 3), the cap and tickets per order (4), which preschools are listed and whether IHOP is named (8), the form fields including the photo-sharing and "not responsible for loss or damage" boxes, wording to the treasurer and insurer (9), the privacy promise "stuffies only, never the children" (10), and the title (11).
 
 - [ ] **B-158 — Approve and reject do not check what the approver saw.**
   (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 3; priority: should-do, medium — money governance)
@@ -1154,8 +1166,13 @@ was deleted on the strength of this review alone.
 
 ## Later
 
+- [ ] **B-170 — White Cane page after the campaign: where-it-went line, roll forward, optional `/donate` card.**
+  (added 2026-10-11 from `docs/work-log/2026-10-11-white-cane-page.md`, Phase 3; priority: after Oct 31, 2026)
+  When the window closes, add a "where it went" line to `/white-cane` with the total and the funded projects (board facts, not ours). (Updated 2026-10-12: the page already rolls forward on its own each September; next year needs only a new Zeffy share link in `campaign-facts.ts` if the form changes.) Optionally add a `campaigns` row so `/donate` lists the White Cane card during the window (deactivate Nov 1); the page itself stays DB-free by design.
+
 - [ ] **B-167 — Santa's Workshop family tracking and volunteer check-in (event phase 2).**
   (added 2026-10-11 from `docs/work-log/2026-10-11-santas-workshop-signup.md`, Phase 6 follow-up; priority: only if the chair says yes to the tracking card; depends on B-166)
+  Design note from the outside review (2026-10-11): the identifying tag must be visible to the photographer but kept out of the finished frame; a photo attached to the wrong stuffy is hard to detect afterward. Pickup confirms the parent's name on the order in addition to the card; the card is not the sole pickup authorization.
   Per-family capability link (opaque high-entropy token, identical response for unknown and expired, rate limited), conductor roster with search and check-in that tolerates a weak signal in a restaurant lobby, photo station, a volunteer gate decided by whether volunteers have accounts (a new `FEATURES` key via `/add-permission`, or a short-lived link or PIN for non-members, rejected server-side not by hiding links), care-note text escaped and length-capped, retention of any family data decided up front. No email from the site unless a separate durable-send pipeline is opened.
   **Blocked on the chair's answers (work-log section 4):** whether to hand each family a QR tracking card at check-in with no email, and whether photos go live during Saturday or all at once that evening (5); who may collect on Sunday (6); and whether the conductor and photo helpers have club accounts or include spouses and youth who do not (7).
 

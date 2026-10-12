@@ -128,7 +128,7 @@ export default async function DonatePage() {
               </p>
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 items-start">
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
               {activeCampaigns.map((campaign) => (
                 <CampaignCard key={campaign.id} campaign={campaign} />
               ))}

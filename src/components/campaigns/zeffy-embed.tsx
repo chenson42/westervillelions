@@ -2,14 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-
-function toEmbedUrl(zeffyLink: string): string {
-  if (zeffyLink.includes("/embed/")) return zeffyLink;
-  return zeffyLink.replace(
-    /^https:\/\/www\.zeffy\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?/,
-    "https://www.zeffy.com/embed/"
-  );
-}
+import { toEmbedUrl } from "./zeffy-url";
 
 export function ZeffyEmbed({
   zeffyLink,

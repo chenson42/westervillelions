@@ -10,6 +10,7 @@ import { getNextOccurrence, parseWallClock, nowEastern } from "@/lib/events";
 import { format } from "date-fns";
 import { getRecentGivingStats } from "@/lib/impact-stats-queries";
 import { roundDownToThousand, formatImpactAmount } from "@/lib/impact-stats";
+import { campaignState } from "@/components/white-cane/campaign-state";
 
 export const revalidate = 300;
 
@@ -40,6 +41,13 @@ export const metadata: Metadata = {
 };
 
 const FOUNDING_YEAR = 1928;
+
+/** True for "/white-cane" or an absolute URL whose path is /white-cane (trailing slash and query ignored). */
+function linksToWhiteCane(linkUrl: string | null): boolean {
+  if (!linkUrl) return false;
+  const path = linkUrl.startsWith("/") ? linkUrl : (() => { try { return new URL(linkUrl).pathname; } catch { return ""; } })();
+  return path.replace(/\/+$/, "").split("?")[0] === "/white-cane";
+}
 
 export default async function HomePage() {
   // nowEastern(), not new Date(): the process runs in UTC on Vercel, and
@@ -172,6 +180,14 @@ export default async function HomePage() {
     ? sortByNextOccurrence(withNextOccurrence(featuredEventRows))
     : sortByNextOccurrence(withNextOccurrence(fallbackEventRows)).slice(0, 1);
   const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR;
+  // The hero's White Cane button is on only while the campaign page is open AND an
+  // active homepage announcement links to /white-cane. Admins turn it on and off at
+  // /admin/announcements (with start/end dates) without a deploy. campaignState()
+  // takes a real instant, not the Eastern-shifted `now`.
+  const whiteCaneLive =
+    campaignState(new Date()) === "live" &&
+    activeAnnouncementRows.some((a) => linksToWhiteCane(a.linkUrl));
+
   return (
     <div className="min-h-screen bg-white">
       {/* Hero Section — downtown Westerville photo under a light translucent
@@ -204,19 +220,40 @@ export default async function HomePage() {
             Helping our community thrive through service and care.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              href="/join"
-              className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
-            >
-              Join the Club
-            </Link>
-            <Link
-              href="/connect"
-              aria-label="Find out when and where we meet"
-              className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
-            >
-              Attend a Meeting
-            </Link>
+            {whiteCaneLive ? (
+              <>
+                {/* White Cane window (Oct 15-31): the campaign takes the gold slot and
+                    Join moves to the outlined slot. Reverts on Nov 1 by itself. */}
+                <Link
+                  href="/white-cane"
+                  className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
+                >
+                  Give to the White Cane campaign
+                </Link>
+                <Link
+                  href="/join"
+                  className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
+                >
+                  Join the Club
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/join"
+                  className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
+                >
+                  Join the Club
+                </Link>
+                <Link
+                  href="/connect"
+                  aria-label="Find out when and where we meet"
+                  className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
+                >
+                  Attend a Meeting
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </section>

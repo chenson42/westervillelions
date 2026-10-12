@@ -74,6 +74,7 @@ src/
 │   ├── events/            # Public events calendar
 │   ├── programs/          # Service programs
 │   ├── santas-workshop/preview/  # Unlisted prototype: noindex, no nav or sitemap entry, fictional data (DECISION-118); /santas-workshop itself is a 404 until B-166
+│   ├── white-cane/        # White Cane 2026 donation page: static, no DB read; /whitecane is a 307 redirect (next.config.ts) adding UTM tags (DECISION-119); facts in src/components/white-cane/campaign-facts.ts
 │   ├── donate/            # Donation page (Zeffy embedded donation forms, EIN + impact band)
 │   ├── privacy/           # Public privacy policy
 │   ├── contact/           # Contact information
@@ -140,6 +141,7 @@ docs/
 ├── work-log/              # Per-feature pipeline tracking
 ├── reviews/               # Review log + detail files
 ├── release-notes/         # vX.Y.md files per minor version
+├── marketing/             # Print assets with no personal data (White Cane poster: layout, art, QR, PDF; rendered by scripts/render-white-cane-poster.mjs)
 └── features/              # Long-form feature specs (historical)
 .claude/
 ├── agents/                # Agent definitions
@@ -156,6 +158,7 @@ docs/
 - **Donate:** Zeffy donation forms embedded per campaign
 - **Contact:** Contact form, meeting info, social media links
 - **Unlisted prototypes (DECISION-118):** a clickable prototype for a stakeholder to confirm look and workflow ships at a `/<name>/preview` route, with the final URL left a 404 so an early QR code fails loudly. `metadata.robots` noindex in the preview layout, never an entry in `robots.ts` (robots.txt is public and would advertise the URL), `sitemap.ts` or navigation; a banner on every screen; sample data in one module (`sample-data.ts`) and real proposals such as dates, price and cap in `event-facts.ts`; source-scan tests pin it. The first is Santa's Workshop (`/santas-workshop/preview`, v1.91); the real page is B-166.
+- **White Cane campaign page (v1.92, DECISION-119):** `/white-cane` is reused every year. Everything that changes lives in `src/components/white-cane/campaign-facts.ts` (Zeffy share link, the annual month-day window `opens 09-15 / start 10-15 / end 10-31`, goal, funded projects, the `RECEIPT_VARIANT` selector); the page makes no database query and is statically generated (`revalidate = 300`). State is `closed` outside the window (Eastern month-day compared as a string, never a UTC `Date`), `pre-form` with no Zeffy URL, else `live`; it closes Nov 1 and reopens Sep 15 with no deploy. The form is embedded inline as a plain iframe (no Zeffy script, no CSP change; `toEmbedUrl()` in `campaigns/zeffy-url.ts` is the one share-link-to-embed converter, shared with the `/donate` modal). `RECEIPT_VARIANT` is the only switch that may print "tax-deductible" or the EIN (`foundation`, matching `/donate`). The poster QR encodes `/whitecane`, a `permanent: false` (307) redirect carrying year-free UTM tags, so the printed code never changes and can be repointed (browsers cache a 308 indefinitely). The homepage hero's White Cane button is on only while the page is `live` AND an active homepage announcement links to `/white-cane`, so admins switch it at `/admin/announcements`. The poster source and render script are `docs/marketing/white-cane-poster/` and `scripts/render-white-cane-poster.mjs`. B-170 covers the post-campaign "where it went" line.
 
 ### Member Portal
 - **Login:** Google OAuth (via Google for Nonprofits) + password authentication
@@ -201,7 +204,7 @@ Two rules follow from this:
 - Donation platform for the `/donate` page — one card per row in the `campaigns` table
 - Each card opens a Zeffy donation form in a modal via `ZeffyEmbed` (`src/components/campaigns/zeffy-embed.tsx`), which iframes `https://www.zeffy.com/embed/…`
 - The CSP `frame-src` in `next.config.ts` must whitelist `https://www.zeffy.com`, or the browser blocks the iframe with "This content is blocked"
-- Campaign cards show the campaign's stored `image`; when none is set they fall back to a local brand image (`/images/service-community.jpg`). Zeffy's Cloudflare 403s server-side fetches, so do not scrape Zeffy at request time.
+- Campaign cards show the campaign's stored `image` when one is set and no picture otherwise (no brand fallback since v1.92; every card carries its title). Cards stretch to equal height per grid row. Zeffy's Cloudflare 403s server-side fetches, so do not scrape Zeffy at request time.
 
 ### Resend
 - Outbound transactional email via `sendEmail()` in `src/lib/email.ts`
