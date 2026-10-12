@@ -3,18 +3,7 @@ import {
   ZEFFY_FORM_URL,
   type CampaignState,
 } from "./campaign-facts";
-
-/** Eastern calendar day of an instant as "YYYY-MM-DD" (a string, so no local-time Date hazard). */
-export function easternDateString(now: Date): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")}`;
-}
+import { easternDateString } from "@/lib/eastern-date";
 
 /**
  * closed: the Eastern month-day is outside [opens, end] (takes precedence), so the

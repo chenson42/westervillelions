@@ -1,12 +1,10 @@
-import { ArtSlot } from "./art-slot";
-import { getArtSlot } from "./art-slots";
-import { InView } from "./in-view";
+import { Art } from "./art";
+import { isSupplied } from "./art-slots";
 
 /** Stand-in locomotive and cars, drawn inline. The supplied "train" art replaces it. */
 function StandInTrain() {
   return (
-    <svg viewBox="0 0 900 300" role="img" aria-label="A small steam train with three cars" className="h-full w-full">
-      <title>A small steam train with three cars</title>
+    <svg viewBox="0 0 900 300" aria-hidden="true" className="h-full w-full">
       {/* steam */}
       <g fill="#fff" opacity="0.85">
         <circle className="sw-steam" cx="738" cy="70" r="14" />
@@ -47,20 +45,20 @@ interface TrainMotifProps {
   className?: string;
 }
 
-/** The journey motif: a train rolling in over a track. Decorative. */
+/** The journey motif: a train over a track. Decorative and static (no client JS). */
 export function TrainMotif({ tone = "light", className = "" }: TrainMotifProps) {
-  const supplied = getArtSlot("train").src !== null;
+  const supplied = isSupplied("train");
   return (
-    <div className={`overflow-hidden ${className}`} aria-hidden={supplied ? undefined : "true"}>
-      <InView className="mx-auto w-full max-w-md px-4 sm:max-w-lg">
+    <div className={`overflow-hidden ${className}`} aria-hidden="true">
+      <div className="mx-auto w-full max-w-md px-4 sm:max-w-lg">
         {supplied ? (
-          <ArtSlot id="train" tone={tone} sizes="512px" />
+          <Art id="train" sizes="512px" />
         ) : (
           <div style={{ aspectRatio: "3 / 1" }}>
             <StandInTrain />
           </div>
         )}
-      </InView>
+      </div>
       <div className={`sw-track -mt-1 ${tone === "night" ? "sw-track-on-night" : ""}`} />
     </div>
   );

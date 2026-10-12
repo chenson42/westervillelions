@@ -1,5 +1,15 @@
 import type { Metadata } from "next";
 
+import { getPublicWorkshopFacts } from "@/lib/santas-workshop/public-facts";
+import { formatMonthDay } from "@/lib/santas-workshop/format";
+import {
+  COLLAGE_KEEPING,
+  PHOTO_BOX_HELPER,
+  PHOTO_BOX_LABEL,
+  PROMISE,
+} from "@/components/santas-workshop/copy";
+import Link from "next/link";
+
 export const revalidate = 86400;
 
 export const metadata: Metadata = {
@@ -20,9 +30,11 @@ export const metadata: Metadata = {
   },
 };
 
-const EFFECTIVE_DATE = "September 4, 2026";
+const EFFECTIVE_DATE = "October 12, 2026";
 
-export default function PrivacyPage() {
+export default async function PrivacyPage() {
+  const workshop = await getPublicWorkshopFacts();
+  const deletedBy = `${formatMonthDay(workshop.signupDataDeletedBy)}, ${workshop.signupDataDeletedBy.slice(0, 4)}`;
   return (
     <div className="min-h-screen bg-white">
       <div className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white py-20">
@@ -63,6 +75,12 @@ export default function PrivacyPage() {
                 <strong>Event RSVPs:</strong> your name and email address.
               </li>
               <li>
+                <strong>Santa&apos;s Workshop sign-ups:</strong> collected for us by Zeffy: your
+                name, email and mobile number, your stuffy&apos;s name and description, a snack
+                preference and, if you choose to give them, a child&apos;s first name, a care note
+                and a note to Santa.
+              </li>
+              <li>
                 <strong>Member accounts:</strong> the sign-in information (email address, and
                 Google account details if you sign in with Google) that lets members access the
                 member portal.
@@ -79,6 +97,35 @@ export default function PrivacyPage() {
               <li>Report membership information to Lions Clubs International, as required of every chartered Lions club.</li>
               <li>Coordinate event attendance and RSVPs.</li>
             </ul>
+          </section>
+
+          <section className="mb-10">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">A Visit to Santa&apos;s Workshop</h2>
+            <div className="space-y-3 text-gray-700">
+              <p>
+                We use sign-up details only to run the event: to find your stuffy, to reach you,
+                and to offer a snack. Zeffy processes the payment and keeps its own record. The
+                club&apos;s volunteers see your answers. We delete sign-up details from the
+                club&apos;s records by {deletedBy}.
+              </p>
+              <p className="font-semibold">{PROMISE}</p>
+              <p>
+                On the sign-up form, one optional box reads: &ldquo;{PHOTO_BOX_LABEL}&rdquo;{" "}
+                {PHOTO_BOX_HELPER} {COLLAGE_KEEPING}
+              </p>
+              <p>
+                To remove a photo or a detail, contact us at{" "}
+                <a href="mailto:info@westervillelions.org" className="text-lions-blue hover:underline">
+                  info@westervillelions.org
+                </a>{" "}
+                and we will take it down.
+              </p>
+              <p>
+                <Link href="/santas-workshop" className="text-lions-blue hover:underline">
+                  Back to A Visit to Santa&apos;s Workshop
+                </Link>
+              </p>
+            </div>
           </section>
 
           <section className="mb-10">

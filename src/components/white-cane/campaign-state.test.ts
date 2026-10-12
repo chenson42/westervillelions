@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { campaignState, easternDateString } from "./campaign-state";
+import { campaignState } from "./campaign-state";
 
 const URL_SET = "https://www.zeffy.com/donation-form/abc";
-
-describe("easternDateString", () => {
-  it("uses the Eastern calendar day, not the UTC day", () => {
-    expect(easternDateString(new Date("2026-11-01T02:00:00Z"))).toBe("2026-10-31");
-    expect(easternDateString(new Date("2026-11-01T04:00:00Z"))).toBe("2026-11-01");
-  });
-});
 
 describe("campaignState (annual window, Eastern time)", () => {
   it("is live at 23:59:59 ET on Oct 31", () => {

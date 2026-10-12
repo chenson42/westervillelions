@@ -154,7 +154,7 @@ stuffies before the weekend. 7. Title stays. 8. Club's Zeffy account; sweep to t
 - Q6 answered: shared worker code per session (see §4).
 - Q7 answered: one Santa and Mrs. Claus portrait per stuffy plus group pictures.
 - Q8 Form fields: add or drop anything?
-- Q9 Zeffy test form: do questions repeat per ticket?
+- Q9 answered (research, 2026-10-12): Zeffy has "per attendee" questions that repeat once per ticket and "buyer" questions asked once per order; stuffy fields go per attendee, parent fields per buyer. A test order still confirms the export's column shape.
 - Q10 answered: yes, stuffies only, never children.
 - Q11 answered: CSV import before drop-off; tags are made from that list.
 - Q12 answered: proceeds support the **Central Ohio Diabetes Association** and the **Ohio Lions Pediatric Cancer Foundation** (page copy; both are Foundation-side beneficiaries, so the sweep in B-172 applies). No dollar goal stated.

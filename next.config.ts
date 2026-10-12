@@ -76,6 +76,21 @@ const nextConfig: NextConfig = {
         permanent: false,
       },
       {
+        // Santa's Workshop poster QR short URL. Temporary (307), year-free UTM
+        // tags: the printed code outlives the year (DECISION-119 reasoning).
+        source: "/santasworkshop",
+        destination:
+          "/santas-workshop?utm_source=poster&utm_medium=qr&utm_campaign=santasworkshop",
+        permanent: false,
+      },
+      {
+        // The retired DECISION-118 prototype. Fixed same-origin target path; any incoming
+        // query string is forwarded to it and ignored by the page (it reads no query).
+        source: "/santas-workshop/preview/:path*",
+        destination: "/santas-workshop",
+        permanent: false,
+      },
+      {
         source: "/contact",
         destination: "/connect",
         permanent: true,

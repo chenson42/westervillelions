@@ -1,44 +1,28 @@
-// The art-slot registry: the only place that knows slot facts. A slot renders
-// as a labelled placeholder until its id is added to SUPPLIED below, after the
-// file is placed at the slot's `path` under public/.
-// Pure module (type-only import of screens would be circular-free, but the
-// "used on" hrefs are plain strings checked by a test).
-
-import { PREVIEW_BASE } from "./screens";
+// The art registry: the only place that knows slot facts. Every slot is
+// optional. A slot renders its image only after its file is placed at `path`
+// under public/ and its id is added to SUPPLIED below; otherwise it renders
+// nothing and the layout collapses around it (the page ships finished with no
+// art at all). Pure module. Artist brief: the Phase 3 work-log, Appendix E.
 
 export type ArtSlotId =
   | "hero-scene"
   | "train"
   | "track-tile"
-  | "scene-wrapping"
-  | "scene-workshop"
-  | "scene-cookies"
-  | "scene-story"
-  | "scene-reindeer"
   | "step-dropoff"
-  | "step-journey"
+  | "step-photos"
   | "step-pickup"
-  | "conductor-stamp"
-  | "book-cover"
-  | "stuffy-wrapping"
-  | "stuffy-workshop"
-  | "stuffy-cookies"
-  | "stuffy-story"
-  | "stuffy-reindeer";
-
-export type ArtSlotKind = "scene" | "train" | "track" | "icon" | "stamp" | "portrait" | "stuffy";
+  | "story-art"
+  | "og";
 
 export interface ArtSlotSpec {
   id: ArtSlotId;
-  kind: ArtSlotKind;
   label: string;
   aspect: `${number}:${number}`;
   pixels: `${number}x${number}`;
-  usedOn: readonly string[];
   notes: string;
   /** Where the supplied file goes. */
   path: string;
-  /** null until the artist supplies the file; set to `path` to switch the slot on. */
+  /** null until the file is supplied; set to `path` to switch the slot on. */
   src: string | null;
   alt: string;
   decorative: boolean;
@@ -48,69 +32,23 @@ const DIR = "/images/santas-workshop";
 
 /**
  * Slots whose file is in place. Put the file at the slot's `path` under
- * `public/`, add the slot id here, and the placeholder becomes the image.
- * Kept as a plain list so the artist edits one line and nothing else.
+ * `public/`, then add the slot id here. A unit test fails if a listed file
+ * is missing.
  */
 export const SUPPLIED: ReadonlySet<ArtSlotId> = new Set<ArtSlotId>([
   // "hero-scene",
 ]);
-const LANDING = PREVIEW_BASE;
-const FOLLOW = `${PREVIEW_BASE}/follow`;
-const BOOK = `${PREVIEW_BASE}/book`;
-const CHECKIN = `${PREVIEW_BASE}/check-in`;
-const CONFIRMED = `${PREVIEW_BASE}/confirmed`;
-const PHOTO = `${PREVIEW_BASE}/photo-station`;
 
-function scene(
-  id: ArtSlotId,
-  label: string,
-  alt: string,
-  notes: string,
-): ArtSlotSpec {
+function icon(id: ArtSlotId, label: string): ArtSlotSpec {
   return {
     id,
-    kind: "scene",
-    label,
-    aspect: "4:3",
-    pixels: "1200x900",
-    usedOn: [LANDING],
-    notes,
-    path: `${DIR}/${id}.webp`,
-    src: null,
-    alt,
-    decorative: false,
-  };
-}
-
-function stuffy(id: ArtSlotId, label: string, alt: string): ArtSlotSpec {
-  return {
-    id,
-    kind: "stuffy",
-    label,
-    aspect: "4:3",
-    pixels: "1200x900",
-    usedOn: [FOLLOW, BOOK, PHOTO, LANDING],
-    notes:
-      "One recognizable plush (or a placeholder silhouette) in this scene. Stuffies only, no children in frame.",
-    path: `${DIR}/${id}.webp`,
-    src: null,
-    alt,
-    decorative: false,
-  };
-}
-
-function step(id: ArtSlotId, label: string, alt: string): ArtSlotSpec {
-  return {
-    id,
-    kind: "icon",
     label,
     aspect: "1:1",
     pixels: "256x256",
-    usedOn: [LANDING],
     notes: "Simple SVG icon, works on a light card. Transparent background.",
     path: `${DIR}/${id}.svg`,
     src: null,
-    alt,
+    alt: "",
     decorative: true,
   };
 }
@@ -118,13 +56,11 @@ function step(id: ArtSlotId, label: string, alt: string): ArtSlotSpec {
 const RAW_SLOTS: readonly ArtSlotSpec[] = [
   {
     id: "hero-scene",
-    kind: "scene",
     label: "Hero scene",
     aspect: "3:2",
     pixels: "2400x1600",
-    usedOn: [LANDING],
     notes:
-      "Night sky / winter town. Keep the focal subject in the center third: the page crops to about 4:5 on phones and 21:9 on wide screens.",
+      "Night sky or winter town. Keep the focal subject in the center third: the page crops to about 4:5 on phones and 21:9 on wide screens. Stuffies only, no children in frame.",
     path: `${DIR}/hero-scene.webp`,
     src: null,
     alt: "A snowy night with a little train heading toward the North Pole",
@@ -132,13 +68,10 @@ const RAW_SLOTS: readonly ArtSlotSpec[] = [
   },
   {
     id: "train",
-    kind: "train",
     label: "Train (engine and cars)",
     aspect: "3:1",
     pixels: "900x300",
-    usedOn: [LANDING, CONFIRMED],
-    notes:
-      "Side view, facing right, transparent background (SVG preferred). The page already draws a stand-in train; yours replaces it.",
+    notes: "Side view, facing right, transparent background (SVG preferred). Replaces the drawn train.",
     path: `${DIR}/train.svg`,
     src: null,
     alt: "A small steam train with three cars",
@@ -146,103 +79,40 @@ const RAW_SLOTS: readonly ArtSlotSpec[] = [
   },
   {
     id: "track-tile",
-    kind: "track",
     label: "Track tile",
     aspect: "10:1",
     pixels: "1200x120",
-    usedOn: [LANDING, FOLLOW],
-    notes:
-      "A seamless horizontal tile of rails and ties. The page draws a CSS track today; this is optional if you like that one.",
+    notes: "A seamless horizontal tile of rails and ties. Optional; the page draws a CSS track.",
     path: `${DIR}/track-tile.svg`,
     src: null,
     alt: "",
     decorative: true,
   },
-  scene(
-    "scene-wrapping",
-    "Scene: Mrs. Claus wrapping presents",
-    "Mrs. Claus wrapping presents",
-    "Illustration or photo of Mrs. Claus wrapping presents.",
-  ),
-  scene(
-    "scene-workshop",
-    "Scene: Santa in the workshop",
-    "Santa building toys in the workshop",
-    "Santa building toys at the workbench.",
-  ),
-  scene(
-    "scene-cookies",
-    "Scene: cookies",
-    "A plate of cookies and a mug of cocoa",
-    "A plate of cookies and cocoa.",
-  ),
-  scene(
-    "scene-story",
-    "Scene: The Night Before Christmas",
-    "Santa reading The Night Before Christmas",
-    "Santa reading The Night Before Christmas in an armchair.",
-  ),
-  scene(
-    "scene-reindeer",
-    "Scene: an elf feeding the reindeer",
-    "An elf feeding the reindeer",
-    "An elf feeding the reindeer.",
-  ),
-  step("step-dropoff", "Step icon: drop off", "Drop off"),
-  step("step-journey", "Step icon: the journey", "The journey"),
-  step("step-pickup", "Step icon: pickup", "Pickup"),
+  icon("step-dropoff", "Step icon: drop off"),
+  icon("step-photos", "Step icon: photo day"),
+  icon("step-pickup", "Step icon: pickup"),
   {
-    id: "conductor-stamp",
-    kind: "stamp",
-    label: "Conductor character / stamp",
+    id: "story-art",
+    label: "Story art",
     aspect: "1:1",
     pixels: "512x512",
-    usedOn: [CONFIRMED, CHECKIN, FOLLOW, BOOK],
-    notes: "Reused as the check-in badge and the certificate stamp. Transparent background.",
-    path: `${DIR}/conductor-stamp.svg`,
+    notes: "A friendly character or emblem beside the story. Transparent background.",
+    path: `${DIR}/story-art.svg`,
     src: null,
-    alt: "The Westerville Lions conductor",
+    alt: "",
     decorative: true,
   },
   {
-    id: "book-cover",
-    kind: "portrait",
-    label: "Memory-book cover",
-    aspect: "4:5",
-    pixels: "1200x1500",
-    usedOn: [BOOK],
-    notes:
-      "Reserve a name-plate area: about 70% of the width and 12% of the height, near the bottom. The stuffy's name is typed into it.",
-    path: `${DIR}/book-cover.webp`,
+    id: "og",
+    label: "Open Graph card",
+    aspect: "40:21",
+    pixels: "1200x630",
+    notes: "Social share card. Falls back to the site default when absent.",
+    path: `${DIR}/og.jpg`,
     src: null,
-    alt: "Cover of the memory book",
+    alt: "A Visit to Santa's Workshop, from the Westerville Lions Club",
     decorative: false,
   },
-  stuffy(
-    "stuffy-wrapping",
-    "Stuffy photo: wrapping room",
-    "The stuffed animal in Mrs. Claus's wrapping room",
-  ),
-  stuffy(
-    "stuffy-workshop",
-    "Stuffy photo: workshop",
-    "The stuffed animal in Santa's workshop",
-  ),
-  stuffy(
-    "stuffy-cookies",
-    "Stuffy photo: cookies",
-    "The stuffed animal beside a plate of cookies",
-  ),
-  stuffy(
-    "stuffy-story",
-    "Stuffy photo: bedtime story",
-    "The stuffed animal listening to the bedtime story",
-  ),
-  stuffy(
-    "stuffy-reindeer",
-    "Stuffy photo: reindeer",
-    "The stuffed animal meeting the reindeer",
-  ),
 ] as const;
 
 export const ART_SLOTS: readonly ArtSlotSpec[] = RAW_SLOTS.map((s) =>
@@ -257,8 +127,8 @@ export function getArtSlot(id: ArtSlotId): ArtSlotSpec {
   return slot;
 }
 
-export function isArtSlotId(x: unknown): x is ArtSlotId {
-  return typeof x === "string" && BY_ID.has(x as ArtSlotId);
+export function isSupplied(id: ArtSlotId): boolean {
+  return getArtSlot(id).src !== null;
 }
 
 /** "3:2" -> "3 / 2" for CSS aspect-ratio. */
