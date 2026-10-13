@@ -1956,3 +1956,20 @@ SHIP WITH NOTES for Slice 1. Ingestion, the sessions admin, Connect, the questio
 The api-developer's `pkill -f "next dev"` (meant for its own `:3101` server in the worktree) also killed the main tree's `:3000` server. No pipeline had a live check running on it at the time. The orchestrator restarted a plain `pnpm dev` on `:3000` from the main tree. Collision count for this pipeline: 1. Rule reminder for later agents: stop your own server by its PID (`kill $(lsof -tiTCP:3101 -sTCP:LISTEN)`), never by pattern.
 
 **Zeffy facts (orchestrator, 2026-10-12):** the user generated the organisation API key (stored in `.env.local` of the main tree and the pipeline worktree as `ZEFFY_API_KEY`; never in the repo). A read-only `GET /api/v1/campaigns` succeeded (HTTP 200). Campaign ids (not personal data): **A Visit to Santa's Workshop** = `1d4e4e1e-aa31-43ec-aa46-ca859c843b7e` (ticketing, active) — this is the id for Connect; White Cane 2026 = `b175c706-ad80-4eac-96d1-6beb8ddc15bb` (donation form); the general donate form = `39232196-d844-430f-9b5f-394dd940e07b`; a meeting raffle and a memberships form also exist. The S2a spike can now run against the real API once a test purchase exists.
+
+## Deploy record — Slice 1 shipped as v1.94.0 (orchestrator, 2026-10-12)
+
+Pushed `6343fa6..160b090` (Slice 1 merge `d76e667`, artwork + Zeffy link `dbd0836`, lint ignore `160b090`). Pre-push on the merged tree: tsc clean; lint 0 errors after excluding `.claude/worktrees/**` (ESLint had exhausted the heap walking the worktree copy — exit 134, a gate that did not run, fixed before push); unit 246 files / 4189 tests; build PASS; e2e 380 passed, 16 skipped (the webhook spec skips without a `whsec_dev` secret), 0 failed; audit high/critical clean; PII sweeps ran and matched nothing; migrations 0113/0114 guarded.
+
+Post-deploy, live host, about 2 minutes after the push:
+
+| Check | Result |
+|---|---|
+| Unsigned `POST /api/zeffy/webhook` | HTTP 400 (route exists; signature required) |
+| Anonymous `/admin/santas-workshop` | 307 to `/signin?callbackUrl=…` (proxy rule derived from the nav entry) |
+| Anonymous `GET /api/admin/santas-workshop/sessions` | 401 |
+| Artwork served on `/santas-workshop` | hero, og, three step icons, story art |
+| Production schema (read-only) | 8 `sw_*`/`zeffy_events` tables present; `santas_workshop.manage` bound to exactly `admin, board_member` |
+
+Still to do on the deploy checklist: board members sign out and in; create the real session and Connect campaign `1d4e4e1e-aa31-43ec-aa46-ca859c843b7e`; first signed Zeffy delivery observed on the Connect page (signature format proof); practice form + S2a spike; N5 measurement gate before Nov 8.
+

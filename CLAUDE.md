@@ -74,6 +74,7 @@ src/
 │   ├── events/            # Public events calendar
 │   ├── programs/          # Service programs
 │   ├── santas-workshop/   # Santa's Workshop sign-up page: static, no DB read, four date-driven states; /santasworkshop is a 307 redirect; the DECISION-118 preview was retired by DECISION-120
+│   │   └── crew/[slug]/   # Worker app: code screen or CrewApp, noindex layout, code-gated by requireCrew()
 │   ├── white-cane/        # White Cane 2026 donation page: static, no DB read; /whitecane is a 307 redirect (next.config.ts) adding UTM tags (DECISION-119); facts in src/components/white-cane/campaign-facts.ts
 │   ├── donate/            # Donation page (Zeffy embedded donation forms, EIN + impact band)
 │   ├── privacy/           # Public privacy policy
@@ -107,6 +108,8 @@ src/
 │   │   └── finances/      # "Club Finances" hub — fans out to impact/ and financial-reports/ (DECISION-074)
 │   ├── api/               # API routes
 │   │   ├── zeffy/webhook/ # signed Zeffy webhook (no auth(); the signature is the auth)
+│   │   ├── santas-workshop/crew/[slug]/  # 13 worker routes, each calls requireCrew() first (enter excepted)
+│   │   ├── santas-workshop/photos/[id]/  # the one photo door
 │   │   └── admin/santas-workshop/  # sessions, Connect, question map, Sync, Reprocess, registrants
 │   ├── robots.ts          # robots.txt
 │   └── sitemap.ts         # sitemap.xml
@@ -114,6 +117,7 @@ src/
 │   ├── ui/                # shadcn/ui primitives + ConfirmDialog
 │   ├── admin/             # Admin-only compositions (incl. santas-workshop/)
 │   ├── public/            # Public marketing surfaces
+│   ├── santas-workshop/crew/  # Worker app and phone outbox ('use client')
 │   ├── members/, events/, campaigns/, home/, join/, layout/  # Surface-specific
 │   └── (top-level forms)  # contact-form, newsletter-form, membership-application-form, suggestion-box-*
 ├── lib/                   # Utility libraries
@@ -125,7 +129,7 @@ src/
 │   ├── email.ts           # sendEmail() + email_queue helpers
 │   ├── events.ts          # Event helpers
 │   ├── zeffy/             # Generic Zeffy module: signature check, client, snapshot, events log
-│   ├── santas-workshop/   # Facts + state for the public page, and server code (consumer, mapper, apply, sync, session queries)
+│   ├── santas-workshop/   # Facts + state for the public page, and server code (consumer, mapper, apply, sync, session queries, crew auth, stuffy transitions, photo-store/ with memory, local and Drive adapters behind PhotoStore)
 │   ├── members.ts         # Member helpers
 │   ├── google-groups.ts   # Google Group sync
 │   └── utils.ts           # General utilities
@@ -165,6 +169,7 @@ docs/
 - **White Cane campaign page (v1.92, DECISION-119):** `/white-cane` is reused every year. Everything that changes lives in `src/components/white-cane/campaign-facts.ts` (Zeffy share link, the annual month-day window `opens 09-15 / start 10-15 / end 10-31`, goal, funded projects, the `RECEIPT_VARIANT` selector); the page makes no database query and is statically generated (`revalidate = 300`). State is `closed` outside the window (Eastern month-day compared as a string, never a UTC `Date`), `pre-form` with no Zeffy URL, else `live`; it closes Nov 1 and reopens Sep 15 with no deploy. The form is embedded inline as a plain iframe (no Zeffy script, no CSP change; `toEmbedUrl()` in `campaigns/zeffy-url.ts` is the one share-link-to-embed converter, shared with the `/donate` modal). `RECEIPT_VARIANT` is the only switch that may print "tax-deductible" or the EIN (`foundation`, matching `/donate`). The poster QR encodes `/whitecane`, a `permanent: false` (307) redirect carrying year-free UTM tags, so the printed code never changes and can be repointed (browsers cache a 308 indefinitely). The homepage hero's White Cane button is on only while the page is `live` AND an active homepage announcement links to `/white-cane`, so admins switch it at `/admin/announcements`. The poster source and render script are `docs/marketing/white-cane-poster/` and `scripts/render-white-cane-poster.mjs`. B-170 covers the post-campaign "where it went" line.
 - **Santa's Workshop sign-up page (v1.93, DECISION-120):** `/santas-workshop` is a static, database-free Server Component page. Everything that changes lives in the typed `WORKSHOP_2026` constant in `src/lib/santas-workshop/facts.ts` behind an async loader (dates, windows, price, `registrationOpens`, `lastSignupDay`, `zeffyShareUrl`, `collagePath`); state is `before | open | closed | after` from the Eastern date string (`src/lib/eastern-date.ts`, shared with White Cane), so it changes with no deploy. The Zeffy ticket form is an inline iframe shown only in `open` with a non-empty URL; **Zeffy's own sales window is the control**, the page state is cosmetic. Copy is ticket, never donation or tax-deductible, never scarcity words: `banned.ts` holds the patterns and unit tests scan every string and the metadata. `/santasworkshop` and `/santas-workshop/preview/*` are 307 redirects. `SANTAS_WORKSHOP_NOW` (development only) clocks the page to any state. Slice 1 of B-167 (sessions admin and Zeffy ingestion) has shipped; workers, photos, the collage, frames and the family page follow (DECISION-121 to 125).
 - **Santa's Workshop sessions and Zeffy ingestion (v1.94, B-167 Slice 1, DECISION-123):** `/admin/santas-workshop` under `santas_workshop.manage` (bound to `admin` and `board_member`; never `treasurer`, `member` or an `admin.*` key; the holders read about 100 families' names, emails and mobiles). A session (`practice` or `real`, immutable) carries its own dates, windows, the connected Zeffy campaign, the stuffy ticket rate ids and a per-session question map (normalized question text to field, several strings per field, plus `ignored`). Connect, then a purchase or Sync, then assign questions, then Remap. Needs attention is a flag with the raw text, never a drop; refund state is derived from the order, never stored per stuffy; Sync and Remap never touch worker-owned columns. A campaign maps to one session and cannot be disconnected in Slice 1, so the real campaign connects to a **real** session only; rehearse on a separate practice form. Nothing prompts the Friday-morning Sync before doors open; it is on the go-live checklist and the chair's calendar.
+- **Santa's Workshop worker (crew) surface and photo store (v1.95, B-167 Slice 2, DECISION-121/122):** `/santas-workshop/crew/<slug>` is **code-gated, not permission-gated**. A volunteer enters a shared per-session code (8 unambiguous characters, stored AES-GCM-encrypted so an admin can re-read it, never in a URL) and receives a signed `HttpOnly` cookie bound to session id, code version, a random device id and 72 hours; `requireCrew()` re-checks the session row on **every** request (active, not paused, code version, Eastern closing date), so pause, rotate and close take effect on the next request; a `santas_workshop.manage` holder bypasses the code in the same helper. Entry is throttled in `sw_crew_attempts` (per IP-hash 5 failures in 10 minutes, per session 30); every denial is one identical 401. **Crew DTOs carry no parent email, mobile, Zeffy id or note** (`crew-contract-no-contact.test.ts`); the parent's name leaves the server only in the tag card and the `pickup-name` response, and the history must hold `name_shown`, then `pickup_check`, then the pickup transition, each newer than the stuffy's last revert. Every state write is pinned to the expected state under `FOR UPDATE` with a rollback sentinel; one current portrait per stuffy is a partial unique index. **Photo store:** bytes live in a private Google shared drive reached by a service account behind the `PhotoStore` interface (Drive in production or a hard failure; local filesystem in development; in-memory in tests); the database keeps metadata and a `storage_key` only. **One photo door:** only `photo-access.ts` reads photo bytes, routes resolve a credential, and every failure is 404; no web link or Drive file id appears anywhere in `src/` (scan-tested). `next.config.ts` adds a path-scoped `Permissions-Policy: camera=(self)` for the crew path after the global `camera=()`. The crew cookie is not a NextAuth session and never populates `session.user`. A photo that has not sent exists only on the volunteer's phone; closing a session signs phones out, so check that no phone says photos are waiting first. Dependencies added: `jsqr`, `qrcode`, `@types/qrcode`.
 
 ### Member Portal
 - **Login:** Google OAuth (via Google for Nonprofits) + password authentication
@@ -236,7 +241,7 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 - `SHARED_HOUSEHOLD_EMAIL` / `SHARED_HOUSEHOLD_EMAIL_ALT` / `SHARED_HOUSEHOLD_EMAIL_ALT_FIRST_NAME_MATCH` - Optional, read only by `scripts/import-roster.ts` and `scripts/sync-roster.ts`. Handles a roster where two household members share one email — gives the second member (matched by first-name substring) a distinct login. Unset (the default) is a no-op.
 - `NEXTAUTH_URL` - Application URL
 - `NEXTAUTH_SECRET` - NextAuth secret key
-- `AUTH_SECRET` - Alias for `NEXTAUTH_SECRET` (fallback used by `src/lib/auth/index.ts`)
+- `AUTH_SECRET` - Alias for `NEXTAUTH_SECRET` (fallback used by `src/lib/auth/index.ts`). Also derives the Santa's Workshop crew-cookie key, the worker-code encryption key and the IP-hash key (HKDF, distinct from NextAuth's); **rotating it signs out every worker phone and makes every stored worker code unreadable**, so an admin must regenerate the codes afterward — never rotate it during the event.
 - `GOOGLE_CLIENT_ID` - Google OAuth client ID (sign-in)
 - `GOOGLE_CLIENT_SECRET` - Google OAuth client secret (sign-in)
 - `RESEND_API_KEY` - Resend API key (outbound email)
@@ -248,6 +253,11 @@ import { db } from "@/lib/db";  // @/* maps to ./src/*
 - `ZEFFY_API_KEY` - bearer key generated by the Zeffy organization owner. Needed for `payment.updated`/`payment.deleted` handling (those events carry only an id), Sync, Reprocess and the form picker. **Set it before registering the webhook URL.**
 - `ZEFFY_DEV_CAMPAIGN_ALLOWLIST` - comma-separated Zeffy campaign ids a **non-production** process may read; unset means no Zeffy call. A dev server holding the production key can therefore never pull real parents' data. Never list a donation form.
 - `ZEFFY_API_BASE_URL` - test-only override of the Zeffy API host; honoured only when `NODE_ENV` is not `production`.
+- `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON` - the Santa's Workshop photo store's service-account key file minified to one line (`jq -c . key.json`). Read only by `src/lib/santas-workshop/photo-store/config.ts`. Production hard-fails without it; never logged, never in a work-log.
+- `GOOGLE_DRIVE_SHARED_DRIVE_ID` - the private shared drive the service account is a member of.
+- `GOOGLE_DRIVE_PHOTO_ROOT_FOLDER_ID` - optional folder inside that drive (default: the drive root).
+- `SW_PHOTO_STORE` - **Development only.** `drive` opts a non-production process into Drive; anything else uses the local store (`.santas-workshop-store/`, gitignored). Ignored in production, where Drive is mandatory (an `.env.local` has carried production credentials before, so a key's presence never selects Drive in development).
+- `SW_LOCAL_STORE_DIR` - development only: where the local adapter writes (default `.santas-workshop-store`).
 - `GOOGLE_GROUPS_CLIENT_ID` - OAuth client ID used by `src/lib/google-groups.ts` for Group sync
 - `GOOGLE_GROUPS_CLIENT_SECRET` - OAuth client secret for Group sync
 - `GOOGLE_GROUPS_REFRESH_TOKEN` - Refresh token used by Group sync (domain-wide delegation)
