@@ -60,6 +60,7 @@ export const ADMIN_ERROR_CODES = [
   "storage_full",
   "storage_rate_limited",
   "photos_unreviewed",
+  "collage_url_not_production",
   "server_error",
 ] as const;
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
@@ -612,4 +613,115 @@ export interface PublishResponse {
   /** publish: group photos newly made public by this call. */
   newlyPublished: number;
   noop: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Frames (Slice 4): export manifest and "mark exported"
+// ---------------------------------------------------------------------------
+
+/** Frame size the browser composites at (portrait 4x6, spec section 7). */
+export const FRAME_WIDTH_PX = 1200;
+export const FRAME_HEIGHT_PX = 1800;
+/** The most items one "mark exported" call may carry. */
+export const FRAME_EXPORTED_MAX_ITEMS = 500;
+
+/**
+ * Where a stuffy's printed frame stands against its CURRENT portrait:
+ * never exported, exported from the portrait that is current now, or exported
+ * from a portrait that has since been retaken ("changed").
+ */
+export const FRAME_EXPORT_STATUSES = ["never", "current", "changed"] as const;
+export type FrameExportStatus = (typeof FRAME_EXPORT_STATUSES)[number];
+
+/** Why a stuffy has no frame in this run (listed, never given a placeholder). */
+export const FRAME_WITHHELD_REASONS = ["no_portrait", "hidden"] as const;
+export type FrameWithheldReason = (typeof FRAME_WITHHELD_REASONS)[number];
+
+/** Row data shared by the frames and the index CSV. Names only: no email, phone or notes. */
+export interface FrameEntryBase {
+  stuffyId: string;
+  /** The stuffy's name as it should print (control and bidi characters removed, whitespace collapsed, capped). */
+  name: string;
+  parentFirst: string;
+  parentLast: string;
+  /** The drop-off window label, "" when unknown. */
+  windowLabel: string;
+  /** Photo-sharing consent. Irrelevant to frames (every family gets one); an index column only. */
+  consent: boolean;
+  /** Persisted; null until the stuffy has an exportable portrait. */
+  frameNumber: number | null;
+  /** `ssw-<slug>-NNN.jpg`, null while frameNumber is null. */
+  fileName: string | null;
+}
+
+/** A stuffy that gets a frame in this run. */
+export interface FrameItem extends FrameEntryBase {
+  frameNumber: number;
+  fileName: string;
+  portraitPhotoId: string;
+  /** Same-origin photo door path (`?v=full`); the admin's browser fetches it with its own session. */
+  photoUrl: string;
+  /** The portrait the last export used (`frame_exported_photo_id`), null when never exported. */
+  exportedPhotoId: string | null;
+  exportStatus: FrameExportStatus;
+}
+
+/** A stuffy with no frame in this run, with the reason (the index CSV prints `no: <reason>`). */
+export interface FrameWithheld extends FrameEntryBase {
+  reason: FrameWithheldReason;
+}
+
+export interface FrameManifestCounts {
+  /** Every non-withdrawn stuffy. */
+  total: number;
+  /** Exportable portraits (items). */
+  withPortrait: number;
+  withoutPortrait: number;
+  /** Current portrait hidden by an admin: withheld from the zip. */
+  hidden: number;
+  neverExported: number;
+  changedSinceExport: number;
+  /** neverExported + changedSinceExport: portraits whose frame is not in the last export. */
+  sinceLastExport: number;
+}
+
+export interface FrameManifest {
+  sessionId: string;
+  kind: SessionKind;
+  slug: string;
+  /** The exact string to encode in the frame QR (equals `collageAdminInfo.qrPayload`). */
+  qrPayload: string;
+  collageUrl: string;
+  frameArtKey: string;
+  /** Prefix for file names and zip parts, already sanitised. */
+  filePrefix: string;
+  partSize: number;
+  /** Wall time of the last "mark exported" call, ISO; null if none. Display only. */
+  lastExportAt: string | null;
+  items: FrameItem[];
+  /** Hidden and portrait-less stuffies, for the index CSV and the "6 without" list. */
+  withheld: FrameWithheld[];
+  counts: FrameManifestCounts;
+}
+
+export interface FramesExportedItem {
+  stuffyId: string;
+  /** The portrait the browser actually composited. */
+  photoId: string;
+  frameNumber: number;
+}
+
+export interface FramesExportedRequest {
+  items: FramesExportedItem[];
+  /** True when more parts are still to come (audit only). */
+  partial?: boolean;
+}
+
+export interface FramesExportedResponse {
+  /** Rows whose marker changed. */
+  marked: number;
+  /** Rows already carrying that photo id (a repeated call). */
+  unchanged: number;
+  /** Items that did not match a stuffy, its frame number and a portrait of this session. */
+  rejected: string[];
 }

@@ -93,6 +93,8 @@ export function adminErrorMessage(code: AdminErrorCode, serverMessage?: string):
       return "Photo storage is limiting requests. Wait a moment and try again.";
     case "photos_unreviewed":
       return "Some group photos have not been reviewed yet. Look through them (hide any picture that shows a child, or anyone other than Santa, Mrs. Claus and the stuffies), mark them reviewed, then publish.";
+    case "collage_url_not_production":
+      return "The collage link on this server is not the club's real web address, so a QR printed from it would not work. Frames for a real session can only be made from the live site.";
     case "server_error":
       return "Something went wrong on our side. Try again, and tell the webmaster if it keeps happening.";
     default: {
@@ -549,6 +551,9 @@ export const ADMIN_API = {
   photos: (id: string, kind: "group" | "portrait", page = 1) => `/api/admin/santas-workshop/sessions/${enc(id)}/photos?kind=${kind}&page=${page}`,
   reviewPhotos: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/photos/review`,
   publish: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/publish`,
+  // Slice 4
+  framesManifest: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/frames/manifest`,
+  framesExported: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/frames/exported`,
   hidePhoto: (photoId: string) => `/api/admin/santas-workshop/photos/${enc(photoId)}/hide`,
 } as const;
 

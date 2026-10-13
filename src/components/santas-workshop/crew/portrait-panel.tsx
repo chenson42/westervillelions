@@ -93,7 +93,7 @@ export function PortraitPanel({ ctx, row, onHandOver }: Props) {
           <h3 className="text-lg font-semibold text-gray-900">{retake ? "Retake the portrait" : "Portrait with Santa"}</h3>
           <PhotoCapture
             stuffyLabel={name}
-            prompt="Take the portrait with Santa and Mrs. Claus. Keep the sticker out of the shot."
+            prompt="Take the portrait with Santa and Mrs. Claus. Turn the phone sideways (landscape) and leave room around the stuffy. Keep the sticker out of the shot."
             takeLabel={retake ? "Retake portrait" : "Take portrait"}
             busy={busy}
             onUse={(f) => (retake ? setPending(f) : void queue(f))}

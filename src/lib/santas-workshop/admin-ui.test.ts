@@ -202,6 +202,8 @@ describe("dates and urls", () => {
   it("formats an instant in Eastern, not UTC", () => {
     expect(formatEasternInstant("2026-11-08T14:05:00Z")).toBe("Nov 8, 2026, 9:05 AM");
     expect(formatEasternInstant(null)).toBe("never");
+    // A UTC instant in summer shows 4 hours earlier (EDT), never the UTC clock time.
+    expect(formatEasternInstant("2026-10-13T05:30:00.000Z")).toBe("Oct 13, 2026, 1:30 AM");
     expect(formatEasternInstant("nope")).toBe("never");
   });
 
