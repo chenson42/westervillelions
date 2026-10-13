@@ -3913,3 +3913,16 @@ Slice 5 merged as `4d1f282` after QA PASS (two re-verifications) and Phase 6 SHI
 
 Pre-push on the merged tree: tsc clean; lint 0 errors; unit 303 files / 5051 tests; build PASS, no dynamic-filesystem warning; audit clean at high; PII sweeps clean; schema and migrations unchanged; package.json diff = version only. The first full e2e run reported 410 passed, 2 skipped, 4 failed and 28 did not run: `ledger-move-transaction.spec.ts:539` (passed alone, 15/15 — flaky family, B-174) and three workshop specs that sign fixture webhooks with `whsec_devexample` while the main-tree dev server held the REAL `ZEFFY_WEBHOOK_SECRET` (400 on every signed order; the serial chains then did not run). Environmental, not code: the worktree QA ran its own server with the dev secret. Fix: both `.env.local` files now hold `whsec_devexample` (the real secret lives only in Vercel); CLAUDE.md env note updated. Re-run with the corrected server: the four specs 36/36, then the whole workshop set (recorded below).
 
+Re-run of the whole workshop e2e set on the corrected environment: 67 passed, 0 failed. Pushed `0aff8cc..d1f6730` as v1.98.0.
+
+Post-deploy, live host, about 3.5 minutes after the push:
+
+| Check | Result |
+|---|---|
+| `GET …/retention/preview`, `POST …/purge`, `POST …/reset`, anonymous | 401 |
+| Family page, unknown token | 404 with `x-robots-tag: noindex, nofollow`, `referrer-policy: no-referrer` |
+| Family portrait door, unknown token | 404 |
+| Family page, malformed token | 404 (identical) |
+
+**Increment 2 is complete: all five slices are in production (v1.94.0 to v1.98.0).** What remains is on the user and the chair; see "Phase 6 — Increment 2 overall" for the dated list and B-167 in the backlog.
+
