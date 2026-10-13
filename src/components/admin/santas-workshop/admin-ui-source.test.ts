@@ -31,7 +31,7 @@ const all = [...pages, ...components];
 describe("Santa's Workshop admin pages: gates", () => {
   it("finds the admin pages", () => {
     expect(pages.map((p) => p.slice(PAGES.length)).sort()).toEqual(
-      ["/[sessionId]/connect/page.tsx", "/[sessionId]/edit/page.tsx", "/[sessionId]/page.tsx", "/[sessionId]/photos/page.tsx", "/[sessionId]/registrants/page.tsx", "/new/page.tsx", "/page.tsx"].sort(),
+      ["/[sessionId]/connect/page.tsx", "/[sessionId]/edit/page.tsx", "/[sessionId]/frames/page.tsx", "/[sessionId]/page.tsx", "/[sessionId]/photos/page.tsx", "/[sessionId]/registrants/page.tsx", "/new/page.tsx", "/page.tsx"].sort(),
     );
   });
 
@@ -78,5 +78,12 @@ describe("Santa's Workshop admin UI: untrusted text and house rules", () => {
 
   it("destructive or replacing actions go through ConfirmDialog", () => {
     expect(readFileSync(join(COMPONENTS, "connect-panel.tsx"), "utf8")).toContain("<ConfirmDialog");
+  });
+});
+
+describe("frame zips never carry the index (privacy)", () => {
+  it("the export engine does not build or zip a CSV", () => {
+    const src = readFileSync(join(COMPONENTS, "frame-export-run.ts"), "utf8");
+    expect(src).not.toMatch(/index\.csv|buildIndexCsv|indexRowsFor/);
   });
 });

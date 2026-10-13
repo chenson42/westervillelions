@@ -7,6 +7,7 @@ const TABS = [
   { key: "connect", label: "Connect to Zeffy", path: "/connect" },
   { key: "registrants", label: "Registrants", path: "/registrants" },
   { key: "photos", label: "Photos", path: "/photos" },
+  { key: "frames", label: "Frames", path: "/frames" },
   { key: "edit", label: "Edit session", path: "/edit" },
 ] as const;
 

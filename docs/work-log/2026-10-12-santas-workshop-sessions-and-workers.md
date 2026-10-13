@@ -23,8 +23,9 @@
 | 4 — Implementation | database-admin (schema done), api-developer (server done), ux-developer (Slice 1 UI done) | Complete (Slice 1); qa next | — | 2026-10-12 |
 | 4 — Implementation, Slice 2 | api-developer (server), then ux-developer | Slice 2: Complete; qa next | — | 2026-10-12 |
 | 4 — Implementation, Slice 3 | api-developer (server), then ux-developer | Slice 3: Complete; qa next | — | 2026-10-13 |
-| 5 — Verification | qa | Slice 1: complete, PASS (re-verified twice). Slice 2: first run FAIL, fixed, re-verified twice (D1 to D3, then N1/N3/N4) | Slice 1 **PASS**; **Slice 2: PASS** (tree: HEAD `160b090` + uncommitted Slice 2 diff in worktree); **Slice 3: PASS** (first run FAIL on S3-D1, fixed and re-verified with real uploads, then post-Phase-6 N1 to N5 re-verified; tree: HEAD `dc3c67e` + uncommitted Slice 3 diff in worktree) | 2026-10-12 |
-| 6 — Shipped vs intent | analyst | Slices 1 to 3 complete; Slices 4 and 5 pending | Slice 1: **SHIP WITH NOTES** (N1 to N3 before Nov 8; N4 with Slice 2; N5 gate). Slice 2: **SHIP WITH NOTES** (S2-N1 gates the dry run; S2-N3 before Dec 17; S2-N5 decided Dec 14). Slice 3: **SHIP WITH NOTES** (S3-N1 and S3-N2 decided before the dry run) | 2026-10-13 |
+| 4 — Implementation, Slice 4 | api-developer (server), then ux-developer | Slice 4: Complete; qa next | — | 2026-10-13 |
+| 5 — Verification | qa | Slice 1: complete, PASS (re-verified twice). Slice 2: first run FAIL, fixed, re-verified twice (D1 to D3, then N1/N3/N4) | Slice 1 **PASS**; **Slice 2: PASS** (tree: HEAD `160b090` + uncommitted Slice 2 diff in worktree); **Slice 3: PASS** (first run FAIL on S3-D1, fixed and re-verified with real uploads, then post-Phase-6 N1 to N5 re-verified; tree: HEAD `dc3c67e` + uncommitted Slice 3 diff in worktree); **Slice 4: PASS** (first run FAIL on S4-D1 partial-export summary, fixed and re-verified live, then post-Phase-6 N1 to N4 and N6 re-verified; tree: HEAD `ab0b566` + uncommitted Slice 4 diff in worktree) | 2026-10-12 |
+| 6 — Shipped vs intent | analyst | Slices 1 to 4 complete; Slice 5 pending | Slice 1: **SHIP WITH NOTES** (N1 to N3 before Nov 8; N4 with Slice 2; N5 gate). Slice 2: **SHIP WITH NOTES** (S2-N1 gates the dry run; S2-N3 before Dec 17; S2-N5 decided Dec 14). Slice 3: **SHIP WITH NOTES** (S3-N1 and S3-N2 decided before the dry run). Slice 4: **SHIP WITH NOTES** (S4-N1 and S4-N2 before the first real counter upload; S4-N3 and S4-N4 settled by the test print) | 2026-10-13 |
 
 ---
 
@@ -2199,6 +2200,191 @@ Session `qa-s3-19201` deleted (children cascade); my 40 photo files and folder r
 
 ---
 
+## Phase 5 — Slice 4 "Frames" — 2026-10-13
+
+**Owner:** qa · **Scope:** the Frames page `/admin/santas-workshop/[sessionId]/frames`, the two admin routes (`frames/manifest`, `frames/exported`), the browser composite (1200 x 1800 JPEG, QR from `qrPayload`, 300 dpi JFIF), the zip parts and `index.csv`, the origin guard and its dev override, "Export only new and retaken", "Retry failed". Slices 1 to 3 re-ran as regression inside the Playwright set.
+**Tree state measured:** `HEAD` = `ab0b566365439435bb71e86e1723faa37e5e0745` (main, v1.96.0, pending push) plus the **uncommitted Slice 4 diff in the pipeline worktree** (36 `git status` entries: 10 modified, 26 new). Branch `ep-divine-boat` only; `:3101` (dev, once with the frame-origin override) and `:3102` (production build) stopped by PID; `:3000` never touched; no commit. `.env.local` still carries a `ZEFFY_API_KEY`, so every server was started with it forced empty.
+
+### VERDICT: FAIL
+
+One defect, small and cosmetic-to-confusing, reproduced; everything else in Slice 4, including the 200-frame run and every adversarial case asked for, passed. A single red item is a red build, so it goes back to the ux-developer; no design flaw.
+
+| # | Defect | Owner | file:line | Fix size |
+|---|--------|-------|-----------|----------|
+| **S4-D1** | After **"Export only new and retaken (1)"** the summary reads **"1 of 3 frames done."** instead of "1 of 1". The denominator is the manifest's whole frame list (`items.length`), not the number of frames this run set out to make. It reads like two frames failed, in a screen whose own rule is "a part is never presented as complete when frames are missing" (Phase 1 Flow C). The one produced frame, its zip and its marking were all correct. | ux-developer | `src/components/admin/santas-workshop/frames-panel.tsx:208` (`{doneCount} of {items.length} frame...`; `items` is `manifest?.items` at line 103) | one line: count the run's own planned frames (the e2e only covers a full run, so nothing asserts the partial case) |
+
+**Established vs believed.** *Established:* reproduced live (retake Bravo, "Export only new and retaken (1)": text "1 of 3 frames done."; the zip held exactly one JPEG, `-002.jpg`, the new colour, QR intact) and read at the cited line. After a "Retry failed" the same sentence correctly read "4 of 4" because the run was a full one. *Not claimed:* anything about why the e2e missed it beyond "it never runs the partial export".
+
+### Gates
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| `pnpm exec tsc --noEmit` | PASS | exit 0 |
+| `pnpm lint` | PASS | 0 errors, the one old warning |
+| `pnpm test` (verbose) | PASS | **296 files, 4948 / 4948** |
+| `pnpm build:only` | PASS | exit 0, **0 warnings** (no "Dynamic filesystem access"), 327 route rows; present: `/admin/santas-workshop/[sessionId]/frames`, `/api/admin/santas-workshop/sessions/[id]/frames/manifest`, `.../frames/exported` |
+| Playwright, all nine workshop specs on `:3101` (default local store) | PASS | **68 passed, 1 skipped, 0 failed** (4.7 min); the 5 frames tests included; the skip is increment 1's "open only" public-page test |
+| PII greps (phones, emails, streets) | PASS | print nothing; no image, PDF or zip in the diff; no `frame-art.png` added to the repo; no `console.log` in the new modules |
+| `package.json` diff | PASS | exactly one line: `"fflate": "^0.8.3"` (lockfile: `fflate@0.8.3` only) |
+
+### Unit tests named, confirmed in the verbose run
+`frame-layout` (27: 1200 x 1800; every rect inside the 75 px margin for QR 21 to 43; integer module size of 7 or more with a 4-module quiet zone and a QR of at least 300 px; no overlaps; the caption is the words plus the club address, never a link; cover-crop for 3:4, 4:3 and square; fit-shrink then truncate; never splits an emoji; art must be 1200 x 1800), `jpeg-dpi` (5: sets units 1 and 300 x 300 on an existing JFIF, inserts one after SOI, leaves the rest byte-identical, idempotent, throws on non-JPEG), `zip-parts` (7: 250 into 100/100/50, round trip, stored uncompressed, `index.csv` rides along, a part is settled only when every frame produced or is listed failed), `csv-index` (6: `produced` yes/no with a reason, comma and quote escaping, formula guard, newline survives, left-out rows have no file name, sort order), server tests `frame-manifest` (13: stable alphabetical numbering, late portrait gets max + 1, withdrawn numbers kept, hidden and portrait-less get no number, opted-out included, retake keeps its number, `changed` after a retake, no contact data in the manifest), `frame-export` (12: 404, origin refusal **before** allocation, one write, `23505` retry, idempotent re-run, mark-exported marks / is idempotent / stamps the photo actually used / rejects mismatches and another session's stuffy / refuses purged and oversize), `frame-origin` (7, including "ignores the dev override in production"), `frame-names` (8), `frame-export-input` (3), `frame-export-ui` (6). The two routes are covered by `admin-routes-gate` (`auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)` first two statements) and the page by `admin-ui-source`. The design called the numbering and origin files `frame-numbering` and `origin`; the same assertions live in `frame-manifest` and `frame-origin`.
+
+### Feature-gate audit
+
+| Route or action | `auth()` | `hasFeature(...)` | Key |
+|-----------------|----------|--------------------|-----|
+| `POST .../sessions/[id]/frames/manifest` | yes (first statement) | yes (second) | `SANTAS_WORKSHOP_MANAGE` |
+| `POST .../sessions/[id]/frames/exported` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `/admin/santas-workshop/[sessionId]/frames` (page) | yes, then redirect | yes, then `redirect("/access-pending")` | `SANTAS_WORKSHOP_MANAGE` |
+Exercised: both routes 401 for an anonymous caller. A plain-member 403 matrix was not re-run for these two routes (the Slice 1 pattern plus the `admin-routes-gate` scan). The manifest carries no email, mobile, note or token (sentinel scan) and the audit rows hold counts and flags only.
+
+### Live checks (admin UI at 1280 px; local photo store; every upload through the real crew routes; practice sessions unless stated)
+Seed: 5 stuffies with sentinel contact data; Alpha (parent Zulu), Bravo (Yankee, **no photo consent**) and **`Rex, "Q"/..\x`** (Xray) have portraits; Delta has none; Echo's portrait is hidden.
+
+| # | Check | Result |
+|---|-------|--------|
+| F1 to F4 | **Prepare export** | "3 frames to make, 2 left out" with "Echo: portrait hidden by an admin" and "Delta: no portrait taken yet"; numbers alphabetical by parent last name (Rex 1, Bravo 2, Alpha 3); the two withheld have no number; the non-consented Bravo **is** included (a family's own frame) |
+| F5 | Manifest | no email, mobile or note; `qrPayload` equals the collage link |
+| **Z1 to Z4** | **Export, download, unzip** (`fflate` in node) | exactly **3 JPEGs plus `index.csv`**, names exactly the manifest's (`ssw-<slug>-001..003.jpg`); every JPEG is **1200 x 1800 (SOF0, 3 components)** with **JFIF 1.1 units 1, 300 x 300 dpi**; 197 to 217 KB each; part named `ssw-<slug>-frames-part-1-of-1.zip`; the three produced stuffies are stamped exported, the two left-out are not; the audit row holds `{marked: 3, partial: false, rejected: 0, unchanged: 0}` only |
+| **Z6 to Z9** | **`index.csv`** | header `frame_number,file_name,stuffy_name,parent_last,parent_first,window,produced,reason,photo_consent`; **5 rows**: 3 `produced=yes`, Echo and Delta `produced=no` with the reasons "No frame: portrait hidden by an admin" / "No frame: no portrait taken yet"; **`"Rex, ""Q""/..\x"`** is correctly quoted (the comma and quotes escaped, the column count intact); **file names carry no stuffy name and no path separators** |
+| **Z10** | **QR in every frame** | `jsqr` on the decoded pixels of each of the 3 JPEGs returns **exactly `qrPayload`** (`http://localhost:3000/santas-workshop/c/<token>`) |
+| Eyeball | Two frames rendered | blue border, gold rule, cream mat, "A Visit to Santa's Workshop 2026", the portrait filling its window with a **"PRACTICE, not for print"** band, the stuffy name large under it (including `Rex, "Q"/..\x` drawn as text), the QR on a white plate bottom left, and "Scan to see the whole day's photos / westervillelions.org" beside it |
+| P1 to P3 | **Re-Prepare** | all three read `current`; numbers identical across 4 consecutive manifest calls (1,2,3); the page shows the last export time and "Retaken since last export 0" |
+| **P4 to P5** | **Retake Bravo** through the real crew portrait route | Bravo reads **`changed`**, the other two `current`, `changedSinceExport` 1, Bravo **keeps number 2**; the page reads "Retaken since last export 1", "1 portrait was retaken since the last export." and offers **"Export only new and retaken (1)"** |
+| **P6 to P9** | **Export only new and retaken (1)** | produces **one** frame: a zip with `-002.jpg` and `index.csv`, 1200 x 1800 at 300 dpi, the **new (orange)** portrait, QR intact; after it all three read `current` again. **S4-D1: the summary said "1 of 3".** |
+| **P11** | **A new portrait whose parent name sorts first (Aardvark)** | gets **max + 1 = 4**; nobody else is renumbered; reads `never` |
+| **R1 to R7** | **Failure path** (I deleted one stored portrait file) | the run says "3 of 4 frames done. 1 failed." (never shown as complete) and lists "Alpha (ssw-...-003.jpg): The portrait is no longer available"; the part holds the 3 produced JPEGs only and the index lists Alpha `produced=no` with that reason; **only produced frames were marked exported**; after restoring the file **"Retry failed (1)"** produced `ssw-<slug>-frames-retry-1.zip` with exactly frame 003, Alpha is then marked exported and the sentence reads "4 of 4" |
+| Z0 | **A session with 0 portraits** | Prepare says "0 frames to make, 1 left out" and "No portraits have been taken yet, so there are no frames to make."; **no Export button exists**; the API manifest has 0 items, 1 withheld (`no_portrait`), no number allocated |
+| 360 px | Frames page | "Use a laptop for this step. Making the frames needs a bigger screen and some patience."; no Prepare or Export controls; no horizontal scroll |
+
+### Origin guard
+| Check | Result |
+|-------|--------|
+| **REAL session**, dev server (`NEXTAUTH_URL` is `localhost:3000`), no override | API **409 `collage_url_not_production`**; the page shows the sentence "The collage link on this server is not the club's real web address, so a QR printed from it would not work. Frames for a real session can only be made from the live site." and no Export button; **no number was allocated** (0 `frame_number` rows) |
+| Same server restarted with **`SW_ALLOW_NON_PRODUCTION_FRAME_ORIGIN=1`** | the real session's manifest proceeds (200, 1 item), the page shows "1 frame to make", the export downloads a valid 1200 x 1800 / 300 dpi JPEG **without the PRACTICE band** |
+| **Production build** (`next start`) **with the same override set** | the real session is **still refused 409 `collage_url_not_production`**: the override is ignored in production (measured, not just unit-tested) |
+| Practice sessions | exempt (every practice export above ran on the dev origin) |
+| **Purged session** (status set by SQL; no purge engine yet) | manifest **409 `session_purged`**; `exported` 409 too; the page shows "This session's photos have been removed, so there is nothing left to export." and no Prepare button |
+
+### Adversarial
+| Probe | Result |
+|-------|--------|
+| `exported` with a **photo id from another session** | counted in `rejected`, nothing marked, the stuffy's marker unchanged |
+| `exported` naming a **stuffy of another session** | rejected, nothing written |
+| `exported` with the **wrong frame number** | rejected |
+| **More than 500 items** | **400 `invalid_input`**; exactly 500 is accepted (duplicates collapse to one `unchanged`) |
+| Malformed bodies (not an array, non-uuid ids, negative frame number, no body) | all 400, never 500 |
+| `exported` with a photo that is **no longer current** (Bravo's superseded first portrait) | **accepted and stamped** (`marked: 1`, `rejected: []`), after which the stuffy reads `changed`. This is the api-developer's documented rule ("stamps the photo id the browser actually used, so a retake during export reads changed"; the photo must be a portrait of that stuffy), **not** the "counted in `rejected`" you expected. Recorded as a discrepancy of expectation, not a defect: the effect is conservative (it can only make a frame look stale) and a photo of another stuffy is still rejected. Say if you want it refused. |
+| Stuffy name containing `,` `"` and a path separator | CSV escaped, the frame draws the name as text, file names are `ssw-<slug>-NNN.jpg` only |
+| Audit rows | counts and flags only (no name, photo id or file name) |
+| Anonymous | both routes 401 |
+
+### 200-frame run (L11), headless Chromium 
+Setup (disclosed): one **real 1,082,847-byte, 1800 x 2400 portrait** uploaded through the crew route; **199 more stuffies, orders and portrait rows inserted by SQL on the branch** that point at that same stored file (so the browser fetched and decoded a realistic 1 MB image 200 times; the server and the browser may have cached the identical bytes, which flatters the network side). Manifest: 200 items, numbers 1 to 200 with no gaps, identical on a repeat call.
+- **Wall time: 37.9 s** from the click to "200 of 200 frames done." (3 frames at a time).
+- **Memory:** peak **JS heap 14 MB** (total 22 MB); peak **whole-browser resident memory 202 MB against 98 MB before the export** (about +104 MB; that figure sums every Chromium process that uses a Playwright profile on this machine, which included a second, idle profile, so the increase is the better number). The zip bytes live in ArrayBuffers, not the JS heap.
+- **Two parts of 100**: `...-frames-part-1-of-2.zip` and `...-part-2-of-2.zip`, **41.4 MB each** (about 414 KB per frame); part 1 holds `-001..-100`, part 2 `-101..-200`, each with its own `index.csv` of 100 rows; **all 200 JPEGs are 1200 x 1800 with 300 dpi**; names unique; all 200 stuffies stamped exported; progress text moved "Frame 44 of 200, part 1 of 2 (Syn045)" through "Frame 200 of 200, part 2 of 2".
+- *Believed, not measured:* that the chair's laptop and a larger real-photo set behave the same (deferred below).
+
+### Deferred (not passes), with the exact step
+1. **A 200-frame run on the chair's laptop** with real portraits (different sizes, EXIF orientation, HEIC-converted files) in the browser she will use (Chrome, Safari or Firefox; the 2 x 41 MB downloads and the "allow multiple downloads" prompt). Step: on the dry-run session after the real portraits exist, Prepare, Export, record the time and watch memory in the browser's task manager; confirm both parts download.
+2. **A photo counter accepting the zip.** Step: upload one part to the chosen service, learn its rules (file-name pattern, maximum size or count per upload, orientation, accepted DPI), then set `frame_part_size` and `frame_file_prefix` on the session (the columns exist; there is no UI for them yet) and re-export.
+3. **The real frame art overlay.** The optional `frame-art.png` (exactly 1200 x 1800; photo window x 75, y 225, 1050 x 990; name band y 1235 to 1335; QR plate x 75, y 1365) was not available, and I added nothing to `public/`. Step: drop the chair's file at `public/images/santas-workshop/frame-art.png` on a preview, Prepare, Export, and eyeball that the portrait, name and QR plate line up.
+4. **A printed 4x6 and a phone scan.** The QR modules are 7 px minimum (0.6 mm at 300 dpi); the decode is proven from pixels, not from paper. Step: print one frame at 100 % on the counter's printer and scan it with an iPhone and an Android phone at arm's length.
+5. **Production QR origin.** On the live site `NEXTAUTH_URL` must be `https://westervillelions.org` or the guard refuses real-session frames (it did here with the dev origin); step: after deploy, Prepare on the real session and confirm no refusal and that a decoded QR starts with the production host.
+
+### Observations (not defects)
+1. **A console 404 on every Prepare/Export:** the page fetches the optional `/images/santas-workshop/frame-art.png`, which does not exist yet, so the browser logs "Failed to load resource: 404" and the server logs a 404. The plain frame is drawn as intended; it will stop once the art is added.
+2. **A partial export reuses the full export's zip name** (`...-frames-part-1-of-1.zip` for "only new and retaken"), so saving both to one Downloads folder makes the browser rename one with " (1)". A retry zip has its own name (`...-frames-retry-1.zip`).
+3. The index CSV uses the column order `frame_number, file_name, ...` and a `reason` column (the api and ux notes record this deviation from the design's `file_name, frame_number` and `no: <reason>`).
+4. On this branch the "Last export" time shows about four hours later than wall-clock time (the database clock on the branch, seen since Slice 1); I did not investigate whether production is affected.
+5. The gate spec's two disposable users again produced two "New portal user" notices (blocked, unsent; removed); the specs again left empty `e2e-*` folders in the photo store (five this run; removed by `rmdir`).
+
+### Cleanup
+Sessions `qa-s4`, `qa-s4z`, `qa-s4r` and `qa-s4l` deleted (children cascade, including the 199 synthetic stuffies, orders and photo rows); their four photo folders (36 files) and the five empty spec folders removed; the two notice rows removed (`email_queue` 1362). Branch re-measured equal to the pre-run baseline: `sw_sessions` 0, `sw_orders` 0, `sw_stuffies` 0, `sw_stuffy_events` 0, `sw_photos` 0, `sw_crew_attempts` 0, `sw_session_log` 0, `zeffy_events` 1 (`smoke-2`), `users` 53, `roles` 7, `user_roles` 72, `email_queue` 1362. Photo store: **0 files**, only the long-standing empty `ping/`. `:3101` and `:3102` stopped by PID; no worktree process remains; `:3000` untouched; nothing committed.
+
+### Phase 5 — Slice 4 handoff
+**Status:** complete (FAIL, handed back). **Next agent: ux-developer** for S4-D1 (one line at `frames-panel.tsx:208`, plus a test that a partial export's summary counts the run's own frames). Then qa re-runs `tsc`, `lint`, `pnpm test`, `pnpm build:only`, the nine workshop specs, the PII greps and the one live check (retake one portrait, "Export only new and retaken (1)", read "1 of 1 frames done."). Phase 6 waits for a PASS.
+
+---
+
+## Re-verification (Slice 4, S4-D1) — 2026-10-13
+
+**Owner:** qa · **Verdict: PASS** (Slice 4). Tree state: `HEAD` `ab0b566365439435bb71e86e1723faa37e5e0745` plus the **uncommitted Slice 4 diff in the pipeline worktree** (37 `git status` entries, now including the S4-D1 fix and the three cleanups). Branch `ep-divine-boat` only; no commit.
+
+| Gate | Result |
+|------|--------|
+| `pnpm exec tsc --noEmit` | PASS |
+| `pnpm lint` | PASS (0 errors, the one old warning) |
+| `pnpm test` | PASS: 296 files, **4949 / 4949** (one more than before: "runSummarySentence > counts against this run's own target") |
+| `pnpm build:only` | PASS: exit 0, 0 warnings, 327 route rows |
+| All nine workshop Playwright specs on `:3101` (`ZEFFY_API_KEY=` forced empty) | PASS: **69 passed, 1 skipped, 0 failed** (4.6 min); includes the new "a partial export counts against its own target and names its zip distinctly" (6 frames tests now); the skip is increment 1's "open only" public-page test |
+| PII greps (phones, emails, streets) | PASS: print nothing; no image, PDF or zip in the diff; `package.json` still only `fflate` |
+
+### Live (admin UI at 1280 px, a fresh practice session with 3 stuffies and portraits uploaded through the real crew routes)
+| # | Check | Result |
+|---|-------|--------|
+| V1 | Full export | "**3 of 3 frames done.**" (plural); zip `ssw-<slug>-frames-part-1-of-1.zip` (no suffix) |
+| **V5** | **S4-D1: retake Bravo, "Export only new and retaken (1)"** | **"1 of 1 frame done."** (singular, against its own target; it read "1 of 3" before) |
+| **V6 to V7** | **Subset zip name** | **`ssw-<slug>-frames-part-1-of-1-new.zip`**, distinct from the full run's (so both can sit in one Downloads folder); it holds exactly Bravo's `-002.jpg`, 1200 x 1800 at 300 dpi |
+| V8 | A failed frame (I deleted one stored portrait file) | the summary reads **"0 of 1 frame done. 1 failed."**; after restoring the file, "Retry failed" produced **`ssw-<slug>-frames-retry-1.zip`** |
+| **V10** | **No `frame-art.png` request at all** | 0 requests for it during Prepare, both exports, the failure and the retry |
+| V9 | No console 404 during Prepare/Export | the whole session logged exactly **one** console error and had exactly **one** response of 400 or more: the photo door's 404 for the stored portrait file **I deliberately deleted** for V8. Nothing else (the previous run's art 404 is gone). My probe flagged V9 red only because that deliberate failure was inside the measured window |
+| **V2 to V4** | **"Last export" with the ET label** | the page shows **"Oct 13, 2026, 2:00 AM ET"**. Computed independently right after the export: the branch's own audit row `created_at` converted to Eastern = **02:00 AM**, the branch's `now()` in Eastern = **02:00 AM** (UTC 06:00:11), and this machine's wall clock in Eastern = **2:00 AM**. All three agree to the minute, so the four-hour offset is gone |
+
+### Surprises
+1. On this branch `now()` and the machine clock now agree (06:00 UTC on both; `TimeZone` is GMT); my earlier note that the branch clock ran about four hours ahead was therefore the display bug the coordinator named (a bare timestamptz string formatted as if local), not a database skew. Withdrawn.
+2. The gate spec's two disposable users again produced two "New portal user" notices (blocked, unsent); removed. The specs again left four empty `e2e-*` folders in the photo store; removed by `rmdir`.
+3. `.env.local` still holds a `ZEFFY_API_KEY`; every server was started with it forced empty.
+
+### Cleanup
+Session `qa-s4v-89216` deleted (children cascade) and its photo folder emptied and removed; four empty spec folders removed (only `ping/` remains, **0 files**); the two notice rows removed (`email_queue` 1362). Branch re-measured equal to the pre-run baseline: `sw_sessions` 0, `sw_orders` 0, `sw_stuffies` 0, `sw_stuffy_events` 0, `sw_photos` 0, `sw_crew_attempts` 0, `sw_session_log` 0, `zeffy_events` 1 (`smoke-2`), `users` 53, `roles` 7, `user_roles` 72, `email_queue` 1362. `:3101` stopped by PID (`:3102` not used); no worktree process remains; `:3000` untouched; nothing committed.
+
+### Verdict
+**PASS.** S4-D1 and the three cleanups are verified. The deferred list from "Phase 5 — Slice 4" stands unchanged (a 200-frame run on the chair's laptop, a photo counter accepting the zip, the real frame art overlay, a printed 4x6 phone scan, the production QR origin). **Phase 6 next** for Slice 4 (analyst).
+
+---
+
+## Re-verification 2 (Slice 4, post-Phase-6) — 2026-10-13
+
+**Owner:** qa · **Verdict: PASS** (Slice 4 stays PASS). Tree state: `HEAD` `ab0b566365439435bb71e86e1723faa37e5e0745` plus the **uncommitted Slice 4 diff in the pipeline worktree** (38 `git status` entries, now including S4-N1 to N4 and N6). Branch `ep-divine-boat` only; no commit.
+
+| Gate | Result |
+|------|--------|
+| `pnpm exec tsc --noEmit` | PASS |
+| `pnpm lint` | PASS (0 errors, the one old warning) |
+| `pnpm test` | PASS: 296 files, **4955 / 4955** (was 4949); new by name: "frame zips never carry the index (privacy) > the export engine does not build or zip a CSV", "buildZip round trip > a part holds pictures only", "frameImageFileName > appends the portrait's short id once the frame was exported before", "frame number and QR size for the real link > the number tag sits inside the canvas margin and is disjoint from the QR plate, the name and the caption" and "...a 69-character collage link (QR version 5) prints at 8 px per module or more with its quiet zone" |
+| `pnpm build:only` | PASS: exit 0, 0 warnings, 327 route rows |
+| All nine workshop Playwright specs on `:3101` (`ZEFFY_API_KEY=` forced empty) | PASS: **69 passed, 1 skipped, 0 failed** (4.5 min); the skip is increment 1's "open only" public-page test |
+| PII greps (phones, emails, streets) | PASS: print nothing; no image, PDF or zip in the diff; `package.json` still only `fflate` |
+
+### Live (admin UI at 1280 px; practice session, 5 stuffies, portraits through the real crew routes; the dev server started with `NEXTAUTH_URL=https://westervillelions.org` so the collage link is the production-shaped link)
+| # | Check | Result |
+|---|-------|--------|
+| Q0 | The link | `https://westervillelions.org/santas-workshop/c/8JoUUg_O3rY6RI532h6Q9A`: exactly **69 characters** |
+| **Z1 to Z2** | **Full export, unzip** | the zip holds **only `.jpg` entries** (3: `ssw-<slug>-001..003.jpg`); no `index.csv`, no other file; no entry contains CSV text (`frame_number,file_name` and `produced,reason` found in none) |
+| Z3 | Page copy | "The zips hold only pictures, so they are safe to upload to the photo counter. The index below lists every stuffy with the parent's name, drop-off window and photo consent, including the ones left out and why. It is for the club only: keep it off the photo counter." |
+| **Z4 to Z6** | **Index download** ("Download index (admin only)", a separate control) | file `ssw-<slug>-frames-index.csv` with the header and **all 5 rows**: Rex, Bravo, Alpha `produced=yes`; Echo `no` / "No frame: portrait hidden by an admin"; Delta `no` / "No frame: no portrait taken yet"; the name `"Rex, ""Q""/..\x"` correctly escaped; plain file names |
+| **Q1 to Q4** | **QR decode and module size** | `jsqr` decodes every frame's QR to exactly the 69-character link; the QR is **version 5 (37 modules)**; measured from the decoded finder-pattern locations (centre-to-centre distance 240.0 px over 30 modules): **module size 8.00 px horizontally and 8.00 px vertically** (the unit test predicts 8 px at 360 px) |
+| Eyeball | One frame at full resolution | **"No. 001"** in the brand serif at the **bottom right** of the QR block, inside the gold rule, clear of the QR plate (which ends at the bottom margin), the caption "Scan to see the whole day's photos / westervillelions.org", the name above, and the photo window; the PRACTICE band, title and year unchanged (note: the coordinator wrote bottom left, the implementer placed it bottom right because the left is the QR plate; the number does not overlap anything) |
+| **R1 to R3** | **Retake, re-export** | after a retake through the real crew route and "Export only new and retaken (1)", the subset zip `...-frames-part-1-of-1-new.zip` holds one entry **`ssw-<slug>-002-63b976.jpg`**, where `63b976` is the first six hex characters of the new portrait's id (`63b976f7-...`); the first export had used the plain `-002.jpg`; the subset zip also has only the `.jpg`; the index downloaded afterwards lists Bravo under the new name |
+| **C1** | **Crew portrait prompt** (390 px) | reads exactly: "Take the portrait with Santa and Mrs. Claus. Turn the phone sideways (landscape) and leave room around the stuffy. Keep the sticker out of the shot." followed by "Stuffies only, never the children." |
+
+### Surprises
+1. **The index is, by design, a file full of personal data** (parent first and last name, window, photo consent) and is now a browser download of the admin only. It is a plain CSV with no protection once downloaded; the page warns to keep it off the photo counter, which is the control. Nothing in a zip can carry it any more (verified by bytes, not just names).
+2. A re-export of a never-changed frame keeps its short-id name only after an earlier export; the first export of a frame is always the plain name, so a counter that already received `-002.jpg` will receive a differently named `-002-63b976.jpg` for the retake rather than an overwrite. That is the S4-N6 intent; I note it so nobody expects the counter to replace the old file.
+3. The gate spec's two disposable users again produced two "New portal user" notices (blocked, unsent); removed. The specs again left six empty `e2e-*` folders in the photo store; removed by `rmdir`.
+4. `.env.local` still holds a `ZEFFY_API_KEY`; every server was started with it forced empty.
+
+### Cleanup
+Session `qa-s4-25911` deleted (children cascade) and its photo folder emptied and removed; six empty spec folders removed (only `ping/` remains, **0 files**); the two notice rows removed (`email_queue` 1362). Branch re-measured equal to the pre-run baseline: `sw_sessions` 0, `sw_orders` 0, `sw_stuffies` 0, `sw_stuffy_events` 0, `sw_photos` 0, `sw_crew_attempts` 0, `sw_session_log` 0, `zeffy_events` 1 (`smoke-2`), `users` 53, `roles` 7, `user_roles` 72, `email_queue` 1362. `:3101` stopped by PID (`:3102` not used); no worktree process remains; `:3000` untouched; nothing committed.
+
+### Verdict
+**PASS.** S4-N1, N2, N4, N6 and the S4-N3 copy behave as specified (the N3 guide rectangle was deliberately not built, per the ux-developer's note). The deferred list from "Phase 5 — Slice 4" stands (a 200-frame run on the chair's laptop, a photo counter accepting the zip, the real frame art overlay, a printed 4x6 phone scan, the production QR origin). **Phase 6 next** for Slice 4 (analyst).
+
+---
+
 # Phase 6 — Shipped vs Intent (analyst)
 
 Later slices get their own heading below this one. Slice 1 is judged alone.
@@ -2699,6 +2885,153 @@ SHIP WITH NOTES for Slice 3. The collage matches the design: one visibility rule
 
 ---
 
+## Phase 6 — Slice 4 — 2026-10-13
+
+**Scope judged:** the admin Frames page (`/admin/santas-workshop/[sessionId]/frames`), the two admin routes (`frames/manifest`, `frames/exported`), persisted frame numbers, the browser composite (1200 x 1800 JPEG at 300 dpi, QR from the collage link, caption words, stuffy name), zip parts and the index CSV, the origin guard, "Export only new and retaken" and "Retry failed", and the optional `frame-art` slot. **Out of scope, not gaps:** the family page and the purge/reset engine (Slice 5).
+
+**Tree state measured:** worktree on main `ab0b566` (v1.96.0) plus the uncommitted Slice 4 diff (37 `git status` entries; one dependency, `fflate`; no migration; no env var except a dev-only override). Method: the work-log in the order given (my Phase 1 addendum Flow C and gap 5/6, Phase 2 Ruling 8, Phase 3 "Frame export" and DECISION-124, both Phase 4 sections with the post-QA fixes, QA's FAIL then PASS, my Slice 3 note on the QR caption), spec §4 step 5, §7 "Frame" and decision 14, then the shipped code (`frame-layout`, `frame-manifest`, `frame-names`, `frame-origin`, `csv-index`, `zip-parts`, `frame-compose`, `frames-panel`, `art-slots`). I did not re-run the test suite (QA's 4,949 tests and the 6 frames e2e tests stand). I ran the real export myself on `:3101` (branch database, local photo store in the scratchpad, `NEXTAUTH_URL` set to the server's own origin, the frame-origin dev override set, `ZEFFY_API_KEY` forced empty, no Sync): a **real** session (so no PRACTICE band) with four stuffies taken through tag, check-in and portrait (two with the same name "Teddy", one 49-character name, one with emoji and an accent; one portrait shot vertical, the others horizontal, each carrying labels at its edges so I could see exactly what is cropped) plus one stuffy with no portrait; I used the page's Prepare and Export, downloaded the part through the browser, unzipped it, read the JPEGs' headers, looked at three frames, decoded the QR, and computed the QR's module size for the **production** link. I then deleted both sessions, re-measured the branch at 0 sessions, orders, stuffies and photos (`email_queue` 1362), and stopped the server by PID. A photo counter, a printer, a phone scanning paper, the chair's laptop and the chair's art are all unmeasured.
+
+## VERDICT
+
+**SHIP WITH NOTES.** The export does what the design says and does it carefully: numbers are stable, nothing about a frame is stored, a zip never looks complete when it is not, the origin guard fails closed, the QR decodes exactly to the collage link, and the default frame is clean enough to print if no art ever arrives. But reading the finished frames against how the chair will really use them turned up two things I would not want to meet on Sunday morning: **the print carries no frame number, so matching prints to families relies on the stuffy's name** (and two stuffies named Teddy look the same), and **every zip the page tells the chair to upload also contains `index.csv` with parents' names**. Neither is a bug in the build; both are one-line-class changes that should land before the first real upload to a photo counter (the dry run). A third matter, how a vertical phone portrait is cropped, decides whether the frames look right and needs the test print.
+
+## ONE-LINE TAKE
+
+> From a laptop the chair can turn every stuffy's portrait into a numbered 4x6 JPEG with the stuffy's name and a QR to the collage, in parts she can download and upload by hand, with the ones that could not be made listed and never hidden; what the frame does not carry is its own number, and what the zip carries that it should not is the parents' names.
+
+## What's Working
+
+- **Flow C, as specified.** Prepare shows the counts up front ("4 frames to make, 1 left out"), names each stuffy that gets no frame and why ("Nopic: no portrait taken yet"), shows "Retaken since last export" and the last export time; Export shows "Frame N of M, part P of Q" with the current name, Stop that keeps finished parts, and ends with a sentence counted against the run's own target ("4 of 4 frames done."; QA's S4-D1 fix: "1 of 1 frame done." for a subset). A failed frame is retried three times, listed by name with its reason, left out of the zip, written into the index as `produced = no`, never marked exported, and "Retry failed" makes a separate zip (QA reproduced all of it).
+- **Stable frame numbers.** Allocated under a row lock the first time a stuffy has an exportable portrait, alphabetically by parent last name within the batch, never reassigned; a late portrait gets `max + 1`; a retake keeps its number. File names are `ssw-<slug>-NNN.jpg` (ASCII, no name, no path characters; a hostile stuffy name `Rex, "Q"/..\x` was drawn as text and quoted in the CSV in QA's run). The name printed on the frame and the portrait come from the same stuffy row, so the code cannot attach one stuffy's portrait to another's name.
+- **Everything is made in the browser and nothing is stored.** No server rendering, no Drive or Postgres frame bytes; the only server calls are the manifest (which allocates numbers) and "exported" (which stamps the photo id actually used, so a retake during an export reads "changed"). Measured by QA on a fast machine with a realistic 1 MB image 200 times: 37.9 s for 200 frames, two parts of 100 (41.4 MB each, about 414 KB a frame), about +104 MB of browser memory; the zip is stored, not compressed, because JPEG does not compress. My own run: four 1200 x 1800 JPEGs (176 to 215 KB with my synthetic images) with JFIF density 1, 300 x 300 dpi.
+- **The QR is exactly the collage link, with the caption in words.** `qrPayload` is the same string the admin photos page shows; I decoded a frame to it, and it still decoded after I shrank the image to one third (about 100 dpi). The caption is "Scan to see the whole day's photos / westervillelions.org", never the 22-character token (Phase 3 ruling 10; my Slice 3 note on the caption is satisfied).
+- **The origin guard fails closed and cannot be talked out of it in production.** A real session's manifest is refused (409 `collage_url_not_production`, with a plain sentence and no Export button, and **no number allocated**) unless the collage link starts with `https://westervillelions.org/` on a Vercel production deploy; practice sessions are exempt; the dev override is honoured only off production (QA measured it ignored on a production build). The club's real origin is `https://westervillelions.org` everywhere else in the app (layout, sitemap), so the guard matches.
+- **Hostile and awkward names are handled.** Control and bidi characters are stripped, the name shrinks from 84 px to a 44 px floor, then truncates by code point with an ellipsis (my 49-character name printed as "Sir Reginald Fluffington the Third of Wester…", legible); the emoji name "Bear 🐻🎄 Noël" rendered in color with its accent on this Chromium. Zero portraits: no Export button and a sentence; a one-frame run works; a purged session is refused.
+- **The default frame is good enough to print.** A blue border, a gold rule, a cream mat, "A Visit to Santa's Workshop 2026" in a serif, a near-square photo window with a gold edge, the stuffy's name large beneath it, the QR on a white plate bottom left with the caption to its right, all inside the 75 px safe margin. It is plain, tidy and consistent with the club's colors; it would not embarrass the club if no art arrives. The optional `frame-art` slot is ready (exactly 1200 x 1800 transparent PNG; window x 75, y 225, 1050 x 990; name band y 1235 to 1335; QR plate x 75, y 1365; the page loads it only when the slot is switched on, so there is no console 404 until then).
+
+## Intent-vs-Shipped Diff
+
+- **Manifest up front; progress by frame and part; failures collected and retried; the zip never looks complete (Flow C).** Matches (QA's failure drill: a deleted portrait file produced "3 of 4 frames done. 1 failed.", a part of the 3 good frames, a `no` row with a reason, and a retry zip with the one frame).
+- **Index CSV with a `produced` column.** Shipped as `produced` yes/no plus a separate `reason` column (design said `no: <reason>` in one cell); columns `frame_number, file_name, stuffy_name, parent_last, parent_first, window, produced, reason, photo_consent`. Verdict: **acceptable drift.** **But Phase 1 gap 6 said the number-to-family mapping goes in a separate, admin-only index CSV, because the third party sees what is uploaded. Shipped: the index rides inside every zip part (and again as a combined download), and the page tells the chair to "Upload them to the photo counter by hand."** I confirmed it: my zip's entries were the four JPEGs plus `index.csv`, which holds each stuffy's parent's first and last name, the drop-off window and the photo-consent answer. Verdict: **regression against intent** (S4-N2).
+- **Stable frame numbers.** Matches. **"Match frames to stuffies by number":** the design's own file naming makes the number the join key, but **the number is not on the print.** My frames show the stuffy's name, the portrait and the QR; no number, no parent. A photo counter prints the picture, not the file name. So at pickup the only thing on the print that identifies the family is the stuffy's name, and in my test two frames read simply "Teddy". The chair can tell them apart by looking at the stuffy and by the index (by parent last name), but only if she knows which print is which: that is a wrong-portrait risk at the door that one small printed "No. 002" in the safe margin would remove, and the number is not personal data. Verdict: **gap** (S4-N1). The wrong-portrait risk upstream of the frame is covered separately: the check-in photo is now shown at the portrait and pickup stations (the Slice 2 note landed), so a portrait taken on the wrong stuffy has a chance of being caught at the Santa station.
+- **"Portraits taken since last export."** Matches. It compares portrait ids exactly (not clocks): the indicator and the "Export only new and retaken (N)" button appear after a retake, the stuffy keeps its number, and the subset zip is named `...-part-1-of-1-new.zip` so it can sit beside the full run's zip. One residue: the JPEG inside has the **same file name** as the earlier one (`-002.jpg`), so a counter that already received frame 002 will see a duplicate name (S4-N6).
+- **Withheld list.** Phase 1: hidden or portrait-less stuffies are listed, never given a placeholder frame. Shipped exactly that, in the page ("Left out of the zip: Echo: portrait hidden by an admin") and in the index with a reason. **What the page does not say is what to do about them.** A family with no frame on pickup morning is a real conversation; the page names the problem but not the remedies (unhide the portrait on the Photos page, or take a new portrait and use "Export only new and retaken") (S4-N5).
+- **Photo window and how a portrait is cropped (Phase 1 gap 2, left open).** The window is 1050 x 990, almost square, on a 4x6 portrait card, and the portrait is **cover-cropped** into it. I measured both shapes with edge labels: a **horizontal** phone photo loses about 20 percent off the left and right (my "TOP" and "BOTTOM" labels survived, the "L" and "R" at the edges were trimmed in; Santa, Mrs. Claus and the stuffy sitting side by side survive); a **vertical** phone photo loses about 29 percent of its height, 14.5 percent off the top and bottom each (my "TOP EDGE" and "BOTTOM EDGE" labels were gone entirely: a Santa hat or a stuffy's feet would be cut). The crew app's portrait prompt says only "Take the portrait with Santa and Mrs. Claus. Keep the sticker out of the shot." Verdict: **drift with a real consequence** (S4-N3): either tell volunteers to shoot sideways with everyone in the middle, or decide the window shape before the chair's art is made; the test print with real portraits shot both ways settles it.
+- **QR "scannable at 4x6 print size".** Shipped: integer pixels per module, at least 7, a 4-module quiet zone, ECC M, on a solid white plate. **Reasoning at 300 dpi, using the real production link:** `https://westervillelions.org/santas-workshop/c/<22-character token>` is 69 characters, which is QR version 5 (37 modules), so the layout's floor of 7 px per module is what it gets: each module is 7 px = **0.59 mm**, the symbol is 21.9 mm wide and the plate with its quiet zone is 26.7 mm (about 1.05 in). QA's note that "the real link is about 50 characters (version 4)" described the development link (62 characters, 33 modules, 8 px, 0.68 mm); the production link is longer. 0.59 mm is above the roughly 0.5 mm that phones read from arm's length, but it is a floor, not a margin, and a glossy print's dot gain eats into it. The block has room: a target of 360 px (instead of 340) gives 8 px per module on the production link and still ends at the bottom safe margin. Verdict: **acceptable drift, tighten** (S4-N4), and the printed-paper scan stays a hard gate.
+- **Default frame versus the chair's art.** Decision 14 allows either; the default is printable (see above). One print-trim note: the outer 36 px (3 percent) is solid blue, and photo counters often trim 2 to 3 percent, so an uneven blue edge on some prints is likely and harmless; a cream outer edge with the blue inset one step in would not show a trim at all (S4-N8).
+- **Origin guard and the practice exemption.** Matches Phase 3 (with the code renamed `collage_url_not_production`, accepted).
+- **Index CSV honesty rule.** Matches: every `no` row carries a reason, a part is offered only after every frame in it produced or is listed failed, hidden and portrait-less stuffies appear with their reasons, and the combined index covers everyone.
+- **Frames for families that opted out of photo sharing.** Included (it is the family's own frame), as DECISION-125 says; their QR leads to the public collage, which does not show their portrait, which is correct.
+- **Third-party processing.** Phase 1 gap 7 asked that the sign-up copy say frames are printed at a photo service; I did not re-read that copy for this slice (increment 1); confirm it (deploy checklist).
+
+Phase 3 rulings touching Slice 4:
+
+| # | Ruling | Verdict |
+|---|---|---|
+| Ruling 8 / DECISION-124 | Browser canvas composite, `fflate` zip, no server rendering, no stored frames | accept; measured on QA's machine, the chair's laptop is still unmeasured |
+| 10 | The caption is words plus `westervillelions.org`, not the token URL | accept; shipped wording is "Scan to see the whole day's photos" (the decision's text says "Scan for the day's photos"): update the decision |
+| 11 | Persisted numbers allocated alphabetically within a batch; zip order is not pickup order; the index CSV is the pickup table; "since last export" compares photo ids | accept; note a late portrait gets `max + 1`, so prints are in family-name order only for the first batch |
+| 8 (hidden portrait withheld from the zip; opted-out included) | accept; shipped and tested |
+| 15 | No schema after the front-loaded migration | accept (none in this diff) |
+
+Phase 4 deviations: **api-developer** 1 (error code `collage_url_not_production`), 2 (no `producedAt`; the last-export time comes from the audit row), 3 (one `withheld[]` list with a reason) and 4 (`sinceLastExport` includes never-exported portraits, so the UI shows "retaken" from `changedSinceExport`) accepted. **ux-developer** 1 (`zipSync` at level 0 per part instead of streaming `Zip` with `ZipPassThrough`) accepted: simpler and measured (a 100-frame part is built in memory once; update DECISION-124 item 2's wording); 2 (the `produced` and `reason` columns) accepted with S4-N2; 3 (the layout throws if the QR would exceed 43 modules, a link over roughly 100 characters) accepted, a hard stop that fails loudly rather than printing a tiny QR; 4 ("Export only new and retaken" and "Retry failed") accepted; 5 (title and year drawn only when there is no art overlay; name, QR and caption always at fixed positions) accepted. **Post-QA:** S4-D1 (summary counted against the whole list), the art 404 cleanup, the distinct `-new` zip name, and the "last export" time (the manifest query returned a bare `timestamptz` string that some runtimes read as local time; now an unambiguous ISO instant shown with an ET label) accepted and verified by QA.
+
+## What the chair does, and what could go wrong
+
+**Saturday evening (photo day), after the portraits are done and the collage is published:** open the session's Frames tab on a laptop, press Prepare export, read the counts and the left-out list; fix what can be fixed now (unhide a portrait, take the missing portrait); press Export frames; wait (about 40 seconds for 200 on QA's machine); click each "Download part" button (the browser may ask permission for several files); **unzip, and upload the JPEGs, not the index**; order 4x6 prints for pickup. **Sunday morning (pickup):** collect the prints; match each to its stuffy by the printed name and the index (sorted by parent last name); for any late or retaken portrait press Prepare again and "Export only new and retaken", upload that file separately; hand over stuffy and frame after the parent-name check.
+
+**Could a family receive the wrong portrait?** Not through the app's own pairing: name and portrait come from one row. Three ways it can still happen, none of them a code defect: (1) a worker photographed the wrong stuffy at the Santa station (the check-in photo is now shown there to catch it); (2) two stuffies share a name and the print carries no number (S4-N1); (3) a retake after the first upload: the old print may already be printed and the new file has the same name (S4-N6). The frame's name is the stuffy's name only, never a child's, and file names carry nothing personal.
+
+## Edge Cases
+
+- Zero portraits: **pass** (no Export button; "No portraits have been taken yet, so there are no frames to make."; the API allocates no number).
+- A one-frame run: **pass** ("1 of 1 frame done." singular; subset zip `-new`).
+- A failed fetch mid-part: **pass** (QA: collected, listed with the reason, excluded from the zip and from "exported", retried into a separate zip).
+- 200 frames on a slow laptop: **unmeasured.** QA's 37.9 s and +104 MB are a fast machine with the same 1 MB image fetched 200 times (which may flatter the network). Stop keeps finished parts and re-running is cheap because nothing is stored, so the failure mode is "slow", not "lost". Measure on the chair's laptop in the dry run.
+- A name with emoji, an accent or 49 characters: **pass on Chromium.** The font stack lists system emoji fonts; Windows, Safari and Firefox rendering is unmeasured.
+- Duplicate stuffy names: **pass in the code, a gap on the print** (S4-N1).
+- A purged session, a real session on a non-production host, a phone: **pass** (each refused with a sentence; a phone is told to use a laptop).
+- Permission gate: **pass.** Both routes and the page call `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)` first; the manifest carries no email, mobile, note or token (QA's sentinel scan) but **does** carry parent first and last names for the index, so it is rightly behind the narrow key.
+- Mobile: **pass** by design (a phone sees "Use a laptop for this step"; QA checked 360 px).
+- Brand and dialogs: **pass.** No native dialog, no `console.log`, the 50-row and 500-item bounds enforced on the server.
+- PII in the repository: **pass** per QA's greps; no image, PDF, zip or `frame-art.png` in the diff.
+
+## Follow-Ups (SHIP WITH NOTES)
+
+Each becomes its own work-log entry, numbered S4-N. **S4-N1 and S4-N2 should land before the first real upload to a photo counter (the dry run); S4-N3 and S4-N4 are settled by the test print.**
+
+**S4-N1 — Print the frame number on the frame (small, ux-developer).**
+Proposed backlog text: *B-nnn The printed frame carries the stuffy's name but not its frame number, so a print cannot be matched to its row in the index, and two stuffies with the same name are indistinguishable on paper. Draw a small "No. 007" (the number from the manifest, no personal data) inside the safe margin, for example bottom right under the caption, in `frame-compose.ts` with its rectangle in `frame-layout.ts`; the file name already carries it. Update the art-slot note (keep that corner plain). Test: the layout rect sits inside the margin and overlaps nothing; the e2e unzip decodes a frame whose number matches its file name.*
+
+**S4-N2 — Keep parents' names out of the zip (small, ux-developer; before the dry run).**
+Proposed backlog text: *B-nnn Each zip part contains `index.csv` (parent first and last name, drop-off window, photo-consent answer), and the page says to upload the zips to the photo counter. Phase 1 gap 6 required the number-to-family index to be separate and admin-only because the third party sees what is uploaded. Remove `index.csv` from the zip parts and offer it only as the separate "Download index" (per part, or combined), change the sentence to say "unzip, upload the JPEG files only, keep the index on your laptop", and add a line on how to unzip (counters take pictures, not zips). Test: no zip entry named `index.csv` or containing a parent name; the index download still lists every stuffy with its reason.*
+
+**S4-N3 — Decide how portraits are cropped before the art is made (decision plus copy).**
+Proposed backlog text: *B-nnn The photo window is 1050 x 990 and the portrait is cover-cropped into it: a vertical phone photo loses about 14.5 percent off the top and bottom each, a horizontal one about 10 percent off each side (measured with edge labels). Either (a) change the crew portrait prompt to "Hold the phone sideways. Keep Santa, Mrs. Claus and the stuffy in the middle" (and photograph both ways at the dry run), or (b) change the window or the card orientation (a 1800 x 1200 landscape 4x6 suits horizontal portraits and leaves more room for the name and QR) before the chair's art is drawn, since the art's window is fixed to these numbers. Record the choice in DECISION-124 and the `frame-art` slot note.*
+
+**S4-N4 — Give the QR a margin on the production link (one constant).**
+Proposed backlog text: *B-nnn The production collage link is 69 characters, QR version 5, which puts the layout at its floor of 7 px per module (0.59 mm at 300 dpi). Raise `QR_TARGET_PX` from 340 to 360 so the production link prints at 8 px per module (0.68 mm; the block still ends at the bottom safe margin), correct the art-slot note ("about 340 px square") and the unit test's expectations, and keep the "link too long" guard. Printing one frame and scanning it with an iPhone and an Android phone at arm's length remains the gate.*
+
+**S4-N5 — Tell the chair what to do about a left-out family (copy).**
+Proposed backlog text: *B-nnn Under "Left out of the zip" add a next step per reason: hidden ("Unhide it on the Photos page, or take a new portrait") and no portrait ("Take the portrait at the Santa station or at pickup, then use Export only new and retaken"), and a one-line reminder that these families receive no printed frame until then. Consider a "Left-out list" download so the chair can bring it to pickup.*
+
+**S4-N6 — A retaken frame keeps its file name (low).**
+Proposed backlog text: *B-nnn A retake is exported as the same file name (`-002.jpg`), so a counter that already has frame 002 sees a duplicate, and the old print may already exist. Name a re-export `-002-r2.jpg` (or add the export date) while the frame number stays stable, and say on the page "Reprint this one and put the old print aside".*
+
+**S4-N7 — The frame settings have no screen (small).**
+Proposed backlog text: *B-nnn `frame_part_size`, `frame_file_prefix` and `frame_art_key` exist on the session and the PATCH route, but the Edit session form does not show them. The counter's rules (maximum files or size per upload, file-name pattern) are only learned in the dry run and must be applied without a deploy: add the three fields to the edit form with plain labels and validation (`sanitizeFilePrefix`, part size 1 to 500).*
+
+**S4-N8 — Print-trim and housekeeping (low).**
+Proposed backlog text: *B-nnn (a) The default frame's outer 36 px is solid blue; counters that trim 2 to 3 percent will leave an uneven blue edge. Use a cream outer edge with the blue band inset beyond 3 percent. (b) Emoji and accent rendering is measured on Chromium on macOS only: check Windows and Safari at the dry run. (c) A late portrait is numbered `max + 1`, so prints are in family-name order only for the first batch; the index stays the pickup table. (d) The page says "Upload them to the photo counter by hand" (the zips): reword with S4-N2.*
+
+**Decision records (I did not edit `docs/decisions.md`).**
+- **DECISION-124:** promote after these edits to its text: item 2 (shipped `zipSync` at level 0, one part at a time, not streaming `Zip` with `ZipPassThrough`; the index handling per S4-N2); item 3 (the index columns, `produced` and `reason`; the caption "Scan to see the whole day's photos"); item 5 (error code `collage_url_not_production`); and record SW-L11 as measured on QA's machine (37.9 s, +104 MB, two parts of 41.4 MB for 200 frames) with the chair's laptop still unmeasured. Keep "the photo service accepts these files and file names" and "the printed QR scans" in Unmeasured until the test print; and note S4-N3's outcome once decided.
+
+## Deploy checklist additions for Slice 4 (in order, after Slice 3's)
+
+1. **Dependencies and config.** Slice 4 adds one dependency (`fflate`), no migration and no environment variable. Confirm the Vercel **production** `NEXTAUTH_URL` is exactly `https://westervillelions.org` (no `www`, no path): the guard refuses real-session frames otherwise (it fails closed, with a sentence). Never set `SW_ALLOW_NON_PRODUCTION_FRAME_ORIGIN` in Vercel (it is ignored in production anyway).
+2. **Smoke on production with the practice session** (real Drive, real portraits from the Slice 2 pass): Prepare, Export, download the part, unzip, open one JPEG, scan its QR with a phone (it opens the practice collage on the real site), retake one portrait and run "Export only new and retaken", hide one portrait and see it listed as left out.
+3. **Test print at a photo counter before the dry run (the gate for everything in this slice).** Use the practice export (it carries a "PRACTICE · not for print" band, which is fine for a test) built from portraits shot **both vertical and horizontal** with a real stuffy, a long name and an emoji name, and two stuffies with the same name. Ask the counter and write down: file types and the 1200 x 1800 size accepted; whether it takes several files or a zip (it will almost certainly want pictures, so unzip first); the maximum files and megabytes per upload; whether prints come out in file-name order; whether it auto-crops or adds a border (turn both off, "fit" or "no crop"); and the **turnaround**, which decides whether a Saturday-evening upload can be ready for Sunday pickup. Print one 4x6 at 100 percent, then **scan its QR with an iPhone and an Android phone at arm's length, indoors and in dim light**, read the stuffy's name from a metre away, and judge the portrait crop (S4-N3). Record the answers on the session: set `frame_part_size` and `frame_file_prefix` (S4-N7 if the screen exists; otherwise through the session PATCH route).
+4. **If the chair supplies frame art:** it must be a transparent PNG of exactly 1200 x 1800 with a clear window at x 75, y 225, 1050 x 990 and plain areas for the name (y 1235 to 1335) and the QR plate and caption (from y 1365); put it at `public/images/santas-workshop/frame-art.png`, add `frame-art` to `SUPPLIED` in `art-slots.ts`, deploy, and repeat the test print and the phone scan. A mis-sized file is refused with a sentence, never silently stretched. If no art arrives the default frame is the plan.
+5. **Dry-run additions (the week of Dec 7):** an export with 100 or more frames so it makes two parts, timed on the **chair's own laptop and browser** (record the time and the browser's memory; accept the "download several files" prompt); a retake after the first export and "Export only new and retaken"; a hidden portrait and a stuffy with no portrait and what the chair does about them; unzip and upload to the counter; at a mock pickup, match prints to stuffies by name and by the index, including the two same-named stuffies.
+6. **Saturday evening and Sunday runbook (until S4-N1 and S4-N2 land):** confirm the collage is published (Slice 3) so the QR resolves when families scan it on Sunday; Prepare, read the counts and the left-out list; Export; download every part; **delete `index.csv` from the unzipped folder, or upload only the JPEG files**, and keep the index on the laptop; print one frame first and scan it before ordering the rest; on Sunday, late or retaken portraits go in a separate, clearly named upload. After S4-N1 the number on each print joins it to the index.
+7. **Check the sign-up copy** (increment 1) says the frames are printed at a photo service (Phase 1 gap 7).
+
+## Release-notes paragraph (no version number, no file list)
+
+Admins can now make a printed keepsake frame for every stuffy. From a laptop, the Frames page prepares the list (who gets a frame, who is left out and why), then makes a 4x6 picture for each stuffy with its portrait, its name and a code that opens the day's photos, in numbered zip files of about 100 pictures ready to upload to a photo counter. If a portrait is retaken afterwards, only that frame needs to be made again. The page never presents a set as complete when a frame is missing, and a real event's frames can only be made from the club's live website, so the code on every printed frame always opens the right page.
+
+## CLAUDE.md edits for the orchestrator
+
+1. **Project Structure:** under the admin segment note a `frames` page for the session; under `lib/santas-workshop/` note the pure frame modules (`frame-layout`, `frame-manifest`, `frame-names`, `frame-origin`, `jpeg-dpi`, `zip-parts`, `csv-index`, `frame-export-ui`) and under `components/admin/santas-workshop/` the browser-only `frame-compose.ts` and `frame-export-run.ts`.
+2. **Dependencies:** add `fflate` (zip) beside `qrcode` and `jsqr`.
+3. **Key Features -> Santa's Workshop** (add after the collage bullet): "**Frame export (v1.97, B-167 Slice 4, DECISION-124):** `/admin/santas-workshop/<id>/frames` (laptop only) turns each stuffy's current portrait into a **1200 x 1800 (4x6 at 300 dpi) JPEG composited in the admin's browser** (canvas; portrait cover-cropped into a 1050 x 990 window, the stuffy's name by `fillText`, never SVG or HTML; the collage QR from `qrcode` module data at whole pixels per module, minimum 7, with a 4-module quiet zone, on a white plate inside a 75 px safe margin; caption in words plus `westervillelions.org`, never the token link; JFIF density rewritten to 300 dpi by `jpeg-dpi.ts`) and zips them with `fflate` in parts of `frame_part_size` (default 100). **Nothing about a frame is stored** and there is no server rendering. The server does two things: `POST .../frames/manifest` allocates and persists **frame numbers** (`sw_stuffies.frame_number`, under a row lock, alphabetical by parent last name within the batch, never reassigned, a late portrait gets `max + 1`) and lists withheld stuffies (a hidden portrait, or no portrait) with reasons, and `POST .../frames/exported` stamps `frame_exported_photo_id` with the portrait id actually used, so a retake reads 'changed' and 'Export only new and retaken' can redo just those. An opted-out family still gets a frame; a hidden portrait does not. A part is offered only when every frame in it produced or is listed as failed; the index CSV (`produced` yes/no plus a reason) is built through `csvCellSafe()` and, per S4-N2, is never uploaded to the photo counter. **Origin guard:** a REAL session's manifest is refused (409 `collage_url_not_production`) unless the collage link starts with `https://westervillelions.org/` on a Vercel production deploy, because a frame's QR outlives the event; practice sessions are exempt (their frames carry a PRACTICE band); `SW_ALLOW_NON_PRODUCTION_FRAME_ORIGIN=1` lets a developer export from localhost and is ignored in production. **Art:** the optional `frame-art` slot (`art-slots.ts`) is a transparent 1200 x 1800 PNG that replaces the default border and title; it must leave the photo window (x 75, y 225, 1050 x 990), the name band (y 1235 to 1335) and the QR block (from y 1365) plain, and is switched on by adding the id to `SUPPLIED`."
+4. **Environment Variables:** add `SW_ALLOW_NON_PRODUCTION_FRAME_ORIGIN` ("development only: `1` allows exporting a real session's frames from a non-production origin; ignored in production") and, in the `NEXTAUTH_URL` entry, "must be exactly `https://westervillelions.org` in production: Santa's Workshop frame export refuses a real session otherwise".
+5. **Gotchas:** add "A frame's QR encodes the collage link; the production link is 69 characters (QR version 5), so the QR is at its 7 px floor unless `QR_TARGET_PX` is raised (S4-N4)." and "A vertical phone portrait loses about 29 percent of its height in the frame's near-square window; shoot portraits sideways (S4-N3)."
+
+### Phase 6 handoff (Slice 4)
+
+**Owner:** analyst
+**Status:** complete (Slice 4 only; Phase 6 stays open for Slice 5)
+
+### Summary
+SHIP WITH NOTES for Slice 4. The browser export is careful and honest: stable numbers, nothing stored, incomplete parts never look complete, the origin guard fails closed, the QR decodes to the collage link, and the default frame is printable. Two things should land before the first real counter upload: the print carries no frame number (so duplicates like two "Teddy" prints cannot be told apart) and the zip the page tells the chair to upload also holds `index.csv` with parents' names. How a vertical portrait is cropped, and the QR sitting at its 7 px floor on the production link, are settled by the test print.
+
+### What I did
+- Read the work-log in the order given, spec §4, §7 and decision 14, then the shipped frame modules, the page and the art slot.
+- Ran the real export on `:3101` (a real session with the dev override, local store, no Zeffy, no Drive): prepare, export, download, unzip, read the JPEG headers, looked at three frames, decoded the QR (also at one third resolution), measured both portrait crops with edge labels, and computed the QR's module size for the production link; cleaned the branch to zero workshop rows and stopped the server by PID.
+- Found S4-N1 (no number on the print), S4-N2 (`index.csv` inside the zip, contradicting Phase 1 gap 6), S4-N3 (the crop), S4-N4 (QR at its floor; QA's "version 4" described the dev link), S4-N6 and S4-N7 by comparing the frames and the code to Phase 1 Flow C.
+
+### Outputs
+- This section of `docs/work-log/2026-10-12-santas-workshop-sessions-and-workers.md` in the pipeline worktree and its Per-Phase Status row. No code, `CLAUDE.md`, `decisions.md` or `backlog.md` touched; nothing committed. Screenshots, frames and scripts are in the session scratchpad only.
+
+### Open questions / handoff notes
+- Orchestrator: file S4-N1 to S4-N8 (text above); S4-N1 and S4-N2 are one small ux pass before the dry run; apply the CLAUDE.md edits and the DECISION-124 text changes when Slice 4 ships; keep the Dec 7 test print on the calendar.
+- Chair: which photo counter, its file and upload rules and turnaround; whether art will arrive and, if so, its window shape (S4-N3); whether volunteers will shoot portraits sideways.
+
+
+---
+
 ## Orchestrator note (2026-10-12): dev-server collision
 
 The api-developer's `pkill -f "next dev"` (meant for its own `:3101` server in the worktree) also killed the main tree's `:3000` server. No pipeline had a live check running on it at the time. The orchestrator restarted a plain `pnpm dev` on `:3000` from the main tree. Collision count for this pipeline: 1. Rule reminder for later agents: stop your own server by its PID (`kill $(lsof -tiTCP:3101 -sTCP:LISTEN)`), never by pattern.
@@ -2985,3 +3318,101 @@ Post-deploy, live host, about 2 minutes after the push:
 | Unsigned webhook POST | 400 |
 
 Not yet done on the live host: the Drive spike (`scripts/spike-drive.ts --apply`) and the two Drive env vars in Vercel (user to create the shared drive and service account); a real session cannot activate until Test storage passes. The real-phone pass with the chair's stickers remains deferred (S2-N6).
+
+## Phase 4 — Implementation (API), Slice 4 Frames — 2026-10-13
+
+**Owner:** api-developer
+**Status:** complete (server side); ux-developer next
+
+### Summary
+Slice 4's server side: the frame-export manifest (persisted frame numbers, withheld hidden and portrait-less stuffies, counts, QR payload, index-CSV row data), the "mark exported" endpoint, and the production-origin guard. Compositing, zip and the index CSV are built in the browser (DECISION-124). `fflate` is added to `package.json` and the lockfile now so the ux step touches no dependencies. No schema change: `frame_number`, `frame_exported_photo_id` and the three `frame_*` session columns already existed (migration 0113).
+
+### What I did
+- Branch was already at `ab0b566` (`git merge --ff-only main`: up to date); worktree clean at start. DB host verified as the pipeline branch (`ep-divine-boat`), not printed further; no DB writes were run (tests mock the db); no server started.
+- `pnpm add fflate`, then `pnpm install --frozen-lockfile` green.
+- Pure modules: `frame-origin.ts` (guard), `frame-names.ts` (file prefix, `ssw-<slug>-NNN.jpg`, part names, printable-name cleaner), `frame-manifest.ts` (allocation order, plan, entries, counts, export status), `frame-export-input.ts` (request parser; kept out of the route file because a Next route may export only handlers).
+- `frame-export.ts` (server-only): `buildFrameManifest()`, `markFramesExported()`, `exportedItemMatches()`.
+- Routes, both `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)` first, covered by `admin-routes-gate.test.ts`.
+- Carrier additions in `admin-contract.ts`; `collage_url_not_production` added to `ADMIN_ERROR_CODES` and to the exhaustive switch in `admin-ui.ts`; `frames_exported` added to `SESSION_LOG_KINDS`.
+
+### Outputs
+**Endpoints** (gate for both: `santas_workshop.manage`; responses `Cache-Control: no-store`; errors use the `{ error, code, field? }` envelope)
+
+| Method + path | Body | Response |
+|---|---|---|
+| `POST /api/admin/santas-workshop/sessions/[id]/frames/manifest` | none | `FrameManifest` (200); 404 `not_found`; 409 `session_purged`; 409 `collage_url_not_production` |
+| `POST /api/admin/santas-workshop/sessions/[id]/frames/exported` | `{ items: [{ stuffyId, photoId, frameNumber }], partial? }` (max 500) | `FramesExportedResponse { marked, unchanged, rejected: stuffyId[] }`; 400 `invalid_input`; 404; 409 `session_purged` |
+
+POST, not GET, for the manifest: it allocates numbers (the design's choice). Carrier: `src/lib/santas-workshop/admin-contract.ts` (`FrameManifest`, `FrameItem`, `FrameWithheld`, `FrameManifestCounts`, `FrameExportStatus`, `FRAME_EXPORT_STATUSES`, `FrameWithheldReason`, `FRAME_WITHHELD_REASONS`, `FRAMES_EXPORTED*`, `FRAME_WIDTH_PX` 1200, `FRAME_HEIGHT_PX` 1800, `FRAME_EXPORTED_MAX_ITEMS`).
+
+**Manifest shape.** `qrPayload` (exact string to encode; equals `collageAdminInfo.qrPayload`), `collageUrl`, `kind`, `slug`, `frameArtKey`, `filePrefix` (sanitised, used for frame and part names; `framePartFileName()` is exported from `frame-names.ts`, client-safe), `partSize`, `lastExportAt` (ISO of the last `frames_exported` audit row, display only, null if none), `items[]` (stuffies that get a frame, in frame-number order: `stuffyId, name` as it should print, `parentFirst, parentLast, windowLabel, consent, frameNumber, fileName, portraitPhotoId, photoUrl` = same-origin door path `?v=full`, `exportedPhotoId, exportStatus` = `never | current | changed`), `withheld[]` (same base fields plus `reason: "hidden" | "no_portrait"`; `frameNumber`/`fileName` null until numbered; these are the "6 without" list and the index CSV's `no: <reason>` rows), `counts { total, withPortrait, withoutPortrait, hidden, neverExported, changedSinceExport, sinceLastExport }`. The browser builds the index CSV from `items` + `withheld` (all non-withdrawn stuffies), sorted by parent last name then stuffy.
+
+**Rules implemented.** An exportable stuffy has a current (not superseded, not purged) portrait that is not hidden; consent is ignored. Numbers are persisted under a `FOR UPDATE` on the session row, allocated alphabetically (parent last name, stuffy name, id) from `max(frame_number) + 1` over the whole session (withdrawn stuffies' numbers included), never reassigned, one retry on a unique violation. A hidden or portrait-less stuffy gets no number until it has an exportable portrait. `exportStatus` compares the current portrait id with `frame_exported_photo_id`. `exported` stamps the photo id the browser actually used (so a retake during export reads `changed`), pinned on stuffy, session and `frame_number`, only if the value differs; it requires the photo to be a portrait of that stuffy; repeating a call is `unchanged` and writes no audit row. Audit row `frames_exported` holds counts and the partial flag only.
+
+**Origin guard** (`frame-origin.ts`, `frameOriginAllowed`): a real session needs the collage URL to start with `https://westervillelions.org/` AND a deploy that is Vercel production or off Vercel; practice sessions are exempt (per the Phase 3 design: PRACTICE band, not for print). Dev override: `SW_ALLOW_NON_PRODUCTION_FRAME_ORIGIN=1`, ignored when the runtime is production (`VERCEL_ENV=production`, or no `VERCEL_ENV` and `NODE_ENV=production`). The guard runs before any number is allocated. The error code is `collage_url_not_production` (the task's name; the Phase 3 table said `non_production_origin`).
+
+**Unit tests** (all named Slice 4 server tests): `frame-manifest.test.ts` (stable numbering, alphabetical, late `max + 1`, hidden withheld, opted-out included, no-portrait listed, `sinceLastExport`, retake => `changed`, contact scan), `frame-export.test.ts` (mocked db: 404, origin refusal before allocation, numbering written once, 23505 retry, re-run writes nothing, manifest JSON contact scan, mark-exported marks/idempotent/retake marker/rejections/purged/oversize), `frame-origin.test.ts` (incl. override ignored in production), `frame-names.test.ts` (file names, sanitised prefix, name cleaning), `frame-export-input.test.ts`. The Phase 3 tests for `frame-layout`, `jpeg-dpi`, `zip-parts`, `csv-index` are browser-side pure modules and belong to ux-developer.
+
+**Gates:** `tsc --noEmit` clean; `pnpm lint` 0 errors (1 pre-existing warning in `budget-context-panel.tsx`); `pnpm test` 291 files, 4890 tests pass; `pnpm build:only` passes, both routes listed as dynamic, no dynamic-filesystem warning; no `console.log`; fixtures use `example.invalid`.
+
+### Deviations from the design
+1. Error code is `collage_url_not_production` (task) rather than the design's `non_production_origin`.
+2. No `producedAt` timestamp exists (no column named in the design). The per-stuffy marker is `exportedPhotoId` + `exportStatus`; the "last export" time comes from the `frames_exported` audit row.
+3. Manifest adds `withheld[]` in place of the design's separate `withoutPortrait[]` and `hidden[]` (one list with a `reason`), and carries `fileName`/`filePrefix` so the UI never rebuilds names.
+4. `counts.sinceLastExport` includes never-exported portraits (on a first export it equals the portrait count); the UI should show `changedSinceExport` as "retaken since last export" and only mention `sinceLastExport` when `lastExportAt` is not null.
+
+### Open questions / handoff notes
+- **Consumers grepped:** `grep -rn "\.code ===\|ADMIN_ERROR_CODES\|switch (code)" src/components src/lib/santas-workshop`: the only exhaustive switch over `AdminErrorCode` is `adminErrorMessage` in `admin-ui.ts` (updated); `photos-panel.tsx` compares one code by `===` and needs nothing. No component consumed the union with a ternary.
+- **Next agent: ux-developer.** Build `/admin/santas-workshop/[sessionId]/frames` per the "Frame export (admin browser, laptop only)" section: dynamic `import()` of `qrcode` and `fflate`, `frame-layout.ts`, `jpeg-dpi.ts`, `zip-parts.ts`, `csv-index.ts` and their Phase 3 tests, the export-page copy for `collage_url_not_production`, and the e2e spec. Encode `manifest.qrPayload` exactly; the QR caption is the words plus `westervillelions.org`, not the token URL (ruling 10). Call `frames/exported` per part with only the produced items, using the photo id actually composited.
+- To export from a local dev server for a real session, start it with `SW_ALLOW_NON_PRODUCTION_FRAME_ORIGIN=1` (and `NEXTAUTH_URL` set to its own origin); otherwise use a practice session.
+- Deploy check (carried from Slice 3): `NEXTAUTH_URL` on Vercel production must be the production origin; the guard now refuses frames if not.
+- Nothing committed.
+
+## Phase 4 — Implementation (UI), Slice 4 Frames — 2026-10-13
+
+**Owner:** ux-developer
+**Status:** complete; qa next
+
+### Summary
+The admin Frames page at `/admin/santas-workshop/[sessionId]/frames`: Prepare export (manifest, counts, withheld list, retaken indicator, origin-guard sentence), then Export frames, which composites each portrait in the browser at exactly 1200x1800, encodes JPEG at 0.92 with a 300 dpi JFIF density, zips in parts of `partSize` with `fflate`, puts an `index.csv` in every part, marks each part exported, and offers a download button per part plus a combined index. Failed frames are retried three times, listed, and can be retried as one extra zip. No chair-supplied art exists, so the default frame is drawn in code (blue border, gold rule, cream mat, title and year), with an optional `frame-art.png` overlay slot. I looked at a real exported frame (name too long truncates with an ellipsis, QR and caption present, PRACTICE band on a practice session).
+
+### What I did
+- Page, nav tab "Frames", and a "Make frames" button on the overview. Gate in the page body (`auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)`); the page-list source test now includes it. A narrow screen shows "Use a laptop for this step".
+- Pure modules (all in `src/lib/santas-workshop/`, client-safe): `frame-layout.ts` (rects, QR module maths, cover-crop, text fit), `jpeg-dpi.ts`, `zip-parts.ts`, `csv-index.ts`, `frame-export-ui.ts` (sentences, counts, index rows, retry constants).
+- Browser modules (`src/components/admin/santas-workshop/`): `frame-compose.ts` (canvas painting, QR from `qrcode` module data, optional art), `frame-export-run.ts` (engine: 3 at a time, 3 tries with backoff, no retry for a missing or unreadable portrait; a part is zipped and offered only after every frame in it produced or failed), `frames-panel.tsx`.
+- `ADMIN_API.framesManifest` / `framesExported` added. QR encodes `manifest.qrPayload` verbatim; caption is "Scan to see the whole day's photos" over "westervillelions.org".
+- Art slot `frame-art` registered (optional, not in `SUPPLIED`); window coordinates are in its notes: portrait window x 75, y 225, 1050 x 990; name band y 1235 to 1335; QR plate x 75, y 1365.
+
+### Outputs
+New: `src/lib/santas-workshop/{frame-layout,jpeg-dpi,zip-parts,csv-index,frame-export-ui}.ts` and their `.test.ts`; `src/components/admin/santas-workshop/{frame-compose,frame-export-run}.ts`, `frames-panel.tsx`; `src/app/(dashboard)/admin/santas-workshop/[sessionId]/frames/page.tsx`; `e2e/santas-workshop-frames.spec.ts`.
+Edited: `session-nav.tsx`, the session overview `page.tsx`, `admin-ui.ts` (two paths), `art-slots.ts`, `admin-ui-source.test.ts`.
+Tests: frame-layout (rects inside the safe margin and non-overlapping, integer module size at least 7, quiet zone, 1200x1800, cover-crop, fit-shrink then truncate, art size), jpeg-dpi, zip-parts (round trip of 250 into 100/100/50, stored), csv-index (`produced`, comma and quote escaping, formula guard), frame-export-ui (sentence map coverage, `collage_url_not_production` and `session_purged` sentences). Gates: `tsc` clean, `pnpm lint` 0 errors (the one pre-existing warning), `pnpm test` 296 files, 4948 tests pass, `pnpm build:only` passes (page and both routes dynamic), no console output, no native dialogs. e2e on `:3101`: 5 of 5 pass (prepare 3 and 1, export, unzip: three 1200x1800 JPEGs at 300 dpi, `index.csv`, exported endpoint marks 3, next manifest all `current`, retake gives `changed` and the indicator reads 1, frame numbers unchanged, phone notice). Server on `:3101` stopped by PID.
+
+### Deviations from the design
+1. **`zipSync` at level 0, not `Zip` + `ZipPassThrough` streaming** (under 30 lines, no schema/API): a 100-frame part is built in memory once per part; simpler and deterministic. Memory is the Phase 3 estimate (about 70 MB per part), still unmeasured.
+2. **Index CSV columns** are `frame_number, file_name, stuffy_name, parent_last, parent_first, window, produced, reason, photo_consent`: `produced` is `yes`/`no` with a separate `reason` column (the task brief), not the design's `no: <reason>` text. Each part's CSV holds that part's frames plus all left-out stuffies; the combined CSV holds everyone.
+3. **QR size ceiling:** the layout throws if the QR would need more than 43 modules (version 6) at 7 px per module (a link over roughly 100 characters). The real link is about 50 characters (version 4).
+4. Added a secondary "Export only new and retaken (N)" button and a "Retry failed" extra zip (`...-frames-retry-N.zip`), both under 30 lines of UI, using the same engine.
+5. The title and year are drawn only when there is no overlay; with `frame-art.png` present it replaces the border and title but the name, QR plate and caption are still painted at the fixed positions above.
+
+### Open questions / handoff notes
+- **Click through (laptop width):** open a practice session, Frames tab, Prepare export (counts, left-out list, "Retaken since last export"), Export frames (progress line, Download part buttons, combined index), open a JPEG (Preview: 4x6 in at 300 dpi), unzip and open `index.csv`. A real session on a non-production server shows the origin sentence; for a local real-session export start the server with `SW_ALLOW_NON_PRODUCTION_FRAME_ORIGIN=1` and `NEXTAUTH_URL` set to its own origin.
+- Not exercised: a multi-part run (over 100 frames), memory and time for 200 frames (L11 in the dry run), a real photo with Santa, and the chair's art overlay.
+- New copy for the chair to refine: the page intro, "Left out of the zip", the title "A Visit to Santa's Workshop" with the year, and the caption lines.
+- Next agent: qa (Phase 5).
+
+### Post-QA fixes (Slice 4 UI) — 2026-10-13
+- **S4-D1 (the FAIL):** the summary now counts against the run's own target (`runTarget`: full run = all items, "new and retaken" = that subset, retry = the failed subset), via `runSummarySentence()` in `frame-export-ui.ts` (unit-tested). The sentence is singular for one ("1 of 1 frame done."). Frames e2e gained a partial-export test asserting it.
+- **Cleanup (a):** `loadFrameArt()` returns null without a request unless `isSupplied("frame-art")`, so no console 404.
+- **Cleanup (b):** a subset export names its zips `<prefix>-frames-part-N-of-M-new.zip` (`framePartFileName(..., suffix)`; test added); retry zips stay `<prefix>-frames-retry-N.zip`. The e2e checks the `-new.zip` name.
+- **"Last export" four hours off:** root cause was the manifest query, not the formatter. `max(created_at)` came back as a raw timestamptz string (`2026-10-13 05:30:00+00`), which some runtimes parse as server-local time. It is now selected as `to_char(max(...) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`, an unambiguous ISO instant, then shown through the existing `formatEasternInstant` with an "ET" label; `admin-ui.test.ts` pins a summer UTC instant to its EDT clock time. Not verified against a live non-UTC server, only the shape and the e2e label.
+- Gates: tsc clean, lint 0 errors, `pnpm test` all green, frames e2e 6 of 6 on `:3101` (server stopped by PID); the spec's `afterAll` removes its session, rows and photo files.
+
+### Post-Phase-6 fixes (Slice 4 UI) — 2026-10-13
+- **S4-N2 (privacy):** `index.csv` is no longer in any zip; the engine builds no CSV (a source scan in `admin-ui-source.test.ts` pins it). The combined index is a separate "Download index (admin only)" button built in the browser, and the page says the zips hold only pictures and the index must stay off the photo counter. The per-part produced/failed counts and the failed list stay on the page. Tests: `zip-parts` now asserts a part holds only `.jpg`; the e2e asserts the same, then downloads the index and checks all four rows, the `produced` column, the escaped name and the withheld reason.
+- **S4-N1:** "No. 002" in the brand serif on every frame. Deviation: bottom RIGHT of the QR block, not bottom left, because the bottom left is the QR plate and the margin below it is gone at 8 px modules. `frame-layout` test: the rect is inside the margin and disjoint from the QR plate, name, caption and photo.
+- **S4-N4:** `QR_TARGET_PX` 360. A 69-character link (QR version 5) prints at 8 px per module with its 4-module quiet zone, plate 360 px ending exactly at the bottom margin (unit test builds a real QR). Densest QR that fits is still version 6 at 7 px.
+- **S4-N6:** once a frame has been exported before, its file name gets the portrait's short id (`ssw-x-002-ab12cd.jpg`); the first export keeps the plain name. Done in the browser by `frameImageFileName()` (no server change), applied to the zip entries, the failed list and the index. `frame-names` test added; the e2e checks the retaken frame's name.
+- **S4-N3:** copy only: the crew portrait prompt now reads "Take the portrait with Santa and Mrs. Claus. Turn the phone sideways (landscape) and leave room around the stuffy. Keep the sticker out of the shot." The guide rectangle is NOT built: the preview is letterboxed (`object-contain`) so a faithful 1050x990 overlay needs image-box measurement, well over 20 lines.
+- Gates: tsc clean, lint 0 errors, `pnpm test` 296 files / 4955 tests, frames plus crew-flow e2e 17 of 17 on `:3101` (server stopped by PID, never `:3000`). A one-off look at an exported frame confirmed the layout; the temporary spec was deleted.
+

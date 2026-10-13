@@ -12,7 +12,8 @@ export type ArtSlotId =
   | "step-photos"
   | "step-pickup"
   | "story-art"
-  | "og";
+  | "og"
+  | "frame-art";
 
 export interface ArtSlotSpec {
   id: ArtSlotId;
@@ -119,6 +120,18 @@ const RAW_SLOTS: readonly ArtSlotSpec[] = [
     src: null,
     alt: "A Visit to Santa's Workshop, from the Westerville Lions Club",
     decorative: false,
+  },
+  {
+    id: "frame-art",
+    label: "Photo frame art",
+    aspect: "2:3",
+    pixels: "1200x1800",
+    notes:
+      "Optional overlay for the printed 4x6 frames, drawn by the admin Frames page over the portrait. Exactly 1200x1800, transparent PNG. Leave a fully transparent window where the portrait goes: x 75, y 225, 1050 wide, 990 tall (the portrait is cropped to fill it). The page paints the stuffy's name centred in the band y 1235 to 1335, a white QR plate at x 75, y 1365 (about 340 px square) and a caption to its right, so keep those areas plain. When present it replaces the built-in blue and gold border and title. Not shown on the public page.",
+    path: `${DIR}/frame-art.png`,
+    src: null,
+    alt: "",
+    decorative: true,
   },
 ] as const;
 

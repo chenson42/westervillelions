@@ -33,6 +33,7 @@ export const SESSION_LOG_KINDS = [
   "group_photos_reviewed",
   "collage_published",
   "collage_unpublished",
+  "frames_exported",
 ] as const;
 export type SessionLogKind = (typeof SESSION_LOG_KINDS)[number];
 
