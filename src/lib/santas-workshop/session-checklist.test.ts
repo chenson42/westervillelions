@@ -14,6 +14,9 @@ const base: ChecklistFacts = {
   lastAnyEventAt: new Date("2026-11-20T10:00:00Z"),
   lastSyncAt: null,
   dropoffDate: "2026-12-18",
+  storageConfigured: true,
+  lastStorageTest: { at: new Date("2026-11-20T14:00:00Z"), ok: true },
+  workerCodeIssued: true,
 };
 const item = (f: ChecklistFacts, key: string) => buildChecklist(f).find((i) => i.key === key)!;
 
@@ -66,9 +69,16 @@ describe("buildChecklist", () => {
     expect(item({ ...onDay, lastSyncAt: new Date("2026-12-10T12:00:00Z") }, "friday_sync").state).toBe("todo");
   });
 
-  it("storage and worker code are informational until the worker screens ship", () => {
-    expect(item(base, "storage_tested").state).toBe("info");
-    expect(item(base, "worker_code").state).toBe("info");
+  it("storage is done after a passing test, warn after a failing one, todo when never run or unconfigured", () => {
+    expect(item(base, "storage_tested").state).toBe("done");
+    expect(item({ ...base, lastStorageTest: { at: NOW, ok: false } }, "storage_tested").state).toBe("warn");
+    expect(item({ ...base, lastStorageTest: null }, "storage_tested").state).toBe("todo");
+    expect(item({ ...base, storageConfigured: false }, "storage_tested")).toMatchObject({ state: "todo", detail: expect.stringContaining("not configured") });
+  });
+
+  it("the worker code is done once issued and todo before activation", () => {
+    expect(item(base, "worker_code").state).toBe("done");
+    expect(item({ ...base, workerCodeIssued: false }, "worker_code").state).toBe("todo");
   });
 });
 

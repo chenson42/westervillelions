@@ -9,6 +9,8 @@ import { REGISTRANT_FLAGS, STUFFY_STATES } from "@/lib/santas-workshop/admin-con
 import { FLAG_LABELS, STATE_LABELS, parseRegistrantFilters, registrantsHref } from "@/lib/santas-workshop/admin-ui";
 import { SessionNav } from "@/components/admin/santas-workshop/session-nav";
 import { RegistrantsTable } from "@/components/admin/santas-workshop/registrants-table";
+import { ManualAddForm } from "@/components/admin/santas-workshop/manual-add-form";
+import { ADMIN_API } from "@/lib/santas-workshop/admin-ui";
 import { BTN_PRIMARY, BTN_SMALL, CARD, EMPTY, INPUT, LABEL, LINK } from "@/components/admin/santas-workshop/styles";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +48,13 @@ export default async function SantasWorkshopRegistrantsPage({
   return (
     <div className="space-y-6">
       <SessionNav session={s} active="registrants" />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <ManualAddForm sessionId={s.id} windows={s.windows} disabled={s.status === "purged"} />
+        <a href={ADMIN_API.awaitingPickupCsv(s.id)} download className={BTN_SMALL}>
+          Download all stuffies not yet picked up (CSV)
+        </a>
+      </div>
 
       <form method="get" className={`${CARD} p-4 grid gap-4 md:grid-cols-[1fr_12rem_12rem_auto] md:items-end`} role="search">
         <div>
@@ -91,9 +100,9 @@ export default async function SantasWorkshopRegistrantsPage({
       ) : (
         <>
           <p className="text-sm text-gray-600" role="status">
-            Showing {from} to {to} of {list.total}. This list is read-only; parent contact details are visible to club admins only.
+            Showing {from} to {to} of {list.total}. Parent contact details are visible to club admins only.
           </p>
-          <RegistrantsTable registrants={list.registrants} />
+          <RegistrantsTable registrants={list.registrants} sessionKind={s.kind} sessionStatus={s.status} />
           {lastPage > 1 && (
             <nav aria-label="Pages" className="flex items-center justify-between gap-4">
               {list.page > 1 ? (

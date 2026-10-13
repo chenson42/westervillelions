@@ -22,7 +22,11 @@ const PUBLIC_FILES = [
   ...walk("src/app/santas-workshop"),
   ...walk("src/components/santas-workshop"),
   ...PUBLIC_LIB,
-].filter(isCode);
+]
+  .filter(isCode)
+  // The crew (worker) app is a separate, code-gated surface with its own source scans
+  // (crew-app-source.test.ts); the public-page rules do not apply to it.
+  .filter((f) => !f.includes(`${path.sep}crew${path.sep}`));
 
 // `banned.ts` is a test table of patterns, not page code.
 const FORBIDDEN: [RegExp, string][] = [

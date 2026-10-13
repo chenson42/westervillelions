@@ -49,6 +49,16 @@ export const ADMIN_ERROR_CODES = [
   "zeffy_not_configured",
   "zeffy_unavailable",
   "zeffy_rate_limited",
+  "invalid_transition",
+  "storage_not_ready",
+  "devices_active",
+  "has_activity",
+  "stale_state",
+  "withdraw_not_allowed",
+  "storage_unavailable",
+  "storage_misconfigured",
+  "storage_full",
+  "storage_rate_limited",
   "server_error",
 ] as const;
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
@@ -58,6 +68,10 @@ export interface AdminErrorBody {
   code: AdminErrorCode;
   /** The offending request field, when one can be named. */
   field?: string;
+  /** devices_active: how many devices used the worker code in the last hour. */
+  count?: number;
+  /** stale_state: where the stuffy actually is now. */
+  currentState?: StuffyState;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,8 +126,10 @@ export interface SessionListItem extends SessionDto {
 }
 
 export interface StorageStatus {
-  /** False until the photo store lands (Slice 2). */
+  /** False when the configured store cannot be built (production without Drive credentials, or SW_PHOTO_STORE=drive without them). */
   configured: boolean;
+  /** Which adapter this process uses; "local" and "memory" are development and test only. */
+  mode: "drive" | "local" | "memory";
   lastTest: { at: string; ok: boolean; latencyMs: number | null } | null;
   /** A short cause shown in the red banner, or null. */
   bannerCause: string | null;
@@ -162,8 +178,9 @@ export interface SessionOverview extends SessionDto {
   lastZeffyEventAt: string | null;
   lastCampaignEventAt: string | null;
   lastSyncAt: string | null;
-  /** Booleans only; the values never leave the server. */
+  /** Booleans and a version only; the code itself is read through GET crew-code. */
   zeffyConfig: { webhookSecretSet: boolean; apiKeySet: boolean };
+  workerAccess: { issued: boolean; paused: boolean; version: number };
   checklist: ChecklistItem[];
 }
 
@@ -381,4 +398,113 @@ export interface RegistrantsResponse {
   total: number;
   page: number;
   pageSize: number;
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2: status, worker code, registrant actions, storage
+// ---------------------------------------------------------------------------
+
+export { SETTABLE_STATUSES } from "./session-status";
+export type { SettableStatus } from "./session-status";
+import type { SettableStatus } from "./session-status";
+
+/** POST sessions/[id]/status. Paused is not a status: use the crew-code pause action. */
+export interface SetStatusRequest {
+  to: SettableStatus;
+}
+export interface SetStatusResponse {
+  session: SessionDto;
+  /** True when the session was already in that status. */
+  noop: boolean;
+}
+
+export const CREW_CODE_ACTIONS = ["rotate", "pause", "resume"] as const;
+export type CrewCodeAction = (typeof CREW_CODE_ACTIONS)[number];
+
+/** GET sessions/[id]/crew-code (no-store; logs code_viewed, never the code). */
+export interface CrewCodeResponse {
+  /** The plain code, or null when none was issued yet or it cannot be read (AUTH_SECRET changed): rotate to issue a new one. */
+  code: string | null;
+  /** "ABCD-EFGH" for the text message; null when code is null. */
+  formatted: string | null;
+  unreadable: boolean;
+  version: number;
+  paused: boolean;
+  /** Distinct devices that used the current code in the last hour. */
+  activeDevicesLastHour: number;
+}
+export interface CrewCodeActionRequest {
+  action: CrewCodeAction;
+  /** Rotate asks twice when devices are active: repeat with acknowledge: true. */
+  acknowledge?: boolean;
+}
+
+/** POST sessions/[id]/stuffies (manual add). Fields mirror manual-add.ts. */
+export interface ManualAddRequest {
+  parentFirstName: string;
+  parentLastName: string;
+  stuffyName: string;
+  windowId: string;
+  reason: string;
+  idempotencyKey: string;
+  description?: string;
+  snack?: string;
+  noteToSanta?: string;
+  careNote?: string;
+  parentEmail?: string;
+  parentPhone?: string;
+  photoConsent?: boolean;
+}
+export interface RegistrantResponse {
+  registrant: RegistrantDto;
+}
+
+export interface AdminRevertRequest {
+  toState: StuffyState;
+  expectedState: StuffyState;
+  /** Required: kept in the history. */
+  reason: string;
+}
+export interface AdminWithdrawRequest {
+  reason: string;
+}
+
+/** POST orders/[orderId]/refund-resolution. keep: stores the refunded amount seen. withdraw: withdraws every stuffy still in registered/tagged. */
+export interface RefundResolutionRequest {
+  resolution: "keep" | "withdraw";
+}
+export interface RefundResolutionResponse {
+  orderId: string;
+  /** Stuffies withdrawn by this call (withdraw only). */
+  withdrawn: number;
+  /** Stuffies already in custody, which can only stay flagged. */
+  stillInCustody: number;
+  /** False when some stuffies remain in custody: the refund flag stays open for them. */
+  resolved: boolean;
+}
+
+export interface StorageTestRequest {
+  /** The session page that asked; the result is logged against it (a global test with none is logged on the newest session). */
+  sessionId?: string;
+}
+export interface StorageTestResponse {
+  ok: true;
+  latencyMs: number;
+  mode: StorageStatus["mode"];
+}
+
+export type StorageCheckAction = "delete_orphans";
+export interface StorageCheckRequest {
+  action?: StorageCheckAction;
+}
+export interface StorageCheckResponse {
+  /** Files in the store with no matching photo row, older than 10 minutes (younger ones may be in flight). */
+  orphanFiles: { photoId: string; variant: "full" | "thumb"; size: number }[];
+  orphanCount: number;
+  /** Photo rows whose file is not in the store. */
+  missingFiles: { photoId: string; kind: string }[];
+  missingCount: number;
+  deleted: number;
+  /** False when the listing was cut at the page cap: run again after deleting. */
+  complete: boolean;
 }

@@ -24,6 +24,11 @@ export interface ChecklistFacts {
   lastSyncAt: Date | null;
   /** Eastern "YYYY-MM-DD". */
   dropoffDate: string;
+  /** False when the photo store cannot be built (production without Drive credentials). */
+  storageConfigured: boolean;
+  /** The newest storage test on any session, or null. */
+  lastStorageTest: { at: Date; ok: boolean } | null;
+  workerCodeIssued: boolean;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -94,17 +99,24 @@ export function buildChecklist(f: ChecklistFacts): ChecklistItem[] {
     });
   }
 
+  const test = f.lastStorageTest;
   items.push({
     key: "storage_tested",
     label: "Photo storage tested",
-    state: "info",
-    detail: "Photo storage arrives with the worker screens.",
+    state: !f.storageConfigured ? "todo" : test ? (test.ok ? "done" : "warn") : "todo",
+    detail: !f.storageConfigured
+      ? "Photo storage is not configured on this deployment."
+      : test
+        ? test.ok
+          ? "The last storage test passed."
+          : "The last storage test failed. Run it again before opening the doors."
+        : "Run Test storage before the first photo is taken.",
   });
   items.push({
     key: "worker_code",
     label: "Worker code issued",
-    state: "info",
-    detail: "Worker access arrives with the worker screens.",
+    state: f.workerCodeIssued ? "done" : "todo",
+    ...(f.workerCodeIssued ? {} : { detail: "Activating the session issues the worker code." }),
   });
 
   const syncedOnDropoff = f.lastSyncAt !== null && easternDateString(f.lastSyncAt) >= f.dropoffDate;
