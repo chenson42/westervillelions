@@ -29,9 +29,9 @@ const components = walk(COMPONENTS).filter((f) => /\.(tsx|ts)$/.test(f) && !f.en
 const all = [...pages, ...components];
 
 describe("Santa's Workshop admin pages: gates", () => {
-  it("finds the six Slice 1 pages", () => {
+  it("finds the admin pages", () => {
     expect(pages.map((p) => p.slice(PAGES.length)).sort()).toEqual(
-      ["/[sessionId]/connect/page.tsx", "/[sessionId]/edit/page.tsx", "/[sessionId]/page.tsx", "/[sessionId]/registrants/page.tsx", "/new/page.tsx", "/page.tsx"].sort(),
+      ["/[sessionId]/connect/page.tsx", "/[sessionId]/edit/page.tsx", "/[sessionId]/page.tsx", "/[sessionId]/photos/page.tsx", "/[sessionId]/registrants/page.tsx", "/new/page.tsx", "/page.tsx"].sort(),
     );
   });
 
@@ -43,7 +43,7 @@ describe("Santa's Workshop admin pages: gates", () => {
     expect(h).toBeGreaterThan(a);
     expect(src).toMatch(/redirect\("\/access-pending"\)/);
     // The first database-reaching call comes after the gate.
-    const firstQuery = src.search(/\b(getSessionOverview|listSessions|listRegistrants|listSeenQuestions|recentEvents|getSessionRow|listUnmatchedWindowAnswers)\(/);
+    const firstQuery = src.search(/\b(getSessionOverview|listSessions|listRegistrants|listSeenQuestions|recentEvents|getSessionRow|listUnmatchedWindowAnswers|listSessionPhotos)\(/);
     if (firstQuery >= 0) expect(firstQuery).toBeGreaterThan(h);
   });
 });

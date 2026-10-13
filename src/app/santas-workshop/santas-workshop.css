@@ -109,3 +109,33 @@
     100% { transform: translate(14px, -34px) scale(1.5); opacity: 0; }
   }
 }
+
+/* ---- Collage (and, later, the family page): a calm grid that prints cleanly ---- */
+.sw-collage-tile {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  .sw-noprint {
+    display: none !important;
+  }
+  .sw-collage-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 6mm !important;
+  }
+  .sw-collage-grid img {
+    max-height: 80mm;
+    width: 100%;
+    object-fit: contain;
+  }
+  .sw-collage-root {
+    background: #fff !important;
+    color: #000 !important;
+    min-height: 0 !important;
+  }
+}

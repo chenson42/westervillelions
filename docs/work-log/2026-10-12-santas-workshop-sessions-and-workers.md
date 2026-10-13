@@ -22,8 +22,9 @@
 | 3 — Technical design | tech-lead | Complete | Design complete; implementers named (database-admin, then api-developer, then ux-developer, per slice; worktree + Neon branch) | 2026-10-12 |
 | 4 — Implementation | database-admin (schema done), api-developer (server done), ux-developer (Slice 1 UI done) | Complete (Slice 1); qa next | — | 2026-10-12 |
 | 4 — Implementation, Slice 2 | api-developer (server), then ux-developer | Slice 2: Complete; qa next | — | 2026-10-12 |
-| 5 — Verification | qa | Slice 1: complete, PASS (re-verified twice). Slice 2: first run FAIL, fixed, re-verified twice (D1 to D3, then N1/N3/N4) | Slice 1 **PASS**; **Slice 2: PASS** (tree: HEAD `160b090` + uncommitted Slice 2 diff in worktree) | 2026-10-12 |
-| 6 — Shipped vs intent | analyst | Slices 1 and 2 complete; Slices 3 to 5 pending | Slice 1: **SHIP WITH NOTES** (N1 to N3 before Nov 8; N4 with Slice 2; N5 gate). Slice 2: **SHIP WITH NOTES** (S2-N1 gates the dry run; S2-N3 before Dec 17; S2-N5 decided Dec 14) | 2026-10-12 |
+| 4 — Implementation, Slice 3 | api-developer (server), then ux-developer | Slice 3: Complete; qa next | — | 2026-10-13 |
+| 5 — Verification | qa | Slice 1: complete, PASS (re-verified twice). Slice 2: first run FAIL, fixed, re-verified twice (D1 to D3, then N1/N3/N4) | Slice 1 **PASS**; **Slice 2: PASS** (tree: HEAD `160b090` + uncommitted Slice 2 diff in worktree); **Slice 3: PASS** (first run FAIL on S3-D1, fixed and re-verified with real uploads, then post-Phase-6 N1 to N5 re-verified; tree: HEAD `dc3c67e` + uncommitted Slice 3 diff in worktree) | 2026-10-12 |
+| 6 — Shipped vs intent | analyst | Slices 1 to 3 complete; Slices 4 and 5 pending | Slice 1: **SHIP WITH NOTES** (N1 to N3 before Nov 8; N4 with Slice 2; N5 gate). Slice 2: **SHIP WITH NOTES** (S2-N1 gates the dry run; S2-N3 before Dec 17; S2-N5 decided Dec 14). Slice 3: **SHIP WITH NOTES** (S3-N1 and S3-N2 decided before the dry run) | 2026-10-13 |
 
 ---
 
@@ -1994,6 +1995,210 @@ Sessions `qa-r3p-908` and `qa-r3r-908` deleted (children cascade); my check-in p
 
 ---
 
+## Phase 5 — Slice 3 "Collage" — 2026-10-13
+
+**Owner:** qa · **Scope:** the public collage `/santas-workshop/c/[token]`, the photo door's anonymous (public) branch, the admin photos page, hide/unhide, group-photo review, publish/unpublish, the collage URL and QR. Slices 1 and 2 re-ran as regression inside the Playwright set.
+**Tree state measured:** `HEAD` = `dc3c67e4c1b88fdd30148dffa315781bf51cb58e` (main, v1.95.0) plus the **uncommitted Slice 3 diff in the pipeline worktree** (34 `git status` entries: 13 modified, the rest new). Branch `ep-divine-boat` only (host checked in code before every write); `:3101` (dev) and `:3102` (production build) stopped by PID; `:3000` never touched; no commit. `.env.local` still carries a `ZEFFY_API_KEY`, so every server was started with it forced empty.
+
+### VERDICT: FAIL
+
+One defect, severe, reproduced three ways; everything else in the Slice 3 surface passed. Not a design flaw (Phase 3's review idea is sound, the arithmetic is wrong), so it goes back to the api-developer, not to tech-lead.
+
+| # | Defect | Owner | file:line | Fix size |
+|---|--------|-------|-----------|----------|
+| **S3-D1** | **The newest group photo can never be marked reviewed, so Publish is refused forever** (and so is "Publish late photos" after a first publish). The review cutoff `through` is `max(created_at)` read back as a JavaScript `Date` (milliseconds); `sw_photos.created_at` is a Postgres `timestamptz` with **microseconds**. The server then asks `created_at > cutoff` in SQL, so a photo whose time has a sub-millisecond part (essentially every photo uploaded through the real crew route) is still "not reviewed" after the admin reviews it. Pressing "Mark group photos reviewed" again sends the same `through` and changes nothing. The admin UI meanwhile computes "reviewed" in JavaScript (also milliseconds), so it shows every chip as Reviewed, **disables** the review button, and still gets `409 photos_unreviewed` (count 1) on Publish: a dead end with no visible cause. Only workaround found: hide the newest photo. | api-developer | `src/lib/santas-workshop/photo-admin.ts:92` (`newestGroupAt` = `max(created_at)` returned as `Date`), `:61` (`unreviewedSql`: `created_at > cutoff::timestamptz`), `:285` (`lte(created_at, cutoff)` in the stamping UPDATE), and `src/lib/santas-workshop/collage-review.ts:31` (`photo.createdAt.getTime() <= cutoff.getTime()`) | small: carry the cutoff as the exact `created_at` text (or compare on `date_trunc('milliseconds', created_at)`, or round the cutoff up by a millisecond) and use the same comparison on both sides |
+
+**Established vs believed.**
+- *Established, three ways.* (1) Through the real route: three group photos uploaded by the crew route (so `created_at` defaults to `now()` with microseconds, e.g. `04:22:18.500711`); the admin pressed "Mark group photos reviewed": audit row `through = 2026-10-13T04:22:18.500Z`, counts tile "Not reviewed 1", Publish `409 {"code":"photos_unreviewed","count":1}`. (2) Repeated: three more review calls with the same `through`: still 1 unreviewed, publish still 409. (3) Cause shown in the data: that photo's `created_at` was `.500711` (`to_char(...,'US')`), `through` was `.500`. Confirmation by experiment: after I truncated the three timestamps to milliseconds by SQL (a disclosed setup tweak), the same stored review covered all three at once, the button became disabled with its reason, and Publish succeeded. The late-photo path reproduces it a second time (a group photo uploaded after publish, `created_at` `.656241`): review leaves it unreviewed, "Publish late photos" is refused with count 1.
+- *Why the tests missed it.* The unit tests mock the database and the collage e2e seeds photos directly with `new Date()` (`e2e/helpers/santas-workshop-crew.ts` `seedPhoto`, lines 181 to 205), which has millisecond precision. No test uses a real route upload or a microsecond timestamp.
+- *Believed, not measured:* that the truncation in the driver's `Date` conversion is the only lossy step; I did not change code.
+- No repo-wide sweep is recommended: the other `created_at` comparisons I read (`session-queries`, door matrix) compare database values with database values.
+
+### Gates
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| `pnpm exec tsc --noEmit` | PASS | exit 0 |
+| `pnpm lint` | PASS | 0 errors, the one old warning |
+| `pnpm test` (verbose) | PASS | **287 files, 4835 / 4835** |
+| `pnpm build:only` | PASS | exit 0, **0 warnings** (no "Dynamic filesystem access"), 324 route rows; present: `/admin/santas-workshop/[sessionId]/photos`, `/santas-workshop/c/[token]` (dynamic), `/api/santas-workshop/photos/[id]`, and the four new admin routes (`sessions/[id]/photos`, `.../photos/review`, `photos/[photoId]/hide`, `sessions/[id]/publish`) |
+| Playwright, all workshop specs on `:3101` (default local store) | PASS | **61 passed, 1 skipped, 0 failed** (4.1 min); 11 collage tests; the skip is increment 1's "open only" public-page test |
+| PII greps (phones, emails, streets) | PASS | print nothing; no image/PDF/zip in the diff; every `@` address in the changed files is `example.*` or the club domain; no `console.log` in the new modules; `package.json` untouched |
+| Collage e2e `afterAll` cleanup (asked) | **rows and files PASS; empty folders left** | `e2e-col*` rows in `sw_sessions`: **0 before, 0 after**; photo files in `.santas-workshop-store/`: **0 before, 0 after**; but the specs leave an **empty folder per run** (before the run: 5 `e2e-col-*` folders; after: 6 `e2e-col-*` plus 1 `e2e-flow-*`); gitignored and empty, cosmetic. I removed this run's two. |
+
+### Unit tests named for Slice 3, confirmed in the verbose run
+`collage-queries` (14: consented and unhidden portraits and published unhidden groups included; blank consent, hidden, unpublished, superseded, purged and **check-in photos never**; nothing while unpublished; tile is exactly `{ id, kind }`; stable order; malformed token is null and never queries; unknown null; unpublished `pending` with the photo date; purged `removed`; live; live and empty), `collage-door` (4: the public viewer's set equals the collage's set, identical null refusals, hidden refused on the next fetch, 5-minute private cache and noindex), `photo-admin` (14: URL and **QR payload are the same string**, hide/unhide write one audit row with ids only, no-op and race write none, **publish refused with unreviewed photos (409 `photos_unreviewed` + count)**, publish after review, zero photos allowed, repeat keeps the original time, unpublish, purged), `collage-review` (8), `collage-contract-no-pii` (8: no name, contact, caption, family or storage field; the token stays out of logs and audit rows), `collage-ui` (11: **publish-refused copy** names the count, **QR payload byte for byte**, review gating, markers, public copy and alt text), `collage-page-source` (5: includes a render of the real page for live, pending, removed and unknown, asserting **no registrant text**), `photos-panel-source` (3), and `admin-routes-gate` (the four new routes: `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)` first two statements). Gap named above: nothing exercises sub-millisecond timestamps.
+
+### Feature-gate audit
+
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Key |
+|-----------------|-------------------|----------------------------|-----|
+| `GET .../sessions/[id]/photos` | yes (line 20) | yes (line 22) | `SANTAS_WORKSHOP_MANAGE` |
+| `POST .../sessions/[id]/photos/review` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `POST .../photos/[photoId]/hide` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `POST .../sessions/[id]/publish` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `/admin/santas-workshop/[sessionId]/photos` (page) | yes, then redirect | yes, then `redirect("/access-pending")` | `SANTAS_WORKSHOP_MANAGE` |
+| `GET /api/santas-workshop/photos/[id]` | none by design: admin, crew or **public** viewer, decided by `photo-access.ts`; 404 on every failure | n/a | n/a |
+| `/santas-workshop/c/[token]` | none by design (possession of a 128-bit token; read-only; no registrant column read) | n/a | n/a |
+Exercised: anonymous 401 on all four admin routes (production build) and 307 to `/signin` on the page; the read of each route file above. A plain-member 403 matrix was not re-run for these four routes (the Slice 1 matrix pattern and the `admin-routes-gate` scan cover them).
+
+### Manual click-through (desktop 1280 px and 360 px; admin UI plus an anonymous browser context)
+Seed: a practice session whose **name is `<script>window.__pwn=1</script> QA collage`**, 3 stuffies (Alpha and Bravo consented, Charlie not) with sentinel parent name, email, mobile and notes, a portrait for each, and 3 group photos, all uploaded through the real crew routes with real JPEGs.
+
+| Flow | Result | Notes |
+|------|--------|-------|
+| Admin photos page, before anything | pass | collage card "Not published / Practice", link with Copy and Open, QR, the amber sentence "3 group photos have not been reviewed yet...", counts tiles (3 group, 0 hidden, 3 not reviewed, 2 on the collage, 1 no consent); group tiles "Not reviewed yet" + Hide; portrait tiles with the stuffy's name and **"On the collage: family agreed"** (Alpha, Bravo) or **"Not on the collage: no consent"** (Charlie); the script-laden session name shows as literal text |
+| Publish before review | pass | refused with the sentence and the count 3; nothing published, no audit row |
+| Hide asks first; Cancel changes nothing | pass | ConfirmDialog "Hide this photo? It leaves the collage and the family page right away. Someone who already has the page open may still see it for up to 5 minutes." |
+| Mark group photos reviewed | **FAIL (S3-D1)** | leaves the newest photo unreviewed with real data; passes with millisecond data |
+| Publish | pass (with ms data) | session stamped, status "Published", **5 "Visible to anyone with the link" chips** (3 group, Alpha, Bravo; none on Charlie), one `collage_published` audit row holding counts only (no token or URL) |
+| **Public page, anonymous, desktop and 360 px** | pass | **3 group pictures + 2 stuffy portraits**, every image loaded from the photo door; alt text ordinal ("Group picture 1".."3", "Stuffy portrait 1".."2"); **no registrant text in the HTML or the RSC flight data** (no names, parent names, notes, email, mobile, session name, slug); the two fixed lines "We photograph stuffies only, never children." and "Changed your mind? Contact the club and we will take your stuffy down." with a working link to `/connect`; `<meta robots noindex, nofollow, nocache>`, `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer`; **no site header, footer or nav** (only the club-name band); PRACTICE banner; no horizontal scroll at 360 px; no console error; the script in the session name did not run (`window.__pwn` unset) |
+| Tap a tile | pass | the **full** variant opens in a dialog; no download control |
+| Hide one group photo | pass | admin chip "Hidden", count 1, one `photo_hidden` row; a **fresh** page fetch no longer lists it; the door answers **404 at once** (thumb and full); a browser that already had the thumb still served it from its cache, a cache-bypassing fetch was 404 (the accepted 5-minute residual, **L3 measured**); the stranger's page on reload shows 2 group + 2 portrait tiles |
+| Unhide | pass | back on the page, door 200, one `photo_unhidden` row |
+| A photo uploaded **after** publish | pass | not on the page, door **404** for a stranger, 200 for the admin; the admin page flags it "Not reviewed yet" and offers "Publish late photos" (which is then blocked by S3-D1; with ms data it publishes it and keeps the original publish time) |
+| Unpublish | pass | ConfirmDialog ("The link goes back to 'The photos arrive on...'..."); the link now says **"The photos arrive on Saturday, Dec 19"**, lists no photo; the door is 404 for the previously public photos for a stranger **and for another session's crew cookie**; the admin still sees them; the date **follows the session's photo day** (changed the session to Sat Nov 28: "Saturday, Nov 28"), then restored |
+| Re-publish | pass | the same link shows the tiles again |
+| Removed state | pass | with `public_purged_at` set by SQL (the Slice 5 engine does not exist yet): "These photos have been removed / The Westerville Lions Club has taken this collage down. Thank you for joining us.", no tile; publish/unpublish refused 409 `session_purged` |
+| QR on the admin page | pass | decoded with `jsqr` to **exactly** `qrPayload` (`http://localhost:3000/santas-workshop/c/<token>`, no extra characters) |
+| Copy link | pass | the clipboard holds exactly the collage URL; toast "Collage link copied." |
+| Admin photos page at 360 px | pass | no horizontal scroll |
+| Print (`page.pdf()`, Letter) | pass, with nits | 2 pages, header band, PRACTICE note, the 3-column grid of all 6 tiles, the two lines; **no site header, footer or nav**, no "Contact" link text beyond the sentence; see observations 3 and 4 |
+
+### Adversarial and live checks
+| Probe | Result |
+|-------|--------|
+| **Crew cookie from another session** at the door | collage-visible photos 200 (it is just a stranger; the same as any visitor), the non-consented portrait 404; after an admin hides a collage portrait, 404 for that cookie too; after unpublish, 404 for all |
+| **Collage token in a Referer** | production build: **0 of 30** requests from the collage page (images, scripts, fonts, the `/connect` navigation) carried the token in a Referer; a request that arrives with the token in its Referer is answered identically and echoes nothing |
+| **L4 token pages** | 9 bad tokens (unknown 22 chars, too short, spaces, `../../etc/passwd`, `%2e%2e%2f`, emoji, SQL-ish, a real token minus one character and plus one, **10,000 characters**): all **404**; rendered page (status, title, visible text, robots, cache headers) identical: **1 distinguishable response**; the 10,000-character token answered in **34 ms**; every 404 is noindex. A real token is 200 |
+| **Public DTO scan** | the page HTML and flight data contain none of the sentinel names, notes, email, mobile, session name or slug; the door's headers carry no file name, key or token and add `nosniff` |
+| `<script>` in the session name | not rendered on the collage (fixed title), literal text in the admin |
+| Door: anonymous | group thumb 200 with `private, max-age=300`, `X-Robots-Tag: noindex`; consented portrait full 200; non-consented portrait thumb and full 404, same as an unknown id |
+| Headers on the production build | collage page: `noindex, nofollow`, `Referrer-Policy: no-referrer`, `camera=()`, `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate` |
+
+### Deferred (not passes)
+1. **Real iPhone/Android at 360 px** for the public page and the admin photos page (tap-to-open dialog, pinch zoom, scanning the QR from the admin screen with a phone). Step: open the published link from the frame QR on each phone and the admin page on a laptop.
+2. **Drive-backed photos** (no credentials): the 5-minute hidden-photo window and the placeholder tile on a store outage (`onError`), L3 against Drive.
+3. **Printing with background graphics on** and a real printer (observation 3).
+4. **The removed state against the real purge engine** (Slice 5): QA set the marker by SQL, so the door's behaviour after a real purge (observation 5) is not yet exercised.
+5. SW-L11, L13 and the family page belong to Slices 4 and 5.
+
+### Observations (not defects)
+1. **The collage link and QR carry `NEXTAUTH_URL` (`http://localhost:3000/...`) in development.** "Open the collage" therefore opens the **main tree's** `:3000` server (another database), not the server under test; to view the page I used `:3101` plus the path. By design (`getAppUrl()`); Slice 4's origin guard covers the frame QR, not this card.
+2. **Dev-only Referer on a font request:** on the dev server one request (`/__nextjs_font/geist-latin.woff2`) carried the page URL, token included, in its Referer; the production build sends none (0 of 30). Not reproducible in production.
+3. **Print contrast:** the header band uses a blue gradient with `print:text-black`; with a browser's "Background graphics" option on, the title prints black on dark blue (it is fine when backgrounds are dropped, the default).
+4. **Print pagination:** the "Stuffy portraits" heading can be stranded at the bottom of page 1 with its grid on page 2 (a `break-after: avoid` on the headings would keep them together).
+5. **The photo door does not read the session's `public_purged_at`.** After the marker was set the page said "removed" but a stranger who already knew a photo id still got 200 (the page lists no ids). Per DECISION-125 the purge deletes bytes and sets each photo's `purged_at` first, and the door refuses purged photos, so this is expected once Slice 5 exists; flagging it so the Slice 5 engine is not skipped on the photo side.
+6. The 404 for a bad token has the collage route's title ("Santa's Workshop photos | ...") and echoes the requested path (escaped) in its payload (57 KB for a 10,000-character token); neither distinguishes an unknown from a malformed token.
+7. The e2e specs leave empty per-run folders in `.santas-workshop-store/` (see gates).
+
+### Cleanup
+Sessions `qa-s3-24134` and `qa-s3b-26159` deleted (children cascade); my 28 photo files and their folder removed, plus the two empty spec folders created by this run; the two "New portal user needs member record review" notices produced by the gate spec's disposable users (`blocked_non_production`, unsent) removed (`email_queue` back to 1362). Branch re-measured equal to the baseline taken before I started: `sw_sessions` 0 (of which `e2e-col*` 0), `sw_orders` 0, `sw_stuffies` 0, `sw_stuffy_events` 0, `sw_photos` 0, `sw_crew_attempts` 0, `sw_session_log` 0, `zeffy_events` 1 (`smoke-2`), `users` 53, `roles` 7, `user_roles` 72, `email_queue` 1362. Photo store: 0 files; `ping/` and the five pre-existing empty `e2e-col-*` folders (not mine) remain. No worktree process remains; `:3000` untouched; nothing committed.
+
+### Phase 5 — Slice 3 handoff
+**Status:** complete (FAIL, handed back). **Next agent: api-developer** for S3-D1 (and a regression test that uploads through the real group-photo route or inserts a microsecond `created_at`, then reviews and publishes; also an assertion that the UI's "reviewed" marker and the server's unreviewed count agree). Then qa re-runs `tsc`, `lint`, `pnpm test`, `pnpm build:only`, the eight workshop specs, the PII greps, and the live check: upload three group photos through the crew route, Mark reviewed once, Publish succeeds, then upload a fourth after publish, review, "Publish late photos" succeeds. Observations 3 and 4 are for the ux-developer if the club prints the collage. Phase 6 waits for a PASS.
+
+---
+
+## Re-verification (Slice 3, S3-D1) — 2026-10-13
+
+**Owner:** qa · **Verdict: PASS** (Slice 3). Tree state: `HEAD` `dc3c67e4c1b88fdd30148dffa315781bf51cb58e` plus the **uncommitted Slice 3 diff in the pipeline worktree** (32 `git status` entries; `collage-review.ts` and its test are gone, the S3-D1 fix is in). Branch `ep-divine-boat` only; no commit.
+
+| Gate | Result |
+|------|--------|
+| `pnpm exec tsc --noEmit` | PASS |
+| `pnpm lint` | PASS (0 errors, the one old warning) |
+| `pnpm test` | PASS: 286 files, **4831 / 4831** (one file and four tests fewer: the deleted `collage-review` module) |
+| `pnpm build:only` | PASS: exit 0, 0 warnings, 324 route rows |
+| All eight workshop Playwright specs on `:3101` (default local store, `ZEFFY_API_KEY=` forced empty) | PASS: **62 passed, 1 skipped, 0 failed** (4.4 min); 12 collage tests including the new "late photo from the real upload route: review once, then Publish late photos succeeds"; the skip is increment 1's "open only" public-page test |
+| PII greps (phones, emails, streets) | PASS: print nothing; no image, PDF or zip in the diff |
+
+The fix as read: `reviewCutoffSql` / `reviewCoveredSql` (`photo-admin.ts:59` and `:69`) compare a photo's stored `created_at` with the stored `created_at` of the photo the admin saw (`throughPhotoId`), entirely in SQL, and are used by the count, the aggregate, the per-photo flag and the stamping UPDATE; no timestamp is parsed or compared in JavaScript for the review (the remaining `toISOString` calls are display fields). New unit tests by name include "the cutoff is a subselect of the stored photo's own created_at, bound only to the session id", "a micro-second photo time (.500711) cannot be made to differ from itself: nothing in the review path parses a timestamp", "a through photo that is not a group photo of this session is a 400 and writes nothing", "records the newest photo id the admin saw (never a timestamp)", and the UI scan "review sends the newest group photo id the admin saw (never a timestamp)".
+
+### The live check that failed, repeated with real uploads (admin UI at 1280 px plus an anonymous context; seed and photos through the real crew routes)
+| # | Step | Result |
+|---|------|--------|
+| V0 | Three group photos uploaded through the crew route | **PASS**: all three carry a sub-millisecond `created_at` (3 of 3 rows differ from their millisecond truncation), i.e. exactly the condition that broke S3-D1 |
+| V1 to V2 | Before review | server 3 unreviewed, UI 3 "Not reviewed yet" chips, review button enabled; Publish refused with the count 3 |
+| **V3** | **Mark group photos reviewed, once** | **PASS**: server 0 unreviewed, UI 0 "Not reviewed yet" chips (3 "Reviewed"), tile "Not reviewed 0", button disabled: **the chips agree with the server** |
+| V4 | Audit | one `group_photos_reviewed` row holding `throughPhotoId` and counts; no timestamp |
+| **V5** | **Repeated review** (same body, three more times) | **PASS, harmless**: 200 each time, still 0 unreviewed, no photo un-reviewed. Each repeat does write another audit row (4 rows after 4 calls): noise, not harm (observation) |
+| V6 | A `throughPhotoId` that is not a group photo of this session, junk, or the old `{ through: <timestamp> }` body | 400, 400, 400; nothing written |
+| **V7** | **Publish** | **PASS**: succeeds after the single review; the card says Published, **5** "Visible to anyone with the link" chips (3 group, Alpha, Bravo; none on Charlie) |
+| V8 | Stranger | page lists all three group photos and the door serves each (200) |
+| V9 | A **4th** group photo uploaded after publish, captured 10 minutes earlier (as an outbox upload is) | not public: door 404 for a stranger |
+| V10 | Admin page agrees with the server on the late photo | server 1 unreviewed, UI 1 chip, button enabled |
+| V11 | "Publish late photos" before reviewing | refused with the count 1 (the gate still works) |
+| **V12 to V13** | **Review once, then "Publish late photos"** | **PASS**: server 0, UI 0 chips, button disabled; a **stranger's door fetch of the 4th photo is 200** (thumb and full) and the public page lists it |
+| V14 | Audit and times | two `collage_published` rows (`first: true` with 3, then `first: false` with 1); the original publish time is unchanged |
+| V15 to V16 | A 5th group photo, **hidden** before review | not counted as unreviewed (0); publishing succeeds; the hidden photo stays 404 to a stranger |
+
+### Cleanup (rows, files, and the empty folders this time)
+Session `qa-s3-87693` deleted (children cascade; `e2e-col*` sessions 0); the two gate-spec "New portal user needs member record review" notices (`blocked_non_production`, unsent) removed (`email_queue` 1362); my 32 photo files and folder removed; **every empty `e2e-*` folder deleted (9: eight `e2e-col-*` and one `e2e-flow-*`, including the ones from earlier runs by other agents; `rmdir` only, so nothing non-empty could go)**. Branch re-measured equal to the pre-run baseline: `sw_sessions` 0, `sw_orders` 0, `sw_stuffies` 0, `sw_stuffy_events` 0, `sw_photos` 0, `sw_crew_attempts` 0, `sw_session_log` 0, `zeffy_events` 1 (`smoke-2`), `users` 53, `roles` 7, `user_roles` 72, `email_queue` 1362. Photo store: **0 files**, only the long-standing empty `ping/` folder. `:3101` stopped by PID (`:3102` not used this time); no worktree process remains; `:3000` untouched; nothing committed.
+
+### Surprises
+1. The Playwright specs (collage and crew-flow) still leave one empty folder per run in `.santas-workshop-store/` even though rows and files are removed; I cleared them by hand. A one-line `rmdir` in the helper's cleanup would stop it.
+2. Pressing "Mark group photos reviewed" repeatedly is harmless but each call writes an audit row (the button is disabled once everything is covered, so only an API caller can do it).
+3. `.env.local` still holds a `ZEFFY_API_KEY`; every server was started with it forced empty.
+
+### Verdict
+**PASS.** S3-D1 is fixed and verified with real uploads (one review is enough; the admin chips agree with the server; repeated review is harmless; the late-photo flow reaches a stranger's door with a 200). The deferred list and observations from "Phase 5 — Slice 3" stand unchanged (real phones, Drive-backed photos, print with background graphics, the removed state against the real purge engine). **Phase 6 next** for Slice 3 (analyst).
+
+---
+
+## Re-verification 2 (Slice 3, post-Phase-6) — 2026-10-13
+
+**Owner:** qa · **Verdict: PASS** (Slice 3 stays PASS). Tree state: `HEAD` `dc3c67e4c1b88fdd30148dffa315781bf51cb58e` plus the **uncommitted Slice 3 diff in the pipeline worktree** (34 `git status` entries, now including the S3-N1 to N5 changes). Branch `ep-divine-boat` only; no commit.
+
+| Gate | Result |
+|------|--------|
+| `pnpm exec tsc --noEmit` | PASS |
+| `pnpm lint` | PASS (0 errors, the one old warning) |
+| `pnpm test` | PASS: 286 files, **4841 / 4841** (was 4831) |
+| `pnpm build:only` | PASS: exit 0, 0 warnings, 324 route rows |
+| All eight workshop Playwright specs on `:3101` (`ZEFFY_API_KEY=` forced empty) | PASS: **63 passed, 1 skipped, 0 failed** (4.5 min); includes the new "pending after the photo day has passed says the photos are being prepared"; the skip is increment 1's "open only" public-page test |
+| PII greps (phones, emails, streets) | PASS: print nothing; no image, PDF or zip in the diff |
+
+New unit tests confirmed by name: "a portrait retaken after publish is a stranger 404 until Publish late photos stamps it, then 200" (door), "late portraits ride the publish batch" (2: the stamping UPDATE covers consented portraits; a publish after a retake reports the portrait), `needsPublish after an unhide (S3-N3)` (4), and the public-copy tests for the un-hide hint, the late-pictures sentence and the removal line.
+
+### Live checks (admin UI at 1280 px, anonymous stranger context, crew cookie of the session; every upload through the real crew routes, no seed)
+Seed: practice session, 3 stuffies (Alpha, Bravo consented; Charlie not) with sentinel contact data, portraits and 3 group photos through the crew routes; reviewed once and published (the audit row now counts both kinds: `photosPublished: 5`, no `groupPublished`).
+
+| # | Check | Result |
+|---|-------|--------|
+| R0 | Retake Alpha's portrait **after publish** through the real crew portrait route (`replace: true`, a crew phone's cookie) | accepted (200) |
+| **R1 to R3** | The stranger | **404 for the retake (thumb and full)**; the superseded old portrait is 404 too; the public page now lists 4 photos (3 groups + Bravo), Alpha's portrait is absent until the batch |
+| **R4** | The crew cookie of that session and the admin | door **200 immediately** (thumb and full) |
+| R5 | Admin API | the retake is `awaitingPublish: true`, `onCollage: false`; `counts.portraitsAwaitingPublish` 1, `awaitingPublish` 1 |
+| **R6 to R7** | Admin tile and sentence | Alpha's tile has **no "Visible to anyone with the link" chip** (Bravo's still does); the sentence reads "1 picture taken since the last publish is not yet public." |
+| **R8** | **"Publish late photos"** (no review step for portraits) | a stranger's door fetch of the retake is **200** (thumb and full) and the page lists it |
+| R9 | Audit | second `collage_published` row with `photosPublished: 1`, `first: false`; the original publish time is unchanged |
+| R10 | Chips and sentence | after a retake exactly **one** portrait is "Visible to anyone" and the late sentence shows; after publishing there are **two** and the sentence is gone (re-checked with a cleaner state after my first probe's text slicing was wrong) |
+| R11 | A **second** retake | held (404); the first retake, now superseded, is 404: no stale or unpublished portrait is ever public |
+| N3a | Un-hide a photo that was **never published** | the hint **"This picture returns to the collage when you press Publish late photos."** appears |
+| N3b | API | un-hide of an already-published photo returns `needsPublish: false`; the hide response `false` |
+| Family view | not applicable live: the family page and token route are Slice 5; the rule "family and crew see their own retake at once" is covered by the door matrix unit tests (photo-access) and was exercised here for the crew viewer |
+
+### The copy changes, as specified
+- **S3-N1 PASS.** Admin instruction: "Hide any picture that shows a child, or anyone other than Santa, Mrs. Claus and the stuffies. Then mark them reviewed so the collage can be published." The refusal sentence carries it with the count ("3 group photos have not been reviewed yet. Look through them (hide any picture that shows a child, or anyone other than Santa, Mrs. Claus and the stuffies), mark them reviewed, then publish."). Crew Group photo screen: "Take a photo of the stuffies together with Santa and Mrs. Claus. **No children in frame.**" The public line is unchanged: "We photograph stuffies only, never children."
+- **S3-N4 PASS.** Removal line (shown on the removed page, the pending page and the live footer): "Changed your mind, or see someone who should not be in a picture? Email info@westervillelions.org and we will take it down." with the address as `mailto:info@westervillelions.org`, plus **"Or use the contact form"** linking to `/connect`. The only email address anywhere on the public page is the club's.
+- **S3-N5 PASS.** Photo day in the future (Dec 19): "The photos arrive on Saturday, Dec 19"; **photo day is today** (2026-10-13 Eastern): still the date ("Tuesday, Oct 13"); **photo day in the past** (Oct 10): **"The photos are being prepared. They will be right here soon. Please check back."** with no stale date.
+- Privacy re-scan of the final public page (live state): none of the sentinel names, notes, email, mobile, session name or slug.
+
+### Surprises
+1. After a retake, **Alpha's portrait disappears from the public collage entirely** until "Publish late photos" (the old one is superseded, the new one is held). That is exactly the specified rule, but it is the thing a chair will notice on photo night: a retake after publishing briefly removes the family's portrait from the page. The late-pictures sentence and the button are the cue.
+2. The gate spec's two disposable users again produced two "New portal user needs member record review" notices (`blocked_non_production`, unsent); removed.
+3. The specs again left empty `e2e-col-*` and `e2e-flow-*` folders (four this run); removed by hand, all by `rmdir`.
+4. `.env.local` still holds a `ZEFFY_API_KEY`; every server was started with it forced empty.
+
+### Cleanup
+Session `qa-s3-19201` deleted (children cascade); my 40 photo files and folder removed; four empty spec folders removed (only `ping/` remains; **0 files**); the two notice rows removed (`email_queue` 1362). Branch re-measured equal to the pre-run baseline: `sw_sessions` 0 (`e2e-col*` 0), `sw_orders` 0, `sw_stuffies` 0, `sw_stuffy_events` 0, `sw_photos` 0, `sw_crew_attempts` 0, `sw_session_log` 0, `zeffy_events` 1 (`smoke-2`), `users` 53, `roles` 7, `user_roles` 72, `email_queue` 1362. `:3101` stopped by PID; no worktree process remains; `:3000` untouched; nothing committed.
+
+### Verdict
+**PASS.** S3-N1 to N5 behave as specified and the post-publish retake rule holds end to end through the real routes. The deferred list from "Phase 5 — Slice 3" stands (real phones, Drive-backed photos, print with background graphics, the removed state against the real purge engine, the family page in Slice 5).
+
+---
+
 # Phase 6 — Shipped vs Intent (analyst)
 
 Later slices get their own heading below this one. Slice 1 is judged alone.
@@ -2339,6 +2544,161 @@ SHIP WITH NOTES for Slice 2. The worker process, the sticker collision rules, th
 
 ---
 
+## Phase 6 — Slice 3 — 2026-10-13
+
+**Scope judged:** the public collage page `/santas-workshop/c/[token]`, the photo door's anonymous viewer, the admin photos page (`/admin/santas-workshop/[sessionId]/photos`), hide/unhide, the group-photo review and the publish/unpublish gate, the collage link and QR. **Out of scope, not gaps:** frames and the frame QR's origin guard (Slice 4), the family page and the real public purge engine (Slice 5).
+
+**Tree state measured:** worktree on main `dc3c67e` (v1.95.0) plus the uncommitted Slice 3 diff (32 `git status` entries; no migration, no dependency, no env var). Method: the whole work-log in the order the coordinator listed (my Phase 1 and addendum, my Slice 1 and 2 notes that touched the collage, Phase 3's collage sections and Flow 9, both Phase 4 sections including S3-D1, QA's FAIL then PASS), DECISION-125, spec §3.5, §5, §7 and Q17, then the shipped code (`collage-contract`, `collage-queries`, `photo-admin`, `photo-access`, the collage page and gallery, `collage-ui` copy, `photos-panel`). I re-ran no test suite (QA's 4,831 tests and 12 collage e2e tests stand), and drove the real app myself on `:3101` (branch database, local photo store in the scratchpad, `NEXTAUTH_URL` set to the server's own origin, `ZEFFY_API_KEY` forced empty, no Sync): a practice session with two registered stuffies (one family agreed to photo sharing, one did not), both taken through tag, check-in and portrait, two group photos, then the pending page, a refused publish, review, publish, the live page at 360 px, a hide, and a retake after publish, plus the admin photos page at 390 px and a print to PDF. I stopped the server by PID, deleted the session and re-measured the branch at 0 sessions, orders, stuffies and photos, `email_queue` 1362. Everything that depends on the real Drive (the placeholder tile on an outage, the 5-minute window against Drive) or a real phone is unmeasured.
+
+## VERDICT
+
+**SHIP WITH NOTES.** The collage does what Phase 1 and Phase 3 describe: strangers see only group pictures an admin reviewed and the portraits of stuffies whose family agreed, nothing carries a name, a hide takes effect at the door at once, and the page is honest in all three of its states. The review gate is a real server-side gate, not a formality, but it is a tripwire and not a proof that anyone looked; and I found three places where the shipped behaviour or wording does not match what the chair will believe on photo-day evening. None is a defect in the build; two need a chair or orchestrator decision before the dry run (S3-N1, S3-N2).
+
+## ONE-LINE TAKE
+
+> Scan the frame's QR and you get a calm, nameless, unlisted page of group pictures and the portraits of families who said yes, which an admin can hide from at any moment and must explicitly release (group pictures only) before anyone outside can see it; the weak spots are portraits, which go public the instant they exist, and the words telling the admin what to look for.
+
+## What's Working
+
+- **One visibility rule, used by the door and the page.** `decidePhotoAccess({ kind: "public" })` decides both what the collage lists and what the photo door will serve a stranger, and `photoFactsFrom()` is the single row-to-facts mapper (the admin's "Visible to anyone with the link" chip uses it too). QA's `collage-door` test proves the two sets are equal; in my run the page listed exactly two group pictures and one portrait and the admin page showed the same one portrait chip as visible.
+- **Consent governs portraits exactly as Phase 1 and the spec (Q17) say.** The family that agreed (Alpha) is on the collage; the family that did not (Bravo) is not on the page and its portrait answers 404 at the door; group pictures are public once released. The admin page labels each portrait in plain words ("On the collage: family agreed" or "Not on the collage: no consent") and counts them ("Portraits on the collage 1", "No consent 1, kept off the collage").
+- **No names anywhere a stranger can read.** The public DTO is a photo id and a kind (scan-tested: no name, caption, family, count or storage key); alt text is ordinal ("Group picture 1", "Stuffy portrait 1"); the page title and every line of copy are fixed strings (a hostile session name never reached the page in QA's test, and the script in it did not run); the door's response headers carry no file name, key or token. QA found no registrant text in the HTML or the RSC flight data. A child's first name, which the form may collect, has no path to this page.
+- **A real gate, enforced on the server.** Publish is refused with a sentence and a count until every unhidden group photo has been covered by an explicit review (my run: "2 group photos have not been reviewed yet", 409). The review covers only photos uploaded up to the newest one the admin was looking at, so a photo that arrives later is not released by an earlier click: QA verified a late photo is 404 at the door and "Publish late photos" is refused until it is reviewed too. The S3-D1 fix compares the cutoff entirely in SQL, so a Postgres microsecond timestamp can no longer make the newest photo permanently unreviewable (QA re-ran it with real uploads: review once, publish, late photo, review, publish late photos).
+- **Hide is immediate where it can be.** My run: hide, then a stranger's door fetch is 404 at once; the page is `force-dynamic` so a reload no longer lists it; only a browser that already has the image may keep showing it for up to 5 minutes (`private, max-age=300`), as the user accepted and QA measured (L3).
+- **The three states of the printed QR are friendly and honest.** Before publish: "The photos arrive on Saturday, Dec 19. Check back in the evening." (200, not a 404, because the QR is printed before the photos exist). Live: the grids. After a public purge: "These photos have been removed. The Westerville Lions Club has taken this collage down. Thank you for joining us." An unknown, malformed or hostile token is one identical 404 (9 bad tokens, 1 distinguishable response, a 10,000-character token in 34 ms; L4 measured).
+- **A quiet, unlisted page.** `noindex, nofollow` in the meta and the header, `Referrer-Policy: no-referrer` (0 of 30 requests carried the token in a Referer on the production build), not in `sitemap.ts` or `robots.ts`, no site header, footer or navigation (only the club-name band), a PRACTICE banner on practice sessions, no download button, tap opens the full picture in a dialog, a quiet "Photo not available right now" tile if an image cannot be served, lazy thumbnails with fixed dimensions. 360 px has no sideways scroll (QA, and my own screenshot).
+- **The admin page is usable on a phone and tells the truth.** Collage card with the link (Copy, Open), a QR that decodes to exactly the link, status chips, four counts, group and portrait grids with Hidden, Reviewed and consent chips, Hide behind a ConfirmDialog that states the 5-minute caveat, Unpublish behind a ConfirmDialog, a late-photo path ("Publish late photos"). The `photos_unreviewed` refusal and an unavailable "Mark reviewed" state both explain themselves.
+- **Fail-safe by construction.** The review marker lives in the session log; if that log were ever pruned, photos would simply read as unreviewed (the safe direction). Photos keep a per-photo publish stamp that only reviewed photos receive.
+
+## Intent-vs-Shipped Diff
+
+- **Collage open to anyone with the link (Q17), unlisted.** Phase 1 said open, not indexed. Shipped: 128-bit token, noindex, no-referrer, no OG preview image, never in the sitemap. Verdict: **matches.** There is no token rotation (a printed frame cannot be re-issued); the only remedies for a link that travels are Unpublish (everyone) or Hide (per photo). That is the design's accepted shape and the chair should hear it plainly.
+- **Consent governs portraits; group pictures show whoever is in them.** Matches the spec's Q17 wording. **But Phase 1 gap 9 resolved the tension with "stuffies only, never the children" by requiring review and a one-line worker reminder.** The wording that implements that resolution is inconsistent (S3-N1): the admin is told "Hide any that shows a person", the crew app asks the volunteers to photograph the stuffies "together with Santa and Mrs. Claus", the public page says "We photograph stuffies only, never children", and the spec says portraits are taken with Santa and Mrs. Claus. An admin who obeys the first instruction would hide every picture with Santa in it; one who does not has been given a rule they are expected to ignore. Verdict: **gap (copy and a chair ruling).** I did not catch the crew-side wording when I judged Slice 2; I should have.
+- **Admin review before publish.** Phase 1: review group pictures, hide any, then publish. Shipped: an explicit "Mark group photos reviewed" action that the server requires before it will publish, re-required for every photo that arrives later. Verdict: **matches, with honest limits**, see "Is review a real gate?" below.
+- **Hide at any time.** Matches (immediate at the door, up to 5 minutes in a browser that already has it, both accepted and measured). Unhide of a photo that was hidden **before** the first publish does not put it on the collage; it needs "Publish late photos", and nothing says so (S3-N3).
+- **Removal contact line.** Phase 1 asked for "Want a photo removed? Email info@westervillelions.org". Shipped: "Changed your mind? Contact the club and we will take your stuffy down." with a link labelled "Contact the club" to `/connect` (a contact form and the club address further down the page). Verdict: **acceptable drift, narrower than intended** (S3-N4): the sentence is addressed to a family withdrawing consent for its own stuffy; it does not speak to a parent who spots a person in a group picture, and the address is two steps away.
+- **Stuffies only, never children, never a child's name.** The sentence is on the page and no name can reach it. Matches.
+- **Pending and removed as 200 states, unknown as 404.** Phase 3 wanted this; the brief's wording said 404. The design wins (the printed QR must not 404 before the photos exist). Verdict: **matches the design; accepted** (Phase 4 deviation 2).
+- **Portraits follow consent and hide live, not the release batch.** Phase 3 ruled that the live collage is "published unhidden group photos, then current unhidden portraits whose stuffy has consent". Phase 1 Flow 9 pictured "one batch". Shipped as Phase 3: portraits have no release step and no review. **I measured the consequence:** after the collage was published, a retake of the consenting stuffy's portrait was served to a stranger at the door immediately (200), with no admin action and nothing on the admin page saying a new portrait had gone public. The pickup card has a "Retake the portrait" button, so retakes after publish are an ordinary flow on pickup day. Verdict: **design drift with a real consequence** (S3-N2).
+- **Printable public page, reusable by the family page.** Print rules exist (`.sw-noprint`, a 3-column grid, no chrome). QA's PDF is two pages with every tile; two nits stand (S3-N6). Verdict: **acceptable drift.**
+- **Zero photos, no consented portraits, practice collage.** See Edge Cases; all pass.
+
+Phase 3 rulings touching Slice 3:
+
+| # | Ruling | Verdict |
+|---|---|---|
+| 8 | A hidden portrait is withheld from every non-admin surface (family page, frame zip) | the collage and the door half is shipped and measured; the family and zip halves are Slices 4 and 5 |
+| 9 | Collage and family tokens are not throttled; unknown and malformed tokens one identical 404 | accept; measured (L4: 9 bad tokens, one distinguishable response) |
+| 10 | The frame caption is words, not the token URL | not Slice 3 |
+| Collage section | `force-dynamic`, noindex, pending/removed 200, no names or counts per family, images `private, max-age=300` | accept; every point verified |
+| Flow 9 | Review group pictures, publish in one batch, URL stable from session creation, "pending" before publish | accept, with S3-N2 on portraits |
+
+Phase 4 deviations: **api-developer** 1 (the review marker as a session-log row, now the **id of the newest group photo seen**, compared in SQL) accepted: no schema, safe-fail direction, and S3-D1 proves it needed the SQL-only comparison; deviation 2 (pending/removed are 200) accepted; 3 (no JSON route) accepted; 4 (origin guard is Slice 4; the admin card shows the URL as built) accepted, with the deploy check below. **ux-developer** 1 (`force-dynamic` rather than a 5-minute `revalidate`) accepted; 2 (site chrome hidden with a scoped `<style>` on `body > header, body > footer`) accepted as a stopgap, but it is a selector coupled to the root layout (S3-N8); 3 (`object-contain`, no crop) accepted; 4 (Publish stays clickable while photos are unreviewed, the server's refusal is the authority) accepted; 5 (admin tile shows the stuffy's name on portraits) accepted (admin only). **QA findings:** S3-D1 fixed and re-verified with real uploads; repeated review writes extra audit rows (harmless noise); the empty e2e folders were cleaned by hand.
+
+## Is "review before publish" a real gate or a formality?
+
+Real, with these limits stated so the chair does not over-trust it:
+
+- **It is a server gate.** The API refuses (409 `photos_unreviewed`, with a count) until every unhidden group photo is covered by a review; a photo uploaded after the review is not released and is 404 to strangers until it is reviewed and published late. QA and my run both saw this.
+- **It cannot know that anyone looked.** One button marks every group photo up to the newest as reviewed. The grid loads 60 at a time; with the roughly 100 group pictures Phase 1 estimated, the button is available while page 2 has never been opened. Today the page tells the admin to "Look at each picture", which is guidance, not a check (S3-N3).
+- **It covers group pictures only.** Portraits are not reviewed; they are public as soon as the collage is published if the family agreed, and any later portrait is public at once (S3-N2).
+- **A hide is the real safety valve.** Because hide is immediate at the door, a mistake found after publish costs at most a 5-minute cache window.
+
+## What a family sees
+
+- **Before photo day, scanning the QR** (the QR is printed on frames, so this mostly means a tester or an early link): "The photos arrive on Saturday, Dec 19. Check back in the evening. The stuffy pictures will be right here.", the two fixed lines, no pictures, noindex. After that Saturday has passed and before the chair publishes (a Sunday-morning pickup is the realistic case) it still says "arrive on Saturday, Dec 19", a date in the past (S3-N5).
+- **On the evening of photo day, once published:** "Group pictures" in capture order, then "Stuffy portraits", ordinal alt text, no captions. A family that did not agree to sharing will not find its own stuffy here and nothing explains why; its portrait is for the frame and, in Slice 5, its family page (S3-N4).
+- **In February after the public purge date:** the page is "removed" **only if the Slice 5 purge has been run**. Nothing expires a collage by itself (there is no cron, as the design says); until the admin runs the purge, the collage stays live past January 31. Once the purge sets the marker the page shows the friendly "These photos have been removed". The photo door does not itself read the session's purge marker; it relies on each photo's own purged stamp, so the Slice 5 engine must delete the bytes and stamp every photo, not just the session (QA observation 5).
+
+## Edge Cases
+
+- Empty state: **pass.** A live collage with no tiles says "No photos have been added yet. Please check back soon."; the admin photos page has empty-state sentences; "Mark reviewed" explains why it is unavailable ("There are no group photos to review yet."). Publishing an empty collage is allowed (design); it reads as live.
+- A session with zero consented portraits: **pass.** Only the group grid renders (no empty "Stuffy portraits" heading); the admin sees "Portraits on the collage 0, No consent N". Note the cross-slice dependency: the consent answer text is still the unmeasured N5 item from Slice 1, and an unrecognised answer fails safe to "no" (a collage with no portraits, never one with the wrong ones).
+- The collage of a practice session: **pass.** Same token form and the same page with a PRACTICE banner; still noindex. A practice collage URL is as public as a real one, so practice photos should be sample photos.
+- A token shared on social media: **works as designed, no revocation.** Anyone with the link can open it; the page is noindex with no preview image (no Open Graph tags), the referrer is stripped, and the token cannot be rotated because frames are printed. The remedies are Hide (per photo) and Unpublish (the whole link). Also decide whether the club's own sign-up page should link to it (deploy checklist 3(b)).
+- Failure microcopy: **pass.** A photo the store cannot serve becomes "Photo not available right now" and the page text still comes from the database; there is no stack trace or status code anywhere public.
+- Permission gate: **pass.** The four admin routes and the page call `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)` first; the page and the door have no login by design; the door answers 404 for every failure, never 403.
+- Mobile (360 px): **pass** on the public page (QA and my screenshot). The admin photos page has no sideways scroll at 390 px, but each group tile is a full-width block, which makes reviewing a hundred pictures a very long scroll on a phone (S3-N8).
+- Brand and dialogs: **pass.** `rounded-2xl` cards, `rounded-lg` buttons, `ConfirmDialog` for hide and unpublish, no native dialog.
+- PII in the repository: **pass** per QA's greps (phones, emails, streets; no image, PDF or zip in the diff); fixtures are `example.*` names and generated images.
+
+## Follow-Ups (SHIP WITH NOTES)
+
+Each becomes its own work-log entry. Numbered S3-N. **S3-N1 and S3-N2 need a decision before the dry run (week of Dec 7); the rest are small.**
+
+**S3-N1 — Say one true thing about people in photos (copy plus a chair ruling; before the dry run).**
+Proposed backlog text: *B-nnn The words about people in pictures disagree. The admin page says "Hide any that shows a person" (group heading, `publishRefusedText()`), the crew group-photo prompt says "Take a photo of the stuffies together with Santa and Mrs. Claus", the spec takes every portrait with Santa and Mrs. Claus, and the public line says "We photograph stuffies only, never children." Ask the chair whether Santa and Mrs. Claus (adult volunteers) may appear in public pictures, then make all four strings say the same: for example "Hide any photo that shows a child, or anyone who should not be public", crew prompt unchanged or reworded, public line "We photograph stuffies, never children." Update `collage-ui.ts` and the strings' tests together; the review instruction is the control the whole privacy promise rests on.*
+
+**S3-N2 — Portraits released without review, including retakes after publish (decision, then about 30 lines; before the dry run).**
+Proposed backlog text: *B-nnn Portraits are public the moment the session is published (if the family agreed) and every later portrait or retake is public at once; the door served a post-publish retake to a stranger immediately and the admin page did not flag it. Recommended: treat portraits like group pictures. Stamp `published_at` on the portraits the admin has seen at Publish, require `published` for the public viewer's portrait case in `decidePhotoAccess`, show "N portraits are new since you published" with "Publish late photos", and have the review button cover the portraits grid too. This changes Phase 3's live-follow ruling (no schema: `sw_photos.published_at` already exists). If the chair prefers live-follow, say so in DECISION-125 and add only the "new since you looked" notice so the admin can see what went public. Tests: a retake after publish is 404 to a stranger until Publish late photos; the collage and door still agree.*
+
+**S3-N3 — Make the review gate say what it can and harden the edges (small).**
+Proposed backlog text: *B-nnn (a) Disable "Mark group photos reviewed" until every page of group photos has been loaded, or show "Viewed N of M" and require M of M (60 per page today; Phase 1 expects about 100). (b) After "Unhide" of a photo that was hidden before the first publish, say "It will appear after you press Publish late photos" (or release it automatically: unhiding is a deliberate act). (c) Do not write a new audit row when the same `throughPhotoId` is already the latest review (QA noted repeats). (d) Group tiles on a phone should be two columns so a hundred pictures are reviewable.*
+
+**S3-N4 — Removal line and a consent explanation on the public page (copy).**
+Proposed backlog text: *B-nnn Replace "Changed your mind? Contact the club and we will take your stuffy down." with a sentence that covers any photo ("Want a photo taken down? Email info@westervillelions.org and tell us which one") and show the address itself, as Phase 1 asked, next to the link to `/connect`; name who watches that mailbox and the contact-form inbox on Dec 19 to 21 and who can hide a photo that day. Add "Portraits appear here only when a family chose to share them." so a family that opted out is not left wondering where its own stuffy is.*
+
+**S3-N5 — The pending page after the date has passed (copy).**
+Proposed backlog text: *B-nnn `pendingHeadline()` prints "The photos arrive on <photo day>" even when that day is in the past. When the Eastern date is after `photoDate` and the collage is still unpublished, say "The photos will be here soon" (the Sunday-pickup case).*
+
+**S3-N6 — Print nits before the family page reuses them (small).**
+Proposed backlog text: *B-nnn In print, the blue gradient header keeps its background image when "Background graphics" is on, so the title prints black on dark blue (add `print:bg-none` beside `print:bg-white`); a "Stuffy portraits" heading can strand at the foot of page 1 (add `break-after: avoid` to the headings). Fix in the shared collage print rules because the family page reuses them.*
+
+**S3-N7 — The collage does not expire by itself (process).**
+Proposed backlog text: *B-167 Slice 5 must delete the bytes, stamp every photo `purged_at`, then set `public_purged_at`, because the door does not read the session marker. Orchestrator reminder for Jan 31, 2027 to run the public purge (the page stays live until then); fallback is Unpublish. Add to backlog: a scheduled purge reminder or cron (already proposed at Phase 3).*
+
+**S3-N8 — Housekeeping (low).**
+Proposed backlog text: *B-nnn (a) `HIDE_SITE_CHROME` is a `<style>` on `body > header, body > footer`; give the root layout an opt-out for chrome-free pages so a layout change cannot bring the site menu back onto the collage and the family page. (b) The e2e collage and crew specs leave an empty per-run folder in `.santas-workshop-store/`; add an `rmdir` to the cleanup helper. (c) The collage 404 page repeats the collage route's title and echoes the escaped path (neither distinguishes unknown from malformed; keep identical). (d) Alt text is ordinal only; fine for privacy, thin for screen-reader users, and acceptable until the club says otherwise.*
+
+**Decision records (I did not edit `docs/decisions.md`).**
+- **DECISION-125:** items 3 and 4 hold for what Slice 3 delivers (opt-in portraits, group pictures unpublished until reviewed, hide at any time, check-in photos never public). Record SW-L3 as measured (a fresh fetch after a hide is 404 at once; a browser that already had the image still served it from its cache) and SW-L4 as measured (9 bad tokens, 1 distinguishable response). Add the S3-N2 outcome to the decision (portraits gated like group pictures, or live-follow recorded as accepted with the new-since-published notice). Keep Proposed until Slice 5 (purge, reset, retention dates). Re-read "the collage shows removed after January 31" as "after the admin runs the public purge".
+- **DECISION-122:** unchanged and still Proposed; the placeholder tile on a Drive outage and the 5-minute window against Drive remain unmeasured.
+
+## Deploy checklist additions for Slice 3 (in order, after Slice 2's)
+
+1. **Nothing to configure.** Slice 3 adds no migration, no dependency and no environment variable. Read the deploy log for a clean build.
+2. **Header and page check on the deployed host.** `curl -I https://<production origin>/santas-workshop/c/anything` must be a 404 with `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer` and `camera=()`; a real token's page must be 200 with the same headers and `Cache-Control: no-store`; the photo door's images must show `private, max-age=300`.
+3. **Decide with the chair before the dry run:** (a) the S3-N1 ruling on Santa and Mrs. Claus in public pictures; (b) the S3-N2 choice for portraits; (c) whether the club's own sign-up page should link to the collage. That page reads `collagePath` from `WORKSHOP_2026` (currently `null`, so no link): setting it needs the real session's token, known only after the real session exists, and a deploy. The QR on the frames works without it. If the link goes on the public page, the collage is findable from the club's website; say so to the chair; (d) who watches `info@westervillelions.org` and the contact-form inbox on Dec 19 to 21 and who holds `santas_workshop.manage` that weekend to hide a photo.
+4. **Production practice run of the collage (on the practice session from Slice 2's checklist, real Drive):** take portraits and group photos through the crew app, open the Photos tab, try Publish before review (refused with a count), review, publish, open the link logged out in a private window and by scanning the admin QR with a phone, hide one picture and time how long a phone that already loaded it keeps showing it (SW-L3 against Drive), then deliberately break storage and confirm tiles degrade to "Photo not available right now" while the page text stays, repair, unpublish (the date reads "The photos arrive on..."), republish.
+5. **Real session.** The collage token is created with the session. After creating the real session, read the collage link from the Photos page and check it begins with the **production origin** (it is built from `NEXTAUTH_URL`; a wrong value would print a wrong QR on every frame; Slice 4's origin guard will refuse a non-production origin for a real session, but do not rely on it for the admin card). Send the exact link to whoever builds the frames.
+6. **Photo-day evening procedure.** Open the Photos tab on a laptop; page through every group picture and the portrait grid; hide anything showing a child; press Mark reviewed (the button is available even if some pages were never opened, so do open them all); press Publish; open the link logged out and scan it from the QR; watch the count of "Visible to anyone with the link". Pictures taken afterwards need review and "Publish late photos"; **until S3-N2 is done, a retaken or late portrait of a family that agreed goes public at once**, so take retakes before publishing or check the portrait grid after.
+7. **Reminders (orchestrator).** The collage and portraits are intended to stay up through Jan 31, 2027, and nothing removes them automatically: set a reminder for the public purge (Slice 5) and note that Unpublish is the immediate fallback.
+
+## Release-notes paragraph (no version number, no file list)
+
+Santa's Workshop now has a public photo collage. After the event, an admin reviews the group pictures, hides any that should not be shared, and publishes the collage; the link on each family's printed frame then opens a quiet page of group pictures and the portraits of stuffies whose families agreed to share. The page never shows a name, and families who did not agree are kept off it. A photo can be hidden at any time and disappears right away, and the admin can unpublish the whole page or add late photos in a second step. Before the photos are published the same link simply says when to check back.
+
+## CLAUDE.md edits for the orchestrator
+
+1. **Project Structure:** under `santas-workshop/` add `c/[token]/  # public collage: noindex, force-dynamic, no names`; under `components/santas-workshop/` add `collage/  # the public gallery client island`; under the admin segment note a `photos` page for the session.
+2. **Key Features -> Santa's Workshop** (add after the worker-surface bullet): "**Collage (v1.96, B-167 Slice 3, DECISION-125):** `/santas-workshop/c/<token>` is 'anyone with the link': a 128-bit token created with the session, never rotated, never in a sitemap, `noindex, nofollow`, `Referrer-Policy: no-referrer`, `force-dynamic` so HTML never outlives a hide, images `private, max-age=300` (the accepted 5-minute window). **One visibility rule:** `decidePhotoAccess({ kind: 'public' })` in `photo-access.ts` decides both what the collage lists and what the photo door serves a stranger (published, unhidden group pictures; current, unhidden portraits whose family opted in; never check-in photos), through one row mapper, so the page cannot list what the door would refuse. The public DTO is a photo id and a kind only: no name, caption, count or storage key (scan-tested); alt text is ordinal and every sentence is a fixed string. A token for a session that is not yet published shows 'The photos arrive on <photo day>', a publicly purged one 'These photos have been removed' (both 200 because the QR is printed before the photos exist and outlives them); an unknown or malformed token is one identical 404. **Review before publish is a server gate:** group photos are unpublished until an admin presses 'Mark group photos reviewed', recorded as a `group_photos_reviewed` session-log row holding the id of the newest group photo seen; Publish is refused (409 `photos_unreviewed`, with a count) while any unhidden group photo is not covered, and stamps `published_at` only on covered photos, so a later upload stays private until it is reviewed and 'Publish late photos' is pressed. Hide and unhide are audited and take effect at the door on the next fetch. [If S3-N2 lands: portraits are gated the same way; if live-follow is kept, say so here.]"
+3. **Gotchas:** add "A Postgres `timestamptz` carries microseconds and a JavaScript `Date` only milliseconds: never read a cutoff into a `Date` and compare it back in SQL (S3-D1 left the newest photo permanently unreviewable); keep such comparisons in SQL or carry the row id." and "The collage page hides the site header and footer with a scoped `<style>` on `body > header, body > footer`; the family page reuses it."
+4. **Key Invariants:** add "**The public collage and the photo door share one visibility rule** (`decidePhotoAccess`); never add a second filter on the page." and "**The collage's review gate is enforced by the server, not the button.**"
+5. **Integrations or Gotchas, Zeffy consent line:** note once that an unrecognised photo-sharing answer means no portrait on the collage.
+
+### Phase 6 handoff (Slice 3)
+
+**Owner:** analyst
+**Status:** complete (Slice 3 only; Phase 6 stays open for Slices 4 and 5)
+
+### Summary
+SHIP WITH NOTES for Slice 3. The collage matches the design: one visibility rule shared by page and door, no names, opt-in portraits, group pictures behind a real server-side review gate, an immediate hide, three honest states for the printed QR and one identical 404 for bad tokens. Two things need a decision before the dry run: the wording about people in photos contradicts itself (S3-N1), and portraits, including retakes after publish, go public with no review, which I measured (S3-N2).
+
+### What I did
+- Read the whole work-log in the order given, DECISION-125 and spec §3.5, §5, §7 and Q17, then the shipped collage, photo-admin, door and page code.
+- Drove the real app on `:3101` (local store, no Zeffy, no Drive): pending page, refused publish, review, publish, live page at 360 px, hide, retake after publish, admin photos page at 390 px, print to PDF; cleaned the branch to zero workshop rows and stopped the server by PID.
+- Found S3-N1 (conflicting people-in-photos wording, including a Slice 2 crew prompt I missed), S3-N2 (post-publish portraits public at once), S3-N3 (review covers unloaded pages; unhide trap), S3-N5 (stale pending date) by reading the copy and the access rule against Phase 1.
+
+### Outputs
+- This section of `docs/work-log/2026-10-12-santas-workshop-sessions-and-workers.md` in the pipeline worktree and its Per-Phase Status row. No code, `CLAUDE.md`, `decisions.md` or `backlog.md` touched; nothing committed. Screenshots and scripts are in the session scratchpad only.
+
+### Open questions / handoff notes
+- Orchestrator: file S3-N1 to S3-N8 (text above); take S3-N1 and S3-N2 to the chair before the dry run; apply the CLAUDE.md edits and the DECISION-125 updates when Slice 3 ships; set the Jan 31 public-purge reminder and make Slice 5 delete bytes, stamp every photo, then set the session marker.
+- Chair: may Santa and Mrs. Claus appear in public pictures; should the club website link to the collage; who answers removal requests on Dec 19 to 21.
+
+
+---
+
 ## Orchestrator note (2026-10-12): dev-server collision
 
 The api-developer's `pkill -f "next dev"` (meant for its own `:3101` server in the worktree) also killed the main tree's `:3000` server. No pipeline had a live check running on it at the time. The orchestrator restarted a plain `pnpm dev` on `:3000` from the main tree. Collision count for this pipeline: 1. Rule reminder for later agents: stop your own server by its PID (`kill $(lsof -tiTCP:3101 -sTCP:LISTEN)`), never by pattern.
@@ -2502,6 +2862,112 @@ Post-deploy, live host, about 2 minutes after the push:
 
 Still to do on the deploy checklist: board members sign out and in; create the real session and Connect campaign `1d4e4e1e-aa31-43ec-aa46-ca859c843b7e`; first signed Zeffy delivery observed on the Connect page (signature format proof); practice form + S2a spike; N5 measurement gate before Nov 8.
 
+## Phase 4 — Implementation (API), Slice 3 "Collage" — 2026-10-13
+
+**Owner:** api-developer
+**Status:** complete (server side; ux-developer next)
+
+### Summary
+The collage's server side: the public lookup by token, the photo door's anonymous branch, the admin photos list, hide/unhide, group-photo review, and publish/unpublish. Visibility is decided in exactly one place, `decidePhotoAccess({ kind: "public" })`: the collage query reads candidate rows and filters them through it, so the page can never list a photo the door would refuse. No schema change, no migration, no email.
+
+### What I did
+- `photo-access.ts`: extracted `photoFactsFrom()` (the one row-to-facts mapper; the door, the collage and the admin list all use it). Matrix unchanged.
+- `/api/santas-workshop/photos/[id]`: a request with no admin session and no valid crew cookie for that photo's session is now the **public** viewer instead of an immediate 404. Same 404 for every failure; public responses `private, max-age=300`, noindex, nosniff.
+- `collage-queries.ts` `getCollage(token)` -> `CollageLookup` (`null` = unknown or malformed token, no query for a malformed one). Pure `selectCollageTiles()` for the filtering and the order (groups first, then portraits, each by capture time then id).
+- `photo-admin.ts`: `listSessionPhotos`, `setPhotoHidden`, `markGroupPhotosReviewed`, `setCollagePublished`, `collageUrl`/`collageAdminInfo` (URL built from `getAppUrl()` + `COLLAGE_PATH_PREFIX`; `qrPayload` is that exact string, for the frame slice).
+- Review rule without a column: `collage-review.ts`. A `group_photos_reviewed` row in `sw_session_log` holds `through` (the newest group-photo upload the admin was looking at). A group photo is reviewed when published or uploaded at or before the latest `through`. Publish is refused (409 `photos_unreviewed`, `count`) while any unhidden, unpublished group photo is not; the stamping UPDATE is also bounded by `created_at <= through`, so a photo uploaded between the check and the write stays private.
+- Tokens: unchanged (created once, 128-bit, at session creation; no rotate path). Scan test: audit rows and `photo-admin.ts` never mention the token or URL and have no `console.*`.
+
+### Outputs
+Contracts (carriers): `src/lib/santas-workshop/collage-contract.ts` (public, scan-tested for no PII) and the Slice 3 section at the end of `src/lib/santas-workshop/admin-contract.ts`. New `AdminErrorCode` `photos_unreviewed` (sentence added to `admin-ui.ts`'s exhaustive switch; ux owns the final copy). Consumers grepped: `admin-ui.ts` is the only exhaustive `AdminErrorCode` switch; no `.kind ===` consumers of the new unions exist yet.
+
+Admin routes (all `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)` first; `no-store`; error envelope as before):
+- `GET /api/admin/santas-workshop/sessions/[id]/photos?kind=group|portrait&page=1` -> `PhotosListResponse { photos[], page, hasMore, counts, collage, sessionKind }`. `AdminPhotoDto { id, kind, takenAt, createdAt, hidden, publishedAt, reviewed, consent, stuffyName, onCollage }`; 60 per page; current photos only (superseded and purged excluded); hidden included. `counts.newestGroupAt` is what to send back as `through`.
+- `POST .../sessions/[id]/photos/review` `{ through: ISO }` -> `ReviewPhotosResponse { counts, collage }` (audit `group_photos_reviewed`).
+- `POST .../photos/[photoId]/hide` `{ hidden: boolean }` -> `HidePhotoResponse { photo, noop }` (audit `photo_hidden` / `photo_unhidden`; already-in-state and concurrent toggles are `noop`, no second audit row). 404 for unknown or purged.
+- `POST .../sessions/[id]/publish` `{ action: "publish" | "unpublish" }` -> `PublishResponse { collage, counts, newlyPublished, noop }`; `409 photos_unreviewed` with `count`; `409 session_purged`. Audit `collage_published` (`groupPublished`, `first`) / `collage_unpublished`. Publishing with zero group photos is allowed; publishing again stamps late reviewed photos and keeps the original publish time.
+- `CollageAdminInfo { url, qrPayload, published, publishedAt, reviewedThrough }` is in the list, review and publish responses.
+
+Public data access (no route handler; the page calls it): `getCollage(token)` -> `CollageView { state: "pending" | "removed" | "live", practice, arrivesOn, tiles[{ id, kind: "group" | "portrait" }] }` or `null`. Images: `collagePhotoPath(id, "thumb" | "full")` (the photo door). No names, captions, counts or keys in the DTO.
+
+Files: `collage-contract.ts`, `collage-queries.ts`, `collage-review.ts`, `photo-admin.ts` (new); `admin-contract.ts`, `admin-ui.ts`, `session-log.ts` (5 new kinds), `photo-access.ts`, `/api/santas-workshop/photos/[id]/route.ts` (edited); four new admin route files (photos, photos/review, publish, photos/[photoId]/hide). Tests (48 new): `collage-queries.test.ts` (consent, hidden, superseded, purged, check-in, unpublished, order, DTO shape, unknown/malformed/pending/removed/live), `collage-door.test.ts` (public viewer set equals the collage set, identical null refusals, hidden refused on the next fetch, cache headers), `photo-admin.test.ts` (audit rows, no-op, pinned-update race, publish refused with unreviewed, publish transaction, zero photos, repeat, unpublish, purged), `collage-review.test.ts`, `collage-contract-no-pii.test.ts`; `admin-routes-gate.test.ts` now also checks `collage-contract.ts` is client-safe and auto-covers the four new routes' gate. Gates: `tsc` clean, `pnpm lint` 0 errors (1 pre-existing warning), `pnpm test` 4810 passed, `pnpm build:only` clean (no dynamic-filesystem warning), no `console.log`, fixtures are `example.invalid` and the existing generated PNG.
+
+### Deviations from the design (routed by size)
+1. **Review marker (absorbed, no schema):** the design had no "reviewed" state; implemented as a session-log row (above) plus `POST .../photos/review`. About 60 lines including the route. If the tech-lead prefers a column (`sw_photos.reviewed_at`), that is a database-admin change; the log approach needs none.
+2. **Pending and removed are 200 states, not 404 (design wins over the brief's wording):** the brief said unpublished and expired tokens should 404 identically; Phase 3 (Flow 9, collage section, named test "unpublished returns pending with the date; purge returns removed") says the printed QR must show "The photos arrive on [date]" before publish and "These photos have been removed" after the purge. I built the design: only an unknown or malformed token is `null` (one identical 404). Photo-door requests for unpublished or purged material are identical 404s. Flipping pending/removed to 404 is a one-line change in the page if the orchestrator rules otherwise.
+3. **No JSON route for the collage:** the page (Server Component) calls `getCollage()` directly; the design lists only the page.
+4. Origin guard (`isProductionOrigin`) is Slice 4's manifest; `collageAdminInfo.url` is shown as-is (a localhost URL in dev).
+
+### Open questions / handoff notes
+- **Next agent: ux-developer.** Build `/admin/santas-workshop/[sessionId]/photos` (group grid first, portraits second; hidden badge; consent badge on portraits "Not on the collage: no consent"; unreviewed count; "Mark reviewed" sends `counts.newestGroupAt` as `through` and is disabled when null; Publish disabled with the reason while `groupUnreviewed > 0`, and handle `photos_unreviewed`; Unpublish through a ConfirmDialog; show `collage.url` with copy and a QR from `collage.qrPayload`), and the public page `/santas-workshop/c/[token]` (`export const dynamic = "force-dynamic"`, noindex, `null` -> `notFound()`, pending/removed/live per the design, PRACTICE banner when `practice`, footer removal line with `CONTACT_EMAIL`, lazy thumbs with an `onError` placeholder, tap opens `full`, no download button, empty-live message). Thumbs for admin tiles come from the same door (`/api/santas-workshop/photos/[id]?v=thumb`, admin credential via the session).
+- Hidden-photo cache window: 5 minutes in a browser that already loaded the image (accepted).
+- Not mine, still open: the "quiet feed" and "do not strand photos" Phase 6 notes.
+
+
+## Phase 4 — Implementation (UI, Slice 3 "Collage" client step) — 2026-10-13
+
+**Owner:** ux-developer
+**Status:** complete (qa next)
+
+### Summary
+The admin photos page (`/admin/santas-workshop/[sessionId]/photos`) and the public collage (`/santas-workshop/c/[token]`) are built on the api-developer's contract. Admins review group photos, hide and unhide with a confirmation, mark them reviewed, and publish or unpublish; strangers see only group pictures and consented portraits, with fixed copy and no registrant text.
+
+### What I did
+- Admin page: Server Component with `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)` in its body, loads group and portrait page 1 through `listSessionPhotos`. Client island `photos-panel.tsx`: collage card (link with Copy, Open, QR from `collage.qrPayload` via `qrText`, Publish / Unpublish / "Publish late photos", status line, the `photos_unreviewed` sentence with the server count in an amber alert, four counts), group grid with "Mark group photos reviewed" (sends `counts.newestGroupAt` as `through`; disabled with the reason when none or all reviewed), portrait grid, tiles with Hidden / consent / review / "Visible to anyone with the link" chips, Hide (ConfirmDialog) / Unhide, "Show more", empty states, per-tile broken-image placeholder. After any write the loaded pages are re-fetched so markers and counts are the server's.
+- Session overview: "Photos" tab added to `SessionNav` and a "Review photos" button on the overview.
+- Public page: Server Component, `force-dynamic`, noindex (`robots` + `referrer: no-referrer`), `null` is `notFound()`, pending ("The photos arrive on Saturday, Dec 19" plus an evening line), removed ("These photos have been removed"), live (group pictures then stuffy portraits), PRACTICE banner, fixed lines "We photograph stuffies only, never children." and "Changed your mind? Contact the club and we will take your stuffy down." with a link to `/connect`. Grid is a client island (`collage-gallery.tsx`): lazy thumbs with width/height, tap opens the full picture in a Radix dialog, no download button, quiet placeholder on error. Alt text is ordinal ("Group picture 2"), never a name. Site header and footer are hidden on this page by a scoped `<style>` (`body > header, body > footer`), leaving only the club-name band. Print rules (`.sw-collage-*`, `.sw-noprint`, `@media print`) added to `santas-workshop.css` for the family page to reuse.
+- Pure logic and copy in `src/lib/santas-workshop/collage-ui.ts` (`COLLAGE_COPY`, `publishRefusedText`, `qrText`, `reviewDisabledReason`, `publishStatusLine`, `photoMarkers`, alt helpers); `ADMIN_API` gained the four photo endpoints.
+
+### Outputs
+New: `src/app/(dashboard)/admin/santas-workshop/[sessionId]/photos/page.tsx`, `src/components/admin/santas-workshop/{photos-panel.tsx,collage-qr.tsx}`, `src/app/santas-workshop/c/[token]/page.tsx`, `src/components/santas-workshop/collage/collage-gallery.tsx`, `src/lib/santas-workshop/collage-ui.ts`. Edited: `session-nav.tsx`, overview `page.tsx`, `admin-ui.ts` (`ADMIN_API`), `santas-workshop.css`, `admin-ui-source.test.ts` (page list), `src/app/santas-workshop/public-page.test.ts` (the `collage/` component dir is excluded from the static public-page rules, as `crew/` is, because the gallery is a client island; it has its own scan).
+Tests: `collage-ui.test.ts` (publish-refused copy, QR payload verbatim, review gating, markers, public copy), `collage-page-source.test.ts` (source scan plus a render of the real page with the data layer stubbed: live, pending, removed, unknown token; asserts no registrant text), `photos-panel-source.test.ts` (QR through `qrText`, two ConfirmDialogs, `photos_unreviewed` handling, `through`). E2E: `e2e/santas-workshop-collage.spec.ts` (11 tests, all pass on `:3101`: pending and unknown token, publish refused with count, markers, review then hide then publish, published page with groups and only consented portraits, hide disappears from the public page and the door, 360 px no sideways scroll on both pages, unpublish with confirmation, removed) with seeding helpers (`solidPng`, `seedStuffy`, `seedPhoto`, `collageToken`) appended to `e2e/helpers/santas-workshop-crew.ts`. Gates: `tsc` clean, `pnpm lint` 0 errors (1 old warning), `pnpm test` 287 files / 4835 tests, `pnpm build:only` passes, no `console.log`, no native dialogs, example names only. Server on `:3101` stopped by PID; the spec's `afterAll` removed its session (children cascade) and stored files.
+
+### Deviations from the design (routed by size)
+1. **`force-dynamic`, not a 5-minute `revalidate` (absorbed):** the brief asked for `revalidate` consistent with the 5-minute window; Phase 3 says the page reads the database on every request so HTML never outlives a hide. Kept the design; only images carry the 5-minute browser window.
+2. **Site chrome hidden by a scoped `<style>` (absorbed, about 3 lines):** the root layout always renders `Header`/`Footer`; I did not edit shared layout components. The two shared components are untouched.
+3. **Group tiles use `object-contain`, not cropped (absorbed):** capture orientation is unknown and a crop could cut a person or stuffy out of frame.
+4. **Publish button stays clickable while photos are unreviewed (absorbed):** the server is the authority and its refusal (sentence plus count) is the specified behaviour; a status line states the reason beforehand. Earlier handoff suggested disabling; this keeps one source of truth.
+5. **Admin tile shows the stuffy's name on portraits** (admin-only surface, as the contract allows).
+
+### Open questions / handoff notes
+- **Next agent: qa (Phase 5).** Click through: create a practice session, add photos from the crew app (Group photo button, portraits), open Photos tab; Hide (cancel, then confirm), Unhide; Publish before review (amber refusal with count), Mark reviewed, Publish; open the copied link in a private window; scan the QR with a phone; Unpublish (confirm) and reload the link; set `public_purged_at` through the retention flow later (Slice 5) for "removed". Print preview of the published page (header band prints plain, link hidden, 3-column grid). A real iPhone check at 360 px is deferred.
+- Not measured here: the 5-minute hidden-photo window (Phase 5 L3) and Drive-backed photos; I used the local store with generated PNGs.
+- New copy the club may want to refine: the pending evening line, "Group pictures" / "Stuffy portraits" headings, the removal and stuffies-only lines, the two ConfirmDialog bodies, "Publish late photos".
+- The collage URL shows as built by the server (a localhost URL in dev); Slice 4's origin guard applies to the frame QR.
+
+### Post-QA fix S3-D1 (api-developer, 2026-10-13) — the newest group photo could never be reviewed
+**Root cause:** the review cutoff was `max(created_at)` read into a JavaScript `Date` (milliseconds) and compared in SQL against `created_at` (microseconds), so the newest photo stayed "unreviewed" forever and Publish returned 409 `photos_unreviewed` with no visible cause.
+
+**Fix (option a; no schema change):** a review is now recorded as the **id of the newest group photo the admin saw** (`throughPhotoId` in the `group_photos_reviewed` log row). "Reviewed" is `created_at <= (that photo's created_at)`, evaluated entirely in SQL by two fragments in `photo-admin.ts` (`reviewCutoffSql`, `reviewCoveredSql`), used by the unreviewed count, the counts aggregate, the list's per-photo `reviewed`, and the publish stamping UPDATE. No timestamp is parsed, bound or compared in JavaScript any more (`reviewedThrough` is the database's own `::text`, display only). `collage-review.ts` and its test were deleted (nothing left to parse).
+- **Carrier changes:** `ReviewPhotosRequest { throughPhotoId }` (was `through: ISO`); `PhotoCounts.newestGroupPhotoId` added (`newestGroupAt` kept, display only); `CollageAdminInfo.reviewedThrough` documented display-only. The route validates a UUID and the service checks it is a group photo of this session (400 `invalid_input` otherwise).
+- **Minimal UI compile-fix edits (behaviour untouched):** `photos-panel.tsx` sends `throughPhotoId: counts.newestGroupPhotoId`; `collage-ui.ts` `reviewDisabledReason` reads `newestGroupPhotoId`; the matching assertions in `photos-panel-source.test.ts` and `collage-ui.test.ts`. The chip already used the server's `photo.reviewed` boolean (`photos-panel.tsx` `Chip tone={photo.reviewed ...}`), so the UI never recomputed it. Consumers grepped: `newestGroupAt|reviewedThrough|through` across `src` and `e2e`.
+- **Tests that cannot pass with millisecond truncation:** `photo-admin.test.ts` renders the SQL with drizzle's `PgDialect` and asserts the cutoff is a subselect of the stored photo's own `created_at` bound only to the session id (no `Date`/timestamp parameter exists to truncate), that the covered fragment compares the stored column to it, and that `photo-admin.ts` contains no `Date.parse`, `lte(`, `::timestamptz` or the old parse helpers; review/publish flows are re-tested around the photo-id model with a microsecond display value (`2026-12-19 14:05:00.500711+00`). There is no precedent in the repo for a branch-backed Vitest, so the DB-level proof is the e2e below, which runs against the real branch database.
+- **e2e:** `uploadGroupPhoto()` in `e2e/helpers/santas-workshop-crew.ts` posts through the real `group-photos` route (admin accepted by `requireCrew`), so `created_at` is the database's `now()`. The collage spec's seed now uploads one such photo (the newest), so the first review and publish cover it (asserted "Visible to anyone with the link"), and a new test uploads a late photo, reviews once, "Publish late photos" succeeds and a stranger's door fetch is 200. Adjusted counts (3 group photos; 2 on the public page) in the affected assertions.
+- **Results:** `tsc` clean; `pnpm lint` 0 errors (one pre-existing warning; I also removed an unused import I had left); `pnpm test` 4831 passed (286 files); collage e2e **12 of 12 passed** on `:3101` (started and stopped by PID, `:3000` untouched, branch host `ep-divine-boat` verified before the run). I did not re-run the spec against the pre-fix code.
+- **Dev-only note:** the collage link and QR are built from `NEXTAUTH_URL` (`getAppUrl()`), so in dev they point at `:3000` unless the dev server is started with `NEXTAUTH_URL` set to its own origin (I did, for this run). Production behaviour is unchanged and correct; Slice 4's manifest origin guard (`isProductionOrigin`) is the real-session safeguard.
+
+**Next agent:** qa re-runs `tsc`, `lint`, `pnpm test`, `pnpm build:only`, the workshop specs, the PII greps, and the live check from S3-D1 (three group photos through the crew route, Mark reviewed once, Publish, a fourth after publish, review, Publish late photos).
+
+### Post-Phase-6 fixes S3-N1, N3, N4, N5 (ux-developer, 2026-10-13)
+- **S3-N1:** admin instruction and the `photos_unreviewed` sentence now read "Hide any picture that shows a child, or anyone other than Santa, Mrs. Claus and the stuffies." (`REVIEW_INSTRUCTION` in `collage-ui.ts`, `admin-ui.ts`); the crew group prompt (`crew/group-panel.tsx`) adds "No children in frame."; the public line is unchanged.
+- **S3-N3:** after an un-hide, the panel shows "This picture returns to the collage when you press Publish late photos." when the response has `needsPublish: true` (field from `admin-contract.ts`); while published, `counts.awaitingPublish > 0` shows "N pictures taken since the last publish are not yet public." (`latePicturesSentence`).
+- **S3-N4:** public removal line is "Changed your mind, or see someone who should not be in a picture? Email info@westervillelions.org and we will take it down." with a `mailto:` link (address from `CONTACT_EMAIL`), plus "Or use the contact form" to `/connect`.
+- **S3-N5:** pending says "The photos are being prepared" when the photo day is before today (Eastern, via `workshopNow` + `easternDateString`, computed in the page, DTO unchanged); the photo day itself still shows the date.
+- Tests: `collage-ui.test.ts`, `collage-page-source.test.ts` updated; collage e2e gained "pending after the photo day" and the un-hide hint assertions. Gates: tsc clean, lint 0 errors, `vitest run src` 285 files / 4828 tests, collage e2e 13/13 on `:3101` (stopped by PID).
+
+### Post-Phase-6 fix S3-N2 and S3-N3 (api-developer, 2026-10-13)
+**S3-N2 — late portraits wait for the batch.** A portrait uploaded or retaken after the session's last publish is private to strangers until the admin presses "Publish late photos", the same rule group photos follow. One rule, one place: `decidePhotoAccess` public viewer now requires `consent && published` for a portrait (`photo-access.ts`), and both the collage query and the photo door already read it, so the page and the door agree. The publish transaction's stamping UPDATE now also stamps every unhidden, current, consented portrait (no review step for portraits); consent and hidden are unchanged. Family and crew rules are unchanged (the family sees its own retake at once). The audit detail key `groupPublished` became `photosPublished` (it counts both kinds).
+**S3-N3 — `needsPublish` on hide/unhide.** `HidePhotoResponse.needsPublish` is true after an unhide of a photo that has never been published and would be on the collage (a group photo, or a consented portrait); false after a hide, for an already-published photo, an unconsented portrait or a check-in photo (`needsPublishFor()`).
+
+**Contract change for ux-developer (`admin-contract.ts`):**
+- `HidePhotoResponse { photo, noop, needsPublish: boolean }` — say "This photo will appear after you press Publish late photos" when true.
+- `PhotoCounts.awaitingPublish: number` (unhidden unpublished group photos + unhidden unpublished consented portraits; group photos also need the review) and `PhotoCounts.portraitsAwaitingPublish: number` (the portrait part: retakes and new portraits after the last publish). Use these to enable or label "Publish late photos" (it is currently always enabled while published).
+- `AdminPhotoDto.awaitingPublish: boolean` (per tile: unhidden, unpublished, would be on the collage once published) and `AdminPhotoDto.publishedAt` is now set for portraits too (was always null). `onCollage` already reflects the new rule, so a late portrait shows no "Visible to anyone with the link" until published.
+- `PublishResponse.newlyPublished` counts group photos and portraits together.
+- No change to `getCollage()` / `CollageView`; the public page just stops listing an unpublished portrait.
+
+**Tests:** photo-access matrix model updated (portrait needs `published`) plus spot checks; `collage-queries.test.ts` (late consented portrait withheld, then shown once stamped); `collage-door.test.ts` (retake after publish: stranger null, admin served, then stamped: served); `photo-admin.test.ts` (`needsPublishFor` table, unhide returns `needsPublish: true`, hide false, already-published false, publish after a retake reports it, stamping SQL covers consented portraits and the awaiting counts exist). The new awaiting-count SQL is only source-scanned in unit tests; the e2e exercises it end to end. **e2e:** the collage late-photo test now supersedes the consented portrait and seeds a retake after publish: stranger gets 404 on it, the admin tile lacks "Visible to anyone with the link", "Publish late photos" makes it 200 and visible, and the superseded one stays 404. Gates: `tsc` clean, `pnpm lint` 0 errors, `pnpm test` all passing, collage e2e **13 of 13** on `:3101` (started and stopped by PID; branch host verified; `:3000` untouched).
+
 ## Deploy record — Slice 2 shipped as v1.95.0 (orchestrator, 2026-10-13)
 
 Pushed `160b090..dc3c67e` (Slice 2 merge `5c97d03`). Pre-push on the merged tree: tsc clean; lint 0 errors; unit 279 files / 4749 tests; build PASS with no dynamic-filesystem warning; e2e 403 passed, 16 skipped, 0 failed; audit clean at high; PII sweeps clean (the one phone-pattern hit was this work-log quoting the removed fixture; reworded); schema and migrations unchanged since v1.94; dependencies added `jsqr`, `qrcode`, `@types/qrcode`.
@@ -2519,4 +2985,3 @@ Post-deploy, live host, about 2 minutes after the push:
 | Unsigned webhook POST | 400 |
 
 Not yet done on the live host: the Drive spike (`scripts/spike-drive.ts --apply`) and the two Drive env vars in Vercel (user to create the shared drive and service account); a real session cannot activate until Test storage passes. The real-phone pass with the chair's stickers remains deferred (S2-N6).
-

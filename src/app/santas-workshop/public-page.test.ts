@@ -26,7 +26,10 @@ const PUBLIC_FILES = [
   .filter(isCode)
   // The crew (worker) app is a separate, code-gated surface with its own source scans
   // (crew-app-source.test.ts); the public-page rules do not apply to it.
-  .filter((f) => !f.includes(`${path.sep}crew${path.sep}`));
+  .filter((f) => !f.includes(`${path.sep}crew${path.sep}`))
+  // The collage grid is a token-gated surface with its own scans (collage-page-source.test.ts)
+  // and is a client island (tap to open a picture), which the static page rules forbid.
+  .filter((f) => !f.includes(`${path.sep}collage${path.sep}`));
 
 // `banned.ts` is a test table of patterns, not page code.
 const FORBIDDEN: [RegExp, string][] = [

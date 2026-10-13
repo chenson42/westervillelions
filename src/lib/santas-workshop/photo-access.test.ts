@@ -41,7 +41,7 @@ function expected(viewer: PhotoViewer, p: PhotoFacts, variant: "full" | "thumb")
   }
   if (p.hidden || p.superseded || !p.sessionPublished) return false;
   if (p.kind === "group") return p.published;
-  return p.kind === "portrait" && p.consent;
+  return p.kind === "portrait" && p.consent && p.published;
 }
 
 describe("photo access matrix (viewer x kind x variant x published x hidden x consent x superseded x purged x session)", () => {
@@ -87,7 +87,7 @@ describe("photo access matrix (viewer x kind x variant x published x hidden x co
 
   it("spot checks that matter most", () => {
     // A hidden portrait is withheld from EVERY non-admin surface.
-    const hidden = facts({ hidden: true, consent: true, sessionPublished: true });
+    const hidden = facts({ hidden: true, consent: true, published: true, sessionPublished: true });
     expect(decidePhotoAccess({ kind: "crew", sessionId: SESSION }, hidden, "full")).toBe(false);
     expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, hidden, "full")).toBe(false);
     expect(decidePhotoAccess({ kind: "public" }, hidden, "full")).toBe(false);
@@ -96,6 +96,11 @@ describe("photo access matrix (viewer x kind x variant x published x hidden x co
     const noConsent = facts({ consent: false, sessionPublished: true });
     expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, noConsent, "full")).toBe(true);
     expect(decidePhotoAccess({ kind: "public" }, noConsent, "full")).toBe(false);
+    // A portrait taken after the last publish (consented, session live, no publish stamp) is private to strangers.
+    const late = facts({ consent: true, published: false, sessionPublished: true });
+    expect(decidePhotoAccess({ kind: "public" }, late, "full")).toBe(false);
+    expect(decidePhotoAccess({ kind: "public" }, { ...late, published: true }, "full")).toBe(true);
+    expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, late, "full")).toBe(true); // the family's own photo
     // A check-in photo is never reachable anonymously, and crew never get its thumbnail.
     const checkIn = facts({ kind: "check_in", consent: true, sessionPublished: true, published: true });
     expect(decidePhotoAccess({ kind: "public" }, checkIn, "full")).toBe(false);

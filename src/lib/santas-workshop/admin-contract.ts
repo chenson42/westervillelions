@@ -59,6 +59,7 @@ export const ADMIN_ERROR_CODES = [
   "storage_misconfigured",
   "storage_full",
   "storage_rate_limited",
+  "photos_unreviewed",
   "server_error",
 ] as const;
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
@@ -507,4 +508,108 @@ export interface StorageCheckResponse {
   deleted: number;
   /** False when the listing was cut at the page cap: run again after deleting. */
   complete: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Photos, hide, review and publish (Slice 3)
+// ---------------------------------------------------------------------------
+
+export const PHOTO_LIST_KINDS = ["group", "portrait"] as const;
+export type PhotoListKind = (typeof PHOTO_LIST_KINDS)[number];
+
+export const PUBLISH_ACTIONS = ["publish", "unpublish"] as const;
+export type PublishAction = (typeof PUBLISH_ACTIONS)[number];
+
+export const PHOTOS_PAGE_SIZE = 60;
+
+/** The collage's address for the admin. The URL carries the token: never log it. */
+export interface CollageAdminInfo {
+  /** Absolute collage URL, built on the server from the one app-URL helper. */
+  url: string;
+  /** Exactly the text a QR code must encode (the frame slice reuses it). */
+  qrPayload: string;
+  published: boolean;
+  publishedAt: string | null;
+  /** Display only (the database's own timestamp text): group photos uploaded at or before this have been reviewed. Null = never reviewed. Never compare it; use `AdminPhotoDto.reviewed` and `counts.groupUnreviewed`. */
+  reviewedThrough: string | null;
+}
+
+export interface AdminPhotoDto {
+  id: string;
+  kind: PhotoListKind;
+  takenAt: string | null;
+  createdAt: string;
+  hidden: boolean;
+  /** Set by the publish batch (group photos and consented portraits); null until then. */
+  publishedAt: string | null;
+  /** Group photos: reviewed (published, or uploaded before the last review). Portraits: null. */
+  reviewed: boolean | null;
+  /** Portraits: the stuffy's collage opt-in. Group photos: null. */
+  consent: boolean | null;
+  /** Portraits only (admin-only surface). */
+  stuffyName: string | null;
+  /** Would a stranger holding the collage link see this photo right now? */
+  onCollage: boolean;
+  /** Unhidden, not yet published, and would be on the collage once published (a group photo, or a consented portrait): "Publish late photos" will release it. */
+  awaitingPublish: boolean;
+}
+
+export interface PhotoCounts {
+  groupTotal: number;
+  groupHidden: number;
+  /** Unhidden group photos not yet published and not covered by a review. Publish is refused while > 0. */
+  groupUnreviewed: number;
+  groupPublished: number;
+  portraitsCurrent: number;
+  portraitsHidden: number;
+  /** Unhidden current portraits whose stuffy opted in. */
+  portraitsOnCollage: number;
+  portraitsNotConsented: number;
+  /** Unhidden, unpublished group photos plus unhidden, unpublished consented portraits: what "Publish late photos" would release (group photos also need a review). */
+  awaitingPublish: number;
+  /** The portrait part of `awaitingPublish`: retakes and new portraits after the last publish. */
+  portraitsAwaitingPublish: number;
+  /** Display only (millisecond precision). */
+  newestGroupAt: string | null;
+  /** The newest group photo: send it back as `throughPhotoId` when the review is done. Null = no group photos. */
+  newestGroupPhotoId: string | null;
+}
+
+export interface PhotosListResponse {
+  photos: AdminPhotoDto[];
+  page: number;
+  hasMore: boolean;
+  counts: PhotoCounts;
+  collage: CollageAdminInfo;
+  sessionKind: SessionKind;
+}
+
+export interface HidePhotoRequest {
+  hidden: boolean;
+}
+export interface HidePhotoResponse {
+  photo: Pick<AdminPhotoDto, "id" | "kind" | "hidden">;
+  noop: boolean;
+  /** True after an UNHIDE of a photo that has never been published (and would be on the collage): it stays private until the next publish. */
+  needsPublish: boolean;
+}
+
+export interface ReviewPhotosRequest {
+  /** The `counts.newestGroupPhotoId` the admin was looking at. Photos uploaded after it stay unreviewed. */
+  throughPhotoId: string;
+}
+export interface ReviewPhotosResponse {
+  counts: PhotoCounts;
+  collage: CollageAdminInfo;
+}
+
+export interface PublishRequest {
+  action: PublishAction;
+}
+export interface PublishResponse {
+  collage: CollageAdminInfo;
+  counts: PhotoCounts;
+  /** publish: group photos newly made public by this call. */
+  newlyPublished: number;
+  noop: boolean;
 }

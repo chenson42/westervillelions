@@ -1,10 +1,13 @@
 /**
  * GET /api/santas-workshop/photos/[id]?v=thumb|full
  *
- * The photo door for admins and crew. The viewer is resolved against THE PHOTO'S
- * session (a crew cookie for another session is nothing), then photo-access.ts
- * decides. 404 on every failure, never 403: unknown, denied, hidden, purged,
- * missing bytes and a storage outage are indistinguishable.
+ * The photo door. The viewer is resolved against THE PHOTO'S session (a crew cookie
+ * for another session is nothing): admin, else crew for that session, else the
+ * anonymous public (the collage), and photo-access.ts decides. The public viewer
+ * sees only collage-visible photos (published unhidden group photos; current
+ * unhidden portraits of opted-in stuffies, session published); a hidden photo is a
+ * 404 on the very next fetch. 404 on every failure, never 403: unknown, denied,
+ * hidden, purged, missing bytes and a storage outage are indistinguishable.
  */
 
 import { isUuid } from "@/lib/utils";
@@ -24,8 +27,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const sessionId = await photoSessionId(id.toLowerCase());
     if (!sessionId) return notFound();
     const gate = await requireCrew(request, { sessionId });
-    if (!gate.ok) return notFound();
-    const viewer: PhotoViewer = gate.credential.kind === "admin" ? { kind: "admin" } : { kind: "crew", sessionId };
+    const viewer: PhotoViewer = !gate.ok ? { kind: "public" } : gate.credential.kind === "admin" ? { kind: "admin" } : { kind: "crew", sessionId };
 
     const v = new URL(request.url).searchParams.get("v");
     const variant = v === "thumb" ? "thumb" : "full";

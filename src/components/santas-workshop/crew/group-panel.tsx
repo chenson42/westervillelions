@@ -39,7 +39,7 @@ export function GroupPanel({ ctx }: { ctx: CrewCtx }) {
     <div className="space-y-4 px-4 py-4">
       <h2 className="text-2xl font-bold text-gray-900">Group photo</h2>
       <div className={`${CREW_CARD} space-y-4 p-4`}>
-        <PhotoCapture key={round} stuffyLabel="the group" prompt="Take a photo of the stuffies together with Santa and Mrs. Claus." takeLabel="Take group photo" busy={busy} onUse={(f) => void use(f)} />
+        <PhotoCapture key={round} stuffyLabel="the group" prompt="Take a photo of the stuffies together with Santa and Mrs. Claus. No children in frame." takeLabel="Take group photo" busy={busy} onUse={(f) => void use(f)} />
       </div>
       {saved > 0 && (
         <p role="status" className="rounded-2xl bg-green-50 p-3 text-green-900">
