@@ -1,10 +1,20 @@
 import type { NextConfig } from "next";
 
+/**
+ * The Permissions-Policy header, built from ONE function so the global string and the
+ * worker-app string cannot drift: only the camera token varies. The worker app
+ * (/santas-workshop/crew/*) needs the live camera to scan stickers; every other
+ * path keeps `camera=()`. permissions-policy.test.ts pins both strings.
+ */
+function permissionsPolicy(camera: "()" | "(self)"): string {
+  return `camera=${camera}, microphone=(), geolocation=(), payment=(self "https://www.zeffy.com"), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), display-capture=()`;
+}
+
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(self \"https://www.zeffy.com\"), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), display-capture=()" },
+  { key: "Permissions-Policy", value: permissionsPolicy("()") },
   {
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
@@ -62,6 +72,37 @@ const nextConfig: NextConfig = {
             value: "public, max-age=86400, stale-while-revalidate=604800",
           },
         ],
+      },
+      // Santa's Workshop (B-167). These rules MUST stay after the global "/(.*)" rule:
+      // when several rules match, a later rule wins for the same header key, which is
+      // how the crew path gets camera=(self) while everything else keeps camera=().
+      // Measured, not assumed: Phase 5 check L5 (curl -I on the crew path, a token path
+      // and /santas-workshop).
+      {
+        source: "/santas-workshop/crew/:path*",
+        headers: [
+          { key: "Permissions-Policy", value: permissionsPolicy("(self)") },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex" },
+        ],
+      },
+      {
+        source: "/santas-workshop/c/:token",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+      {
+        source: "/santas-workshop/f/:token",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+      {
+        source: "/api/santas-workshop/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex" }],
       },
     ];
   },

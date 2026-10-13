@@ -1,7 +1,8 @@
-import type { RegistrantDto } from "@/lib/santas-workshop/admin-contract";
+import type { RegistrantDto, SessionKind, SessionStatus } from "@/lib/santas-workshop/admin-contract";
 import { displayStuffyName } from "@/lib/santas-workshop/payment-mapper";
 import { STATE_LABELS, attentionLabel, refundBadge } from "@/lib/santas-workshop/admin-ui";
 import { Chip } from "./badges";
+import { RegistrantActions } from "./registrant-actions";
 import { CARD } from "./styles";
 
 /**
@@ -50,7 +51,7 @@ function Attention({ r }: { r: RegistrantDto }) {
 function Details({ r }: { r: RegistrantDto }) {
   const rows: [string, string | null][] = [
     ["What it is", r.description],
-    ["Snack", r.snack],
+    ["Snack", r.snack || "No snack choice recorded"],
     ["Note to Santa", r.noteToSanta],
     ["Care note", r.careNote],
   ];
@@ -79,7 +80,7 @@ function Parent({ r }: { r: RegistrantDto }) {
   );
 }
 
-export function RegistrantsTable({ registrants }: { registrants: RegistrantDto[] }) {
+export function RegistrantsTable({ registrants, sessionKind, sessionStatus }: { registrants: RegistrantDto[]; sessionKind: SessionKind; sessionStatus: SessionStatus }) {
   return (
     <>
       <ul className="space-y-3 xl:hidden">
@@ -97,6 +98,7 @@ export function RegistrantsTable({ registrants }: { registrants: RegistrantDto[]
             <div className="mt-2"><Flags r={r} /></div>
             <Attention r={r} />
             <Details r={r} />
+            <RegistrantActions registrant={r} sessionKind={sessionKind} sessionStatus={sessionStatus} />
           </li>
         ))}
       </ul>
@@ -120,6 +122,7 @@ export function RegistrantsTable({ registrants }: { registrants: RegistrantDto[]
                   <p className="font-semibold text-gray-900 break-words">{displayStuffyName(r.name, r.orderSize)}</p>
                   <Details r={r} />
                   <Attention r={r} />
+                  <RegistrantActions registrant={r} sessionKind={sessionKind} sessionStatus={sessionStatus} />
                 </td>
                 <td className="px-4 py-3"><Parent r={r} /></td>
                 <td className="px-4 py-3 text-gray-700">{r.windowLabel ?? "No matching window"}</td>

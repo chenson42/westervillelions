@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 import { ZeffyError } from "@/lib/zeffy/client";
 import type { AdminErrorBody, AdminErrorCode } from "./admin-contract";
 import type { QueryFailure } from "./session-queries";
+import { isStorageError } from "./photo-store/errors";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -19,8 +20,14 @@ export function ok<T>(body: T, status: 200 | 201 = 200): NextResponse {
   return NextResponse.json(body, { status, headers: NO_STORE });
 }
 
-export function adminError(status: number, code: AdminErrorCode, error: string, field?: string): NextResponse {
-  const body: AdminErrorBody = { error, code, ...(field ? { field } : {}) };
+export function adminError(
+  status: number,
+  code: AdminErrorCode,
+  error: string,
+  field?: string,
+  extra: Pick<AdminErrorBody, "count" | "currentState"> = {},
+): NextResponse {
+  const body: AdminErrorBody = { error, code, ...(field ? { field } : {}), ...extra };
   return NextResponse.json(body, { status, headers: NO_STORE });
 }
 
@@ -29,7 +36,10 @@ export const forbidden = () => adminError(403, "forbidden", "Forbidden");
 export const notFound = (what = "Not found") => adminError(404, "not_found", what);
 
 export function fromFailure(f: QueryFailure): NextResponse {
-  return adminError(f.status, f.code, f.error, f.field);
+  return adminError(f.status, f.code, f.error, f.field, {
+    ...(f.count !== undefined ? { count: f.count } : {}),
+    ...(f.currentState ? { currentState: f.currentState } : {}),
+  });
 }
 
 /** The route's JSON body, or null when it is missing or not valid JSON. Call only AFTER the gate. */
@@ -63,4 +73,10 @@ export function logRouteError(label: string, error: unknown): void {
 export function serverError(label: string, error: unknown): NextResponse {
   logRouteError(label, error);
   return adminError(500, "server_error", "Something went wrong");
+}
+
+/** A photo-store failure as the admin envelope (503 with the storage code), or null for anything else. */
+export function storageFailure(e: unknown): NextResponse | null {
+  if (!isStorageError(e)) return null;
+  return adminError(503, e.code, e.message);
 }

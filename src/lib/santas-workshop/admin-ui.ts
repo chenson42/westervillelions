@@ -71,6 +71,26 @@ export function adminErrorMessage(code: AdminErrorCode, serverMessage?: string):
       return "Zeffy could not be reached. Try again in a minute.";
     case "zeffy_rate_limited":
       return "Zeffy is limiting requests. Wait a moment and try again.";
+    case "invalid_transition":
+      return "The session cannot move to that status from where it is.";
+    case "storage_not_ready":
+      return "Run Test storage first: a real session needs a passing photo storage test in the last 10 minutes.";
+    case "devices_active":
+      return "Phones are using the current worker code right now. Rotating signs them all out.";
+    case "has_activity":
+      return "Stuffies have already been tagged or photographed, so the session cannot go back to draft.";
+    case "stale_state":
+      return "That stuffy changed while you were looking. Refresh and check it.";
+    case "withdraw_not_allowed":
+      return "A stuffy that is already checked in cannot be withdrawn; it can only be flagged.";
+    case "storage_unavailable":
+      return "Photo storage is not answering. Try again in a minute.";
+    case "storage_misconfigured":
+      return "Photo storage is not set up correctly on this server.";
+    case "storage_full":
+      return "Photo storage is full.";
+    case "storage_rate_limited":
+      return "Photo storage is limiting requests. Wait a moment and try again.";
     case "server_error":
       return "Something went wrong on our side. Try again, and tell the webmaster if it keeps happening.";
     default: {
@@ -84,6 +104,10 @@ export interface AdminFailure {
   code: AdminErrorCode;
   message: string;
   field?: string;
+  /** devices_active: phones that used the worker code in the last hour. */
+  count?: number;
+  /** stale_state: where the stuffy actually is now. */
+  currentState?: StuffyState;
 }
 
 export function isAdminErrorBody(v: unknown): v is AdminErrorBody {
@@ -100,7 +124,13 @@ const ADMIN_CODES: readonly string[] = ADMIN_ERROR_CODES;
 /** Turns a non-2xx response body (or a network failure, body = null) into one failure shape. */
 export function toAdminFailure(body: unknown): AdminFailure {
   if (isAdminErrorBody(body)) {
-    return { code: body.code, message: adminErrorMessage(body.code, body.error), ...(body.field ? { field: body.field } : {}) };
+    return {
+      code: body.code,
+      message: adminErrorMessage(body.code, body.error),
+      ...(body.field ? { field: body.field } : {}),
+      ...(typeof body.count === "number" ? { count: body.count } : {}),
+      ...(body.currentState ? { currentState: body.currentState } : {}),
+    };
   }
   return { code: "server_error", message: adminErrorMessage("server_error") };
 }
@@ -502,6 +532,17 @@ export const ADMIN_API = {
   remap: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/zeffy/reprocess`,
   sync: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/zeffy/sync`,
   eventReprocess: (eventId: string) => `/api/admin/santas-workshop/zeffy/events/${enc(eventId)}/reprocess`,
+  // Slice 2
+  status: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/status`,
+  crewCode: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/crew-code`,
+  manualAdd: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/stuffies`,
+  storageTest: "/api/admin/santas-workshop/storage/test",
+  storageCheck: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/storage/check`,
+  awaitingPickupCsv: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/awaiting-pickup.csv`,
+  revert: (stuffyId: string) => `/api/admin/santas-workshop/stuffies/${enc(stuffyId)}/revert`,
+  withdraw: (stuffyId: string) => `/api/admin/santas-workshop/stuffies/${enc(stuffyId)}/withdraw`,
+  dismissAttention: (stuffyId: string) => `/api/admin/santas-workshop/stuffies/${enc(stuffyId)}/dismiss-attention`,
+  refundResolution: (orderId: string) => `/api/admin/santas-workshop/orders/${enc(orderId)}/refund-resolution`,
 } as const;
 
 /** A short URL name suggestion for the new-session form: "practice-2026" or "workshop-2026". */

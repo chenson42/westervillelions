@@ -14,6 +14,20 @@ export const SESSION_LOG_KINDS = [
   "sync_run",
   "remap_run",
   "session_updated",
+  "status_changed",
+  "code_viewed",
+  "code_rotated",
+  "code_paused",
+  "code_resumed",
+  "storage_test",
+  "storage_check",
+  "storage_orphans_deleted",
+  "manual_add",
+  "stuffy_reverted",
+  "stuffy_withdrawn",
+  "attention_dismissed",
+  "refund_kept",
+  "refund_withdraw",
 ] as const;
 export type SessionLogKind = (typeof SESSION_LOG_KINDS)[number];
 

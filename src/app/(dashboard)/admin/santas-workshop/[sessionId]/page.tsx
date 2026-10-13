@@ -7,7 +7,12 @@ import { isUuid } from "@/lib/utils";
 import { getSessionOverview } from "@/lib/santas-workshop/session-queries";
 import { STUFFY_STATES } from "@/lib/santas-workshop/admin-contract";
 import { CHECKLIST_MARK, STATE_LABELS, formatEasternInstant, registrantsHref } from "@/lib/santas-workshop/admin-ui";
+import { getStorageStatus } from "@/lib/santas-workshop/storage-status";
+import { ADMIN_API } from "@/lib/santas-workshop/admin-ui";
 import { ScheduleCard } from "@/components/admin/santas-workshop/schedule-card";
+import { StatusControls } from "@/components/admin/santas-workshop/status-controls";
+import { StorageCard } from "@/components/admin/santas-workshop/storage-card";
+import { WorkerCodeCard } from "@/components/admin/santas-workshop/worker-code-card";
 import { SessionNav } from "@/components/admin/santas-workshop/session-nav";
 import { BTN_PRIMARY, BTN_SECONDARY, CARD } from "@/components/admin/santas-workshop/styles";
 
@@ -20,16 +25,22 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
 
   const { sessionId } = await params;
   if (!isUuid(sessionId)) notFound();
-  const s = await getSessionOverview(sessionId);
+  const [s, storage] = await Promise.all([getSessionOverview(sessionId), getStorageStatus()]);
   if (!s) notFound();
 
   const base = `/admin/santas-workshop/${s.id}`;
   const open = s.checklist.filter((c) => c.state === "todo" || c.state === "warn").length;
   const noWindow = s.counts.byWindow.find((w) => w.windowId === null);
+  const awaitingPickup = s.counts.byState.checked_in + s.counts.byState.portrait_taken;
 
   return (
     <div className="space-y-6">
       <SessionNav session={s} active="overview" />
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <StatusControls sessionId={s.id} status={s.status} kind={s.kind} />
+        <WorkerCodeCard sessionId={s.id} slug={s.slug} status={s.status} access={s.workerAccess} />
+      </div>
 
       <section className={`${CARD} p-6`} aria-labelledby="checklist-heading">
         <h2 id="checklist-heading" className="text-lg font-semibold text-gray-900">Go-live checklist</h2>
@@ -84,6 +95,17 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
           </Link>
         </dl>
 
+        <div className={`${CARD} flex flex-wrap items-center justify-between gap-4 p-4`}>
+          <div>
+            <p className="text-sm text-gray-500">Waiting for pickup</p>
+            <p className="text-3xl font-bold text-gray-900">{awaitingPickup}</p>
+            <p className="text-sm text-gray-500">Checked in, not yet picked up.</p>
+          </div>
+          <a href={ADMIN_API.awaitingPickupCsv(s.id)} download className={BTN_SECONDARY}>
+            Download all stuffies not yet picked up (CSV)
+          </a>
+        </div>
+
         {s.counts.stuffies === 0 ? (
           <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500">
             <p className="font-medium">No registrations yet.</p>
@@ -122,6 +144,7 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
 
       <section className="grid gap-4 md:grid-cols-2">
         <ScheduleCard dropoffDate={s.dropoffDate} photoDate={s.photoDate} pickupDate={s.pickupDate} windows={s.windows} />
+        <StorageCard sessionId={s.id} storage={storage} kind={s.kind} />
         <div className={`${CARD} p-6`}>
           <h2 className="text-lg font-semibold text-gray-900">Zeffy</h2>
           <dl className="mt-3 space-y-2 text-sm">

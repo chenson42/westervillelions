@@ -29,6 +29,8 @@ import type {
   WindowCount,
 } from "./admin-contract";
 import { logSessionEvent } from "./session-log";
+import { describePhotoStoreConfig } from "./photo-store/config";
+import { lastStorageTest } from "./storage-status";
 import { buildChecklist, unmappedRequiredFields } from "./session-checklist";
 import { DEFAULT_QUOTA_BYTES, defaultCrewClosesOn, defaultRetention, validateSessionDates } from "./session-input";
 import { isStuffyState, STUFFY_STATES, type StuffyState } from "./state-machine";
@@ -46,13 +48,22 @@ export interface QueryFailure {
   code: AdminErrorCode;
   error: string;
   field?: string;
+  count?: number;
+  currentState?: StuffyState;
 }
-const failure = (status: QueryFailure["status"], code: AdminErrorCode, error: string, field?: string): QueryFailure => ({
+export const failure = (
+  status: QueryFailure["status"],
+  code: AdminErrorCode,
+  error: string,
+  field?: string,
+  extra: { count?: number; currentState?: StuffyState } = {},
+): QueryFailure => ({
   ok: false,
   status,
   code,
   error,
   ...(field ? { field } : {}),
+  ...extra,
 });
 
 /** Postgres unique violation, however the driver wraps it. */
@@ -245,6 +256,9 @@ export async function getSessionOverview(id: string): Promise<SessionOverview | 
     lastAnyEventAt: lastAny,
     lastSyncAt: sync?.at ?? null,
     dropoffDate: row.dropoffDate,
+    storageConfigured: describePhotoStoreConfig().configured,
+    lastStorageTest: await lastStorageTest(),
+    workerCodeIssued: row.crewCodeEnc !== null,
   });
 
   return {
@@ -262,6 +276,7 @@ export async function getSessionOverview(id: string): Promise<SessionOverview | 
     lastCampaignEventAt: iso(lastCampaign),
     lastSyncAt: iso(sync?.at ?? null),
     zeffyConfig: config,
+    workerAccess: { issued: row.crewCodeEnc !== null, paused: row.crewPaused, version: row.crewCodeVersion },
     checklist,
   };
 }
