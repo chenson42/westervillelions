@@ -3430,3 +3430,20 @@ Post-deploy, live host, about 2 minutes after the push:
 | Anonymous publish / hide routes | 401 |
 
 Orchestrator defaults adopted at Phase 6 (chair to confirm, B-173): Santa and Mrs. Claus may appear in public pictures, children never; portraits uploaded after the last publish wait for "Publish late photos". Calendar reminder set for Jan 31, 2027 (public purge). Photo-night habit for the chair: press "Publish late photos" before leaving on photo night and again after pickup, because a retake removes the old portrait from the collage until the new one is published.
+
+## Deploy record — Slice 4 shipped as v1.97.0 (orchestrator, 2026-10-13)
+
+Pushed `ab0b566..0aff8cc` (Slice 4 merge `0aff8cc`). Pre-push on the merged tree: tsc clean; lint 0 errors; unit 296 files / 4955 tests; build PASS, no dynamic-filesystem warning; e2e 419 passed, 16 skipped, 1 failed — `ledger-approvals-history.spec.ts:1030` (sign-in callback), a file this diff does not touch, passed alone on re-run (2 passed), recorded on B-174 as the second flaky spec; audit clean at high; PII sweeps clean; schema and migrations unchanged; dependency added `fflate`.
+
+Post-deploy, live host, about 2 minutes after the push:
+
+| Check | Result |
+|---|---|
+| `POST …/frames/manifest`, anonymous | 401 |
+| `POST …/frames/exported`, anonymous | 401 |
+| Anonymous frames page | 307 to sign-in |
+| Collage unknown token | 404 |
+| Crew page | 200 (code screen) |
+
+Still on the user: `NEXTAUTH_URL` on Vercel must be exactly `https://westervillelions.org` for real-session frames (verify in the Vercel dashboard); a test print at a photo counter before the dry run.
+
