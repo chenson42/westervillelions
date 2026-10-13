@@ -8,10 +8,13 @@
  * | Viewer | Allowed                                                                  | Always denied |
  * | Admin  | any kind, either variant, hidden and superseded included                  | purged        |
  * | Crew   | same session: check_in full; current unhidden portrait; unhidden group     | other session, hidden, superseded, check_in thumb, purged |
- * | Family | its stuffy's current UNHIDDEN portrait, regardless of consent, once the    | anything else |
- * |        | session is published                                                       |               |
+ * | Family | its stuffy's current UNHIDDEN portrait, regardless of consent and of the   | anything else |
+ * |        | publish batch, from the moment it exists (S5-D1)                           |               |
  * | Public | published unhidden group; current unhidden consented PUBLISHED portrait,   | check_in      |
  * |        | session published (late portraits wait for the next publish)               |               |
+ *
+ * Every viewer: a photo with `purged_at` is refused, and so is any portrait or group photo once the
+ * session's public purge marker is set (and any check-in photo or retake once the personal marker is set).
  */
 
 import { eq, sql } from "drizzle-orm";
@@ -40,10 +43,18 @@ export interface PhotoFacts {
   consent: boolean;
   /** The session's collage has been published. */
   sessionPublished: boolean;
+  /** The session's personal purge has finished (S3-N7: the door refuses check-in photos even if a row was missed). */
+  sessionPersonalPurged: boolean;
+  /** The session's public purge has finished: portraits and group photos are refused for every viewer. */
+  sessionPublicPurged: boolean;
 }
 
 export function decidePhotoAccess(viewer: PhotoViewer, photo: PhotoFacts, variant: "full" | "thumb"): boolean {
   if (photo.purged) return false;
+  // The purge markers are enforced here as well as through each photo's own `purged_at`, so a photo
+  // the purge engine did not reach (a late upload, a failed stamp) is still refused once its scope is done.
+  if (photo.sessionPublicPurged && photo.kind !== "check_in") return false;
+  if (photo.sessionPersonalPurged && (photo.kind === "check_in" || photo.superseded)) return false;
   switch (viewer.kind) {
     case "admin":
       return true;
@@ -60,8 +71,7 @@ export function decidePhotoAccess(viewer: PhotoViewer, photo: PhotoFacts, varian
         photo.stuffyId !== null &&
         photo.stuffyId === viewer.stuffyId &&
         !photo.superseded &&
-        !photo.hidden &&
-        photo.sessionPublished
+        !photo.hidden
       );
     case "public": {
       if (photo.hidden || photo.superseded || !photo.sessionPublished) return false;
@@ -89,6 +99,9 @@ export interface PhotoFactsSource {
   publishedAt: Date | null;
   consent: boolean;
   collagePublishedAt: Date | null;
+  /** Optional so callers that never read these (the admin list of unpurged photos) need not select them; absent means not purged. */
+  personalPurgedAt?: Date | null;
+  publicPurgedAt?: Date | null;
 }
 
 /** The ONE place a row becomes `PhotoFacts`, so the door, the collage and the admin list can never disagree. */
@@ -103,6 +116,8 @@ export function photoFactsFrom(row: PhotoFactsSource): PhotoFacts {
     published: row.publishedAt !== null,
     consent: row.consent,
     sessionPublished: row.collagePublishedAt !== null,
+    sessionPersonalPurged: (row.personalPurgedAt ?? null) !== null,
+    sessionPublicPurged: (row.publicPurgedAt ?? null) !== null,
   };
 }
 
@@ -134,6 +149,8 @@ export async function loadPhotoRecord(photoId: string): Promise<PhotoRecord | nu
       thumbStorageKey: swPhotos.thumbStorageKey,
       contentType: swPhotos.contentType,
       collagePublishedAt: swSessions.collagePublishedAt,
+      personalPurgedAt: swSessions.personalPurgedAt,
+      publicPurgedAt: swSessions.publicPurgedAt,
       consent: sql`coalesce((select photo_consent from sw_stuffies s where s.id = ${swPhotos.stuffyId}), false)`.mapWith(Boolean),
     })
     .from(swPhotos)

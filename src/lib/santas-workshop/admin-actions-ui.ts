@@ -119,6 +119,15 @@ export function devicesActiveText(count: number): string {
   return `${count} phone${count === 1 ? "" : "s"} used the current code in the last hour. Rotating signs ${count === 1 ? "it" : "them"} out and they need the new code.`;
 }
 
+/**
+ * B-181: the sentence added to the Close dialog. The count is the same "phones that used
+ * the code in the last hour" number the rotate dialog reports (GET crew-code). Null when none.
+ */
+export function closeWarningText(devices: number): string | null {
+  if (!Number.isFinite(devices) || devices < 1) return null;
+  return `${devices} phone${devices === 1 ? "" : "s"} used the code in the last hour. Photos still waiting on ${devices === 1 ? "it" : "them"} cannot be sent after closing.`;
+}
+
 export function codeShownText(c: CrewCodeResponse): string {
   if (c.unreadable) return "The stored code can no longer be read (the server secret changed). Rotate to issue a new one.";
   if (!c.code) return "No code has been issued yet.";

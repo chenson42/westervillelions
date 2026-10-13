@@ -14,6 +14,7 @@ import { failure, isUniqueViolation, toRegistrantDto, type QueryFailure } from "
 import { logSessionEvent } from "./session-log";
 import { eventRow, revertStuffy, withdrawStuffy, type TransitionFailure, type TransitionResult } from "./stuffy-transitions";
 import { isStuffyState, type StuffyState } from "./state-machine";
+import { hasCheckInPhotoSql } from "./registrant-photo";
 import { newToken128 } from "./tokens";
 
 export async function getRegistrant(session: SwSession, stuffyId: string): Promise<RegistrantDto | null> {
@@ -22,12 +23,13 @@ export async function getRegistrant(session: SwSession, stuffyId: string): Promi
       stuffy: swStuffies,
       order: swOrders,
       orderSize: sql<number>`(select count(*) from sw_stuffies s2 where s2.order_id = ${swStuffies.orderId})::int`,
+      hasCheckInPhoto: hasCheckInPhotoSql,
     })
     .from(swStuffies)
     .innerJoin(swOrders, eq(swStuffies.orderId, swOrders.id))
     .where(and(eq(swStuffies.id, stuffyId), eq(swStuffies.sessionId, session.id)))
     .limit(1);
-  return row ? toRegistrantDto(row.stuffy, row.order, row.orderSize, session.windows, session.questionMap) : null;
+  return row ? toRegistrantDto(row.stuffy, row.order, row.orderSize, session.windows, session.questionMap, row.hasCheckInPhoto === true) : null;
 }
 
 /** A stuffy and the session it belongs to (the stuffy-scoped admin routes carry no session id). */

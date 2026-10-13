@@ -28,6 +28,10 @@ import type {
   UpdateSessionRequest,
   WindowCount,
 } from "./admin-contract";
+import { easternDateString } from "@/lib/eastern-date";
+import { workshopNow } from "./clock";
+import { hasCheckInPhotoSql } from "./registrant-photo";
+import { retentionStatusFor } from "./retention-policy";
 import { logSessionEvent } from "./session-log";
 import { describePhotoStoreConfig } from "./photo-store/config";
 import { lastStorageTest } from "./storage-status";
@@ -44,7 +48,7 @@ import type { SnapshotQuestion } from "@/lib/zeffy/snapshot";
 
 export interface QueryFailure {
   ok: false;
-  status: 400 | 404 | 409 | 502 | 503;
+  status: 400 | 403 | 404 | 409 | 502 | 503;
   code: AdminErrorCode;
   error: string;
   field?: string;
@@ -278,6 +282,7 @@ export async function getSessionOverview(id: string): Promise<SessionOverview | 
     zeffyConfig: config,
     workerAccess: { issued: row.crewCodeEnc !== null, paused: row.crewPaused, version: row.crewCodeVersion },
     checklist,
+    retention: retentionStatusFor(row, easternDateString(workshopNow(process.env, new Date()))),
   };
 }
 
@@ -498,6 +503,7 @@ export function toRegistrantDto(
   orderSize: number,
   windows: readonly { id: string; label: string }[],
   questionMap: QuestionMap = {},
+  hasCheckInPhoto = false,
 ): RegistrantDto {
   const order = {
     refundStatus: o.refundStatus,
@@ -531,6 +537,7 @@ export function toRegistrantDto(
     withdrawn: s.withdrawnAt !== null,
     source: o.source as RegistrantDto["source"],
     tagLast4: s.tagCode ? s.tagCode.slice(-4) : null,
+    hasCheckInPhoto,
     createdAt: s.createdAt.toISOString(),
   };
 }
@@ -558,6 +565,10 @@ export async function listRegistrants(
   if (filters.flag === "attention") conditions.push(eq(swStuffies.needsAttention, true));
   else if (filters.flag === "withdrawn") conditions.push(isNotNull(swStuffies.withdrawnAt));
   else if (filters.flag === "manual") conditions.push(eq(swOrders.source, "manual"));
+  else if (filters.flag === "no_checkin_photo") {
+    // B-180: checked in (or past it) but no current check-in photo on file.
+    conditions.push(inArray(swStuffies.state, ["checked_in", "portrait_taken", "picked_up"]), sql`not ${hasCheckInPhotoSql}`);
+  }
   else if (filters.flag === "refund") {
     conditions.push(
       sql`((${swOrders.refundStatus} <> 'none' or ${swOrders.paymentDeleted}) and ${swOrders.refundResolutionCents} is distinct from ${swOrders.refundedCents})`,
@@ -576,6 +587,7 @@ export async function listRegistrants(
       stuffy: swStuffies,
       order: swOrders,
       orderSize: sql<number>`(select count(*) from sw_stuffies s2 where s2.order_id = ${swStuffies.orderId})::int`,
+      hasCheckInPhoto: hasCheckInPhotoSql,
     })
     .from(swStuffies)
     .innerJoin(swOrders, eq(swStuffies.orderId, swOrders.id))
@@ -585,7 +597,7 @@ export async function listRegistrants(
     .offset((page - 1) * REGISTRANT_PAGE_SIZE);
 
   return {
-    registrants: rows.map((r) => toRegistrantDto(r.stuffy, r.order, r.orderSize, session.windows, session.questionMap)),
+    registrants: rows.map((r) => toRegistrantDto(r.stuffy, r.order, r.orderSize, session.windows, session.questionMap, r.hasCheckInPhoto === true)),
     total,
     page,
     pageSize: REGISTRANT_PAGE_SIZE,

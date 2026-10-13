@@ -33,7 +33,7 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
   return (
     <div className="sw-collage-root sw-snow-bg min-h-screen">
       <style>{HIDE_SITE_CHROME}</style>
-      <header className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white print:bg-white print:text-black">
+      <header className="bg-gradient-to-br from-lions-blue to-lions-blue-dark text-white print:bg-none print:bg-white print:text-black">
         <div className="mx-auto max-w-6xl px-4 py-6 sm:py-8">
           <p className="text-sm uppercase tracking-widest text-lions-gold">{COLLAGE_COPY.siteName}</p>
           <h1 className="sw-display mt-1 text-3xl font-bold sm:text-4xl">{COLLAGE_COPY.title}</h1>
@@ -87,7 +87,7 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
           </div>
         )}
 
-        <footer className="mt-12 space-y-1 border-t border-gray-200 pt-6 text-center text-sm text-gray-600">
+        <footer className="sw-print-footer mt-12 space-y-1 border-t border-gray-200 pt-6 text-center text-sm text-gray-600">
           <p>{COLLAGE_COPY.stuffiesOnly}</p>
           <p>
             {COLLAGE_COPY.removalLead}{" "}

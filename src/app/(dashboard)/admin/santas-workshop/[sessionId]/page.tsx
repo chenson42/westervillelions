@@ -4,13 +4,14 @@ import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { isUuid } from "@/lib/utils";
-import { getSessionOverview } from "@/lib/santas-workshop/session-queries";
+import { getSessionOverview, listRegistrants } from "@/lib/santas-workshop/session-queries";
 import { STUFFY_STATES } from "@/lib/santas-workshop/admin-contract";
 import { CHECKLIST_MARK, STATE_LABELS, formatEasternInstant, registrantsHref } from "@/lib/santas-workshop/admin-ui";
 import { getStorageStatus } from "@/lib/santas-workshop/storage-status";
 import { ADMIN_API } from "@/lib/santas-workshop/admin-ui";
 import { ScheduleCard } from "@/components/admin/santas-workshop/schedule-card";
 import { StatusControls } from "@/components/admin/santas-workshop/status-controls";
+import { RetentionCard } from "@/components/admin/santas-workshop/retention-card";
 import { StorageCard } from "@/components/admin/santas-workshop/storage-card";
 import { WorkerCodeCard } from "@/components/admin/santas-workshop/worker-code-card";
 import { SessionNav } from "@/components/admin/santas-workshop/session-nav";
@@ -25,9 +26,14 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
 
   const { sessionId } = await params;
   if (!isUuid(sessionId)) notFound();
-  const [s, storage] = await Promise.all([getSessionOverview(sessionId), getStorageStatus()]);
+  const [s, storage, noPhoto] = await Promise.all([
+    getSessionOverview(sessionId),
+    getStorageStatus(),
+    listRegistrants(sessionId, { flag: "no_checkin_photo", page: 1 }),
+  ]);
   if (!s) notFound();
 
+  const noPhotoCount = noPhoto?.total ?? 0;
   const base = `/admin/santas-workshop/${s.id}`;
   const open = s.checklist.filter((c) => c.state === "todo" || c.state === "warn").length;
   const noWindow = s.counts.byWindow.find((w) => w.windowId === null);
@@ -74,7 +80,7 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
 
       <section aria-labelledby="counts-heading" className="space-y-4">
         <h2 id="counts-heading" className="text-lg font-semibold text-gray-900">Registrations</h2>
-        <dl className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-4 lg:grid-cols-5">
           <div className={`${CARD} p-4`}>
             <dt className="text-sm text-gray-500">Stuffies</dt>
             <dd className="text-3xl font-bold text-gray-900">{s.counts.stuffies}</dd>
@@ -89,6 +95,11 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
             <dt className="text-sm text-gray-500">Open refunds</dt>
             <dd className={`text-3xl font-bold ${s.refundsOpen > 0 ? "text-red-700" : "text-gray-900"}`}>{s.refundsOpen}</dd>
             <dd className="text-sm text-lions-blue">Review them</dd>
+          </Link>
+          <Link href={registrantsHref(s.id, { flag: "no_checkin_photo" })} className={`${CARD} p-4 focus:outline-none focus:ring-2 focus:ring-lions-blue hover:shadow-md transition`} data-testid="no-checkin-photo-tile">
+            <dt className="text-sm text-gray-500">No check-in photo</dt>
+            <dd className={`text-3xl font-bold ${noPhotoCount > 0 ? "text-amber-700" : "text-gray-900"}`}>{noPhotoCount}</dd>
+            <dd className="text-sm text-lions-blue">See who</dd>
           </Link>
           <Link href={registrantsHref(s.id, { flag: "withdrawn" })} className={`${CARD} p-4 focus:outline-none focus:ring-2 focus:ring-lions-blue hover:shadow-md transition`}>
             <dt className="text-sm text-gray-500">Withdrawn</dt>
@@ -145,6 +156,7 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
       </section>
 
       <section className="grid gap-4 md:grid-cols-2">
+        <RetentionCard sessionId={s.id} retention={s.retention} />
         <ScheduleCard dropoffDate={s.dropoffDate} photoDate={s.photoDate} pickupDate={s.pickupDate} windows={s.windows} />
         <StorageCard sessionId={s.id} storage={storage} kind={s.kind} />
         <div className={`${CARD} p-6`}>

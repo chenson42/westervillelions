@@ -15,6 +15,7 @@ import {
   type AttentionCode,
   type ChecklistState,
   type RefundBadge,
+  type RegistrantDto,
   type RemapResponse,
   type SessionKind,
   type SessionStatus,
@@ -95,6 +96,10 @@ export function adminErrorMessage(code: AdminErrorCode, serverMessage?: string):
       return "Some group photos have not been reviewed yet. Look through them (hide any picture that shows a child, or anyone other than Santa, Mrs. Claus and the stuffies), mark them reviewed, then publish.";
     case "collage_url_not_production":
       return "The collage link on this server is not the club's real web address, so a QR printed from it would not work. Frames for a real session can only be made from the live site.";
+    case "not_eligible":
+      return serverMessage || "That cannot run yet: the session must be closed and its removal date must have come.";
+    case "practice_only":
+      return "Only a practice session can be reset. A real session's data is removed on its dated schedule.";
     case "server_error":
       return "Something went wrong on our side. Try again, and tell the webmaster if it keeps happening.";
     default: {
@@ -504,11 +509,17 @@ export function registrantsHref(sessionId: string, f: Partial<RegistrantFilters>
   return `/admin/santas-workshop/${sessionId}/registrants${qs ? `?${qs}` : ""}`;
 }
 
+/** B-180: checked in (or later) with no current check-in photo on file. */
+export function needsCheckInPhoto(r: Pick<RegistrantDto, "state" | "hasCheckInPhoto" | "withdrawn">): boolean {
+  return !r.withdrawn && !r.hasCheckInPhoto && (r.state === "checked_in" || r.state === "portrait_taken" || r.state === "picked_up");
+}
+
 export const FLAG_LABELS: Record<(typeof REGISTRANT_FLAGS)[number], string> = {
   attention: "Needs attention",
   refund: "Open refund",
   withdrawn: "Withdrawn",
   manual: "Added by hand",
+  no_checkin_photo: "No check-in photo",
 };
 
 
@@ -550,6 +561,10 @@ export const ADMIN_API = {
   // Slice 3
   photos: (id: string, kind: "group" | "portrait", page = 1) => `/api/admin/santas-workshop/sessions/${enc(id)}/photos?kind=${kind}&page=${page}`,
   reviewPhotos: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/photos/review`,
+  // Slice 5
+  retentionPreview: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/retention/preview`,
+  purge: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/purge`,
+  reset: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/reset`,
   publish: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/publish`,
   // Slice 4
   framesManifest: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/frames/manifest`,

@@ -133,8 +133,39 @@
     width: 100%;
     object-fit: contain;
   }
+  .sw-collage-root h1,
+  .sw-collage-root h2,
+  .sw-collage-root h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  .sw-collage-root header > div {
+    padding-top: 3mm !important;
+    padding-bottom: 3mm !important;
+  }
+  .sw-collage-root main {
+    padding-top: 4mm !important;
+    padding-bottom: 0 !important;
+  }
+  .sw-collage-root main section + section {
+    margin-top: 4mm !important;
+  }
+  .sw-print-footer {
+    break-before: avoid;
+    page-break-before: avoid;
+    break-inside: avoid;
+    margin-top: 6mm !important;
+    padding-top: 3mm !important;
+  }
+  .sw-family-portrait {
+    max-height: 90mm;
+    width: auto !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+  }
   .sw-collage-root {
     background: #fff !important;
+    background-image: none !important;
     color: #000 !important;
     min-height: 0 !important;
   }

@@ -34,6 +34,9 @@ export const SESSION_LOG_KINDS = [
   "collage_published",
   "collage_unpublished",
   "frames_exported",
+  "purge_step",
+  "purge_done",
+  "reset",
 ] as const;
 export type SessionLogKind = (typeof SESSION_LOG_KINDS)[number];
 

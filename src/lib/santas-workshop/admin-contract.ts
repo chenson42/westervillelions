@@ -24,6 +24,7 @@ export { ZEFFY_EVENT_OUTCOMES, STUFFY_STATES, ATTENTION_CODES, QUESTION_FIELDS, 
 export type { ZeffyEventOutcome, StuffyState, AttentionCode, QuestionFieldKey };
 
 import type { SessionKind, SessionStatus } from "./session-vocabulary";
+import type { RetentionScope, RetentionStatus } from "./retention-policy";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -61,6 +62,8 @@ export const ADMIN_ERROR_CODES = [
   "storage_rate_limited",
   "photos_unreviewed",
   "collage_url_not_production",
+  "not_eligible",
+  "practice_only",
   "server_error",
 ] as const;
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
@@ -184,6 +187,8 @@ export interface SessionOverview extends SessionDto {
   zeffyConfig: { webhookSecretSet: boolean; apiKeySet: boolean };
   workerAccess: { issued: boolean; paused: boolean; version: number };
   checklist: ChecklistItem[];
+  /** Slice 5: what is due and what has been purged (dates are on SessionDto). */
+  retention: RetentionStatus;
 }
 
 export interface CreateSessionRequest {
@@ -355,7 +360,7 @@ export interface ZeffyEventsResponse {
 // Registrants (read-only in Slice 1)
 // ---------------------------------------------------------------------------
 
-export const REGISTRANT_FLAGS = ["attention", "refund", "withdrawn", "manual"] as const;
+export const REGISTRANT_FLAGS = ["attention", "refund", "withdrawn", "manual", "no_checkin_photo"] as const;
 export type RegistrantFlag = (typeof REGISTRANT_FLAGS)[number];
 
 export type RefundBadge = "none" | "refunded" | "partial_flag";
@@ -392,6 +397,8 @@ export interface RegistrantDto {
   source: "webhook" | "sync" | "manual";
   /** Last four characters of the bound sticker code, or null. */
   tagLast4: string | null;
+  /** B-180: a current (not retaken, not purged) check-in photo exists. False for a registrant who has not checked in yet. */
+  hasCheckInPhoto: boolean;
   createdAt: string;
 }
 
@@ -724,4 +731,81 @@ export interface FramesExportedResponse {
   unchanged: number;
   /** Items that did not match a stuffy, its frame number and a portrait of this session. */
   rejected: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Retention, purge and practice reset (Slice 5; DECISION-125)
+// ---------------------------------------------------------------------------
+
+export {
+  FORCE_REASON_MAX,
+  RETENTION_BLOCKERS,
+  RETENTION_SCOPES,
+  RETENTION_STATES,
+  describeBlockers,
+  retentionScopeStatus,
+} from "./retention-policy";
+export type { RetentionBlocker, RetentionScope, RetentionScopeStatus, RetentionState, RetentionStatus } from "./retention-policy";
+
+/** What a scope would remove right now. Counts only: no names, no contact data. */
+export interface ScopePreview {
+  status: RetentionStatus["personal"];
+  /** Photos still to delete (bytes) and stamp. Personal: check-in photos and superseded retakes. Public: current portraits and group photos. */
+  photos: number;
+  photoBytes: number;
+  /** Personal only (0 for public): rows whose personal columns still hold data. */
+  orders: number;
+  stuffies: number;
+  eventNotes: number;
+  webhookSnapshots: number;
+}
+
+export interface ResetPreview {
+  photos: number;
+  photoBytes: number;
+  orders: number;
+  stuffies: number;
+  events: number;
+}
+
+/** GET sessions/[id]/retention/preview. `reset` is null for a real session. No write happens. */
+export interface RetentionPreview {
+  sessionId: string;
+  kind: SessionKind;
+  /** The Eastern calendar day the server used, "YYYY-MM-DD". */
+  today: string;
+  personal: ScopePreview;
+  public: ScopePreview;
+  reset: ResetPreview | null;
+}
+
+/** POST sessions/[id]/purge. `force` overrides the date and the closed-session rule and needs a reason. */
+export interface PurgeRequest {
+  phase: RetentionScope;
+  force?: boolean;
+  reason?: string;
+}
+
+export interface PurgeResponse {
+  phase: RetentionScope;
+  /** True when the scope is finished (marker set). False: call again, the run was time-boxed. */
+  done: boolean;
+  /** Photos still to delete in this scope. */
+  remaining: number;
+  /** Photos whose bytes this call deleted. */
+  photosDeleted: number;
+  /** True when the scope had already been purged. */
+  noop: boolean;
+  /** True when a blocker was overridden. */
+  forced: boolean;
+  retention: RetentionStatus;
+}
+
+/** POST sessions/[id]/reset (practice sessions only). Resumable: call again while done is false. */
+export interface ResetResponse {
+  done: boolean;
+  remaining: number;
+  photosDeleted: number;
+  /** Set on the call that finishes: rows removed. */
+  removed: { orders: number; stuffies: number; events: number } | null;
 }

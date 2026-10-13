@@ -135,3 +135,15 @@ describe("registrant actions", () => {
     expect(refundResolutionText({ orderId: "o", withdrawn: 3, stillInCustody: 0, resolved: true }, "withdraw")).toBe("3 stuffies withdrawn.");
   });
 });
+
+import { closeWarningText } from "./admin-actions-ui";
+
+describe("close warning (B-181)", () => {
+  it("says nothing when no phone used the code", () => {
+    expect(closeWarningText(0)).toBeNull();
+  });
+  it("uses the count and the singular", () => {
+    expect(closeWarningText(1)).toBe("1 phone used the code in the last hour. Photos still waiting on it cannot be sent after closing.");
+    expect(closeWarningText(3)).toBe("3 phones used the code in the last hour. Photos still waiting on them cannot be sent after closing.");
+  });
+});

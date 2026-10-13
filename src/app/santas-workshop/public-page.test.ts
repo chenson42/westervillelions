@@ -29,7 +29,10 @@ const PUBLIC_FILES = [
   .filter((f) => !f.includes(`${path.sep}crew${path.sep}`))
   // The collage grid is a token-gated surface with its own scans (collage-page-source.test.ts)
   // and is a client island (tap to open a picture), which the static page rules forbid.
-  .filter((f) => !f.includes(`${path.sep}collage${path.sep}`));
+  .filter((f) => !f.includes(`${path.sep}collage${path.sep}`))
+  // The family page's client islands (portrait fallback, print button, print QR) are token-gated
+  // and covered by family-page-source.test.ts and family-ui.test.ts.
+  .filter((f) => !f.includes(`${path.sep}family${path.sep}`));
 
 // `banned.ts` is a test table of patterns, not page code.
 const FORBIDDEN: [RegExp, string][] = [

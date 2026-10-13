@@ -5,7 +5,7 @@
  *
  * GET: registrant list. Includes parent contact: admin only,
  * never the crew. 50 per page, sorted by parent last name then stuffy name.
- * flag is one of attention | refund | withdrawn | manual.
+ * flag is one of attention | refund | withdrawn | manual | no_checkin_photo.
  *
  * Gate: auth() then hasFeature(SANTAS_WORKSHOP_MANAGE), the first two statements.
  */

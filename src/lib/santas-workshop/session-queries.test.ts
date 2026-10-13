@@ -44,6 +44,11 @@ describe("toRegistrantDto", () => {
     expect(toRegistrantDto(stuffy, order({ refundStatus: "partial", refundedCents: 1500, refundResolutionCents: 1500 }), 1, []).refund).toBe("none");
   });
 
+  it("carries the check-in photo flag (B-180), false by default", () => {
+    expect(toRegistrantDto(stuffy, order(), 1, []).hasCheckInPhoto).toBe(false);
+    expect(toRegistrantDto(stuffy, order(), 1, [], {}, true).hasCheckInPhoto).toBe(true);
+  });
+
   it("falls back to registered for an unknown state value", () => {
     expect(toRegistrantDto({ ...stuffy, state: "weird" } as SwStuffy, order(), 1, []).state).toBe("registered");
   });
