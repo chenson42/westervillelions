@@ -2501,3 +2501,22 @@ Post-deploy, live host, about 2 minutes after the push:
 | Production schema (read-only) | 8 `sw_*`/`zeffy_events` tables present; `santas_workshop.manage` bound to exactly `admin, board_member` |
 
 Still to do on the deploy checklist: board members sign out and in; create the real session and Connect campaign `1d4e4e1e-aa31-43ec-aa46-ca859c843b7e`; first signed Zeffy delivery observed on the Connect page (signature format proof); practice form + S2a spike; N5 measurement gate before Nov 8.
+
+## Deploy record — Slice 2 shipped as v1.95.0 (orchestrator, 2026-10-13)
+
+Pushed `160b090..dc3c67e` (Slice 2 merge `5c97d03`). Pre-push on the merged tree: tsc clean; lint 0 errors; unit 279 files / 4749 tests; build PASS with no dynamic-filesystem warning; e2e 403 passed, 16 skipped, 0 failed; audit clean at high; PII sweeps clean (the one phone-pattern hit was this work-log quoting the removed fixture; reworded); schema and migrations unchanged since v1.94; dependencies added `jsqr`, `qrcode`, `@types/qrcode`.
+
+Post-deploy, live host, about 2 minutes after the push:
+
+| Check | Result |
+|---|---|
+| `Permissions-Policy` on `/santas-workshop/crew/<slug>` | `camera=(self)` (SW-L5 on the deployed host: PASS) |
+| `Permissions-Policy` on `/santas-workshop` | `camera=()` |
+| Crew page, no cookie | 200 (renders only the code screen) |
+| Photo door, no cookie | 404 |
+| Crew roster API, unknown slug, no cookie | 404 (identical denial) |
+| Anonymous `/admin/santas-workshop` | 307 to sign-in |
+| Unsigned webhook POST | 400 |
+
+Not yet done on the live host: the Drive spike (`scripts/spike-drive.ts --apply`) and the two Drive env vars in Vercel (user to create the shared drive and service account); a real session cannot activate until Test storage passes. The real-phone pass with the chair's stickers remains deferred (S2-N6).
+
