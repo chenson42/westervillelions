@@ -2985,3 +2985,19 @@ Post-deploy, live host, about 2 minutes after the push:
 | Unsigned webhook POST | 400 |
 
 Not yet done on the live host: the Drive spike (`scripts/spike-drive.ts --apply`) and the two Drive env vars in Vercel (user to create the shared drive and service account); a real session cannot activate until Test storage passes. The real-phone pass with the chair's stickers remains deferred (S2-N6).
+
+## Deploy record — Slice 3 shipped as v1.96.0 (orchestrator, 2026-10-13)
+
+Pushed `dc3c67e..ab0b566` (Slice 3 merge `ab0b566`). Pre-push on the merged tree: tsc clean; lint 0 errors; unit 286 files / 4841 tests; build PASS, no dynamic-filesystem warning; e2e 416 passed, 16 skipped, 0 failed; audit clean at high; PII sweeps clean; schema and migrations unchanged; package.json diff = version only.
+
+Post-deploy, live host, about 2 minutes after the push:
+
+| Check | Result |
+|---|---|
+| Collage route, unknown token | 404 with `x-robots-tag: noindex, nofollow`, `referrer-policy: no-referrer`, `cache-control: private, no-store` |
+| Collage route, malformed token | 404 (identical) |
+| Anonymous admin photos page | 307 to sign-in |
+| Anonymous publish / hide routes | 401 |
+
+Orchestrator defaults adopted at Phase 6 (chair to confirm, B-173): Santa and Mrs. Claus may appear in public pictures, children never; portraits uploaded after the last publish wait for "Publish late photos". Calendar reminder set for Jan 31, 2027 (public purge). Photo-night habit for the chair: press "Publish late photos" before leaving on photo night and again after pickup, because a retake removes the old portrait from the collage until the new one is published.
+
