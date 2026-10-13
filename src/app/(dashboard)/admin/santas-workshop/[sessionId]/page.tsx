@@ -66,6 +66,7 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
         <div className="mt-4 flex flex-wrap gap-3">
           <Link href={`${base}/connect`} className={BTN_PRIMARY}>Connect to Zeffy</Link>
           <Link href={`${base}/registrants`} className={BTN_SECONDARY}>See registrants</Link>
+          <Link href={`${base}/photos`} className={BTN_SECONDARY}>Review photos</Link>
           <Link href={`${base}/edit`} className={BTN_SECONDARY}>Edit session</Link>
         </div>
       </section>

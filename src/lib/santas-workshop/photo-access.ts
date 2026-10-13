@@ -10,8 +10,8 @@
  * | Crew   | same session: check_in full; current unhidden portrait; unhidden group     | other session, hidden, superseded, check_in thumb, purged |
  * | Family | its stuffy's current UNHIDDEN portrait, regardless of consent, once the    | anything else |
  * |        | session is published                                                       |               |
- * | Public | published unhidden group; current unhidden consented portrait, session     | check_in      |
- * |        | published                                                                  |               |
+ * | Public | published unhidden group; current unhidden consented PUBLISHED portrait,   | check_in      |
+ * |        | session published (late portraits wait for the next publish)               |               |
  */
 
 import { eq, sql } from "drizzle-orm";
@@ -34,7 +34,7 @@ export interface PhotoFacts {
   hidden: boolean;
   superseded: boolean;
   purged: boolean;
-  /** Group photos: set by the publish batch. */
+  /** Set by the publish batch (group photos and consented portraits). */
   published: boolean;
   /** The stuffy's photo consent (portraits). */
   consent: boolean;
@@ -66,7 +66,9 @@ export function decidePhotoAccess(viewer: PhotoViewer, photo: PhotoFacts, varian
     case "public": {
       if (photo.hidden || photo.superseded || !photo.sessionPublished) return false;
       if (photo.kind === "group") return photo.published;
-      if (photo.kind === "portrait") return photo.consent;
+      // Portraits go public in the same batch as group photos: consent AND a publish stamp. A portrait
+      // taken or retaken after the last publish stays private until "Publish late photos".
+      if (photo.kind === "portrait") return photo.consent && photo.published;
       return false;
     }
     default: {
@@ -74,6 +76,34 @@ export function decidePhotoAccess(viewer: PhotoViewer, photo: PhotoFacts, varian
       return _never;
     }
   }
+}
+
+/** The columns `photoFactsFrom` reads (a join row from either the door or the collage query). */
+export interface PhotoFactsSource {
+  kind: string;
+  sessionId: string;
+  stuffyId: string | null;
+  hiddenAt: Date | null;
+  supersededAt: Date | null;
+  purgedAt: Date | null;
+  publishedAt: Date | null;
+  consent: boolean;
+  collagePublishedAt: Date | null;
+}
+
+/** The ONE place a row becomes `PhotoFacts`, so the door, the collage and the admin list can never disagree. */
+export function photoFactsFrom(row: PhotoFactsSource): PhotoFacts {
+  return {
+    kind: row.kind as PhotoKind,
+    sessionId: row.sessionId,
+    stuffyId: row.stuffyId,
+    hidden: row.hiddenAt !== null,
+    superseded: row.supersededAt !== null,
+    purged: row.purgedAt !== null,
+    published: row.publishedAt !== null,
+    consent: row.consent,
+    sessionPublished: row.collagePublishedAt !== null,
+  };
 }
 
 export interface PhotoRecord {
@@ -112,17 +142,7 @@ export async function loadPhotoRecord(photoId: string): Promise<PhotoRecord | nu
     .limit(1);
   if (!row) return null;
   return {
-    facts: {
-      kind: row.kind as PhotoKind,
-      sessionId: row.sessionId,
-      stuffyId: row.stuffyId,
-      hidden: row.hiddenAt !== null,
-      superseded: row.supersededAt !== null,
-      purged: row.purgedAt !== null,
-      published: row.publishedAt !== null,
-      consent: row.consent,
-      sessionPublished: row.collagePublishedAt !== null,
-    },
+    facts: photoFactsFrom(row),
     storageKey: row.storageKey,
     thumbStorageKey: row.thumbStorageKey,
     contentType: row.contentType,

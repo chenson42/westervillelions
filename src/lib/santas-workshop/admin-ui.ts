@@ -91,6 +91,8 @@ export function adminErrorMessage(code: AdminErrorCode, serverMessage?: string):
       return "Photo storage is full.";
     case "storage_rate_limited":
       return "Photo storage is limiting requests. Wait a moment and try again.";
+    case "photos_unreviewed":
+      return "Some group photos have not been reviewed yet. Look through them (hide any picture that shows a child, or anyone other than Santa, Mrs. Claus and the stuffies), mark them reviewed, then publish.";
     case "server_error":
       return "Something went wrong on our side. Try again, and tell the webmaster if it keeps happening.";
     default: {
@@ -543,6 +545,11 @@ export const ADMIN_API = {
   withdraw: (stuffyId: string) => `/api/admin/santas-workshop/stuffies/${enc(stuffyId)}/withdraw`,
   dismissAttention: (stuffyId: string) => `/api/admin/santas-workshop/stuffies/${enc(stuffyId)}/dismiss-attention`,
   refundResolution: (orderId: string) => `/api/admin/santas-workshop/orders/${enc(orderId)}/refund-resolution`,
+  // Slice 3
+  photos: (id: string, kind: "group" | "portrait", page = 1) => `/api/admin/santas-workshop/sessions/${enc(id)}/photos?kind=${kind}&page=${page}`,
+  reviewPhotos: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/photos/review`,
+  publish: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/publish`,
+  hidePhoto: (photoId: string) => `/api/admin/santas-workshop/photos/${enc(photoId)}/hide`,
 } as const;
 
 /** A short URL name suggestion for the new-session form: "practice-2026" or "workshop-2026". */

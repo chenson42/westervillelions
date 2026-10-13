@@ -11,6 +11,7 @@ import { db } from "../../src/lib/db";
 import { swCrewAttempts, swSessions } from "../../src/lib/db/schema";
 import { getPhotoStore } from "../../src/lib/santas-workshop/photo-store";
 import { selectPhotoStoreMode } from "../../src/lib/santas-workshop/photo-store/config";
+import { makeJpeg } from "../../src/lib/santas-workshop/photo-fixtures";
 import { signInAsAdmin } from "./auth";
 
 /** A real 1x1 PNG. The crew app re-encodes whatever it is given to a JPEG, which is what the server accepts. */
@@ -128,4 +129,105 @@ export async function cleanupSession(slug: string, since: Date) {
 /** Waits for the row of a stuffy in the crew list to show a state label. */
 export async function expectRowState(page: Page, stuffy: string, label: string) {
   await expect(page.getByRole("button", { name: new RegExp(`${stuffy}[\\s\\S]*${label}`) }).first()).toBeVisible({ timeout: 25_000 });
+}
+
+// ---------------------------------------------------------------------------
+// Collage specs: photos seeded straight through the photo store and the table
+// ---------------------------------------------------------------------------
+
+import { deflateSync } from "node:zlib";
+import { swPhotos, swStuffies } from "../../src/lib/db/schema";
+
+function crc32(buf: Buffer): number {
+  let c = ~0;
+  for (const b of buf) {
+    c ^= b;
+    for (let k = 0; k < 8; k += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+
+function chunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+
+/** A real, decodable solid-colour PNG (the browser sniffs images, so the door's JPEG label does not matter here). */
+export function solidPng(width: number, height: number, rgb: [number, number, number]): Buffer {
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: width }, () => rgb).flat())]);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+
+/** A stuffy created through the real manual-add route, with its consent flag set directly. */
+export async function seedStuffy(request: APIRequestContext, sessionId: string, name: string, consent: boolean): Promise<string> {
+  const r = await manualAdd(request, sessionId, { stuffy: name });
+  await db.update(swStuffies).set({ photoConsent: consent }).where(eq(swStuffies.id, r.id));
+  return r.id;
+}
+
+/** Puts a photo in the store and its row in sw_photos. Group photos pass stuffyId null. */
+export async function seedPhoto(
+  sessionId: string,
+  slug: string,
+  input: { kind: "group" | "portrait"; stuffyId: string | null; rgb: [number, number, number]; takenAt: Date },
+): Promise<string> {
+  const store = getPhotoStore();
+  const folder = await store.ensureFolder(slug);
+  await db.update(swSessions).set({ storageFolderKey: folder }).where(eq(swSessions.id, sessionId));
+  const id = crypto.randomUUID();
+  const w = input.kind === "group" ? 160 : 120;
+  const h = input.kind === "group" ? 120 : 160;
+  const bytes = solidPng(w, h, input.rgb);
+  const full = await store.put({ folderKey: folder, photoId: id, variant: "full", bytes, contentType: "image/jpeg" });
+  const thumb = await store.put({ folderKey: folder, photoId: id, variant: "thumb", bytes, contentType: "image/jpeg" });
+  await db.insert(swPhotos).values({
+    id,
+    sessionId,
+    stuffyId: input.stuffyId,
+    kind: input.kind,
+    storageKind: selectPhotoStoreMode(),
+    storageKey: full.key,
+    thumbStorageKey: thumb.key,
+    contentType: "image/jpeg",
+    byteSize: bytes.length,
+    thumbByteSize: bytes.length,
+    width: w,
+    height: h,
+    takenAt: input.takenAt,
+  });
+  return id;
+}
+
+export async function collageToken(sessionId: string): Promise<string> {
+  const [row] = await db.select({ t: swSessions.collageToken }).from(swSessions).where(eq(swSessions.id, sessionId)).limit(1);
+  return row.t;
+}
+
+/**
+ * Uploads a group photo through the REAL crew route (the signed-in admin is accepted by requireCrew),
+ * so `created_at` is the database's own microsecond `now()` and not a JavaScript Date seeded by a
+ * helper. This is the path that exposed S3-D1; do not replace it with `seedPhoto`.
+ */
+export async function uploadGroupPhoto(request: APIRequestContext, slug: string, takenAt: Date = new Date()): Promise<string> {
+  const photoId = crypto.randomUUID();
+  const jpeg = Buffer.from(makeJpeg(160, 120));
+  const res = await request.post(`/api/santas-workshop/crew/${slug}/group-photos`, {
+    multipart: {
+      meta: JSON.stringify({ photoId, takenAt: takenAt.toISOString(), width: 160, height: 120, thumbWidth: 160, thumbHeight: 120 }),
+      full: { name: "full.jpg", mimeType: "image/jpeg", buffer: jpeg },
+      thumb: { name: "thumb.jpg", mimeType: "image/jpeg", buffer: jpeg },
+    },
+  });
+  expect(res.status(), await res.text()).toBe(200);
+  return photoId;
 }

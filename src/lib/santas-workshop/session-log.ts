@@ -28,6 +28,11 @@ export const SESSION_LOG_KINDS = [
   "attention_dismissed",
   "refund_kept",
   "refund_withdraw",
+  "photo_hidden",
+  "photo_unhidden",
+  "group_photos_reviewed",
+  "collage_published",
+  "collage_unpublished",
 ] as const;
 export type SessionLogKind = (typeof SESSION_LOG_KINDS)[number];
 

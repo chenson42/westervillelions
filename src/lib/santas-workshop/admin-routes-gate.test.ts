@@ -84,6 +84,7 @@ describe("admin-routes-gate: /api/admin/santas-workshop/**", () => {
 describe("carrier modules are client-safe", () => {
   const CARRIERS = [
     "lib/santas-workshop/admin-contract.ts",
+    "lib/santas-workshop/collage-contract.ts",
     "lib/santas-workshop/question-fields.ts",
     "lib/santas-workshop/session-input.ts",
     "lib/santas-workshop/session-checklist.ts",
