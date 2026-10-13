@@ -3906,3 +3906,10 @@ Post-deploy, live host, about 2 minutes after the push:
 | Crew page | 200 (code screen) |
 
 Still on the user: `NEXTAUTH_URL` on Vercel must be exactly `https://westervillelions.org` for real-session frames (verify in the Vercel dashboard); a test print at a photo counter before the dry run.
+
+## Deploy record — Slice 5 (orchestrator, 2026-10-13, pending push as v1.98.0)
+
+Slice 5 merged as `4d1f282` after QA PASS (two re-verifications) and Phase 6 SHIP WITH NOTES for the slice and for increment 2 overall. Pre-push gates and the live-host probe are recorded below once run.
+
+Pre-push on the merged tree: tsc clean; lint 0 errors; unit 303 files / 5051 tests; build PASS, no dynamic-filesystem warning; audit clean at high; PII sweeps clean; schema and migrations unchanged; package.json diff = version only. The first full e2e run reported 410 passed, 2 skipped, 4 failed and 28 did not run: `ledger-move-transaction.spec.ts:539` (passed alone, 15/15 — flaky family, B-174) and three workshop specs that sign fixture webhooks with `whsec_devexample` while the main-tree dev server held the REAL `ZEFFY_WEBHOOK_SECRET` (400 on every signed order; the serial chains then did not run). Environmental, not code: the worktree QA ran its own server with the dev secret. Fix: both `.env.local` files now hold `whsec_devexample` (the real secret lives only in Vercel); CLAUDE.md env note updated. Re-run with the corrected server: the four specs 36/36, then the whole workshop set (recorded below).
+
