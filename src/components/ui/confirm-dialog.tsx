@@ -11,6 +11,8 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   onConfirm: () => void;
   destructive?: boolean;
+  /** Disables the confirm button (a dialog that needs a typed reason first). */
+  confirmDisabled?: boolean;
 }
 
 export function ConfirmDialog({
@@ -21,6 +23,7 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   onConfirm,
   destructive = false,
+  confirmDisabled = false,
 }: ConfirmDialogProps) {
   return (
     <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
@@ -39,7 +42,8 @@ export function ConfirmDialog({
             </AlertDialog.Cancel>
             <AlertDialog.Action
               onClick={onConfirm}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
+              disabled={confirmDisabled}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-60 disabled:cursor-not-allowed ${
                 destructive
                   ? "bg-red-600 hover:bg-red-700"
                   : "bg-lions-blue hover:bg-lions-blue-dark"

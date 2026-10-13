@@ -1,6 +1,6 @@
 import type { RegistrantDto, SessionKind, SessionStatus } from "@/lib/santas-workshop/admin-contract";
 import { displayStuffyName } from "@/lib/santas-workshop/payment-mapper";
-import { STATE_LABELS, attentionLabel, refundBadge } from "@/lib/santas-workshop/admin-ui";
+import { STATE_LABELS, attentionLabel, needsCheckInPhoto, refundBadge } from "@/lib/santas-workshop/admin-ui";
 import { Chip } from "./badges";
 import { RegistrantActions } from "./registrant-actions";
 import { CARD } from "./styles";
@@ -18,6 +18,7 @@ function Flags({ r }: { r: RegistrantDto }) {
       {r.needsAttention && <Chip tone="amber">Needs attention</Chip>}
       {refund && <Chip tone={refund.tone}>{refund.label}</Chip>}
       {r.withdrawn && <Chip tone="gray">Withdrawn</Chip>}
+      {needsCheckInPhoto(r) && <Chip tone="amber">No check-in photo</Chip>}
       {r.source === "manual" && <Chip tone="blue">Added by hand</Chip>}
       <Chip tone={r.photoConsent ? "green" : "gray"}>{r.photoConsent ? "Photo sharing OK" : "No photo sharing"}</Chip>
     </div>

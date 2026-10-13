@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import type { SessionKind, SessionStatus, SetStatusRequest, SetStatusResponse } from "@/lib/santas-workshop/admin-contract";
-import { statusActionsFor, statusDoneText, statusHelp, type StatusAction } from "@/lib/santas-workshop/admin-actions-ui";
+import type { CrewCodeResponse, SessionKind, SessionStatus, SetStatusRequest, SetStatusResponse } from "@/lib/santas-workshop/admin-contract";
+import { closeWarningText, statusActionsFor, statusDoneText, statusHelp, type StatusAction } from "@/lib/santas-workshop/admin-actions-ui";
 import { ADMIN_API, callAdmin } from "@/lib/santas-workshop/admin-ui";
 import { BTN_PRIMARY, BTN_SECONDARY, CARD } from "./styles";
 import { StatusBadge } from "./badges";
@@ -21,6 +21,7 @@ export function StatusControls({ sessionId, status, kind }: Props) {
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<StatusAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [devices, setDevices] = useState(0);
   const actions = statusActionsFor(status);
 
   async function run(action: StatusAction) {
@@ -37,6 +38,20 @@ export function StatusControls({ sessionId, status, kind }: Props) {
     toast.success(statusDoneText(action.to, res.data.noop));
     router.refresh();
   }
+
+  // B-181: the same "phones that used the code in the last hour" count the rotate dialog reports.
+  async function ask(a: StatusAction) {
+    setDevices(0);
+    if (a.to === "closed") {
+      setBusy(true);
+      const res = await callAdmin<CrewCodeResponse>(ADMIN_API.crewCode(sessionId));
+      setBusy(false);
+      if (res.ok) setDevices(res.data.activeDevicesLastHour);
+    }
+    setPending(a);
+  }
+
+  const warning = pending?.to === "closed" ? closeWarningText(devices) : null;
 
   return (
     <section className={`${CARD} p-6`} aria-labelledby="status-heading">
@@ -55,7 +70,7 @@ export function StatusControls({ sessionId, status, kind }: Props) {
               type="button"
               disabled={busy}
               className={a.primary ? BTN_PRIMARY : BTN_SECONDARY}
-              onClick={() => (a.confirm ? setPending(a) : void run(a))}
+              onClick={() => (a.confirm ? void ask(a) : void run(a))}
             >
               {a.label}
             </button>
@@ -71,7 +86,16 @@ export function StatusControls({ sessionId, status, kind }: Props) {
         open={pending !== null}
         onOpenChange={(o) => !o && setPending(null)}
         title={pending?.confirm?.title ?? ""}
-        description={pending?.confirm?.body ?? ""}
+        description={
+          <>
+            <p>{pending?.confirm?.body ?? ""}</p>
+            {warning && (
+              <p className="mt-2 rounded-lg bg-amber-50 p-3 font-medium text-amber-900" data-testid="close-warning">
+                {warning}
+              </p>
+            )}
+          </>
+        }
         confirmLabel={pending?.confirm?.confirmLabel ?? "Confirm"}
         destructive={pending?.confirm?.destructive ?? false}
         onConfirm={() => pending && void run(pending)}

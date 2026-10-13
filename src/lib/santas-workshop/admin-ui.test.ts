@@ -278,3 +278,21 @@ describe("eventCodeSentence (N3)", () => {
     expect(eventCodeSentence("brand_new_code")).toContain("webmaster");
   });
 });
+
+import { FLAG_LABELS as FLAG_LABELS_B180, needsCheckInPhoto, parseRegistrantFilters as parseFiltersB180, registrantsHref as hrefB180 } from "./admin-ui";
+
+describe("no check-in photo (B-180)", () => {
+  it("flags a checked-in stuffy without a photo, not a registered or withdrawn one", () => {
+    expect(needsCheckInPhoto({ state: "checked_in", hasCheckInPhoto: false, withdrawn: false })).toBe(true);
+    expect(needsCheckInPhoto({ state: "picked_up", hasCheckInPhoto: false, withdrawn: false })).toBe(true);
+    expect(needsCheckInPhoto({ state: "checked_in", hasCheckInPhoto: true, withdrawn: false })).toBe(false);
+    expect(needsCheckInPhoto({ state: "registered", hasCheckInPhoto: false, withdrawn: false })).toBe(false);
+    expect(needsCheckInPhoto({ state: "tagged", hasCheckInPhoto: false, withdrawn: false })).toBe(false);
+    expect(needsCheckInPhoto({ state: "checked_in", hasCheckInPhoto: false, withdrawn: true })).toBe(false);
+  });
+  it("is a real filter with a label and a link", () => {
+    expect(parseFiltersB180({ flag: "no_checkin_photo" }).flag).toBe("no_checkin_photo");
+    expect(FLAG_LABELS_B180.no_checkin_photo).toBe("No check-in photo");
+    expect(hrefB180("s1", { flag: "no_checkin_photo" })).toBe("/admin/santas-workshop/s1/registrants?flag=no_checkin_photo");
+  });
+});

@@ -33,6 +33,7 @@ describe("the photo store is reached through the access module", () => {
   const ALLOWED = [
     "src/lib/santas-workshop/photo-access.ts",
     "src/lib/santas-workshop/photo-service.ts",
+    "src/lib/santas-workshop/retention.ts",
     "src/lib/santas-workshop/storage-admin.ts",
   ];
 

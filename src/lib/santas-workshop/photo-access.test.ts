@@ -23,6 +23,8 @@ const facts = (over: Partial<PhotoFacts> = {}): PhotoFacts => ({
   published: false,
   consent: false,
   sessionPublished: false,
+  sessionPersonalPurged: false,
+  sessionPublicPurged: false,
   ...over,
 });
 
@@ -37,7 +39,7 @@ function expected(viewer: PhotoViewer, p: PhotoFacts, variant: "full" | "thumb")
     return p.kind === "group";
   }
   if (viewer.kind === "family") {
-    return p.kind === "portrait" && p.stuffyId === viewer.stuffyId && !p.superseded && !p.hidden && p.sessionPublished;
+    return p.kind === "portrait" && p.stuffyId === viewer.stuffyId && !p.superseded && !p.hidden;
   }
   if (p.hidden || p.superseded || !p.sessionPublished) return false;
   if (p.kind === "group") return p.published;
@@ -101,6 +103,13 @@ describe("photo access matrix (viewer x kind x variant x published x hidden x co
     expect(decidePhotoAccess({ kind: "public" }, late, "full")).toBe(false);
     expect(decidePhotoAccess({ kind: "public" }, { ...late, published: true }, "full")).toBe(true);
     expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, late, "full")).toBe(true); // the family's own photo
+    // S5-D1: the family's own portrait does not wait for the collage publish; strangers still do.
+    const unpublishedSession = facts({ consent: false, published: false, sessionPublished: false });
+    expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, unpublishedSession, "full")).toBe(true);
+    expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, { ...unpublishedSession, hidden: true }, "full")).toBe(false);
+    expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, { ...unpublishedSession, purged: true }, "full")).toBe(false);
+    expect(decidePhotoAccess({ kind: "family", stuffyId: OTHER_STUFFY }, unpublishedSession, "full")).toBe(false);
+    expect(decidePhotoAccess({ kind: "public" }, { ...unpublishedSession, consent: true, published: true }, "full")).toBe(false);
     // A check-in photo is never reachable anonymously, and crew never get its thumbnail.
     const checkIn = facts({ kind: "check_in", consent: true, sessionPublished: true, published: true });
     expect(decidePhotoAccess({ kind: "public" }, checkIn, "full")).toBe(false);
@@ -187,5 +196,35 @@ describe("photoHeaders", () => {
 
   it("a download uses a neutral file name", () => {
     expect(photoHeaders({ kind: "family", stuffyId: STUFFY }, served, true)["Content-Disposition"]).toBe('attachment; filename="stuffy-portrait.jpg"');
+  });
+});
+
+describe("the session purge markers close the door even when a photo row was missed (S3-N7)", () => {
+  const viewers: PhotoViewer[] = [{ kind: "admin" }, { kind: "crew", sessionId: SESSION }, { kind: "family", stuffyId: STUFFY }, { kind: "public" }];
+  const live = { published: true, consent: true, sessionPublished: true } as const;
+
+  it("public purge: no viewer, admin included, gets a portrait or a group photo; the photo itself is not stamped", () => {
+    for (const viewer of viewers) {
+      for (const kind of ["portrait", "group"] as const) {
+        for (const variant of ["full", "thumb"] as const) {
+          const before = facts({ kind, stuffyId: kind === "group" ? null : STUFFY, ...live });
+          const after = { ...before, sessionPublicPurged: true };
+          // Only the viewers the table already allows are interesting; the marker must turn each of them off.
+          if (decidePhotoAccess(viewer, before, variant)) expect(decidePhotoAccess(viewer, after, variant), `${viewer.kind} ${kind} ${variant}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("public purge leaves the personal scope alone: the admin still sees a check-in photo", () => {
+    expect(decidePhotoAccess({ kind: "admin" }, facts({ kind: "check_in", sessionPublicPurged: true }), "full")).toBe(true);
+  });
+
+  it("personal purge: no viewer gets a check-in photo or a superseded retake; current portraits are unaffected", () => {
+    for (const viewer of viewers) {
+      expect(decidePhotoAccess(viewer, facts({ kind: "check_in", sessionPersonalPurged: true }), "full")).toBe(false);
+    }
+    expect(decidePhotoAccess({ kind: "admin" }, facts({ kind: "portrait", superseded: true, sessionPersonalPurged: true }), "full")).toBe(false);
+    expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, facts({ kind: "portrait", sessionPublished: true, sessionPersonalPurged: true }), "full")).toBe(true);
   });
 });
