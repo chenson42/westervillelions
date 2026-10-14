@@ -58,6 +58,7 @@ was deleted on the strength of this review alone.
 - B-186 — Santa's Workshop: per-family removal tool (before Dec 17)
 - B-187 — Santa's Workshop prints: eager images in print, re-measure Letter and A4
 - B-188 — Santa's Workshop: transient states during an interrupted public purge
+- B-189 — Santa's Workshop: landing route for the QR sticker URL `/t/<code>`
 - B-145 — Member RSVP and signup routes have no tests
 - B-146 — Public forms and the v1.83.0 junk-guard wiring have no route or e2e coverage
 - B-147 — Unit-test the DB-bound permission resolver (carried since 2026-05-18 and 2026-06-24)
@@ -521,6 +522,10 @@ was deleted on the strength of this review alone.
 - [ ] **B-188 — Santa's Workshop: transient states during an interrupted public purge.**
   (added 2026-10-13, Phase 6 of increment 2 Slice 5, S5-N7; priority: low)
   While a public purge is half done, a family whose portrait is already deleted sees "Your stuffy's portrait is on its way". Treat a stuffy whose portrait row is purged as "removed" for the family page, and let the Retention card show "N photos left" until finished.
+
+- [ ] **B-189 — Santa's Workshop: a landing route for the QR sticker URL (`/t/<code>`).**
+  (added 2026-10-14 from the user ordering the stickers; priority: small, before the stickers are scanned by anyone but the crew)
+  The stickers encode `https://westervillelions.org/t/NNNN` (four-digit serial). The crew app binds and matches that whole string as the opaque tag code, so nothing in the app needs the route, but a parent who scans the sticker on the cardboard tag with a plain camera today gets a 404. Add `src/app/t/[code]/page.tsx`: a noindex page saying this is a Santa's Workshop tag and pointing to the family page the crew showed at pickup (the tag goes home with the stuffy). Decide separately (chair) whether a bound code may resolve straight to that stuffy's family page — equivalent to printing the family token on the tag; anyone holding the tag holds the stuffy. Keep the route a 404 for codes never bound in any session.
 - [ ] **B-158 — Approve and reject do not check what the approver saw.**
   (added 2026-10-10 from `docs/work-log/2026-10-10-approvals-mobile-and-history.md`, Phase 3; priority: should-do, medium — money governance)
   A pending entry's amount, payee and memo can be edited by a `ledger.record` holder (`PATCH /api/admin/ledger/transactions/[id]`) until it is approved, and the approve/reject request carries only the minute or reason. An approver can approve a different figure than the one on screen when they opened the dialog. Mirror reimbursement Mark Paid (DECISION-106): the dialog sends the `amountCents` and `updatedAt` it displayed, and `decideTransaction()` 409s with a typed `changed` code when either differs, naming "was edited". Small once the shared decide helper from Increment 1 exists.
