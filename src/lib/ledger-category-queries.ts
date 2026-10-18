@@ -59,10 +59,19 @@ import {
   ledgerAuditLog,
   type LedgerCategory,
 } from "@/lib/db/schema";
-import { eq, and, isNull, inArray, count, sql, desc } from "drizzle-orm";
+import { eq, and, isNull, inArray, count, sql, desc, ne } from "drizzle-orm";
 import { assertBudgetUnlocked } from "@/lib/ledger-queries";
 import { isBudgetLocked } from "@/lib/ledger";
 import { currentFiscalYear } from "@/lib/fiscal-year";
+import {
+  checkCategoryMirror,
+  mirrorErrorMessage,
+  type MirrorCategoryFacts,
+  type MirrorErrorCode,
+  type MirrorProjection,
+  type MirrorTargetFacts,
+} from "@/lib/ledger-category-mirror";
+import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
 
 // ---------------------------------------------------------------------------
 // toCategoryDTO — shared list/PATCH response shape
@@ -75,7 +84,7 @@ import { currentFiscalYear } from "@/lib/fiscal-year";
  * config allowlist — an extra named export there fails the build's route
  * type-check.
  */
-export function toCategoryDTO(category: LedgerCategory) {
+export function toCategoryDTO(category: LedgerCategory, mirror?: MirrorProjection | null) {
   return {
     id: category.id,
     name: category.name,
@@ -86,8 +95,110 @@ export function toCategoryDTO(category: LedgerCategory) {
     countsAsGiving: category.countsAsGiving,
     ackNotRequired: category.ackNotRequired,
     form990Line: category.form990Line,
+    /** The Foundation counterpart (B-172); null = the gift stays in Public Funds. */
+    mirrorsCategoryId: category.mirrorsCategoryId,
+    /**
+     * Read-only projection of the counterpart's flags and 990 line, present
+     * when the caller loaded it (list and PATCH). The Foundation category is
+     * the only source of `countsAsGiving` / `ackNotRequired` for a copy.
+     */
+    mirror: mirror ?? null,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
+  };
+}
+
+/**
+ * Load the counterpart projection for each category that has one, in one
+ * query. Categories without a counterpart (or whose target row is gone) map to
+ * nothing. Read-only; used by the list route and the PATCH response.
+ */
+export async function loadMirrorProjections(
+  categories: ReadonlyArray<Pick<LedgerCategory, "id" | "mirrorsCategoryId">>,
+): Promise<Map<string, MirrorProjection>> {
+  const targetIds = [
+    ...new Set(categories.map((c) => c.mirrorsCategoryId).filter((id): id is string => !!id)),
+  ];
+  const result = new Map<string, MirrorProjection>();
+  if (targetIds.length === 0) return result;
+  const rows = await db
+    .select({
+      id: ledgerCategories.id,
+      name: ledgerCategories.name,
+      isActive: ledgerCategories.isActive,
+      countsAsGiving: ledgerCategories.countsAsGiving,
+      ackNotRequired: ledgerCategories.ackNotRequired,
+      form990Line: ledgerCategories.form990Line,
+    })
+    .from(ledgerCategories)
+    .where(inArray(ledgerCategories.id, targetIds));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  for (const c of categories) {
+    const target = c.mirrorsCategoryId ? byId.get(c.mirrorsCategoryId) : undefined;
+    if (target) result.set(c.id, target);
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// validateMirrorWrite — the one enforcement of "what may be a counterpart"
+// ---------------------------------------------------------------------------
+
+export type MirrorWriteValidation =
+  | { ok: true }
+  | { ok: false; status: 400 | 404; code: MirrorErrorCode; error: string };
+
+/**
+ * Shared by POST (subject not yet created: pass `id: null`) and PATCH. A null
+ * target clears and always passes. Loads the target and both entities'
+ * deductibility, then defers to the pure `checkCategoryMirror()`.
+ */
+export async function validateMirrorWrite(
+  subject: { id: string | null; entityId: string; fundKind: string; flow: string },
+  targetId: string | null,
+): Promise<MirrorWriteValidation> {
+  if (targetId === null) return { ok: true };
+
+  const [target] = await db
+    .select()
+    .from(ledgerCategories)
+    .where(eq(ledgerCategories.id, targetId))
+    .limit(1);
+  if (!target) {
+    return {
+      ok: false,
+      status: 404,
+      code: "mirror_target_not_found",
+      error: mirrorErrorMessage("mirror_target_not_found"),
+    };
+  }
+
+  const entities = await db
+    .select({ id: ledgerEntities.id, donationsDeductible: ledgerEntities.donationsDeductible })
+    .from(ledgerEntities)
+    .where(inArray(ledgerEntities.id, [subject.entityId, target.entityId]));
+  const deductible = new Map(entities.map((e) => [e.id, e.donationsDeductible]));
+
+  const subjectFacts: MirrorCategoryFacts = {
+    id: subject.id ?? "",
+    fundKind: subject.fundKind,
+    flow: subject.flow,
+    entityDonationsDeductible: deductible.get(subject.entityId) ?? false,
+  };
+  const targetFacts: MirrorTargetFacts = {
+    id: target.id,
+    fundKind: target.fundKind,
+    flow: target.flow,
+    entityDonationsDeductible: deductible.get(target.entityId) ?? false,
+    isActive: target.isActive,
+  };
+  const verdict = checkCategoryMirror(subjectFacts, targetFacts);
+  if (verdict.ok) return { ok: true };
+  return {
+    ok: false,
+    status: 400,
+    code: verdict.code,
+    error: mirrorErrorMessage(verdict.code, await getFundLabels()),
   };
 }
 
@@ -171,6 +282,7 @@ export type CategoryImpact = {
     countsAsGiving: boolean;
     ackNotRequired: boolean;
     form990Line: string | null;
+    mirrorsCategoryId: string | null;
   };
   transactions: {
     /** COUNT(*) of ledger_transactions rows referencing this category, ANY
@@ -201,7 +313,17 @@ export type CategoryImpact = {
     hasNonLockedBudgetRow: boolean;
     currentFyBudgetedCents: number | null;
   };
+  /** This category's Foundation counterpart (B-172), or null. */
+  mirror: { id: string; name: string; isActive: boolean; entityName: string } | null;
+  /**
+   * Categories that point at this one as their counterpart. The deactivate
+   * dialog warns that those gifts become unsweepable until re-pointed;
+   * deactivation itself stays unconditional. Names are capped at 10.
+   */
+  mirroredBy: { count: number; names: string[] };
 };
+
+export const MIRRORED_BY_NAME_CAP = 10;
 
 /**
  * One query, three callers (rename-impact preview, countsAsGiving dollar
@@ -275,6 +397,28 @@ export async function getCategoryImpact(categoryId: string): Promise<CategoryImp
   const currentFY = currentFiscalYear(new Date());
   const currentFyRow = fiscalYears.find((fy) => fy.fiscalYear === currentFY) ?? null;
 
+  let mirror: CategoryImpact["mirror"] = null;
+  if (category.mirrorsCategoryId) {
+    const [target] = await db
+      .select({
+        id: ledgerCategories.id,
+        name: ledgerCategories.name,
+        isActive: ledgerCategories.isActive,
+        entityName: ledgerEntities.name,
+      })
+      .from(ledgerCategories)
+      .innerJoin(ledgerEntities, eq(ledgerCategories.entityId, ledgerEntities.id))
+      .where(eq(ledgerCategories.id, category.mirrorsCategoryId))
+      .limit(1);
+    mirror = target ?? null;
+  }
+
+  const mirroredByRows = await db
+    .select({ name: ledgerCategories.name })
+    .from(ledgerCategories)
+    .where(eq(ledgerCategories.mirrorsCategoryId, categoryId))
+    .orderBy(ledgerCategories.name);
+
   return {
     category: {
       id: category.id,
@@ -286,6 +430,7 @@ export async function getCategoryImpact(categoryId: string): Promise<CategoryImp
       countsAsGiving: category.countsAsGiving,
       ackNotRequired: category.ackNotRequired,
       form990Line: category.form990Line,
+      mirrorsCategoryId: category.mirrorsCategoryId,
     },
     transactions: {
       total: transactionsTotal,
@@ -300,6 +445,11 @@ export async function getCategoryImpact(categoryId: string): Promise<CategoryImp
       hasNonLockedBudgetRow: Boolean(currentFyRow && !currentFyRow.locked),
       currentFyBudgetedCents: currentFyRow ? currentFyRow.annualAmountCents : null,
     },
+    mirror,
+    mirroredBy: {
+      count: mirroredByRows.length,
+      names: mirroredByRows.slice(0, MIRRORED_BY_NAME_CAP).map((r) => r.name),
+    },
   };
 }
 
@@ -313,12 +463,15 @@ export type CategoryUpdatePatch = {
   ackNotRequired?: boolean;
   form990Line?: string | null;
   isActive?: boolean;
+  /** B-172: the Foundation counterpart. `null` clears it. Validated by the caller (validateMirrorWrite). */
+  mirrorsCategoryId?: string | null;
 };
 
 export type CategoryUpdateAction =
   | "category_renamed"
   | "category_reactivated"
   | "category_deactivated"
+  | "category_mirror_changed"
   | "category_flags_updated";
 
 /**
@@ -332,10 +485,15 @@ export type CategoryUpdateAction =
 export function determineCategoryUpdateAction(changed: {
   name?: unknown;
   isActive?: unknown;
+  mirrorsCategoryId?: unknown;
 }): CategoryUpdateAction {
   if (changed.name !== undefined) return "category_renamed";
   if (changed.isActive !== undefined) {
     return changed.isActive ? "category_reactivated" : "category_deactivated";
+  }
+  // `null` (cleared) is a change, so test the key, not truthiness.
+  if ("mirrorsCategoryId" in changed && changed.mirrorsCategoryId !== undefined) {
+    return "category_mirror_changed";
   }
   return "category_flags_updated";
 }
@@ -413,6 +571,15 @@ export async function updateCategory(
       before.isActive = existing.isActive;
       after.isActive = patch.isActive;
     }
+    if (
+      patch.mirrorsCategoryId !== undefined &&
+      patch.mirrorsCategoryId !== existing.mirrorsCategoryId
+    ) {
+      // Ids only: the audit row never carries a name or any other text.
+      setValues.mirrorsCategoryId = patch.mirrorsCategoryId;
+      before.mirrorsCategoryId = existing.mirrorsCategoryId;
+      after.mirrorsCategoryId = patch.mirrorsCategoryId;
+    }
 
     if (Object.keys(setValues).length === 0) {
       // Recognized field(s) present in the request, but nothing actually
@@ -429,6 +596,7 @@ export async function updateCategory(
     const action = determineCategoryUpdateAction({
       name: setValues.name,
       isActive: setValues.isActive,
+      ...("mirrorsCategoryId" in setValues ? { mirrorsCategoryId: setValues.mirrorsCategoryId } : {}),
     });
 
     await tx.insert(ledgerAuditLog).values({
@@ -470,6 +638,8 @@ export type MergeCategoriesResult =
       plan: MergePlanEntry[];
       sourceTransactionCount: number;
       destinationName: string;
+      /** Categories whose Foundation counterpart is the source and would be re-pointed to the destination. */
+      mirrorsRepointed: number;
     }
   | {
       ok: true;
@@ -477,8 +647,9 @@ export type MergeCategoriesResult =
       merged: true;
       destinationId: string;
       affectedFiscalYears: number[];
+      mirrorsRepointed: number;
     }
-  | { ok: false; error: string; status: 400 | 404 | 409 };
+  | { ok: false; error: string; status: 400 | 404 | 409; code?: MirrorErrorCode };
 
 /**
  * Merge = re-point every fiscal year where the SOURCE has a budget row and
@@ -551,6 +722,21 @@ export async function mergeCategories(
       ok: false,
       error: `Cannot merge into '${destination.name}' — it is deactivated. Reactivate it first.`,
       status: 409,
+    };
+  }
+
+  // 4b. 409 — both categories declare a Foundation counterpart and they differ
+  // (B-172). One having it and the other not is fine: the source keeps its link.
+  if (
+    source.mirrorsCategoryId &&
+    destination.mirrorsCategoryId &&
+    source.mirrorsCategoryId !== destination.mirrorsCategoryId
+  ) {
+    return {
+      ok: false,
+      error: mirrorErrorMessage("mirror_conflict", await getFundLabels()),
+      status: 409,
+      code: "mirror_conflict",
     };
   }
 
@@ -680,6 +866,17 @@ export async function mergeCategories(
     };
   }
 
+  // Categories that point at the source as their counterpart move with it.
+  // Never the destination itself (it could not mirror its own scope-mate, but a
+  // self-link must be impossible by construction).
+  const [mirrorCountRow] = await db
+    .select({ n: count() })
+    .from(ledgerCategories)
+    .where(
+      and(eq(ledgerCategories.mirrorsCategoryId, sourceId), ne(ledgerCategories.id, destinationId)),
+    );
+  const mirrorsRepointed = mirrorCountRow?.n ?? 0;
+
   if (!confirm) {
     return {
       ok: true,
@@ -687,6 +884,7 @@ export async function mergeCategories(
       plan,
       sourceTransactionCount,
       destinationName: destination.name,
+      mirrorsRepointed,
     };
   }
 
@@ -700,9 +898,22 @@ export async function mergeCategories(
         .where(eq(ledgerBudgets.id, row.id));
     }
 
+    if (mirrorsRepointed > 0) {
+      await tx
+        .update(ledgerCategories)
+        .set({ mirrorsCategoryId: destinationId, updatedAt: new Date() })
+        .where(
+          and(
+            eq(ledgerCategories.mirrorsCategoryId, sourceId),
+            ne(ledgerCategories.id, destinationId),
+          ),
+        );
+    }
+
     const details =
       `Merged into '${destination.name}' (${destinationId}). Affected fiscal years: ` +
-      `${affectedFiscalYears.length ? affectedFiscalYears.map((y) => `FY${y}`).join(", ") : "none"}.`;
+      `${affectedFiscalYears.length ? affectedFiscalYears.map((y) => `FY${y}`).join(", ") : "none"}.` +
+      (mirrorsRepointed > 0 ? ` Counterpart links re-pointed: ${mirrorsRepointed}.` : "");
 
     await tx.insert(ledgerAuditLog).values({
       actorUserId: actorUserId ?? null,
@@ -714,5 +925,5 @@ export async function mergeCategories(
     });
   });
 
-  return { ok: true, confirm: true, merged: true, destinationId, affectedFiscalYears };
+  return { ok: true, confirm: true, merged: true, destinationId, affectedFiscalYears, mirrorsRepointed };
 }

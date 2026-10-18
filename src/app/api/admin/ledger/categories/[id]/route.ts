@@ -12,7 +12,8 @@
  * Gate: LEDGER_MANAGE
  *
  * Body — any non-empty subset of:
- * { name?: string; countsAsGiving?: boolean; ackNotRequired?: boolean; form990Line?: string | null; isActive?: boolean }
+ * { name?: string; countsAsGiving?: boolean; ackNotRequired?: boolean; form990Line?: string | null; isActive?: boolean;
+ *   mirrorsCategoryId?: string | null }  // B-172: the Foundation counterpart; null clears
  *
  * Validation, in order (Phase 3 contract):
  *   1. 404 if category doesn't exist.
@@ -58,8 +59,13 @@ import {
   getCategoryById,
   updateCategory,
   toCategoryDTO,
+  loadMirrorProjections,
+  validateMirrorWrite,
   type CategoryUpdatePatch,
 } from "@/lib/ledger-category-queries";
+import { mirroredFlagEditBlocked, mirrorErrorMessage } from "@/lib/ledger-category-mirror";
+import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
+import { isUuid } from "@/lib/utils";
 import { validateCategoryEditInput, MAX_FORM_990_LINE_LENGTH } from "@/lib/ledger";
 
 export async function PATCH(
@@ -83,14 +89,15 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { name, countsAsGiving, ackNotRequired, form990Line, isActive } = body ?? {};
+    const { name, countsAsGiving, ackNotRequired, form990Line, isActive, mirrorsCategoryId } = body ?? {};
 
     const hasRecognizedField =
       name !== undefined ||
       countsAsGiving !== undefined ||
       ackNotRequired !== undefined ||
       form990Line !== undefined ||
-      isActive !== undefined;
+      isActive !== undefined ||
+      mirrorsCategoryId !== undefined;
     if (!hasRecognizedField) {
       return NextResponse.json({ error: "No fields to update." }, { status: 400 });
     }
@@ -148,12 +155,50 @@ export async function PATCH(
       patch.isActive = isActive;
     }
 
+    // B-172: the Foundation counterpart. Shape (400 invalid_mirror), target
+    // lookup (404), the pure validity check (400 with its code), then the flag
+    // guard: with the effective mirror non-null, a patch that CHANGES
+    // countsAsGiving or ackNotRequired is refused (one writer for those flags).
+    if (mirrorsCategoryId !== undefined) {
+      if (mirrorsCategoryId !== null && (typeof mirrorsCategoryId !== "string" || !isUuid(mirrorsCategoryId))) {
+        return NextResponse.json(
+          { error: mirrorErrorMessage("invalid_mirror"), code: "invalid_mirror" },
+          { status: 400 },
+        );
+      }
+      const verdict = await validateMirrorWrite(
+        { id, entityId: existing.entityId, fundKind: existing.fundKind, flow: existing.flow },
+        mirrorsCategoryId,
+      );
+      if (!verdict.ok) {
+        return NextResponse.json({ error: verdict.error, code: verdict.code }, { status: verdict.status });
+      }
+      patch.mirrorsCategoryId = mirrorsCategoryId;
+    }
+    if (
+      mirroredFlagEditBlocked({
+        storedMirrorId: existing.mirrorsCategoryId,
+        patchMirrorId: patch.mirrorsCategoryId,
+        stored: { countsAsGiving: existing.countsAsGiving, ackNotRequired: existing.ackNotRequired },
+        patch: { countsAsGiving: patch.countsAsGiving, ackNotRequired: patch.ackNotRequired },
+      })
+    ) {
+      return NextResponse.json(
+        {
+          error: mirrorErrorMessage("mirrored_flag_read_only", await getFundLabels()),
+          code: "mirrored_flag_read_only",
+        },
+        { status: 400 },
+      );
+    }
+
     const result = await updateCategory(id, patch, session.user.id);
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
 
-    return NextResponse.json(toCategoryDTO(result.category));
+    const mirrors = await loadMirrorProjections([result.category]);
+    return NextResponse.json(toCategoryDTO(result.category, mirrors.get(result.category.id) ?? null));
   } catch (error) {
     console.error("Error updating ledger category:", error);
     return NextResponse.json({ error: "Failed to update category" }, { status: 500 });

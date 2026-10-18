@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 
 const linkClass =
   "text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded";
@@ -17,7 +18,8 @@ type GuardrailRow = {
  * flagged. If a 15th guardrail is added, this table needs a matching row —
  * see the release-notes SKILL.md Step 4 maintenance bullet.
  */
-const GUARDRAILS: GuardrailRow[] = [
+function getGuardrailRows(labels: FundLabels): GuardrailRow[] {
+  return [
   {
     title: "Negative fund balance: {kind}",
     severity: "high",
@@ -61,7 +63,7 @@ const GUARDRAILS: GuardrailRow[] = [
   {
     title: "Two-fund firewall violation",
     severity: "high",
-    whatToDo: "Reverse or reclassify — Activity/public fund money must never move into the Administrative fund.",
+    whatToDo: `Reverse or reclassify — ${labels.activity} money must never move into ${labels.administrative}.`,
   },
   {
     title: "IRS 990 revocation risk — 3 consecutive unfiled returns",
@@ -86,9 +88,10 @@ const GUARDRAILS: GuardrailRow[] = [
   {
     title: "Public-category income posted directly to Administrative fund",
     severity: "warn",
-    whatToDo: "Reclassify to an Activity/Charitable fund — public money can't post directly to Administrative. This flag only fires for a public category; a donation entered under an Administrative category (the usual mistake) is not detected, so check donations against where the money was deposited. Use Move on the entry to correct it.",
+    whatToDo: `Reclassify to ${labels.activity} or ${labels.charitable} — public money can't post directly to ${labels.administrative}. This flag only fires for a public category; a donation entered under an Administrative category (the usual mistake) is not detected, so check donations against where the money was deposited. Use Move on the entry to correct it.`,
   },
-];
+  ];
+}
 
 function severityBadgeClass(severity: GuardrailRow["severity"]): string {
   switch (severity) {
@@ -101,7 +104,8 @@ function severityBadgeClass(severity: GuardrailRow["severity"]): string {
   }
 }
 
-export default function GuardrailsSection() {
+export default function GuardrailsSection({ labels }: { labels: FundLabels }) {
+  const GUARDRAILS = getGuardrailRows(labels);
   return (
     <section id="guardrails" className="bg-white rounded-2xl shadow-sm overflow-hidden p-6">
       <h2 className="text-xl font-bold text-gray-900">Compliance Guardrails</h2>

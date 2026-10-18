@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { signInAsAdmin } from "./helpers/auth";
+import { getActivityFundName } from "./helpers/fund-names";
 
 /**
  * Budgeting Overview/Drill-Down Restructure —
@@ -31,6 +32,12 @@ const DRILLDOWN_URL = `/admin/ledger/budgeting/${ACTIVITY_FUND_SLUG}?entity=${EN
 test.describe.configure({ mode: "serial" });
 
 test.describe("Budgeting Overview/Drill-Down Restructure", () => {
+  // The stored fund name (DECISION-127), never a literal.
+  let activityFundName = "Public Funds";
+  test.beforeAll(async () => {
+    activityFundName = await getActivityFundName();
+  });
+
   test.beforeEach(async ({ page }) => {
     await signInAsAdmin(page);
   });
@@ -73,7 +80,7 @@ test.describe("Budgeting Overview/Drill-Down Restructure", () => {
     // Assert — read-only summary present: fund name, "Edit budget" affordance,
     // an all-funds total row. No "+ Add" / editing controls on this page —
     // the overview is read-only by design.
-    await expect(page.getByRole("heading", { name: "Activity Fund" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: activityFundName })).toBeVisible();
     // "All Funds" also appears in the hidden print worksheet's own total row
     // — scope to the on-screen heading, not a bare text match.
     await expect(page.getByRole("heading", { name: "All Funds" })).toBeVisible();
@@ -86,14 +93,14 @@ test.describe("Budgeting Overview/Drill-Down Restructure", () => {
     // the Activity Fund's own row — Administrative Fund sorts first
     // (getFunds orders administrative-before-activity) and has its own
     // "Edit budget" footer too.
-    const activityRow = page.locator("a", { hasText: "Activity Fund" });
+    const activityRow = page.locator("a", { hasText: activityFundName });
     await activityRow.getByText("Edit budget", { exact: true }).click();
 
     // Assert — landed on the fund's own URL, entity+fy preserved
     await expect(page).toHaveURL(
       new RegExp(`/admin/ledger/budgeting/${ACTIVITY_FUND_SLUG}\\?entity=${ENTITY_SLUG}&fy=${TEST_FISCAL_YEAR}`),
     );
-    await expect(page.getByRole("heading", { name: "Activity Fund", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: activityFundName, level: 1 })).toBeVisible();
     // The full editor — including "+ Add category" — now lives here.
     await expect(
       page.getByRole("button", { name: "+ Add income category" }),

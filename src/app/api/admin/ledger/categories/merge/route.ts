@@ -26,6 +26,9 @@
  *   2. 404 — either category not found.
  *   3. 400 — source/destination don't share (entityId, fundKind, flow).
  *   4. 409 — destination is inactive.
+ *   4b. 409 `mirror_conflict` — both categories have a Foundation counterpart and they
+ *      differ (B-172). On confirm, categories pointing at the source are re-pointed to
+ *      the destination; `mirrorsRepointed` reports the count in both responses.
  *   5. 409 — current fiscal year is locked for the shared entity.
  *   6. 409 — source has any transactions (message states the count).
  *   7. 409 — any fiscal year has a budget row on BOTH sides.
@@ -85,7 +88,10 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: result.status });
+      return NextResponse.json(
+        { error: result.error, ...(result.code ? { code: result.code } : {}) },
+        { status: result.status },
+      );
     }
 
     if (!result.confirm) {
@@ -93,6 +99,7 @@ export async function POST(request: NextRequest) {
         plan: result.plan,
         sourceTransactionCount: result.sourceTransactionCount,
         destinationName: result.destinationName,
+        mirrorsRepointed: result.mirrorsRepointed,
       });
     }
 
@@ -100,6 +107,7 @@ export async function POST(request: NextRequest) {
       merged: true,
       destinationId: result.destinationId,
       affectedFiscalYears: result.affectedFiscalYears,
+      mirrorsRepointed: result.mirrorsRepointed,
     });
   } catch (error) {
     console.error("Error merging ledger categories:", error);

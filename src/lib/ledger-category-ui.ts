@@ -27,6 +27,8 @@ export interface AdminCategoryRow {
    *  and docs/work-log/2026-08-08-ack-not-required-flag.md. */
   ackNotRequired: boolean;
   form990Line: string | null;
+  /** B-172: the Foundation counterpart of a Club Public Funds income category; null = none. */
+  mirrorsCategoryId: string | null;
 }
 
 export interface EntityFundOption {
@@ -167,4 +169,45 @@ export function getMergeDestinationOptions(
  */
 export function isPriorFiscalYearMergeRefusal(errorMessage: string): boolean {
   return errorMessage.includes("prior fiscal year") && errorMessage.includes("already closed");
+}
+
+/**
+ * B-172: both directions of the counterpart link over a row set that may span
+ * entities (the category screen loads both). `target` is the row a category
+ * mirrors (null when none or when the row is not in the set); `mirroredBy` are
+ * the rows that point at `row` (the "Counterpart of: ..." chip on a Foundation
+ * row).
+ */
+export function mirrorsOf(
+  rows: readonly AdminCategoryRow[],
+  row: Pick<AdminCategoryRow, "id" | "mirrorsCategoryId">,
+): { target: AdminCategoryRow | null; mirroredBy: AdminCategoryRow[] } {
+  const target = row.mirrorsCategoryId
+    ? (rows.find((r) => r.id === row.mirrorsCategoryId) ?? null)
+    : null;
+  const mirroredBy = rows.filter((r) => r.mirrorsCategoryId === row.id);
+  return { target, mirroredBy };
+}
+
+/**
+ * B-172: the Foundation categories a Club Public Funds income category may
+ * point at. Mirrors `checkCategoryMirror()` on the client so the picker never
+ * offers a target the server would refuse: an ACTIVE income category in the
+ * Charitable fund of a tax-deductible entity, never the subject itself. The
+ * server stays the authority; this only keeps the dropdown honest.
+ */
+export function mirrorTargetOptions(
+  entities: readonly Pick<EntityCategoryData, "donationsDeductible" | "categories">[],
+  subjectId: string,
+): AdminCategoryRow[] {
+  const options: AdminCategoryRow[] = [];
+  for (const entity of entities) {
+    if (!entity.donationsDeductible) continue;
+    for (const c of entity.categories) {
+      if (c.id !== subjectId && c.isActive && c.fundKind === "charitable" && c.flow === "income") {
+        options.push(c);
+      }
+    }
+  }
+  return options;
 }

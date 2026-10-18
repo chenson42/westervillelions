@@ -88,6 +88,7 @@ describe("DonorDetailClient — Acknowledge button gate (any amount)", () => {
           },
           ackStatus: null,
           ackId: null,
+          entityDonationsDeductible: true,
         },
       ],
     });
@@ -97,5 +98,80 @@ describe("DonorDetailClient — Acknowledge button gate (any amount)", () => {
     );
 
     expect(html).toContain(">Acknowledge<");
+  });
+});
+
+describe("DonorDetailClient — total counts Foundation gifts only (B-172)", () => {
+  function giftRow(id: string, amountCents: number, deductible: boolean, fundName: string) {
+    return {
+      txn: {
+        id,
+        entityId: deductible ? "entity-foundation" : "entity-club",
+        fundId: "fund-x",
+        bankAccountId: null,
+        txnDate: "2026-09-01",
+        flow: "income" as const,
+        categoryId: null,
+        amountCents,
+        party: "Example Donor",
+        memo: null,
+        beneficiaryCause: null,
+        publicNote: null,
+        paymentMethod: "check",
+        checkNumber: null,
+        receiptStorageKey: null,
+        receiptWaivedAt: null,
+        receiptWaivedByUserId: null,
+        receiptWaiverReason: null,
+        transferGroupId: null,
+        status: "posted",
+        approvedByUserId: null,
+        approvedAt: null,
+        boardMinute: null,
+        rejectionReason: null,
+        rejectedByUserId: null,
+        rejectedAt: null,
+        reconciled: false,
+        reconciledAt: null,
+        recordedByUserId: "user-1",
+        duesPaymentId: null,
+        syncStale: false,
+        donorId: "donor-1",
+        reconciledSessionId: null,
+        budgetLineId: null,
+        createdAt: new Date("2026-09-01"),
+        updatedAt: new Date("2026-09-01"),
+        fundName,
+        entityName: deductible ? "Foundation" : "Club",
+      },
+      ackStatus: null,
+      ackId: null,
+      entityDonationsDeductible: deductible,
+    };
+  }
+
+  it("sums only the deductible-entity rows, labels the Public Funds row, and offers no Acknowledge on it", () => {
+    const donor = baseDonor({
+      givingHistory: [
+        giftRow("t-found", 10000, true, "Charitable Fund"),
+        giftRow("t-public", 50000, false, "Community Money"),
+      ] as DonorWithGivingHistory["givingHistory"],
+    });
+    const html = renderToStaticMarkup(<DonorDetailClient donor={donor} canRecord={true} canManage={false} />);
+    expect(html).toContain("$100.00");
+    expect(html).not.toContain("$600.00");
+    expect(html).toContain("Foundation gifts only");
+    expect(html).toContain("Community Money, not yet a Foundation gift");
+    // One Acknowledge button: the Foundation row's, not the Public Funds row's.
+    expect((html.match(/>Acknowledge</g) ?? []).length).toBe(1);
+  });
+
+  it("a donor with only Public Funds gifts shows a $0.00 total", () => {
+    const donor = baseDonor({
+      givingHistory: [giftRow("t-public", 50000, false, "Public Funds")] as DonorWithGivingHistory["givingHistory"],
+    });
+    const html = renderToStaticMarkup(<DonorDetailClient donor={donor} canRecord={true} canManage={false} />);
+    expect(html).toContain("$0.00");
+    expect(html).not.toContain(">Acknowledge<");
   });
 });

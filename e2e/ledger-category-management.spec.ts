@@ -1,3 +1,4 @@
+import { getActivityFundName } from "./helpers/fund-names";
 import { test, expect, type Page } from "@playwright/test";
 import { signInAsAdmin } from "./helpers/auth";
 
@@ -502,7 +503,7 @@ test.describe("deactivate warns but does not block; reactivate recovers it", () 
     await page.goto("/admin/ledger/settings/categories");
     await page.getByRole("button", { name: /^Club$/ }).click().catch(() => {});
     await page.getByRole("button", { name: "+ New Category" }).click();
-    await page.locator("#new-cat-fund").selectOption({ label: "Activity Fund" });
+    await page.locator("#new-cat-fund").selectOption({ label: await getActivityFundName() });
     await page.locator("#new-cat-name").fill(QA_CATEGORY_NAME);
     await page.getByRole("button", { name: "Create Category" }).click();
     await expect(page.getByRole("dialog", { name: "New Category" })).toBeHidden();

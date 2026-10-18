@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   getMergeDestinationOptions,
@@ -16,6 +17,8 @@ interface CategoryMergeDialogProps {
   /** Every category for this entity (active + inactive) — narrowed to
    *  eligible destinations client-side via getMergeDestinationOptions. */
   allCategories: AdminCategoryRow[];
+  /** Stored fund names (DECISION-127). */
+  labels: FundLabels;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -34,6 +37,8 @@ interface MergePlanResponse {
   }>;
   sourceTransactionCount: number;
   destinationName: string;
+  /** Categories whose Foundation counterpart is the source and would move to the destination. */
+  mirrorsRepointed?: number;
 }
 
 /**
@@ -66,6 +71,7 @@ interface MergePlanResponse {
 export default function CategoryMergeDialog({
   source,
   allCategories,
+  labels,
   open,
   onOpenChange,
 }: CategoryMergeDialogProps) {
@@ -133,7 +139,11 @@ export default function CategoryMergeDialog({
       if (!res.ok) {
         throw new Error(data.error || "This merge isn't possible.");
       }
-      toast.success(`Merged "${source.name}" into "${plan?.destinationName ?? "destination"}".`);
+      const repointed = typeof data.mirrorsRepointed === "number" ? data.mirrorsRepointed : 0;
+      toast.success(
+        `Merged "${source.name}" into "${plan?.destinationName ?? "destination"}".` +
+          (repointed > 0 ? ` ${repointed} counterpart link${repointed === 1 ? "" : "s"} moved with it.` : ""),
+      );
       router.refresh();
       onOpenChange(false);
     } catch (err) {
@@ -211,7 +221,15 @@ export default function CategoryMergeDialog({
                   ) : refusalError ? (
                     <p className="text-red-700">{refusalError}</p>
                   ) : plan ? (
-                    plan.plan.length === 0 ? (
+                    <>
+                    {(plan.mirrorsRepointed ?? 0) > 0 && (
+                      <p className="mb-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-blue-800">
+                        {plan.mirrorsRepointed} {labels.activity} categor{plan.mirrorsRepointed === 1 ? "y has" : "ies have"}{" "}
+                        &ldquo;{source.name}&rdquo; as its Foundation counterpart. The link will move to
+                        &ldquo;{plan.destinationName}&rdquo;.
+                      </p>
+                    )}
+                    {plan.plan.length === 0 ? (
                       <p className="text-gray-600">
                         No budget rows to move — &ldquo;{source.name}&rdquo; has no budget lines to
                         re-point. Merging will still leave the source with zero transactions and no
@@ -244,7 +262,8 @@ export default function CategoryMergeDialog({
                           ))}
                         </ul>
                       </div>
-                    )
+                    )}
+                    </>
                   ) : (
                     <p className="text-gray-500">Choose a destination to preview this merge.</p>
                   )}

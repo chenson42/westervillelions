@@ -26,6 +26,8 @@
  *   budgetLineId?: string;     // explicit budget-line link (B-30, DECISION-061);
  *     // expense-only; server-validated against fund/derived-FY/category — 400
  *     // on mismatch, 404 on a nonexistent/malformed id.
+ *   donorId?: string | null;   // B-172: income into Public Funds or a Foundation charitable fund only —
+ *     // 400 donor_not_applicable elsewhere, 404 donor_not_found for an unknown donor.
  * }
  * Response 201: { id: string; derivedFiscalYear: number }
  *
@@ -60,7 +62,9 @@ import { eq, and, inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
-import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
+import { isUuid } from "@/lib/utils";
+import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation, donorExists } from "@/lib/ledger-queries";
+import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
 import { sendBulkMemberEmail } from "@/lib/email";
 import { getFromEmail, buildApprovalReviewUrl, buildPendingApprovalEmailHtml } from "@/lib/email-compose";
 import { normalizeCheckNumber } from "@/lib/ledger";
@@ -157,6 +161,7 @@ export async function POST(request: NextRequest) {
       publicNote,
       receiptStorageKey,
       budgetLineId,
+      donorId,
     } = body;
 
     // Required fields
@@ -266,6 +271,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Donor on a gift (B-172): income into Public Funds or a Foundation
+    // charitable fund only. Absent or null is exactly the old behaviour.
+    // Everywhere else the donor panel does not exist, so a donorId is refused
+    // rather than stored.
+    let validatedDonorId: string | null = null;
+    if (donorId !== undefined && donorId !== null) {
+      if (typeof donorId !== "string" || !isUuid(donorId)) {
+        return NextResponse.json({ error: "donorId must be a donor id or null" }, { status: 400 });
+      }
+      if (flow !== "income" || (fund.kind !== "activity" && fund.kind !== "charitable")) {
+        const fundLabels = await getFundLabels();
+        return NextResponse.json(
+          {
+            error: `A donor can only be recorded on income in ${fundLabels.activity} or the Foundation's Charitable fund.`,
+            code: "donor_not_applicable",
+          },
+          { status: 400 },
+        );
+      }
+      if (!(await donorExists(donorId))) {
+        return NextResponse.json({ error: "Donor not found", code: "donor_not_found" }, { status: 404 });
+      }
+      validatedDonorId = donorId;
+    }
+
     // Validate the bank account (DECISION-109): it must exist, belong to the
     // body's entity, and be active. Before this, a cross-entity id was saved
     // silently and a nonexistent one was a foreign-key 500.
@@ -364,6 +394,7 @@ export async function POST(request: NextRequest) {
         publicNote: publicNoteResult.value,
         receiptStorageKey: receiptStorageKey?.trim() ?? null,
         budgetLineId: validatedBudgetLineId,
+        donorId: validatedDonorId,
         status: derivedStatus,
         recordedByUserId: session.user.id,
       })
@@ -481,7 +512,12 @@ async function handleTransfer(
   // what allows the two funds to resolve to DIFFERENT entities, which is
   // required to represent a cross-entity Sweep at all.
   const fundRows = await db
-    .select({ id: ledgerFunds.id, kind: ledgerFunds.kind, entityId: ledgerFunds.entityId })
+    .select({
+      id: ledgerFunds.id,
+      kind: ledgerFunds.kind,
+      entityId: ledgerFunds.entityId,
+      name: ledgerFunds.name,
+    })
     .from(ledgerFunds)
     .where(inArray(ledgerFunds.id, [sourceFundId, destFundId]));
 
@@ -499,8 +535,8 @@ async function handleTransfer(
   // every matrix cell. Enforced here, server-side, regardless of what the
   // client's UI does or does not offer (defense in depth).
   const direction = checkTransferDirection(
-    { entityId: sourceFund.entityId, fundId: sourceFund.id, kind: sourceFund.kind },
-    { entityId: destFund.entityId, fundId: destFund.id, kind: destFund.kind },
+    { entityId: sourceFund.entityId, fundId: sourceFund.id, kind: sourceFund.kind, name: sourceFund.name },
+    { entityId: destFund.entityId, fundId: destFund.id, kind: destFund.kind, name: destFund.name },
   );
   if (!direction.allowed) {
     return NextResponse.json({ error: direction.reason }, { status: 403 });

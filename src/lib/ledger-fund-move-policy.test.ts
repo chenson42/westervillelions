@@ -233,3 +233,40 @@ describe("C4-C6: the cross-entity cell and the sweep's cell", () => {
     expect(r).toMatchObject({ allowed: false, code: "not_permitted" });
   });
 });
+
+describe("denial reasons use the fund's stored name (DECISION-127)", () => {
+  const named = (kind: string, entityId: string, fundId: string, name?: string): FundRef => ({
+    entityId,
+    fundId,
+    kind,
+    name,
+  });
+
+  it("income Activity -> Administrative and expense Administrative -> Activity name the supplied fund", () => {
+    const away = checkFundMove({
+      flow: "income",
+      from: named("activity", "e", "a", "Community Pool"),
+      to: named("administrative", "e", "b", "Administrative Fund"),
+    });
+    const charge = checkFundMove({
+      flow: "expense",
+      from: named("administrative", "e", "b", "Administrative Fund"),
+      to: named("activity", "e", "a", "Community Pool"),
+    });
+    for (const r of [away, charge]) {
+      expect(r.allowed).toBe(false);
+      const reason = r.allowed ? "" : r.reason;
+      expect(reason).toContain("Community Pool");
+      expect(reason).not.toMatch(/Activity/);
+    }
+  });
+
+  it("falls back to the default name when the descriptor has none", () => {
+    const away = checkFundMove({
+      flow: "income",
+      from: named("activity", "e", "a"),
+      to: named("administrative", "e", "b"),
+    });
+    expect(away.allowed ? "" : away.reason).toContain("Public Funds");
+  });
+});

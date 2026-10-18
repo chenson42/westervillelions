@@ -5,6 +5,8 @@ import { hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getEntities, getComplianceOverview, getSettings } from "@/lib/ledger-queries";
 import { currentFiscalYear } from "@/lib/fiscal-year";
+import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
+import { DEFAULT_FUND_LABELS } from "@/lib/ledger-fund-labels";
 import type { LedgerSettings } from "@/lib/db/schema";
 
 import BankTransitionSection from "@/components/admin/ledger/guide/bank-transition-section";
@@ -52,9 +54,9 @@ const TOC: { id: string; label: string }[] = [
  * and docs/work-log/2026-07-27-ledger-budgeting-guide.md for the Budgeting
  * section added after that design shipped.
  *
- * Exactly two live reads happen here (page.tsx stays the single place that
+ * Three live reads happen here (the third is the stored fund names) (page.tsx stays the single place that
  * loads data, per architect Ruling 2): the current 990 determination per
- * entity, and the current Ledger settings recap. Both are try/catch-wrapped
+ * entity, and the current Ledger settings recap. All are try/catch-wrapped
  * per DECISION-037 — on failure the affected section renders a one-line
  * fallback instead of crashing the whole page. ensureFilingsForFY() is
  * deliberately NOT called here (unlike the Compliance page) — this is a
@@ -109,6 +111,14 @@ export default async function TreasuryUsersGuidePage() {
     settings = null;
   }
 
+  // --- Live read 3: stored fund names (DECISION-127); defaults on failure ---
+  let labels = DEFAULT_FUND_LABELS;
+  try {
+    labels = await getFundLabels();
+  } catch {
+    labels = DEFAULT_FUND_LABELS;
+  }
+
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Breadcrumb */}
@@ -158,18 +168,18 @@ export default async function TreasuryUsersGuidePage() {
       {/* Sections, in TOC order */}
       <div className="space-y-6">
         <BankTransitionSection />
-        <BooksRegisterSection />
-        <ZeffyFundRoutingSection />
+        <BooksRegisterSection labels={labels} />
+        <ZeffyFundRoutingSection labels={labels} />
         <DuesSection />
         <ReimbursementsSection />
         <UncashedChecksSection />
         <CashAndBankAccountsSection />
         <ComplianceCalendarSection entity990s={entity990s} />
-        <GuardrailsSection />
+        <GuardrailsSection labels={labels} />
         <ReportsSection />
-        <BudgetingSection />
+        <BudgetingSection labels={labels} />
         <ReconciliationSection />
-        <SettingsSection settings={settings} />
+        <SettingsSection settings={settings} labels={labels} />
       </div>
     </div>
   );

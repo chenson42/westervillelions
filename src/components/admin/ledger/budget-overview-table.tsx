@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { computeBudgetBalanceStatus } from "@/lib/ledger";
+import { fundKindBadge } from "@/lib/ledger-fund-labels";
 import {
   BudgetPlanBalanceBadge,
   formatDollars,
-  fundKindLabel,
 } from "@/components/admin/ledger/budget-plan-status";
 
 export interface BudgetOverviewRow {
@@ -72,7 +72,7 @@ export default function BudgetOverviewTable({ targetFY, fyQuery, rows }: BudgetO
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-semibold text-gray-900 text-base">{row.fundName}</h3>
                   <span className="inline-flex items-center rounded-lg bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 whitespace-nowrap">
-                    {fundKindLabel(row.fundKind)}
+                    {fundKindBadge(row.fundKind)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">

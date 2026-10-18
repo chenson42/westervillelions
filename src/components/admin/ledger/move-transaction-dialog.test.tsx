@@ -30,12 +30,16 @@ import {
 } from "./correction-dialog-logic";
 import {
   MOVE_FAILED_MESSAGE,
-  RATCHET_WARNING,
+  ratchetWarning,
   STALE_MOVE_MESSAGE,
   parseMoveBody,
   type MovePreview,
   type MoveResponse,
 } from "@/lib/ledger-correction";
+
+const RATCHET_WARNING = ratchetWarning();
+const CROSS_ENTITY_RATCHET_NO_RECEIPT = crossEntityRatchetNoReceipt();
+const CROSS_ENTITY_RATCHET_RECEIPT_SENT = crossEntityRatchetReceiptSent();
 
 const FROM = "a0000000-0000-4000-8000-000000000001";
 const TO = "a0000000-0000-4000-8000-000000000002";
@@ -313,8 +317,8 @@ describe("move request and close rules", () => {
 // ---------------------------------------------------------------------------
 
 import {
-  CROSS_ENTITY_RATCHET_NO_RECEIPT,
-  CROSS_ENTITY_RATCHET_RECEIPT_SENT,
+  crossEntityRatchetNoReceipt,
+  crossEntityRatchetReceiptSent,
   RECEIPT_SENT_WARNING,
   UNSENT_RECEIPT_REMOVED_WARNING,
   duplicateCandidateWarning,

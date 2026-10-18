@@ -1,3 +1,4 @@
+import { getActivityFundName } from "./helpers/fund-names";
 import { test, expect, type Page } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { and, eq, ilike, inArray } from "drizzle-orm";
@@ -43,6 +44,12 @@ import {
  */
 
 test.describe.configure({ mode: "serial" });
+
+// The stored public-fund name (DECISION-127), resolved once per run, never a literal.
+let activityName = "Public Funds";
+test.beforeAll(async () => {
+  activityName = await getActivityFundName();
+});
 test.setTimeout(120_000);
 
 const TAG = "E2E QA Approvals Mobile";
@@ -265,7 +272,7 @@ test.describe("Approvals page, Increment 1", () => {
       await expect(visibleRow(page, ids.selfId)).toContainText("You recorded this, so another board member must decide it.");
       // Transfer chip and From -> To; the income leg is not listed separately
       await expect(visibleRow(page, ids.transferExpenseId)).toContainText("Transfer");
-      await expect(visibleRow(page, ids.transferExpenseId)).toContainText("Administrative Fund → Activity Fund");
+      await expect(visibleRow(page, ids.transferExpenseId)).toContainText(`Administrative Fund → ${activityName}`);
       await expect(page.locator(`[data-row-id="${ids.transferIncomeId}"]`)).toHaveCount(0);
     });
   }

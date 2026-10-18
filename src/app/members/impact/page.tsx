@@ -86,8 +86,8 @@ async function ImpactDashboard() {
     return (
       <div className="bg-gray-50 rounded-2xl p-10 text-center text-gray-500">
         <p className="text-base">
-          No community giving has been recorded yet. Transactions from the Activity and Charitable
-          funds will appear here once posted.
+          No community giving has been recorded yet. Giving transactions will appear here once
+          they are posted.
         </p>
       </div>
     );

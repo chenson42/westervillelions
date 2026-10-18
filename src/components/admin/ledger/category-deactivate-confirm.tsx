@@ -6,10 +6,13 @@ import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type { AdminCategoryRow } from "@/lib/ledger-category-ui";
 import type { CategoryImpact } from "@/lib/ledger-category-queries";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 
 interface CategoryDeactivateConfirmProps {
   /** null closes the dialog — same nullable-target pattern as donor-list.tsx. */
   category: AdminCategoryRow | null;
+  /** Stored fund names (DECISION-127). */
+  labels: FundLabels;
   onClose: () => void;
 }
 
@@ -24,6 +27,7 @@ function formatDollars(cents: number): string {
  */
 export default function CategoryDeactivateConfirm({
   category,
+  labels,
   onClose,
 }: CategoryDeactivateConfirmProps) {
   const router = useRouter();
@@ -72,6 +76,10 @@ export default function CategoryDeactivateConfirm({
     "lines. Historical transactions and budget rows keep their name and amount unchanged.";
   if (category) {
     description = `"${category.name}" will no longer appear in category pickers for new transactions or budget lines. Historical transactions and budget rows keep their name and amount unchanged.`;
+  }
+  if (impact && impact.mirroredBy.count > 0) {
+    const names = impact.mirroredBy.names.join(", ");
+    description += ` ${impact.mirroredBy.count} ${labels.activity} categor${impact.mirroredBy.count === 1 ? "y points to it as its" : "ies point to it as their"} Foundation counterpart (${names}). The counterpart link will show as inactive until it is re-pointed.`;
   }
   if (loading) {
     description += " Checking for an open balance…";

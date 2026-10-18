@@ -38,8 +38,18 @@ vi.mock("@/lib/ledger-queries", () => ({
   getCategories: vi.fn(),
   assertBudgetUnlocked: vi.fn(),
 }));
+vi.mock("@/lib/ledger-fund-labels-queries", () => ({
+  getFundLabels: vi.fn(async () => ({
+    administrative: "Administrative Fund",
+    activity: "Public Funds",
+    charitable: "Charitable Fund",
+    scholarship: "Scholarship Fund",
+  })),
+}));
 vi.mock("@/lib/ledger-category-queries", () => ({
   listCategoriesForAdmin: vi.fn(),
+  loadMirrorProjections: vi.fn(async () => new Map()),
+  validateMirrorWrite: vi.fn(),
   toCategoryDTO: (c: Record<string, unknown>) => ({
     id: c.id,
     name: c.name,
@@ -49,12 +59,14 @@ vi.mock("@/lib/ledger-category-queries", () => ({
     isActive: c.isActive,
     countsAsGiving: c.countsAsGiving,
     form990Line: c.form990Line,
+    mirrorsCategoryId: c.mirrorsCategoryId ?? null,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   }),
 }));
 
 import { GET, POST } from "./route";
+import { validateMirrorWrite } from "@/lib/ledger-category-queries";
 import { auth } from "@/lib/auth";
 import { hasFeature, hasAnyFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
@@ -220,5 +232,78 @@ describe("POST /api/admin/ledger/categories — gate (Y9)", () => {
 
     expect(response.status).toBe(403);
     expect(listCategoriesForAdmin).not.toHaveBeenCalled();
+  });
+});
+
+// ── POST — mirrorsCategoryId (B-172) ─────────────────────────────────────────
+
+const TARGET_ID = "b0000000-0000-4000-8000-000000000001";
+
+describe("POST /api/admin/ledger/categories — mirrorsCategoryId", () => {
+  beforeEach(() => {
+    insertValues.mockReset();
+    vi.mocked(getEntityById).mockResolvedValue({ id: "entity-1" } as never);
+    vi.mocked(getFunds).mockResolvedValue([{ kind: "activity" }] as never);
+    vi.mocked(getCategories).mockResolvedValue([]);
+    vi.mocked(assertBudgetUnlocked).mockResolvedValue({ ok: true } as never);
+    vi.mocked(validateMirrorWrite).mockResolvedValue({ ok: true });
+  });
+
+  const body = (extra: Record<string, unknown> = {}) =>
+    postRequest({ fundKind: "activity", flow: "income", name: "Gala", mirrorsCategoryId: TARGET_ID, ...extra });
+
+  it("a budget.edit-only caller sending a counterpart gets a plain-language 403 before any lookup", async () => {
+    holdOnly(FEATURES.BUDGET_EDIT);
+
+    const response = await POST(body());
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/ledger management access/);
+    expect(getEntityById).not.toHaveBeenCalled();
+    expect(validateMirrorWrite).not.toHaveBeenCalled();
+    expect(insertValues).not.toHaveBeenCalled();
+  });
+
+  it("a malformed counterpart id is 400 invalid_mirror", async () => {
+    holdOnly(FEATURES.LEDGER_MANAGE);
+
+    const response = await POST(body({ mirrorsCategoryId: "not-a-uuid" }));
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe("invalid_mirror");
+    expect(insertValues).not.toHaveBeenCalled();
+  });
+
+  it("a ledger.manage caller stores a valid counterpart", async () => {
+    holdOnly(FEATURES.LEDGER_MANAGE);
+
+    const response = await POST(body());
+
+    expect(response.status).toBe(200);
+    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({ mirrorsCategoryId: TARGET_ID }));
+    expect((await response.json()).mirrorsCategoryId).toBe(TARGET_ID);
+  });
+
+  it("surfaces the validator's code and status (404 unknown target, 400 shape) and writes nothing", async () => {
+    holdOnly(FEATURES.LEDGER_MANAGE);
+    for (const [status, code] of [
+      [404, "mirror_target_not_found"],
+      [400, "target_not_foundation_income"],
+      [400, "target_inactive"],
+      [400, "subject_not_public_income"],
+    ] as const) {
+      vi.mocked(validateMirrorWrite).mockResolvedValueOnce({ ok: false, status, code, error: code });
+      const response = await POST(body());
+      expect(response.status).toBe(status);
+      expect((await response.json()).code).toBe(code);
+    }
+    expect(insertValues).not.toHaveBeenCalled();
+  });
+
+  it("an omitted or null counterpart creates exactly as before", async () => {
+    holdOnly(FEATURES.BUDGET_EDIT);
+    expect((await POST(body({ mirrorsCategoryId: undefined }))).status).toBe(200);
+    expect((await POST(body({ mirrorsCategoryId: null }))).status).toBe(200);
+    expect(validateMirrorWrite).not.toHaveBeenCalled();
   });
 });

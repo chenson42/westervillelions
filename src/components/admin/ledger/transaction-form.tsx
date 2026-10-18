@@ -1,16 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import ReceiptFileInput from "./receipt-file-input";
 import BudgetLinePicker from "./budget-line-picker";
 import BudgetContextPanel from "./budget-context-panel";
+import DonorPickerField, { type PickedDonor } from "./donor-picker-field";
+import FoundationBoundHint from "./foundation-bound-hint";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
 import type { BudgetLineOption } from "@/lib/ledger-queries";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { CHECK_NUMBER_MAX_LEN, pickDefaultBankAccount } from "@/lib/ledger";
+import { buildFundLabels } from "@/lib/ledger-fund-labels";
+import { describeMirrorHint, type MirrorProjection } from "@/lib/ledger-category-mirror";
 
 // Convenience type for a partial transaction used when editing
 type EditableTransaction = Pick<
@@ -72,6 +76,10 @@ interface TransactionFormProps {
    *  pages. Enables the "Sweep to Foundation" mode. Undefined on Foundation
    *  pages, where Sweep simply never renders as an option. */
   crossEntityContext?: CrossEntityContext;
+  /** Category id -> the Foundation counterpart of a Public Funds income
+   *  category (B-172), computed on the server with loadMirrorProjections().
+   *  Absent or empty: no "Foundation-bound" hint is shown. */
+  mirrorHints?: Record<string, MirrorProjection>;
   /** Opens a NEW form already in Sweep mode with these values (the "Record
    *  sweep now" deep link after a move). Never carries the board-minute
    *  reference: the treasurer enters that. Ignored in edit mode and when a
@@ -125,11 +133,13 @@ function resolveApiFlow(mode: FlowMode): "income" | "expense" {
 /**
  * Form for recording or editing a ledger transaction.
  *
+ * Fund names are read from the stored fund rows (DECISION-127), never typed here.
+ *
  * Handles four code paths:
  *   1. Regular income/expense (and refund convenience labels)
  *   2. New Transfer — same fund, two of the CURRENT entity's bank accounts
  *      (e.g. Admin Checking -> Petty Cash). No board minute, no category.
- *   3. New Sweep — Club Activity Fund -> Foundation Charitable Fund, each leg
+ *   3. New Sweep — Club public fund -> Foundation Charitable Fund, each leg
  *      its own entity's bank account. Requires a board-minute reference;
  *      routes through <ConfirmDialog> since it's two permanent, independent
  *      transactions on two separate books (DECISION-058).
@@ -151,6 +161,7 @@ export default function TransactionForm({
   initialValues,
   defaultFundId,
   crossEntityContext,
+  mirrorHints,
   sweepPrefill,
 }: TransactionFormProps) {
   const router = useRouter();
@@ -168,7 +179,13 @@ export default function TransactionForm({
     return initialValues.flow as "income" | "expense";
   }
 
-  // The current entity's Activity fund and the Foundation's Charitable fund —
+  // Stored fund names for every user-facing sentence (DECISION-127).
+  const labels = useMemo(
+    () => buildFundLabels([...funds, ...(crossEntityContext?.funds ?? [])]),
+    [funds, crossEntityContext],
+  );
+
+  // The current entity's public fund and the Foundation's Charitable fund —
   // the only two funds a Sweep ever touches. Undefined/false when either
   // side is missing, which is what gates the Sweep option out of the Type
   // selector entirely (never offered as a UI path, not just disabled).
@@ -228,6 +245,8 @@ export default function TransactionForm({
   const [publicNote, setPublicNote] = useState(initialValues?.publicNote ?? "");
   // Explicit budget-line link (B-30, DECISION-061).
   const [budgetLineId, setBudgetLineId] = useState(initialValues?.budgetLineId ?? "");
+  // Donor on a NEW Public Funds / Foundation income gift (B-172); sent as donorId.
+  const [donor, setDonor] = useState<PickedDonor | null>(null);
   const [categoryMismatchNotice, setCategoryMismatchNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -272,6 +291,25 @@ export default function TransactionForm({
   // invalid, which BudgetContextPanel treats as "suppress the projected
   // clause," never "+$0."
   const parsedAmountCents = parseDollars(amount);
+
+  // The donor picker: new, regular income into a public or Foundation fund
+  // (the kinds the server accepts a donorId for).
+  const showDonorPicker =
+    !isEdit &&
+    !isTransferOrSweep &&
+    apiFlow === "income" &&
+    (activeFund?.kind === "activity" || activeFund?.kind === "charitable");
+
+  // "Foundation-bound" hint for a Public Funds income category (B-172). The
+  // form's categories belong to the current Club entity, so deductible = false.
+  const selectedCategory = categories.find((c) => c.id === categoryId);
+  const mirrorHint = describeMirrorHint(
+    selectedCategory && !isTransferOrSweep
+      ? { fundKind: selectedCategory.fundKind, flow: selectedCategory.flow, entityDonationsDeductible: false }
+      : null,
+    selectedCategory ? (mirrorHints?.[selectedCategory.id] ?? null) : null,
+    parsedAmountCents,
+  );
 
   // Filter categories by active fund kind and api flow
   const filteredCategories = categories.filter(
@@ -372,7 +410,7 @@ export default function TransactionForm({
       }
     } else if (!isEdit && isSweep) {
       if (!clubActivityFund || !foundationCharitableFund) {
-        return "Sweep is not available — the Activity Fund or Foundation Charitable Fund could not be found.";
+        return `Sweep is not available — ${labels.activity} or ${labels.charitable} could not be found.`;
       }
       if (!destBankAccountId) return "Select both a source and destination bank account.";
       if (!boardMinute.trim()) {
@@ -482,6 +520,7 @@ export default function TransactionForm({
           beneficiaryCause: beneficiaryCause.trim() || null,
           publicNote: publicNote.trim() || null,
           budgetLineId: budgetLineId || null,
+          ...(showDonorPicker && donor ? { donorId: donor.id } : {}),
           // Receipt (DECISION-035): the opaque key already minted by
           // ReceiptFileInput's upload-on-select flow, if the admin attached
           // one before saving (Flow A). Omitted entirely when none was
@@ -590,14 +629,14 @@ export default function TransactionForm({
         </div>
       )}
 
-      {/* Sweep: implied Activity -> Charitable, cross-entity — explicit
+      {/* Sweep: implied public fund -> Charitable, cross-entity — explicit
           two-books framing per DECISION-058 (never a single reversible entry). */}
       {isSweep && !isEdit && (
         <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-900 space-y-1">
           <p>
-            <span className="font-semibold">From:</span> {clubActivityFund?.name ?? "Activity Fund"} (this entity)
+            <span className="font-semibold">From:</span> {clubActivityFund?.name ?? labels.activity} (this entity)
             {" "}&rarr;{" "}
-            <span className="font-semibold">To:</span> {foundationCharitableFund?.name ?? "Charitable Fund"}
+            <span className="font-semibold">To:</span> {foundationCharitableFund?.name ?? labels.charitable}
             {crossEntityContext ? ` (${crossEntityContext.entityName})` : ""}
           </p>
           <p className="text-xs text-blue-800">
@@ -686,6 +725,7 @@ export default function TransactionForm({
               </option>
             ))}
           </select>
+          {mirrorHint.state !== "not_applicable" && <FoundationBoundHint labels={labels} hint={mirrorHint} />}
         </div>
       )}
 
@@ -726,6 +766,9 @@ export default function TransactionForm({
           />
         </div>
       )}
+
+      {/* Donor (new public/Foundation income only) */}
+      {showDonorPicker && <DonorPickerField donor={donor} onChange={setDonor} disabled={submitting} />}
 
       {/* Check # (not for transfer/sweep) */}
       {!isTransferOrSweep && !isEditingTransfer && (
@@ -1091,7 +1134,7 @@ export default function TransactionForm({
         open={sweepConfirmOpen}
         onOpenChange={setSweepConfirmOpen}
         title="Confirm Sweep to Foundation?"
-        description="This creates two separate, permanent transactions — a Club Activity Fund expense and a Foundation Charitable Fund gift/income — both citing the board-minute reference you entered. This cannot be undone in the Ledger; reversing it requires a new, opposite transaction and a new board decision."
+        description={`This creates two separate, permanent transactions — a Club ${labels.activity} expense and a Foundation ${labels.charitable} gift/income — both citing the board-minute reference you entered. This cannot be undone in the Ledger; reversing it requires a new, opposite transaction and a new board decision.`}
         confirmLabel="Confirm Sweep"
         destructive
         onConfirm={() => {

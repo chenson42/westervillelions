@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, bigint, date, jsonb, unique, index, uniqueIndex, primaryKey, varchar, customType, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid, boolean, integer, bigint, date, jsonb, unique, index, uniqueIndex, primaryKey, varchar, customType, foreignKey, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // Users table for authentication
@@ -775,11 +775,23 @@ export const ledgerCategories = pgTable(
     // column itself has no such constraint (see
     // docs/work-log/2026-08-08-ack-not-required-flag.md).
     ackNotRequired: boolean("ack_not_required").notNull().default(false),
+    // B-172 / DECISION-126: a Club Public Funds (activity) INCOME category may
+    // declare the Foundation charitable income category its gifts become when
+    // swept. Null = no counterpart (the gift stays in Public Funds). Validity
+    // (entity, fund kind, flow, active) is enforced at write by the app, not a
+    // CHECK. ON DELETE SET NULL: deleting the target only unlinks.
+    mirrorsCategoryId: uuid("mirrors_category_id"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [
     index("ix_ledger_categories_entity_kind_flow").on(t.entityId, t.fundKind, t.flow),
+    // Explicit short name (drizzle's default would be 61+ chars).
+    foreignKey({
+      columns: [t.mirrorsCategoryId],
+      foreignColumns: [t.id],
+      name: "ledger_categories_mirror_fk",
+    }).onDelete("set null"),
   ],
 );
 
@@ -835,6 +847,10 @@ export const ledgerAuditLog = pgTable(
     // ledger-audit.ts; both targets null, plain-text details, no PII; they are
     // NOT in CORRECTION_AUDIT_ACTIONS so the board-visible reader never lists
     // them, and they have no reader yet)
+    // 'category_mirror_changed' (B-172: a category's mirrors_category_id set or cleared;
+    // ids only) | 'category_mirrors_seeded' (migration 0115's one-shot marker row; both
+    // targets null — the third both-targets-null case beside
+    // 'ack_letter_template_updated' and 'reconciliation_session_discarded'; no reader lists it)
     // ('category_created' is a reserved future value — category creation is
     // NOT audited in v1, per DECISION-066 item 5.)
     action: text("action").notNull(),
@@ -853,8 +869,8 @@ export const ledgerAuditLog = pgTable(
     // vanishes when its subject is deleted would defeat its purpose).
     // App-layer invariant: exactly one of targetCategoryId /
     // targetTransactionId is non-null per row (or, for the pre-existing cases
-    // 'ack_letter_template_updated' and 'reconciliation_session_discarded',
-    // both are null).
+    // 'ack_letter_template_updated', 'reconciliation_session_discarded' and
+    // 'category_mirrors_seeded', both are null).
     targetTransactionId: uuid("target_transaction_id").references(() => ledgerTransactions.id, { onDelete: "set null" }),
     before: text("before"),
     after: text("after"),

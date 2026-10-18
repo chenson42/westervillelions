@@ -1,3 +1,4 @@
+import { getActivityFundName } from "./helpers/fund-names";
 import { test, expect, type Page } from "@playwright/test";
 import { and, eq, ilike } from "drizzle-orm";
 import { db } from "../src/lib/db";
@@ -60,6 +61,12 @@ import {
  */
 
 test.describe.configure({ mode: "serial" });
+
+// The stored public-fund name (DECISION-127), resolved once per run, never a literal.
+let activityName = "Public Funds";
+test.beforeAll(async () => {
+  activityName = await getActivityFundName();
+});
 
 const TAG = MOVE_FIXTURE_TAG;
 const PARTY_MOVE = `${TAG} Gift`;
@@ -239,7 +246,7 @@ test.describe("Move a transaction to another fund", () => {
     await expect(confirm).toBeDisabled();
     await dialog.locator("#move-reason").fill(REASON_MOVE);
     await confirm.click();
-    await expect(dialog.getByText("Moved to Activity Fund.")).toBeVisible();
+    await expect(dialog.getByText(`Moved to ${activityName}.`)).toBeVisible();
 
     // Assert: the row is now in Activity, not Administrative
     const [moved] = await db.select().from(ledgerTransactions).where(eq(ledgerTransactions.id, ids.movedTxnId));
@@ -271,7 +278,7 @@ test.describe("Move a transaction to another fund", () => {
 
     // Assert
     expect(club).toContain(REASON_MOVE);
-    expect(club).toContain("Administrative Fund to Activity Fund");
+    expect(club).toContain(`Administrative Fund to ${activityName}`);
     expect(foundation).not.toContain(REASON_MOVE);
   });
 
@@ -438,7 +445,7 @@ test.describe("Move a Foundation gift to the Club (cross-entity)", () => {
     const options = await dest.locator("option").evaluateAll((els) =>
       els.map((e) => ({ value: (e as HTMLOptionElement).value, text: e.textContent ?? "" })),
     );
-    await dest.selectOption(options.find((o) => /Activity/.test(o.text))!.value);
+    await dest.selectOption(options.find((o) => o.text.includes(activityName))!.value);
   }
 
   async function pickClubAccount(dialog: ReturnType<Page["getByRole"]>, name: string) {
@@ -471,7 +478,7 @@ test.describe("Move a Foundation gift to the Club (cross-entity)", () => {
 
     // Act
     await confirm.click();
-    await expect(dialog.getByRole("status")).toContainText("Moved to Activity Fund (Club)");
+    await expect(dialog.getByRole("status")).toContainText(`Moved to ${activityName} (Club)`);
 
     // Assert: the row is now the Club's, on the picked account, with donor and receipt intact
     const [moved] = await db.select().from(ledgerTransactions).where(eq(ledgerTransactions.id, sentGift.txnId));

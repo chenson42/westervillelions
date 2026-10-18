@@ -6,6 +6,7 @@ import { FEATURES } from "@/lib/permissions";
 import { getEntities, getFunds } from "@/lib/ledger-queries";
 import { listCategoriesForAdmin, toCategoryDTO } from "@/lib/ledger-category-queries";
 import { currentFiscalYear } from "@/lib/fiscal-year";
+import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
 import CategoryList from "@/components/admin/ledger/category-list";
 import type { EntityCategoryData } from "@/lib/ledger-category-ui";
 
@@ -30,7 +31,7 @@ export default async function AdminLedgerCategoriesPage() {
   const canManage = await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE);
   if (!canManage) redirect("/admin/ledger");
 
-  const entities = await getEntities();
+  const [entities, labels] = await Promise.all([getEntities(), getFundLabels()]);
 
   const entityData: EntityCategoryData[] = await Promise.all(
     entities.map(async (entity) => {
@@ -57,6 +58,7 @@ export default async function AdminLedgerCategoriesPage() {
             countsAsGiving: dto.countsAsGiving,
             ackNotRequired: dto.ackNotRequired,
             form990Line: dto.form990Line,
+            mirrorsCategoryId: dto.mirrorsCategoryId,
           };
         }),
       };
@@ -90,7 +92,7 @@ export default async function AdminLedgerCategoriesPage() {
         </p>
       </div>
 
-      <CategoryList entities={entityData} currentFiscalYear={fiscalYear} />
+      <CategoryList entities={entityData} currentFiscalYear={fiscalYear} labels={labels} />
     </div>
   );
 }

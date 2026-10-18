@@ -1,10 +1,15 @@
 /** T8-T10 and C9-C13: reason normalizer, move-body parser, audit payload shapes, copy. */
 import { describe, it, expect } from "vitest";
+import { DEFAULT_FUND_LABELS, type FundLabels } from "./ledger-fund-labels";
 import {
   CROSS_ENTITY_STATE_COPY,
   TRANSACTION_DELETED_AUDIT_ACTION,
   TRANSACTION_FUND_MOVED_AUDIT_ACTION,
   buildMoveWarnings,
+  ratchetWarning,
+  agedPublicFundWarning,
+  crossEntityRatchetNoReceipt,
+  crossEntityRatchetReceiptSent,
   buildSweepMemo,
   formatStatementMonth,
   sentStatementWarning,
@@ -432,6 +437,60 @@ describe("audit v2 (C11)", () => {
   });
 });
 
+/** A stored fund name as it exists in the database before the treasurer renames it. */
+const STORED_NAME: FundLabels = { ...DEFAULT_FUND_LABELS, activity: "Activity Fund" };
+
+describe("buildMoveWarnings with a custom fund name (DECISION-127)", () => {
+  const warn = (labels: FundLabels, crossEntity?: Parameters<typeof buildMoveWarnings>[0]["crossEntity"]) =>
+    buildMoveWarnings({
+      labels,
+      anyDestinationAllowed: true,
+      tierReasons: [],
+      sentStatementMonth: null,
+      aged: true,
+      bankAccountName: "Checking",
+      crossEntity,
+    });
+  const renamed: FundLabels = { ...DEFAULT_FUND_LABELS, activity: "Community Pool" };
+  const x = {
+    receipt: "sent" as const,
+    sourceLabel: "Foundation",
+    destLabel: "Club",
+    destSentStatementMonth: null,
+    duplicateCount: 0,
+    fiscalYear: 2026,
+  };
+
+  it("uses the supplied name and never prints Activity (same entity and cross entity)", () => {
+    for (const w of [warn(renamed), warn(renamed, x), warn(renamed, { ...x, receipt: "none" })]) {
+      const text = w.map((m) => m.message).join("\n");
+      expect(text).toContain("Community Pool");
+      expect(text).not.toMatch(/\bActivity\b/);
+    }
+  });
+
+  it("falls back to the default name when no labels are given", () => {
+    const text = buildMoveWarnings({
+      anyDestinationAllowed: true,
+      tierReasons: [],
+      sentStatementMonth: null,
+      aged: true,
+      bankAccountName: null,
+    })
+      .map((m) => m.message)
+      .join("\n");
+    expect(text).toContain("Public Funds");
+    expect(text).not.toMatch(/\bActivity\b/);
+  });
+
+  it("the exported label functions default to Public Funds", () => {
+    for (const text of [ratchetWarning(), agedPublicFundWarning(), crossEntityRatchetNoReceipt(), crossEntityRatchetReceiptSent()]) {
+      expect(text).toContain("Public Funds");
+      expect(text).not.toMatch(/\bActivity\b/);
+    }
+  });
+});
+
 describe("buildMoveWarnings (C12)", () => {
   const codes = (w: ReturnType<typeof buildMoveWarnings>) => w.map((x) => x.code);
   const X: {
@@ -451,6 +510,7 @@ describe("buildMoveWarnings (C12)", () => {
   };
   function cross(over: Partial<typeof X> = {}, top: { sent?: string | null; aged?: boolean } = {}) {
     return buildMoveWarnings({
+      labels: STORED_NAME,
       anyDestinationAllowed: true,
       tierReasons: [],
       sentStatementMonth: top.sent ?? null,
@@ -462,6 +522,7 @@ describe("buildMoveWarnings (C12)", () => {
 
   it("same-entity output is byte-identical to the shipped copy", () => {
     const w = buildMoveWarnings({
+      labels: STORED_NAME,
       anyDestinationAllowed: true,
       tierReasons: ["reconciled", "prior_fiscal_year"],
       sentStatementMonth: "2026-09",
@@ -472,7 +533,7 @@ describe("buildMoveWarnings (C12)", () => {
       {
         code: "ratchet",
         message:
-          "This cannot be moved back. Money in the Activity Fund can only leave through a minuted sweep to the Foundation. If you move the wrong entry, the fix is to delete and re-enter it, or to reopen its reconciliation session first if it has been reconciled.",
+          "This cannot be moved back. Money in Activity Fund can only leave through a minuted sweep to the Foundation. If you move the wrong entry, the fix is to delete and re-enter it, or to reopen its reconciliation session first if it has been reconciled.",
       },
       {
         code: "reconciled",
@@ -491,7 +552,7 @@ describe("buildMoveWarnings (C12)", () => {
       {
         code: "aged_public_fund",
         message:
-          "This entry is older than the holding period, so the Activity Fund will show the aged-funds warning until it is swept.",
+          "This entry is older than the holding period, so Activity Fund will show the aged-funds warning until it is swept.",
       },
       {
         code: "sweep_not_automatic",

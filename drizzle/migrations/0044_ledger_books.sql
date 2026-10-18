@@ -204,7 +204,7 @@ WHERE e.slug = 'club'
   );
 
 INSERT INTO ledger_funds (entity_id, slug, name, kind, opening_balance_cents)
-SELECT e.id, 'activity', 'Activity Fund', 'activity', 0
+SELECT e.id, 'activity', 'Public Funds', 'activity', 0
 FROM ledger_entities e
 WHERE e.slug = 'club'
   AND NOT EXISTS (

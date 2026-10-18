@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 
 const linkClass =
   "text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded";
@@ -9,7 +10,7 @@ const linkClass =
  * reasoning behind why the Budgeting page enforces a different "balanced"
  * rule per fund kind — content is locked in that work-log's outline.
  *
- * Per Phase 1 Gap notes: dollar/day-count thresholds (Activity's ~$100
+ * Per Phase 1 Gap notes: dollar/day-count thresholds (the public fund's ~$100
  * tolerance, "several months" of operating reserve) are stated as
  * principles here, not hardcoded permanent-feeling numbers — same
  * precedent as GuardrailsSection. The one code-verifiable number
@@ -18,7 +19,7 @@ const linkClass =
  * it annotates. No 990/compliance-deadline content is restated here — a
  * single cross-link to the existing Compliance Calendar section instead.
  */
-export default function BudgetingSection() {
+export default function BudgetingSection({ labels }: { labels: FundLabels }) {
   return (
     <section id="budgeting" className="bg-white rounded-2xl shadow-sm overflow-hidden p-6">
       <h2 className="text-xl font-bold text-gray-900">Budgeting</h2>
@@ -51,8 +52,8 @@ export default function BudgetingSection() {
 
       <h3 className="mt-5 font-semibold text-gray-900">How Our Funds Map</h3>
       <p className="mt-2 text-sm text-gray-700">
-        The Club entity (a 501(c)(4)) holds the Administrative and Activity funds. The Foundation
-        entity (a 501(c)(3)) holds the Charitable and Scholarship funds. The Activity fund is a
+        The Club entity (a 501(c)(4)) holds {labels.administrative} and {labels.activity}. The Foundation
+        entity (a 501(c)(3)) holds {labels.charitable} and {labels.scholarship}. {labels.activity} is a
         pass-through clearing account for publicly-raised money on its way to the Foundation &mdash;
         it targets roughly a zero balance and sweeps forward rather than accumulating. That
         distinction &mdash; administrative money the club keeps and spends on itself, versus public
@@ -109,8 +110,8 @@ export default function BudgetingSection() {
         the Charitable and Scholarship side, the goal is the opposite: disburse, don&rsquo;t
         accumulate. A large idle balance of public donations sitting unspent can put the
         Foundation&rsquo;s exempt status at risk. This is exactly why the Budgeting page&rsquo;s
-        balance badges behave differently per fund &mdash; Administrative is checked against
-        covering its own expenses, Activity is checked for staying near zero as a pass-through,
+        balance badges behave differently per fund &mdash; {labels.administrative} is checked against
+        covering its own expenses, {labels.activity} is checked for staying near zero as a pass-through,
         and Charitable/Scholarship are shown for information only, since a planned drawdown there
         is the point, not a problem.
       </p>

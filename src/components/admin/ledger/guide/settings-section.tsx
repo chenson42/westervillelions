@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { LedgerSettings } from "@/lib/db/schema";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 
 const linkClass =
   "text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded";
@@ -7,6 +8,8 @@ const linkClass =
 interface SettingsSectionProps {
   /** Live current settings, or null when the read failed (DECISION-037). */
   settings: LedgerSettings | null;
+  /** Stored fund names (DECISION-127). */
+  labels: FundLabels;
 }
 
 function formatDollars(cents: number): string {
@@ -21,7 +24,7 @@ function formatDollars(cents: number): string {
  * appear, and it renders a fallback line if getSettings() fails
  * (DECISION-037).
  */
-export default function SettingsSection({ settings }: SettingsSectionProps) {
+export default function SettingsSection({ settings, labels }: SettingsSectionProps) {
   return (
     <section id="settings" className="bg-white rounded-2xl shadow-sm overflow-hidden p-6">
       <h2 className="text-xl font-bold text-gray-900">Ledger Settings &amp; Annual Review</h2>
@@ -40,7 +43,7 @@ export default function SettingsSection({ settings }: SettingsSectionProps) {
         </li>
         <li>
           <span className="font-semibold">Public-fund holding-period (days)</span> — how long
-          public money can sit in a public (Activity, Charitable or Scholarship) fund, counted
+          public money can sit in a public ({labels.activity}, {labels.charitable} or {labels.scholarship}) fund, counted
           oldest-first, before the aged-public-fund guardrail warns.
         </li>
         <li>

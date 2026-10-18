@@ -8,6 +8,8 @@ import type {
 import type { EntityOverview, PendingApprovalRow, BudgetLineOption } from "@/lib/ledger-queries";
 import type { GuardrailFlag } from "@/lib/ledger";
 import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
+import { fundKindBadge } from "@/lib/ledger-fund-labels";
+import type { MirrorProjection } from "@/lib/ledger-category-mirror";
 import TransactionFormDialog from "@/components/admin/ledger/transaction-form-dialog";
 
 interface LedgerEntityDetailProps {
@@ -17,6 +19,8 @@ interface LedgerEntityDetailProps {
   funds: LedgerFund[];
   bankAccounts: LedgerBankAccount[];
   categories: LedgerCategory[];
+  /** Category id -> Foundation counterpart (B-172), for the "Foundation-bound" hint. */
+  mirrorHints?: Record<string, MirrorProjection>;
   /** Every expense-flow budget line for this entity (B-30, DECISION-061). */
   budgetLines: BudgetLineOption[];
   overview: EntityOverview | null;
@@ -68,6 +72,7 @@ export default function LedgerEntityDetail({
   funds,
   bankAccounts,
   categories,
+  mirrorHints,
   budgetLines,
   overview,
   fiscalYears,
@@ -125,6 +130,7 @@ export default function LedgerEntityDetail({
               categories={categories}
               bankAccounts={bankAccounts}
               budgetLines={budgetLines}
+              mirrorHints={mirrorHints}
               triggerLabel="Record Transaction"
             />
           )}
@@ -231,7 +237,7 @@ export default function LedgerEntityDetail({
                     <div className="flex items-start justify-between gap-2 mb-3">
                       <div>
                         <h3 className="font-semibold text-gray-900">{fs.fund.name}</h3>
-                        <p className="text-xs text-gray-400 capitalize">{fs.fund.kind}</p>
+                        <p className="text-xs text-gray-400">{fundKindBadge(fs.fund.kind)}</p>
                       </div>
                       <span
                         className={`text-xl font-bold tabular-nums ${

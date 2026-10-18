@@ -4,13 +4,14 @@ import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import BooksRegisterSection from "./books-register-section";
 import ReimbursementsSection from "./reimbursements-section";
+import { DEFAULT_FUND_LABELS } from "@/lib/ledger-fund-labels";
 import ReconciliationSection from "./reconciliation-section";
 
 const text = (el: React.ReactElement) =>
   renderToStaticMarkup(el).replace(/<[^>]+>/g, " ").replace(/&#x27;|&rsquo;/g, "'").replace(/\s+/g, " ");
 
 describe("guide: books & register", () => {
-  const t = text(<BooksRegisterSection />);
+  const t = text(<BooksRegisterSection labels={DEFAULT_FUND_LABELS} />);
   it("explains Correct, Add bank account, the locks, the tier and the own-request rule", () => {
     expect(t).toContain("Correcting a paid reimbursement");
     expect(t).toContain("Paid reimbursement");

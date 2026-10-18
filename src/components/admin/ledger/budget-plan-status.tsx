@@ -1,7 +1,7 @@
 /**
  * Shared plan-balance presentation — extracted from guided-budget-setup.tsx
- * (Budgeting Overview/Drill-Down Restructure, architect Ruling 3). Five pure
- * functions (formatDollars/fundKindLabel/balanceBadgeClass/balanceMessage/
+ * (Budgeting Overview/Drill-Down Restructure, architect Ruling 3). Four pure
+ * functions (formatDollars/balanceBadgeClass/balanceMessage/
  * balanceWhyNote), copied verbatim (no logic change), plus two thin
  * presentational wrapper components so BudgetOverviewTable and
  * BudgetFundEditor don't each re-derive the badge/message/why-note JSX.
@@ -20,14 +20,11 @@
  */
 
 import { computeBudgetBalanceStatus, type BudgetBalanceStatus } from "@/lib/ledger";
+import { fundKindBadge } from "@/lib/ledger-fund-labels";
 
 export function formatDollars(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-export function fundKindLabel(kind: string): string {
-  return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
 /** Presentation-only per Phase 3 design — never gates a write. */
@@ -149,7 +146,7 @@ export function BudgetPlanBalanceSummary({
         <h3 className="font-semibold text-gray-900 text-base">{fundName}</h3>
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center rounded-lg bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 whitespace-nowrap">
-            {fundKindLabel(fundKind)}
+            {fundKindBadge(fundKind)}
           </span>
           <BudgetPlanBalanceBadge status={balance.status} />
         </div>

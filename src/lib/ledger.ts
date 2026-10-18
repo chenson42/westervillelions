@@ -84,6 +84,7 @@
 // ---------------------------------------------------------------------------
 
 import { getFiscalYear } from "@/lib/fiscal-year";
+import { DEFAULT_FUND_LABELS, fundLabel, type FundLabels } from "@/lib/ledger-fund-labels";
 // Type-only: no runtime import, so ledger.ts stays DB-free and client-safe.
 import type { TreasurerResolution } from "@/lib/board-positions";
 
@@ -778,6 +779,9 @@ export function deriveCauseSeedLines(
  */
 export const GIFT_PURPOSE_MAX_LENGTH = 200;
 
+/** The written-acknowledgment threshold ($250). Read by deriveAckType(), the unsent-receipts worklist and the Foundation-bound hint. */
+export const ACK_MIN_CENTS = 25000;
+
 /**
  * Derives the IRS Pub 1771 acknowledgment type for a donation.
  *
@@ -800,7 +804,7 @@ export function deriveAckType(
     return "quid_pro_quo_75";
   }
   // Written acknowledgment required: gift >= $250 with no qualifying quid-pro-quo
-  if (amountCents >= 25000) {
+  if (amountCents >= ACK_MIN_CENTS) {
     return "written_ack_250";
   }
   return null;
@@ -975,6 +979,8 @@ export function isReceiptMissing(t: {
 }
 
 export type GuardrailsInput = {
+  /** Fund display names (DECISION-127); defaults when omitted. */
+  fundLabels?: FundLabels;
   funds: Array<FundState>;
   entityBalanceCents: number;
   settings: {
@@ -1090,14 +1096,15 @@ export type GuardrailsInput = {
  */
 export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
   const flags: GuardrailFlag[] = [];
+  const fundLabels = state.fundLabels ?? DEFAULT_FUND_LABELS;
 
   // Check 6: Negative fund balance (HIGH)
   for (const fund of state.funds) {
     if (fund.balanceCents < 0) {
       flags.push({
         severity: "high",
-        title: `Negative fund balance: ${fund.kind}`,
-        detail: `The ${fund.kind} fund has a negative balance. Review recent transactions immediately.`,
+        title: `Negative fund balance: ${fundLabel(fund.kind, fundLabels)}`,
+        detail: `${fundLabel(fund.kind, fundLabels)} has a negative balance. Review recent transactions immediately.`,
         policyCite: "Lions Financial Transparency Policy §6",
       });
     }
@@ -1186,7 +1193,7 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
     flags.push({
       severity: "high",
       title: "Two-fund firewall violation",
-      detail: `${n} transfer${n === 1 ? "" : "s"} move${n === 1 ? "s" : ""} money from an Activity fund to the Administrative fund. Activity fund money must remain in activity accounts. Reverse or reclassify these transfers immediately.`,
+      detail: `${n} transfer${n === 1 ? "" : "s"} move${n === 1 ? "s" : ""} money from ${fundLabels.activity} to the Administrative fund. Money in ${fundLabels.activity} must remain in public accounts. Reverse or reclassify these transfers immediately.`,
       policyCite: "Standard Club Constitution Art. VII §3(g); Lions Financial Transparency Policy §6 — Two-Fund Firewall",
     });
   }
@@ -1281,8 +1288,8 @@ export function guardrails(state: GuardrailsInput): GuardrailFlag[] {
       title: "Public-category income posted directly to Administrative fund",
       detail:
         `${n} posted income transaction${n === 1 ? "" : "s"} in the Administrative fund ` +
-        `${n === 1 ? "uses a category" : "use categories"} associated with public/activity funds. ` +
-        `Public donations and fundraising proceeds must be deposited into an Activity or Charitable fund, ` +
+        `${n === 1 ? "uses a category" : "use categories"} associated with public funds. ` +
+        `Public donations and fundraising proceeds must be deposited into ${fundLabels.activity} or a Charitable fund, ` +
         `not the Administrative fund. Review and reclassify these transactions.`,
       policyCite: "Standard Club Constitution Art. VII §3(g); Lions Financial Transparency Policy §6 — Two-Fund Firewall",
     });

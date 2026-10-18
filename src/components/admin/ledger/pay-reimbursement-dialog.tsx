@@ -1,5 +1,6 @@
 "use client";
 
+import { fundKindBadge } from "@/lib/ledger-fund-labels";
 import { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
@@ -227,7 +228,7 @@ export default function PayReimbursementDialog({
                 <option value="">Select fund…</option>
                 {funds.map((f) => (
                   <option key={f.id} value={f.id}>
-                    {f.name} ({f.kind})
+                    {f.name} ({fundKindBadge(f.kind)})
                   </option>
                 ))}
               </select>

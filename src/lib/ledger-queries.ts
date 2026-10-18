@@ -79,6 +79,7 @@ import {
   resolveCauseLineActual,
   isEligibleForFuzzyCauseMatch,
   computeDuesTimingAdjustment,
+  ACK_MIN_CENTS,
   type GuardrailFlag,
   type BudgetVarianceResult,
   type AgedPublicFundFact,
@@ -91,6 +92,7 @@ import {
   type CauseActualSourceRow,
   type DuesTimingAdjustment,
 } from "@/lib/ledger";
+import { buildFundLabels } from "@/lib/ledger-fund-labels";
 
 // ---------------------------------------------------------------------------
 // FY bound helpers
@@ -3288,6 +3290,7 @@ export async function getOverview(
   const adminPublicIncomeCount = Math.max(0, adminPublicIncomeCountRaw);
 
   const guardrailFlags = guardrails({
+    fundLabels: buildFundLabels(fundSummaries.map((fs) => fs.fund)),
     funds: fundSummaries.map((fs) => ({
       id: fs.fund.id,
       kind: fs.fund.kind,
@@ -4974,8 +4977,28 @@ export type DonorWithGivingHistory = LedgerDonor & {
      * Generation, 2026-08-08) without a second query.
      */
     ackId: string | null;
+    /**
+     * True when the gift's entity issues tax-deductible receipts (Foundation).
+     * A gift keyed into Public Funds is false: it is not yet a Foundation gift,
+     * so the donor-page total sums only rows where this is true (B-172,
+     * `sumDeductibleGiving()` in ledger-donor-giving.ts).
+     */
+    entityDonationsDeductible: boolean;
   }>;
 };
+
+/**
+ * True when a donor row exists. The one definition shared by the transaction
+ * create route (`donorId`) and the PATCH route's link check.
+ */
+export async function donorExists(donorId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: ledgerDonors.id })
+    .from(ledgerDonors)
+    .where(eq(ledgerDonors.id, donorId))
+    .limit(1);
+  return rows.length > 0;
+}
 
 /**
  * True when any element of ledgerDonors.emails case-insensitively contains
@@ -5034,6 +5057,7 @@ export async function getDonor(donorId: string): Promise<DonorWithGivingHistory 
       txn: ledgerTransactions,
       fundName: ledgerFunds.name,
       entityName: ledgerEntities.name,
+      entityDonationsDeductible: ledgerEntities.donationsDeductible,
       ackId: ledgerAcknowledgments.id,
       ackSentAt: ledgerAcknowledgments.sentAt,
     })
@@ -5064,6 +5088,8 @@ export async function getDonor(donorId: string): Promise<DonorWithGivingHistory 
         ? ("sent" as const)
         : ("pending" as const),
     ackId: r.ackId,
+    // A missing entity row (left join) is treated as not deductible: never over-count.
+    entityDonationsDeductible: r.entityDonationsDeductible ?? false,
   }));
 
   return { ...donor, givingHistory };
@@ -5189,7 +5215,7 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
           eq(ledgerCategories.ackNotRequired, false),
         ),
         // Only include transactions that meet the minimum threshold ($250)
-        sql`${ledgerTransactions.amountCents} >= 25000`,
+        sql`${ledgerTransactions.amountCents} >= ${ACK_MIN_CENTS}`,
       ),
     )
     .orderBy(desc(ledgerTransactions.txnDate));

@@ -1,3 +1,4 @@
+import { getActivityFundName } from "./helpers/fund-names";
 import { test, expect, request as pwRequest, type BrowserContext, type Page, type Locator } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
@@ -42,6 +43,12 @@ import { signInAsAdmin } from "./helpers/auth";
  */
 
 test.describe.configure({ mode: "serial" });
+
+// The stored public-fund name (DECISION-127), resolved once per run, never a literal.
+let activityName = "Public Funds";
+test.beforeAll(async () => {
+  activityName = await getActivityFundName();
+});
 test.setTimeout(120_000);
 
 const TAG = "QATEST E2E Approvals Cosign";
@@ -575,7 +582,7 @@ test.describe("Adding your approval (2b)", () => {
     const page = await pageFor("admin");
     await load(page, "/admin/ledger/approvals?tab=decided");
     const card = visibleRow(page, ids.cardSweep);
-    await expect(card).toContainText("Activity Fund (Club)");
+    await expect(card).toContainText(`${activityName} (Club)`);
     await expect(card).toContainText("Charitable Fund (Foundation)");
     await expect(page.locator(`[data-row-id="${incomeIds.cardSweep}"]`)).toHaveCount(0); // one card per pair
     const before = await digest();
@@ -583,7 +590,7 @@ test.describe("Adding your approval (2b)", () => {
     // Act
     await addBtn(card).click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog).toContainText("Activity Fund");
+    await expect(dialog).toContainText(activityName);
     await expect(dialog).toContainText("Charitable Fund");
     await expect(dialog).toContainText("Cosign card sweep motion");
     await dialog.getByRole("button", { name: "Add my approval", exact: true }).click();

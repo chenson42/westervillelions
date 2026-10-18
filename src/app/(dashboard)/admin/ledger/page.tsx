@@ -16,6 +16,7 @@ import {
 } from "@/lib/ledger-queries";
 import { currentFiscalYear } from "@/lib/fiscal-year";
 import LedgerDashboard from "@/components/admin/ledger/ledger-dashboard";
+import { loadMirrorProjections } from "@/lib/ledger-category-queries";
 import LedgerEntityDetail from "@/components/admin/ledger/ledger-entity-detail";
 import LoadErrorCard from "@/components/admin/ledger/load-error-card";
 
@@ -117,6 +118,10 @@ export default async function AdminLedgerPage({
     return <LoadErrorCard backHref="/admin/ledger" />;
   }
   const [funds, bankAccounts, categories, overview, fiscalYears, pendingTxns, budgetLines] = data;
+  // Foundation counterparts for the transaction form's hint; a failure only drops the hint.
+  const mirrorHints = Object.fromEntries(
+    await loadMirrorProjections(categories).catch(() => new Map<string, never>()),
+  );
 
   return (
     <LedgerEntityDetail
@@ -126,6 +131,7 @@ export default async function AdminLedgerPage({
       funds={funds}
       bankAccounts={bankAccounts}
       categories={categories}
+      mirrorHints={mirrorHints}
       budgetLines={budgetLines}
       overview={overview}
       fiscalYears={fiscalYears}

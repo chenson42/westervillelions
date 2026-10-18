@@ -57,6 +57,7 @@
  *   name: string;              // required, trimmed, non-empty
  *   countsAsGiving?: boolean;  // default true (matches schema default)
  *   form990Line?: string;      // optional, trimmed
+ *   mirrorsCategoryId?: string | null; // ledger.manage; Club Public Funds income only (B-172)
  * }
  *
  * Response 200:
@@ -81,7 +82,14 @@ import { ledgerCategories } from "@/lib/db/schema";
 import { hasAnyFeature, hasFeature } from "@/lib/permissions-server";
 import { BUDGET_WRITE_FEATURES, FEATURES } from "@/lib/permissions";
 import { getEntityById, getFunds, getCategories, assertBudgetUnlocked } from "@/lib/ledger-queries";
-import { listCategoriesForAdmin, toCategoryDTO } from "@/lib/ledger-category-queries";
+import {
+  listCategoriesForAdmin,
+  toCategoryDTO,
+  loadMirrorProjections,
+  validateMirrorWrite,
+} from "@/lib/ledger-category-queries";
+import { mirrorErrorMessage } from "@/lib/ledger-category-mirror";
+import { isUuid } from "@/lib/utils";
 import { validateCategoryCreateInput, nextCategorySortOrder } from "@/lib/ledger";
 
 const VALID_FUND_KINDS = ["administrative", "activity", "charitable", "scholarship"] as const;
@@ -123,7 +131,10 @@ export async function GET(request: NextRequest) {
 
     const categories = await listCategoriesForAdmin(entityId, { fundKind, flow, includeInactive });
 
-    return NextResponse.json({ categories: categories.map(toCategoryDTO) });
+    const mirrors = await loadMirrorProjections(categories);
+    return NextResponse.json({
+      categories: categories.map((c) => toCategoryDTO(c, mirrors.get(c.id) ?? null)),
+    });
   } catch (error) {
     console.error("Error listing ledger categories:", error);
     return NextResponse.json({ error: "Failed to list categories" }, { status: 500 });
@@ -144,7 +155,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { entityId, fiscalYear, fundKind, flow, name, countsAsGiving, form990Line } = body;
+    const { entityId, fiscalYear, fundKind, flow, name, countsAsGiving, form990Line, mirrorsCategoryId } = body;
 
     if (!entityId || typeof entityId !== "string") {
       return NextResponse.json({ error: "entityId is required" }, { status: 400 });
@@ -178,6 +189,26 @@ export async function POST(request: NextRequest) {
     }
     if (form990Line !== undefined && form990Line !== null && typeof form990Line !== "string") {
       return NextResponse.json({ error: "form990Line must be a string" }, { status: 400 });
+    }
+
+    // B-172: a Foundation counterpart is ledger.manage-only, like form990Line.
+    // Shape and permission come before any lookup.
+    if (mirrorsCategoryId !== undefined && mirrorsCategoryId !== null) {
+      if (typeof mirrorsCategoryId !== "string" || !isUuid(mirrorsCategoryId)) {
+        return NextResponse.json(
+          { error: mirrorErrorMessage("invalid_mirror"), code: "invalid_mirror" },
+          { status: 400 },
+        );
+      }
+      if (!(await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE))) {
+        return NextResponse.json(
+          {
+            error:
+              "Choosing a Foundation counterpart needs ledger management access. Add the category without one and ask the treasurer to set it.",
+          },
+          { status: 403 },
+        );
+      }
     }
 
     // Manage-only fields (DECISION-115 ruling 6): only a DEVIATION from the
@@ -227,6 +258,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: validation.error }, { status: validation.status });
     }
 
+    const mirrorTargetId: string | null = typeof mirrorsCategoryId === "string" ? mirrorsCategoryId : null;
+    if (mirrorTargetId !== null) {
+      const verdict = await validateMirrorWrite({ id: null, entityId, fundKind, flow }, mirrorTargetId);
+      if (!verdict.ok) {
+        return NextResponse.json({ error: verdict.error, code: verdict.code }, { status: verdict.status });
+      }
+    }
+
     const sortOrder = nextCategorySortOrder(existing.map((c) => c.sortOrder));
     const trimmedName = name.trim();
     const trimmedForm990Line =
@@ -242,6 +281,7 @@ export async function POST(request: NextRequest) {
         sortOrder,
         countsAsGiving: countsAsGiving ?? true,
         form990Line: trimmedForm990Line,
+        mirrorsCategoryId: mirrorTargetId,
         isActive: true,
       })
       .returning();
@@ -256,6 +296,7 @@ export async function POST(request: NextRequest) {
       sortOrder: category.sortOrder,
       countsAsGiving: category.countsAsGiving,
       form990Line: category.form990Line,
+      mirrorsCategoryId: category.mirrorsCategoryId,
       isActive: category.isActive,
     });
   } catch (error) {

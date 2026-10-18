@@ -18,6 +18,10 @@ interface CategoryFlagsDialogProps {
    *  categories on a donations-deductible entity (see
    *  listPendingAcknowledgments(), ledger-queries.ts). */
   entityDonationsDeductible: boolean;
+  /** B-172: the Foundation counterpart of a Public Funds income category. While
+   *  set, "counts as giving" and "receipt not required" are read from it, so
+   *  both inputs are disabled and show its values. null: not mirrored. */
+  mirrorTarget?: AdminCategoryRow | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -44,6 +48,7 @@ export default function CategoryFlagsDialog({
   category,
   fundLabel,
   entityDonationsDeductible,
+  mirrorTarget = null,
   open,
   onOpenChange,
 }: CategoryFlagsDialogProps) {
@@ -56,7 +61,11 @@ export default function CategoryFlagsDialog({
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const showAckNotRequired = category.flow === "income" && entityDonationsDeductible;
+  // Mirrored: the Foundation category owns both flags; show its values read-only.
+  const mirrored = Boolean(mirrorTarget);
+  const showAckNotRequired = category.flow === "income" && (entityDonationsDeductible || mirrored);
+  const shownCounts = mirrorTarget ? mirrorTarget.countsAsGiving : countsAsGiving;
+  const shownAckNotRequired = mirrorTarget ? mirrorTarget.ackNotRequired : ackNotRequired;
 
   useEffect(() => {
     if (!open) return;
@@ -156,12 +165,20 @@ export default function CategoryFlagsDialog({
                 <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
                   <input
                     type="checkbox"
-                    checked={countsAsGiving}
+                    checked={shownCounts}
+                    disabled={mirrored}
                     onChange={(e) => setCountsAsGiving(e.target.checked)}
                     className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue"
                   />
                   Counts toward reported community giving
                 </label>
+                {mirrored && (
+                  <p className="mt-2 text-xs text-blue-800" data-testid="mirror-flag-note">
+                    Read from the Foundation category &ldquo;{mirrorTarget?.name}&rdquo;
+                    {mirrorTarget && !mirrorTarget.isActive ? " (deactivated)" : ""}. To change it here, clear the
+                    counterpart first.
+                  </p>
+                )}
                 <p className="mt-2 text-xs text-gray-500">
                   {loadingImpact
                     ? "Loading dollar impact…"
@@ -176,7 +193,8 @@ export default function CategoryFlagsDialog({
                   <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
                     <input
                       type="checkbox"
-                      checked={ackNotRequired}
+                      checked={shownAckNotRequired}
+                      disabled={mirrored}
                       onChange={(e) => setAckNotRequired(e.target.checked)}
                       className="h-4 w-4 rounded border-gray-300 text-lions-blue focus:outline-none focus:ring-2 focus:ring-lions-blue"
                     />
@@ -184,9 +202,14 @@ export default function CategoryFlagsDialog({
                   </label>
                   <p className="mt-2 text-xs text-gray-500">
                     For race entries, event receipts, grants, and internal transfers — income
-                    that will {ackNotRequired ? "stay off" : "still be queued on"} the
+                    that will {shownAckNotRequired ? "stay off" : "still be queued on"} the
                     Acknowledgments pending list, even at $250 or more.
                   </p>
+                  {mirrored && (
+                    <p className="mt-2 text-xs text-blue-800">
+                      Read from the Foundation category, which issues the receipt after the sweep.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -206,6 +229,12 @@ export default function CategoryFlagsDialog({
                 <p className="mt-1 text-xs text-gray-400 text-right tabular-nums">
                   {form990Line.length}/{MAX_FORM_990_LINE_LENGTH}
                 </p>
+                {mirrorTarget && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    This line is the Club&rsquo;s own and stays editable. The Foundation reports this under:{" "}
+                    {mirrorTarget.form990Line ?? "No Form 990 line"}.
+                  </p>
+                )}
               </div>
 
               <div className="flex justify-end gap-3 pt-1">

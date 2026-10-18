@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getSettings } from "@/lib/ledger-queries";
+import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
 import LedgerSettingsForm from "@/components/admin/ledger/ledger-settings-form";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ export default async function AdminLedgerSettingsPage() {
   const canManage = await hasFeature(session.user.id, FEATURES.LEDGER_MANAGE);
   if (!canManage) redirect("/admin/ledger");
 
-  const settings = await getSettings();
+  const [settings, labels] = await Promise.all([getSettings(), getFundLabels()]);
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -92,7 +93,7 @@ export default async function AdminLedgerSettingsPage() {
       </Link>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        <LedgerSettingsForm settings={settings} />
+        <LedgerSettingsForm settings={settings} labels={labels} />
       </div>
 
       {/* Info note */}

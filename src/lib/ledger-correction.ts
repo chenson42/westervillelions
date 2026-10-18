@@ -17,6 +17,7 @@
 
 import { isUuid } from "@/lib/utils";
 import { fiscalYearLabel } from "@/lib/fiscal-year";
+import { DEFAULT_FUND_LABELS, type FundLabels } from "@/lib/ledger-fund-labels";
 import type { FundMoveDenialCode } from "@/lib/ledger-fund-move-policy";
 import type { CrossEntityStateBlock, MoveTierReason } from "@/lib/ledger-transaction-lock";
 
@@ -392,8 +393,9 @@ export interface CorrectionErrorBody {
 // Copy (one place so the dialog, tests, guide and release note agree)
 // ---------------------------------------------------------------------------
 
-export const RATCHET_WARNING =
-  "This cannot be moved back. Money in the Activity Fund can only leave through a minuted sweep to the Foundation. If you move the wrong entry, the fix is to delete and re-enter it, or to reopen its reconciliation session first if it has been reconciled.";
+export function ratchetWarning(labels: FundLabels = DEFAULT_FUND_LABELS): string {
+  return `This cannot be moved back. Money in ${labels.activity} can only leave through a minuted sweep to the Foundation. If you move the wrong entry, the fix is to delete and re-enter it, or to reopen its reconciliation session first if it has been reconciled.`;
+}
 
 export const RECONCILED_WARNING =
   "This entry was cleared on a bank statement. Moving it changes only the fund; the bank balance and the reconciliation are not affected.";
@@ -401,8 +403,9 @@ export const RECONCILED_WARNING =
 export const PRIOR_FISCAL_YEAR_WARNING =
   "This entry is dated in an earlier fiscal year. Moving it restates that year's fund totals.";
 
-export const AGED_PUBLIC_FUND_WARNING =
-  "This entry is older than the holding period, so the Activity Fund will show the aged-funds warning until it is swept.";
+export function agedPublicFundWarning(labels: FundLabels = DEFAULT_FUND_LABELS): string {
+  return `This entry is older than the holding period, so ${labels.activity} will show the aged-funds warning until it is swept.`;
+}
 
 export const MANAGE_REQUIRED_MESSAGE =
   "Moving a reconciled or prior-year entry needs the Manage Ledger permission.";
@@ -455,11 +458,13 @@ export function sweepNotAutomaticWarning(bankAccountName: string | null): string
 export const CROSS_ENTITY_MANAGE_REQUIRED_MESSAGE =
   "Moving an entry to the other entity needs the Manage Ledger permission (held by the Admin role).";
 
-export const CROSS_ENTITY_RATCHET_RECEIPT_SENT =
-  "This cannot be moved back. The Club's Activity Fund can only send money to the Foundation through a minuted sweep, and because a receipt has already gone to the donor, this entry can no longer be deleted; correcting it later means a refund entry.";
+export function crossEntityRatchetReceiptSent(labels: FundLabels = DEFAULT_FUND_LABELS): string {
+  return `This cannot be moved back. The Club's ${labels.activity} can only send money to the Foundation through a minuted sweep, and because a receipt has already gone to the donor, this entry can no longer be deleted; correcting it later means a refund entry.`;
+}
 
-export const CROSS_ENTITY_RATCHET_NO_RECEIPT =
-  "This cannot be moved back. The Club's Activity Fund can only send money to the Foundation through a minuted sweep. If you move the wrong entry, delete it and enter the gift on the correct register.";
+export function crossEntityRatchetNoReceipt(labels: FundLabels = DEFAULT_FUND_LABELS): string {
+  return `This cannot be moved back. The Club's ${labels.activity} can only send money to the Foundation through a minuted sweep. If you move the wrong entry, delete it and enter the gift on the correct register.`;
+}
 
 export const RECEIPT_SENT_WARNING =
   "A receipt letter was already sent for this gift. It stays attached to the gift and still names the Foundation as the issuer. The ledger does not change what the donor was told; confirm with whoever advises the club on tax matters that the receipt is still the right document before you move a receipted gift.";
@@ -508,6 +513,8 @@ export const CROSS_ENTITY_STATE_COPY: Record<
 
 /** Compose the server-side warning list for ONE destination. Pure. */
 export function buildMoveWarnings(input: {
+  /** Fund display names (DECISION-127); defaults when omitted. */
+  labels?: FundLabels;
   anyDestinationAllowed: boolean;
   tierReasons: Array<"reconciled" | "prior_fiscal_year">;
   sentStatementMonth: string | null;
@@ -523,6 +530,7 @@ export function buildMoveWarnings(input: {
     fiscalYear: number;
   };
 }): NonNullable<MoveDestination["warnings"]> {
+  const labels = input.labels ?? DEFAULT_FUND_LABELS;
   const warnings: NonNullable<MoveDestination["warnings"]> = [];
 
   if (input.crossEntity) {
@@ -531,7 +539,7 @@ export function buildMoveWarnings(input: {
     // so those two warnings never appear here.
     warnings.push({
       code: "ratchet",
-      message: x.receipt === "sent" ? CROSS_ENTITY_RATCHET_RECEIPT_SENT : CROSS_ENTITY_RATCHET_NO_RECEIPT,
+      message: x.receipt === "sent" ? crossEntityRatchetReceiptSent(labels) : crossEntityRatchetNoReceipt(labels),
     });
     if (x.receipt === "sent") {
       warnings.push({ code: "receipt_sent", message: RECEIPT_SENT_WARNING });
@@ -558,7 +566,7 @@ export function buildMoveWarnings(input: {
       });
     }
     if (input.aged) {
-      warnings.push({ code: "aged_public_fund", message: AGED_PUBLIC_FUND_WARNING });
+      warnings.push({ code: "aged_public_fund", message: agedPublicFundWarning(labels) });
     }
     warnings.push({ code: "reports_change", message: reportsChangeWarning(x.fiscalYear) });
     warnings.push({ code: "reconciliation_pending", message: RECONCILIATION_PENDING_WARNING });
@@ -570,7 +578,7 @@ export function buildMoveWarnings(input: {
   }
 
   if (input.anyDestinationAllowed) {
-    warnings.push({ code: "ratchet", message: RATCHET_WARNING });
+    warnings.push({ code: "ratchet", message: ratchetWarning(labels) });
   }
   if (input.tierReasons.includes("reconciled")) {
     warnings.push({ code: "reconciled", message: RECONCILED_WARNING });
@@ -585,7 +593,7 @@ export function buildMoveWarnings(input: {
     });
   }
   if (input.anyDestinationAllowed && input.aged) {
-    warnings.push({ code: "aged_public_fund", message: AGED_PUBLIC_FUND_WARNING });
+    warnings.push({ code: "aged_public_fund", message: agedPublicFundWarning(labels) });
   }
   if (input.anyDestinationAllowed) {
     warnings.push({

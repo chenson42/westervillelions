@@ -25,10 +25,12 @@ import ReceiptWaiverControl from "@/components/admin/ledger/receipt-waiver-contr
 import RowHighlighter from "@/components/admin/ledger/row-highlighter";
 import SweepPrefillLauncher from "@/components/admin/ledger/sweep-prefill-launcher";
 import ReceiptIssuerNote from "@/components/admin/ledger/receipt-issuer-note";
+import { loadMirrorProjections } from "@/lib/ledger-category-queries";
 import { listMoveRegisterContext } from "@/lib/ledger-fund-move-preview";
 import { getLatestFundMove } from "@/lib/ledger-audit";
 import { buildSweepMemo } from "@/lib/ledger-correction";
 import { isUuid } from "@/lib/utils";
+import { buildFundLabels, fundExplainer, fundKindBadge } from "@/lib/ledger-fund-labels";
 import { db } from "@/lib/db";
 import { listPaidReimbursementTransactionIds } from "@/lib/ledger-reimbursement-link";
 import type { LedgerTransaction, LedgerFund, LedgerBankAccount, LedgerCategory } from "@/lib/db/schema";
@@ -245,15 +247,21 @@ export default async function AdminLedgerFundPage({
       ).catch(() => new Set<string>())
     : new Set<string>();
 
+  // Foundation counterparts for the form's hint (B-172); a failure only drops the hint.
+  const mirrorHints = Object.fromEntries(
+    await loadMirrorProjections(categories).catch(() => new Map<string, never>()),
+  );
+
   // Category name lookup
   const categoryNameMap = new Map(categories.map((c) => [c.id, c.name]));
   // Fund name lookup for transfer labels
   const fundNameMap = new Map(allFunds.map((f) => [f.id, f.name]));
 
+  const fundLabels = buildFundLabels(allFunds);
   const basePath = `/admin/ledger/${fundSlug}`;
 
   // "Record sweep now" deep link (DECISION-111 D2): ?sweepFrom=<txnId> opens the
-  // existing sweep form prefilled from a gift just moved into the Activity Fund.
+  // existing sweep form prefilled from a gift just moved into the public fund.
   // Validated here, server-side; anything that does not check out is ignored
   // silently (a stale or hand-edited link just shows the register).
   const nowIso = new Date().toISOString();
@@ -295,7 +303,7 @@ export default async function AdminLedgerFundPage({
       : "All Transactions";
   const pageSubtitle = fund ? (
     <>
-      <span className="capitalize">{fund.kind} fund</span> &bull; {entity.shortName ?? entity.name} &bull;{" "}
+      <span>{fundKindBadge(fund.kind)} fund</span> &bull; {entity.shortName ?? entity.name} &bull;{" "}
       {fiscalYearLabel(fiscalYear)}
     </>
   ) : (
@@ -343,6 +351,9 @@ export default async function AdminLedgerFundPage({
             {canManage && fund && <FundManageDialog fund={fund} />}
           </div>
           <p className="mt-1 text-sm text-gray-500">{pageSubtitle}</p>
+          {fund && fundExplainer(fund.kind, fundLabels) && (
+            <p className="mt-1 text-sm text-gray-500 max-w-2xl">{fundExplainer(fund.kind, fundLabels)}</p>
+          )}
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -378,6 +389,7 @@ export default async function AdminLedgerFundPage({
               budgetLines={budgetLines}
               defaultFundId={fund?.id}
               crossEntityContext={crossEntityContext}
+              mirrorHints={mirrorHints}
               triggerLabel="Record Transaction"
             />
           )}
@@ -573,6 +585,19 @@ export default async function AdminLedgerFundPage({
                             txnDate={txn.txnDate}
                             donorId={txn.donorId ?? null}
                             ackStatus={ackStatusByTxnId.get(txn.id) ?? null}
+                          />
+                        )}
+                        {/* Public Funds income rows (Club): Link donor only. The Foundation
+                            issues the receipt after the sweep, so no Acknowledge here. */}
+                        {!isFoundationEntity && canRecord && !isTransfer && txn.flow === "income" && isPosted &&
+                          allFunds.find((f) => f.id === txn.fundId)?.kind === "activity" && (
+                          <TxnDonorActions
+                            mode="public"
+                            txnId={txn.id}
+                            amountCents={txn.amountCents}
+                            txnDate={txn.txnDate}
+                            donorId={txn.donorId ?? null}
+                            ackStatus={null}
                           />
                         )}
                         {/* Read-only: a receipt issued by the OTHER entity (a gift moved over

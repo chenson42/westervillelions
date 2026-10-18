@@ -17,6 +17,7 @@ import FiscalYearSelector from "@/components/admin/ledger/fiscal-year-selector";
 import FinancialReportSendPanel from "@/components/admin/ledger/financial-report-send-panel";
 import type { GuardrailFlag } from "@/lib/ledger";
 import type { FundReport } from "@/lib/ledger-queries";
+import { fundKindBadge } from "@/lib/ledger-fund-labels";
 
 export const dynamic = "force-dynamic";
 
@@ -59,8 +60,8 @@ function FundCard({ report }: { report: FundReport }) {
       <div className="px-5 pt-5 pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between gap-2">
           <h3 className="font-semibold text-gray-900 text-base">{report.fund.name}</h3>
-          <span className="inline-flex items-center rounded-lg bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 capitalize whitespace-nowrap">
-            {report.fund.kind}
+          <span className="inline-flex items-center rounded-lg bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 whitespace-nowrap">
+            {fundKindBadge(report.fund.kind)}
           </span>
         </div>
       </div>

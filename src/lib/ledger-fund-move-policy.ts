@@ -34,6 +34,7 @@
  * The mutual-exclusion test (no pair allowed by both policies) must stay green.
  */
 
+import { refName } from "@/lib/ledger-fund-labels";
 import type { FundRef } from "@/lib/ledger-transfer-policy";
 
 export type FundMoveDenialCode =
@@ -112,7 +113,7 @@ export function checkFundMove(input: {
     if (from.kind === "activity" && to.kind === "administrative") {
       return deny(
         "away_from_public",
-        "Public money cannot be moved into the Administrative Fund. The Activity Fund's income must stay publicly-sourced.",
+        `Public money cannot be moved into the Administrative Fund. The income of ${refName(from)} must stay publicly-sourced.`,
       );
     }
     return deny("not_permitted", "Income cannot be moved between these funds.");
@@ -131,7 +132,7 @@ export function checkFundMove(input: {
   if (from.kind === "administrative" && to.kind === "activity") {
     return deny(
       "away_from_public",
-      "A Club operating cost cannot be charged to the Activity Fund's public money.",
+      `A Club operating cost cannot be charged to the public money in ${refName(to)}.`,
     );
   }
   return deny("not_permitted", "Expenses cannot be moved between these funds.");

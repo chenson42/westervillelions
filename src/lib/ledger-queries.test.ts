@@ -42,6 +42,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { ACK_MIN_CENTS } from "./ledger";
 import { readFileSync } from "fs";
 import path from "path";
 
@@ -110,6 +111,8 @@ import {
   setBudgetCauseLineAnnotation,
   getPendingApprovals,
   listPendingAcknowledgments,
+  getDonor,
+  donorExists,
   listAcknowledgmentsSummary,
   listUnlinkedGifts,
   getAcknowledgment,
@@ -2533,6 +2536,51 @@ describe("listPendingAcknowledgments — ack_not_required exclusion", () => {
     expect(sql).toContain('"ack_not_required"');
     expect(sql).toContain('"ledger_categories"');
     expect(params).toContain(false);
+  });
+
+  it("the $250 floor is the shared ACK_MIN_CENTS constant, bound as a parameter (B-172)", async () => {
+    mockDbState.queue.push([]);
+
+    await listPendingAcknowledgments();
+
+    const { sql, params } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).not.toContain("25000");
+    expect(params).toContain(ACK_MIN_CENTS);
+    expect(ACK_MIN_CENTS).toBe(25000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDonor / donorExists (B-172): each gift reports whether its entity is
+// tax-deductible, so the donor page total never counts a Public Funds gift.
+// ---------------------------------------------------------------------------
+describe("getDonor — entityDonationsDeductible per gift", () => {
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  const txn = (id: string) => ({ id, flow: "income", amountCents: 1000, donorId: "d-1" });
+
+  it("carries the entity's deductibility onto each giving-history row, false when the entity row is missing", async () => {
+    mockDbState.queue.push(
+      [{ id: "d-1", name: "Example Donor", emails: [] }],
+      [
+        { txn: txn("t1"), fundName: "Charitable Fund", entityName: "Foundation", entityDonationsDeductible: true, ackId: null, ackSentAt: null },
+        { txn: txn("t2"), fundName: "Public Funds", entityName: "Club", entityDonationsDeductible: false, ackId: null, ackSentAt: null },
+        { txn: txn("t3"), fundName: null, entityName: null, entityDonationsDeductible: null, ackId: null, ackSentAt: null },
+      ],
+    );
+
+    const donor = await getDonor("d-1");
+
+    expect(donor!.givingHistory.map((r) => r.entityDonationsDeductible)).toEqual([true, false, false]);
+  });
+
+  it("donorExists is true for a row and false for none", async () => {
+    mockDbState.queue.push([{ id: "d-1" }], []);
+    expect(await donorExists("d-1")).toBe(true);
+    expect(await donorExists("d-2")).toBe(false);
   });
 });
 

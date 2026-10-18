@@ -1,3 +1,4 @@
+import { getActivityFundName } from "./helpers/fund-names";
 import { test, expect, type Page, type APIResponse } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { and, eq, ilike, inArray, notInArray } from "drizzle-orm";
@@ -42,6 +43,12 @@ import { signInAsAdmin } from "./helpers/auth";
  */
 
 test.describe.configure({ mode: "serial" });
+
+// The stored public-fund name (DECISION-127), resolved once per run, never a literal.
+let activityName = "Public Funds";
+test.beforeAll(async () => {
+  activityName = await getActivityFundName();
+});
 test.setTimeout(120_000);
 
 const TAG = "QATEST E2E Approvals History";
@@ -645,7 +652,7 @@ test.describe("Approvals page, Increment 2a (admin viewer)", () => {
     await load(page, "/admin/ledger/approvals");
 
     // Assert: Sweep card names both entities (F2)
-    await expect(visibleRow(page, ids.pendingSweep)).toContainText("Activity Fund (Club) → Charitable Fund (Foundation)");
+    await expect(visibleRow(page, ids.pendingSweep)).toContainText(`${activityName} (Club) → Charitable Fund (Foundation)`);
     await expect(visibleRow(page, ids.pendingNotOwn)).toContainText("Club");
 
     // Act / Assert: Sweep approve dialog

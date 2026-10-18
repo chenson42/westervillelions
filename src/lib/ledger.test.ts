@@ -780,6 +780,24 @@ describe("guardrails", () => {
     expect(flag.policyCite).toMatch(/§6/);
   });
 
+  it("firewall and admin-public-income flag text reads the supplied fund labels, never Activity (DECISION-127)", () => {
+    const state: GuardrailsInput = {
+      ...cleanState,
+      firewallViolations: 1,
+      adminPublicIncomeCount: 1,
+      fundLabels: { administrative: "Administrative Fund", activity: "Community Pool", charitable: "Charitable Fund", scholarship: "Scholarship Fund" },
+    };
+    const text = guardrails(state)
+      .map((f) => `${f.title} ${f.detail}`)
+      .join("\n");
+    expect(text).toContain("Community Pool");
+    expect(text).not.toMatch(/\bActivity\b/);
+    const fallback = guardrails({ ...state, fundLabels: undefined })
+      .map((f) => f.detail)
+      .join("\n");
+    expect(fallback).toContain("Public Funds");
+  });
+
   it("fires all three inc2 flags simultaneously when all counts are non-zero", () => {
     const state: GuardrailsInput = {
       ...cleanState,

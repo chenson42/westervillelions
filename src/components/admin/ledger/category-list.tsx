@@ -9,17 +9,23 @@ import CategoryRenameDialog from "./category-rename-dialog";
 import CategoryFlagsDialog from "./category-flags-dialog";
 import CategoryMergeDialog from "./category-merge-dialog";
 import CategoryDeactivateConfirm from "./category-deactivate-confirm";
+import CategoryMirrorDialog from "./category-mirror-dialog";
 import {
   filterCategoryRows,
   groupCategoriesByFundKind,
   fundKindLabel,
+  mirrorsOf,
   type AdminCategoryRow,
   type EntityCategoryData,
 } from "@/lib/ledger-category-ui";
+import { isPublicFundsIncome } from "@/lib/ledger-category-mirror";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 
 interface CategoryListProps {
   entities: EntityCategoryData[];
   currentFiscalYear: number;
+  /** Stored fund names (DECISION-127), for the counterpart copy. */
+  labels: FundLabels;
 }
 
 /**
@@ -31,7 +37,7 @@ interface CategoryListProps {
  * fetched list, matching every other ~100-row admin list in this app
  * (donor-list.tsx).
  */
-export default function CategoryList({ entities, currentFiscalYear }: CategoryListProps) {
+export default function CategoryList({ entities, currentFiscalYear, labels }: CategoryListProps) {
   const router = useRouter();
   const [activeEntityId, setActiveEntityId] = useState(entities[0]?.id ?? "");
   const [fundKindFilter, setFundKindFilter] = useState("");
@@ -41,12 +47,17 @@ export default function CategoryList({ entities, currentFiscalYear }: CategoryLi
   const [createOpen, setCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<AdminCategoryRow | null>(null);
   const [flagsTarget, setFlagsTarget] = useState<AdminCategoryRow | null>(null);
+  const [mirrorTarget, setMirrorTarget] = useState<AdminCategoryRow | null>(null);
   const [mergeTarget, setMergeTarget] = useState<AdminCategoryRow | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<AdminCategoryRow | null>(null);
   const [reactivateTarget, setReactivateTarget] = useState<AdminCategoryRow | null>(null);
   const [reactivating, setReactivating] = useState(false);
 
   const activeEntity = entities.find((e) => e.id === activeEntityId) ?? entities[0];
+
+  // Both directions of the counterpart link span entities, so they are read
+  // over every entity's rows (B-172).
+  const allRows = useMemo(() => entities.flatMap((e) => e.categories), [entities]);
 
   const filtered = useMemo(() => {
     if (!activeEntity) return [];
@@ -246,6 +257,9 @@ export default function CategoryList({ entities, currentFiscalYear }: CategoryLi
                     label="Income"
                     rows={group.income}
                     fundLabel={fundKindLabel(group.fundKind, activeEntity.funds)}
+                    allRows={allRows}
+                    canMirror={isMirrorSubjectGroup(group.fundKind, activeEntity.donationsDeductible)}
+                    onMirror={setMirrorTarget}
                     onRename={setRenameTarget}
                     onFlags={setFlagsTarget}
                     onMerge={setMergeTarget}
@@ -258,6 +272,9 @@ export default function CategoryList({ entities, currentFiscalYear }: CategoryLi
                     label="Expense"
                     rows={group.expense}
                     fundLabel={fundKindLabel(group.fundKind, activeEntity.funds)}
+                    allRows={allRows}
+                    canMirror={isMirrorSubjectGroup(group.fundKind, activeEntity.donationsDeductible)}
+                    onMirror={setMirrorTarget}
                     onRename={setRenameTarget}
                     onFlags={setFlagsTarget}
                     onMerge={setMergeTarget}
@@ -296,9 +313,22 @@ export default function CategoryList({ entities, currentFiscalYear }: CategoryLi
           category={flagsTarget}
           fundLabel={fundKindLabel(flagsTarget.fundKind, activeEntity.funds)}
           entityDonationsDeductible={activeEntity.donationsDeductible}
+          mirrorTarget={mirrorsOf(allRows, flagsTarget).target}
           open={Boolean(flagsTarget)}
           onOpenChange={(open) => {
             if (!open) setFlagsTarget(null);
+          }}
+        />
+      )}
+
+      {mirrorTarget && (
+        <CategoryMirrorDialog
+          category={mirrorTarget}
+          entities={entities}
+          labels={labels}
+          open={Boolean(mirrorTarget)}
+          onOpenChange={(open) => {
+            if (!open) setMirrorTarget(null);
           }}
         />
       )}
@@ -307,6 +337,7 @@ export default function CategoryList({ entities, currentFiscalYear }: CategoryLi
         <CategoryMergeDialog
           source={mergeTarget}
           allCategories={activeEntity.categories}
+          labels={labels}
           open={Boolean(mergeTarget)}
           onOpenChange={(open) => {
             if (!open) setMergeTarget(null);
@@ -314,7 +345,7 @@ export default function CategoryList({ entities, currentFiscalYear }: CategoryLi
         />
       )}
 
-      <CategoryDeactivateConfirm category={deactivateTarget} onClose={() => setDeactivateTarget(null)} />
+      <CategoryDeactivateConfirm category={deactivateTarget} labels={labels} onClose={() => setDeactivateTarget(null)} />
 
       <ConfirmDialog
         open={Boolean(reactivateTarget)}
@@ -330,10 +361,20 @@ export default function CategoryList({ entities, currentFiscalYear }: CategoryLi
   );
 }
 
+/** Only a Club Public Funds group can hold categories that take a counterpart. */
+function isMirrorSubjectGroup(fundKind: string, entityDonationsDeductible: boolean): boolean {
+  return isPublicFundsIncome({ fundKind, flow: "income", entityDonationsDeductible });
+}
+
 interface CategoryFlowTableProps {
   label: string;
   rows: AdminCategoryRow[];
   fundLabel: string;
+  /** Every entity's rows, for the counterpart lines. */
+  allRows: AdminCategoryRow[];
+  /** True on the Club's Public Funds group (income rows may take a counterpart). */
+  canMirror: boolean;
+  onMirror: (row: AdminCategoryRow) => void;
   onRename: (row: AdminCategoryRow) => void;
   onFlags: (row: AdminCategoryRow) => void;
   onMerge: (row: AdminCategoryRow) => void;
@@ -345,6 +386,9 @@ function CategoryFlowTable({
   label,
   rows,
   fundLabel,
+  allRows,
+  canMirror,
+  onMirror,
   onRename,
   onFlags,
   onMerge,
@@ -386,6 +430,7 @@ function CategoryFlowTable({
                       Inactive
                     </span>
                   )}
+                  <CounterpartLine row={row} allRows={allRows} />
                 </td>
                 <td className="px-3 py-2 text-sm whitespace-nowrap">
                   {row.countsAsGiving ? (
@@ -408,6 +453,15 @@ function CategoryFlowTable({
                         >
                           Rename
                         </button>
+                        {canMirror && row.flow === "income" && (
+                          <button
+                            type="button"
+                            onClick={() => onMirror(row)}
+                            className="text-xs font-medium text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded px-2 py-1"
+                          >
+                            Counterpart
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => onFlags(row)}
@@ -457,4 +511,33 @@ function CategoryFlowTable({
       </div>
     </div>
   );
+}
+
+/**
+ * "Counterpart: X" under a Public Funds income row that has one, and
+ * "Counterpart of: A, B" under a Foundation row that others point at. Both read
+ * from the rows already loaded for every entity.
+ */
+function CounterpartLine({ row, allRows }: { row: AdminCategoryRow; allRows: AdminCategoryRow[] }) {
+  const { target, mirroredBy } = mirrorsOf(allRows, row);
+  if (target) {
+    return (
+      <p className="mt-0.5 text-xs text-blue-800">
+        Counterpart: {target.name}
+        {!target.isActive && " (deactivated)"}
+        {` · ${target.form990Line ?? "No Form 990 line"}`}
+      </p>
+    );
+  }
+  if (row.mirrorsCategoryId) {
+    return <p className="mt-0.5 text-xs text-amber-700">Counterpart not found. Pick another.</p>;
+  }
+  if (mirroredBy.length > 0) {
+    return (
+      <p className="mt-0.5 text-xs text-blue-800">
+        Counterpart of: {mirroredBy.map((m) => m.name).join(", ")}
+      </p>
+    );
+  }
+  return null;
 }

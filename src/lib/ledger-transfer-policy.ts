@@ -38,6 +38,8 @@
  * across environments and fully unit-testable.
  */
 
+import { refName } from "@/lib/ledger-fund-labels";
+
 export type TransferMode = "transfer" | "sweep";
 
 export type TransferDirectionResult =
@@ -49,6 +51,8 @@ export interface FundRef {
   fundId: string;
   /** 'administrative' | 'activity' | 'charitable' | 'scholarship' (forward-compat) */
   kind: string;
+  /** The fund's stored display name (DECISION-127); denial reasons use it, falling back to the kind's default. */
+  name?: string;
 }
 
 /**
@@ -85,14 +89,14 @@ export function checkTransferDirection(
       return {
         allowed: false,
         reason:
-          "Activity Fund is public-facing pass-through money; it cannot be used to fund Club operations. See Activity Fund policy.",
+          `${refName(source)} is public-facing pass-through money; it cannot be used to fund Club operations. See ${refName(source)} policy.`,
       };
     }
     if (source.kind === "administrative" && dest.kind === "activity") {
       return {
         allowed: false,
         reason:
-          "Administrative funds cannot be moved into the Activity Fund — the Activity Fund's income must stay publicly-sourced. See Activity Fund policy.",
+          `Administrative funds cannot be moved into ${refName(dest)}: its income must stay publicly-sourced. See ${refName(dest)} policy.`,
       };
     }
     return {

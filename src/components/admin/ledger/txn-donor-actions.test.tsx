@@ -69,3 +69,31 @@ describe("TxnDonorActions — Acknowledge button gate", () => {
     expect(html).toContain("Mark Sent");
   });
 });
+
+describe('TxnDonorActions mode="public" (Club Public Funds income row)', () => {
+  it("shows Link donor and never Acknowledge, Mark Sent or Ack sent, whatever the ack status", () => {
+    for (const ackStatus of [null, "pending", "sent"] as const) {
+      const html = renderToStaticMarkup(
+        <TxnDonorActions
+          mode="public"
+          txnId="txn-pub"
+          amountCents={50000}
+          txnDate="2026-09-01"
+          donorId={null}
+          ackStatus={ackStatus}
+        />,
+      );
+      expect(html).toContain("Link donor");
+      expect(html).not.toContain("Acknowledge");
+      expect(html).not.toContain("Mark Sent");
+      expect(html).not.toContain("Ack sent");
+    }
+  });
+
+  it("offers Re-link once a donor is linked", () => {
+    const html = renderToStaticMarkup(
+      <TxnDonorActions mode="public" txnId="t" amountCents={100} txnDate="2026-09-01" donorId="d1" ackStatus={null} />,
+    );
+    expect(html).toContain("Re-link");
+  });
+});

@@ -1,12 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
-import DonorForm from "./donor-form";
-import type { LedgerDonor } from "@/lib/db/schema";
-import { formatEmailList } from "@/lib/utils";
+import DonorSearchPanel from "./donor-search-panel";
 
 interface LinkDonorDialogProps {
   txnId: string;
@@ -44,29 +42,7 @@ export default function LinkDonorDialog({
   currentDonorId,
 }: LinkDonorDialogProps) {
   const router = useRouter();
-  const [mode, setMode] = useState<"search" | "create">("search");
-  const [search, setSearch] = useState("");
-  const [donors, setDonors] = useState<LedgerDonor[]>([]);
-  const [loading, setLoading] = useState(false);
   const [linking, setLinking] = useState(false);
-
-  // Fetch donors for search
-  useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    setLoading(true);
-
-    const params = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
-    fetch(`/api/admin/ledger/donors${params}`, { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data) setDonors(data.donors ?? []);
-      })
-      .catch(() => { /* aborted */ })
-      .finally(() => setLoading(false));
-
-    return () => controller.abort();
-  }, [open, search]);
 
   async function linkDonor(donorId: string) {
     setLinking(true);
@@ -142,119 +118,13 @@ export default function LinkDonorDialog({
             </div>
           )}
 
-          {/* Mode toggle */}
-          <div className="flex gap-2 mb-4 mt-3">
-            <button
-              type="button"
-              onClick={() => setMode("search")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-lions-blue ${
-                mode === "search"
-                  ? "bg-lions-blue text-white"
-                  : "border border-gray-300 text-gray-700 hover:bg-gray-50"
-              }`}
-            >
-              Search existing donors
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("create")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-lions-blue ${
-                mode === "create"
-                  ? "bg-lions-blue text-white"
-                  : "border border-gray-300 text-gray-700 hover:bg-gray-50"
-              }`}
-            >
-              Create new donor
-            </button>
-          </div>
-
-          {mode === "search" && (
-            <div className="space-y-3">
-              {/* Search input */}
-              <div className="relative">
-                <svg
-                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth="1.5"
-                  stroke="currentColor"
-                  aria-hidden="true"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-                </svg>
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by name or email…"
-                  className="block w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
-                  aria-label="Search donors"
-                />
-              </div>
-
-              {/* Donor list */}
-              {loading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-12 bg-gray-100 rounded-lg animate-pulse" />
-                  ))}
-                </div>
-              ) : donors.length === 0 ? (
-                <div className="text-center py-6 text-sm text-gray-500">
-                  {search.trim()
-                    ? `No donors match "${search}". Try creating a new donor.`
-                    : "No donors yet. Create one below."}
-                </div>
-              ) : (
-                <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 max-h-64 overflow-y-auto">
-                  {donors.map((donor) => (
-                    <li key={donor.id}>
-                      <button
-                        type="button"
-                        onClick={() => linkDonor(donor.id)}
-                        disabled={linking || donor.id === currentDonorId}
-                        className="w-full text-left px-4 py-3 hover:bg-gray-50 transition flex items-center justify-between gap-3 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-inset"
-                      >
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{donor.name}</p>
-                          {formatEmailList(donor.emails) && (
-                            <p className="text-xs text-gray-400">{formatEmailList(donor.emails)}</p>
-                          )}
-                        </div>
-                        {donor.id === currentDonorId ? (
-                          <span className="text-xs text-gray-400 italic">Current</span>
-                        ) : (
-                          <span className="text-xs font-semibold text-lions-blue">Select</span>
-                        )}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {mode === "create" && (
-            <DonorForm
-              onClose={() => onOpenChange(false)}
-              onSuccess={(newDonor) => {
-                // After creating, immediately link the new donor
-                linkDonor(newDonor.id);
-              }}
-            />
-          )}
-
-          {mode === "search" && (
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => onOpenChange(false)}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
+          <DonorSearchPanel
+            active={open}
+            currentDonorId={currentDonorId}
+            busy={linking}
+            onSelect={(donor) => void linkDonor(donor.id)}
+            onCancel={() => onOpenChange(false)}
+          />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

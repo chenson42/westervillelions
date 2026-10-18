@@ -1,3 +1,4 @@
+import { getActivityFundName } from "./helpers/fund-names";
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { signInAsAdmin } from "./helpers/auth";
 import { db } from "../src/lib/db";
@@ -93,7 +94,9 @@ const OVERVIEW_URL = `/admin/ledger/budgeting?entity=${ENTITY_SLUG}&fy=${TEST_FI
 const LANDMINE_CATEGORY = "Event costs"; // Activity Fund, expense — gets amount + star + note
 const UNBUDGETED_CATEGORY = "Vision screening"; // Activity Fund, expense — star-only, never gets an amount
 const CAUSE_CATEGORY = "Service projects"; // Activity Fund, expense, counts_as_giving=true — cause-line breakdown fixture (must be a giving-eligible category per isCauseEligibleCategory; "Program supplies" is NOT eligible and has no "+ Add cause" control at all)
-const ACTIVITY_FUND_NAME = "Activity Fund";
+// Resolved from the database in the describe's beforeAll (DECISION-127): the stored name is
+// "Activity Fund" on a long-lived dev DB and "Public Funds" on a fresh install.
+let ACTIVITY_FUND_NAME = "Public Funds";
 const ADMIN_FUND_NAME = "Administrative Fund";
 
 const NOTE_TEXT = "Confirm with committee before locking";
@@ -252,6 +255,10 @@ test.describe("Budget Star & Notes — /admin/ledger/budgeting", () => {
   // un-cleaned lock/approval row) BEFORE this run's fixtures are created —
   // guarantees the "un-budgeted category" and "never-before-starred"
   // assumptions the first tests below depend on.
+  test.beforeAll(async () => {
+    ACTIVITY_FUND_NAME = await getActivityFundName();
+  });
+
   test.beforeAll(cleanupFixture);
 
   // Runs regardless of pass/fail (Playwright always executes afterAll hooks

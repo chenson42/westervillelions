@@ -5,6 +5,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import TransactionForm, { type SweepPrefill } from "./transaction-form";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
 import type { BudgetLineOption } from "@/lib/ledger-queries";
+import type { MirrorProjection } from "@/lib/ledger-category-mirror";
 
 interface CrossEntityContext {
   entityId: string;
@@ -62,6 +63,8 @@ interface TransactionFormDialogProps {
   /** Foundation entity's funds/bank accounts/categories — Club pages only.
    *  Enables the "Sweep to Foundation" mode (DECISION-058). */
   crossEntityContext?: CrossEntityContext;
+  /** Category id -> Foundation counterpart (B-172), for the "Foundation-bound" hint. */
+  mirrorHints?: Record<string, MirrorProjection>;
   /** Opens the new-transaction form already in Sweep mode (see TransactionForm). */
   sweepPrefill?: SweepPrefill;
   /** Whether the dialog is controlled externally */
@@ -86,6 +89,7 @@ export default function TransactionFormDialog({
   transferPartnerId,
   defaultFundId,
   crossEntityContext,
+  mirrorHints,
   sweepPrefill,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
@@ -148,6 +152,7 @@ export default function TransactionFormDialog({
             transferPartnerId={transferPartnerId}
             defaultFundId={defaultFundId}
             crossEntityContext={crossEntityContext}
+            mirrorHints={mirrorHints}
             sweepPrefill={sweepPrefill}
           />
         </Dialog.Content>

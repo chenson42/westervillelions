@@ -47,6 +47,7 @@ import {
   type LedgerTransaction,
 } from "@/lib/db/schema";
 import { checkFundMove } from "@/lib/ledger-fund-move-policy";
+import { buildFundLabels } from "@/lib/ledger-fund-labels";
 import {
   LOCK_COPY,
   crossEntityBlockKind,
@@ -201,8 +202,8 @@ export async function evaluateDestination(args: {
   // 4. direction policy
   const decision = checkFundMove({
     flow: row.flow,
-    from: { entityId: source.entityId, fundId: source.id, kind: source.kind },
-    to: { entityId: dest.entityId, fundId: dest.id, kind: dest.kind },
+    from: { entityId: source.entityId, fundId: source.id, kind: source.kind, name: source.name },
+    to: { entityId: dest.entityId, fundId: dest.id, kind: dest.kind, name: dest.name },
   });
   if (!decision.allowed) {
     const status = decision.code === "same_fund" ? 409 : 403;
@@ -331,6 +332,7 @@ export async function previewFundMove(args: {
     .from(ledgerFunds)
     .where(eq(ledgerFunds.isActive, true))
     .orderBy(asc(ledgerFunds.name));
+  const labels = buildFundLabels(allFunds);
   const candidates = allFunds
     .filter((f) => f.id !== source.id)
     .sort((a, b) => {
@@ -489,6 +491,7 @@ export async function previewFundMove(args: {
         defaultCategoryId: defaultCategory?.id ?? null,
         impact: { crossEntity: false, sourceFund, destFund, bankAccount: { name: bankName, changeCents: 0 } },
         warnings: buildMoveWarnings({
+          labels,
           anyDestinationAllowed: true,
           tierReasons: ev.reasons.filter(
             (r): r is "reconciled" | "prior_fiscal_year" => r !== "cross_entity",
@@ -522,6 +525,7 @@ export async function previewFundMove(args: {
       },
       duplicateCandidates: duplicates,
       warnings: buildMoveWarnings({
+        labels,
         anyDestinationAllowed: true,
         tierReasons: [],
         sentStatementMonth,

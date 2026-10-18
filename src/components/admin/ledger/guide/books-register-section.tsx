@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 
 const linkClass =
   "text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded";
@@ -13,16 +14,21 @@ const linkClass =
  * and public gift descriptions (v1.31) as subsections rather than standalone
  * files, per the tech-lead design.
  */
-export default function BooksRegisterSection() {
+export default function BooksRegisterSection({ labels }: { labels: FundLabels }) {
   return (
     <section id="books-register" className="bg-white rounded-2xl shadow-sm overflow-hidden p-6">
       <h2 className="text-xl font-bold text-gray-900">Books &amp; the Register</h2>
       <p className="mt-2 text-sm text-gray-500">
-        Each entity (Club/Administrative and Foundation) tracks its own <span className="font-semibold">funds</span> — Administrative,
-        Activity, Charitable, or Scholarship — and every dollar in or out is a <span className="font-semibold">transaction</span> recorded
+        Each entity (Club/Administrative and Foundation) tracks its own <span className="font-semibold">funds</span> — {labels.administrative},
+        {labels.activity}, {labels.charitable}, or {labels.scholarship} — and every dollar in or out is a <span className="font-semibold">transaction</span> recorded
         against one of those funds. A transaction that&rsquo;s awaiting board approval (see Reimbursements
         &amp; Approvals below) is <span className="font-semibold">pending</span> and excluded from posted
         balances until it&rsquo;s approved; everything else is <span className="font-semibold">posted</span>.
+      </p>
+
+      <p className="mt-2 text-sm text-gray-500">
+        {labels.activity} is the fund Lions International calls the &ldquo;Activities account&rdquo;:
+        money raised from the public, held for charitable use.
       </p>
 
       <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">
@@ -116,9 +122,9 @@ export default function BooksRegisterSection() {
       <p className="mt-2 text-sm text-gray-700">
         If a gift was recorded under the wrong fund, use <span className="font-semibold">Move</span> on
         its row instead of deleting and re-entering it. Move handles two cases:{" "}
-        <span className="font-semibold">income from the Administrative Fund to the Activity Fund</span>{" "}
+        <span className="font-semibold">income from the {labels.administrative} to {labels.activity}</span>{" "}
         within the Club, and{" "}
-        <span className="font-semibold">income from the Foundation&rsquo;s Charitable Fund to the Club&rsquo;s Activity Fund</span>{" "}
+        <span className="font-semibold">income from the Foundation&rsquo;s {labels.charitable} to the Club&rsquo;s {labels.activity}</span>{" "}
         (described below). Either way the entry keeps its date, party and amount, and the change is
         logged with your reason on the Compliance page.
       </p>
@@ -138,7 +144,7 @@ export default function BooksRegisterSection() {
           before and after.
         </li>
         <li>
-          <span className="font-semibold">A move cannot be undone.</span> Money in the Activity Fund
+          <span className="font-semibold">A move cannot be undone.</span> Money in {labels.activity}
           leaves only through a minuted sweep. If you move the wrong entry within the Club, delete and
           re-enter it (or reopen its reconciliation session first if it was reconciled).
         </li>
@@ -170,7 +176,7 @@ export default function BooksRegisterSection() {
       <p className="mt-2 text-sm text-gray-700">
         Use this when a gift was recorded on the Foundation&rsquo;s books but the money actually landed
         in a Club bank account. Choose <span className="font-semibold">Move</span> on the
-        Foundation&rsquo;s income entry, pick the Activity Fund, pick the Club bank account the money
+        Foundation&rsquo;s income entry, pick {labels.activity}, pick the Club bank account the money
         landed in (the dialog never guesses unless the Club has only one active account), and choose a
         category.
       </p>

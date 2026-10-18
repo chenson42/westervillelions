@@ -10,7 +10,7 @@ import { checkTransferDirection, type FundRef } from "./ledger-transfer-policy";
 
 const clubAdmin: FundRef = { entityId: "club", fundId: "club-admin", kind: "administrative" };
 const clubAdminPettyCash: FundRef = { entityId: "club", fundId: "club-admin", kind: "administrative" };
-const clubActivity: FundRef = { entityId: "club", fundId: "club-activity", kind: "activity" };
+const clubActivity: FundRef = { entityId: "club", fundId: "club-activity", kind: "activity", name: "Activity Fund" };
 const foundationCharitable: FundRef = {
   entityId: "foundation",
   fundId: "foundation-charitable",
@@ -45,8 +45,29 @@ describe("checkTransferDirection", () => {
     expect(result).toEqual({
       allowed: false,
       reason:
-        "Administrative funds cannot be moved into the Activity Fund — the Activity Fund's income must stay publicly-sourced. See Activity Fund policy.",
+        "Administrative funds cannot be moved into Activity Fund: its income must stay publicly-sourced. See Activity Fund policy.",
     });
+  });
+
+  it("reasons use the descriptor's stored name, and the default name when it is absent", () => {
+    const renamed: FundRef = { ...clubActivity, name: "Community Pool" };
+    const noName: FundRef = { entityId: "club", fundId: "club-activity", kind: "activity" };
+    const texts = [
+      checkTransferDirection(renamed, clubAdmin),
+      checkTransferDirection(clubAdmin, renamed),
+    ].map((r) => (r.allowed ? "" : r.reason));
+    for (const t of texts) {
+      expect(t).toContain("Community Pool");
+      expect(t).not.toMatch(/Activity/);
+    }
+    const fallback = [
+      checkTransferDirection(noName, clubAdmin),
+      checkTransferDirection(clubAdmin, noName),
+    ].map((r) => (r.allowed ? "" : r.reason));
+    for (const t of fallback) {
+      expect(t).toContain("Public Funds");
+      expect(t).not.toMatch(/Activity/);
+    }
   });
 
   it("same entity, any other kind pair (forward-compat) → blocked with the generic reason", () => {

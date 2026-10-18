@@ -39,6 +39,15 @@ vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
 vi.mock("@/lib/ledger-queries", () => ({
   getSettings: vi.fn(),
   getEmailsForFeature: vi.fn(),
+  donorExists: vi.fn(),
+}));
+vi.mock("@/lib/ledger-fund-labels-queries", () => ({
+  getFundLabels: vi.fn(async () => ({
+    administrative: "Administrative Fund",
+    activity: "Public Funds",
+    charitable: "Charitable Fund",
+    scholarship: "Scholarship Fund",
+  })),
 }));
 vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(), sendBulkMemberEmail: vi.fn() }));
 vi.mock("@/lib/board-positions", () => ({ resolveTreasurer: vi.fn() }));
@@ -47,6 +56,8 @@ const { mockDbState } = vi.hoisted(() => ({
   mockDbState: {
     selectQueue: [] as unknown[][],
     insertReturning: [{ id: "txn-1" }] as { id: string }[],
+    /** Captured from the LAST single-row db.insert(...).values(...) call. */
+    lastInsertValues: null as Record<string, unknown> | null,
     /** Captured from the LAST db.transaction(...) call's tx.insert(...).values([...]) — the two-leg array. */
     lastTransactionInsertValues: null as Record<string, unknown>[] | null,
     /** What the pair insert's .returning() yields; null = one expense and one income row. */
@@ -71,9 +82,10 @@ vi.mock("@/lib/db", () => ({
       }),
     })),
     insert: vi.fn(() => ({
-      values: () => ({
-        returning: () => Promise.resolve(mockDbState.insertReturning),
-      }),
+      values: (v: Record<string, unknown>) => {
+        mockDbState.lastInsertValues = v;
+        return { returning: () => Promise.resolve(mockDbState.insertReturning) };
+      },
     })),
     transaction: vi.fn(async (cb: (tx: unknown) => unknown) => {
       const tx = {
@@ -101,7 +113,7 @@ vi.mock("@/lib/db", () => ({
 import { POST } from "./route";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
-import { getSettings, getEmailsForFeature } from "@/lib/ledger-queries";
+import { getSettings, getEmailsForFeature, donorExists } from "@/lib/ledger-queries";
 import { sendBulkMemberEmail } from "@/lib/email";
 import { resolveTreasurer } from "@/lib/board-positions";
 import { db } from "@/lib/db";
@@ -128,7 +140,7 @@ const VALID_NORMAL_BODY = {
 const CLUB_ENTITY = "entity-club";
 const FOUNDATION_ENTITY = "entity-foundation";
 
-const CLUB_ACTIVITY_FUND = { id: "fund-activity", kind: "activity", entityId: CLUB_ENTITY };
+const CLUB_ACTIVITY_FUND = { id: "fund-activity", kind: "activity", entityId: CLUB_ENTITY, name: "Activity Fund" };
 const CLUB_ADMIN_FUND = { id: "fund-admin", kind: "administrative", entityId: CLUB_ENTITY };
 const FOUNDATION_CHARITABLE_FUND = {
   id: "fund-charitable",
@@ -705,5 +717,90 @@ describe("POST /api/admin/ledger/transactions — review link and expense-leg id
     expect(data.status).toBe("pending");
     expect(sentHtml()).toMatch(/href="[^"]*\/admin\/ledger\/approvals"/);
     expect(sentHtml()).not.toContain("?txn=");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// donorId on create (B-172): income into Public Funds or a Foundation
+// charitable fund only
+// ---------------------------------------------------------------------------
+
+describe("POST /api/admin/ledger/transactions — donorId on create (B-172)", () => {
+  const DONOR_ID = "d0000000-0000-4000-8000-000000000001";
+  const BANK = { id: VALID_NORMAL_BODY.bankAccountId, entityId: "entity-1", isActive: true };
+  const fund = (kind: string) => ({ id: "fund-1", kind, entityId: "entity-1" });
+  const income = (extra: Record<string, unknown> = {}) => ({
+    ...VALID_NORMAL_BODY,
+    flow: "income" as const,
+    party: "Example Donor",
+    ...extra,
+  });
+
+  beforeEach(() => {
+    mockDbState.lastInsertValues = null;
+    vi.mocked(donorExists).mockReset();
+    vi.mocked(donorExists).mockResolvedValue(true);
+    vi.mocked(db.insert).mockClear();
+  });
+
+  it.each(["activity", "charitable"])("stores the donor on %s income", async (kind) => {
+    mockDbState.selectQueue.push([fund(kind)], [BANK]);
+
+    const res = await POST(makeRequest(income({ donorId: DONOR_ID })));
+
+    expect(res.status).toBe(201);
+    expect(mockDbState.lastInsertValues?.donorId).toBe(DONOR_ID);
+    expect(donorExists).toHaveBeenCalledWith(DONOR_ID);
+  });
+
+  it("an unknown donor is 404 donor_not_found and nothing is inserted", async () => {
+    vi.mocked(donorExists).mockResolvedValue(false);
+    mockDbState.selectQueue.push([fund("activity")], [BANK]);
+
+    const res = await POST(makeRequest(income({ donorId: DONOR_ID })));
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("donor_not_found");
+    expect(vi.mocked(db.insert)).not.toHaveBeenCalled();
+  });
+
+  it("expense in a public fund is 400 donor_not_applicable, and the donor is never looked up", async () => {
+    mockDbState.selectQueue.push([fund("activity")], [BANK]);
+
+    const res = await POST(makeRequest({ ...VALID_NORMAL_BODY, flow: "expense", donorId: DONOR_ID }));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("donor_not_applicable");
+    expect(donorExists).not.toHaveBeenCalled();
+    expect(vi.mocked(db.insert)).not.toHaveBeenCalled();
+  });
+
+  it.each(["administrative", "scholarship"])("income in a %s fund is 400 donor_not_applicable", async (kind) => {
+    mockDbState.selectQueue.push([fund(kind)], [BANK]);
+
+    const res = await POST(makeRequest(income({ donorId: DONOR_ID })));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("donor_not_applicable");
+    expect(vi.mocked(db.insert)).not.toHaveBeenCalled();
+  });
+
+  it("a malformed donorId is 400 before any lookup", async () => {
+    mockDbState.selectQueue.push([fund("activity")], [BANK]);
+
+    const res = await POST(makeRequest(income({ donorId: "not-a-uuid" })));
+
+    expect(res.status).toBe(400);
+    expect(donorExists).not.toHaveBeenCalled();
+  });
+
+  it("omitted or null donorId behaves exactly as before, on any fund and flow", async () => {
+    mockDbState.selectQueue.push([fund("administrative")], [BANK]);
+    expect((await POST(makeRequest(VALID_NORMAL_BODY))).status).toBe(201);
+    expect(mockDbState.lastInsertValues?.donorId).toBeNull();
+
+    mockDbState.selectQueue.push([fund("administrative")], [BANK]);
+    expect((await POST(makeRequest({ ...VALID_NORMAL_BODY, donorId: null }))).status).toBe(201);
+    expect(donorExists).not.toHaveBeenCalled();
   });
 });

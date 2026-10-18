@@ -5,6 +5,8 @@ import {
   getMergeDestinationOptions,
   fundKindLabel,
   isPriorFiscalYearMergeRefusal,
+  mirrorsOf,
+  mirrorTargetOptions,
   type AdminCategoryRow,
 } from "./ledger-category-ui";
 
@@ -19,6 +21,7 @@ function row(overrides: Partial<AdminCategoryRow> = {}): AdminCategoryRow {
     countsAsGiving: true,
     ackNotRequired: false,
     form990Line: null,
+    mirrorsCategoryId: null,
     ...overrides,
   };
 }
@@ -212,5 +215,49 @@ describe("isPriorFiscalYearMergeRefusal", () => {
         "Both 'Awards' and 'Member recognition' have FY2026 budget rows — resolve by hand.",
       ),
     ).toBe(false);
+  });
+});
+
+describe("mirrorsOf (B-172)", () => {
+  it("finds the target a category mirrors and the categories that mirror it", () => {
+    const foundation = row({ id: "f1", fundKind: "charitable", flow: "income" });
+    const clubA = row({ id: "c1", flow: "income", mirrorsCategoryId: "f1" });
+    const clubB = row({ id: "c2", flow: "income", mirrorsCategoryId: "f1" });
+    const loose = row({ id: "c3", flow: "income" });
+    const rows = [foundation, clubA, clubB, loose];
+    expect(mirrorsOf(rows, clubA).target?.id).toBe("f1");
+    expect(mirrorsOf(rows, foundation).mirroredBy.map((r) => r.id).sort()).toEqual(["c1", "c2"]);
+    expect(mirrorsOf(rows, loose)).toEqual({ target: null, mirroredBy: [] });
+  });
+
+  it("a target outside the loaded set is null, not an error", () => {
+    const orphan = row({ id: "c9", flow: "income", mirrorsCategoryId: "gone" });
+    expect(mirrorsOf([orphan], orphan).target).toBeNull();
+  });
+});
+
+describe("mirrorTargetOptions (B-172)", () => {
+  const club = {
+    donationsDeductible: false,
+    categories: [row({ id: "club-ch", fundKind: "charitable", flow: "income" })],
+  };
+  const foundation = {
+    donationsDeductible: true,
+    categories: [
+      row({ id: "f-ok", name: "Public donations", fundKind: "charitable", flow: "income" }),
+      row({ id: "f-inactive", fundKind: "charitable", flow: "income", isActive: false }),
+      row({ id: "f-expense", fundKind: "charitable", flow: "expense" }),
+      row({ id: "f-scholarship", fundKind: "scholarship", flow: "income" }),
+      row({ id: "f-self", fundKind: "charitable", flow: "income" }),
+    ],
+  };
+
+  it("offers only active Foundation charitable income categories, never a Club row or the subject", () => {
+    const ids = mirrorTargetOptions([club, foundation], "f-self").map((r) => r.id);
+    expect(ids).toEqual(["f-ok"]);
+  });
+
+  it("is empty when the Foundation has no eligible category", () => {
+    expect(mirrorTargetOptions([club], "x")).toEqual([]);
   });
 });

@@ -90,7 +90,6 @@ import {
   ledgerTransactions,
   ledgerFunds,
   ledgerCategories,
-  ledgerDonors,
   ledgerAcknowledgments,
   ledgerAuditLog,
   ledgerBankAccounts,
@@ -100,7 +99,7 @@ import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { RECEIPT_KEY_REGEX, getReceiptStorage } from "@/lib/receipt-storage";
 import { getFiscalYear } from "@/lib/fiscal-year";
-import { getBudgetLineForLinkValidation } from "@/lib/ledger-queries";
+import { getBudgetLineForLinkValidation, donorExists } from "@/lib/ledger-queries";
 import { getMatchForTransaction } from "@/lib/reconciliation-queries";
 import { validateBankAccountForEntity } from "@/lib/ledger-transaction-validation";
 import { isUuid } from "@/lib/utils";
@@ -503,12 +502,7 @@ export async function PATCH(
       if (body.donorId === null) {
         update.donorId = null;
       } else if (typeof body.donorId === "string") {
-        const donorRows = await db
-          .select({ id: ledgerDonors.id })
-          .from(ledgerDonors)
-          .where(eq(ledgerDonors.id, body.donorId))
-          .limit(1);
-        if (donorRows.length === 0) {
+        if (!(await donorExists(body.donorId))) {
           return NextResponse.json({ error: "Donor not found" }, { status: 400 });
         }
         update.donorId = body.donorId;

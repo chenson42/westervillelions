@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import type { LedgerSettings } from "@/lib/db/schema";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 
 interface LedgerSettingsFormProps {
+  /** Stored fund names (DECISION-127). */
+  labels: FundLabels;
   settings: LedgerSettings;
 }
 
@@ -14,7 +17,7 @@ interface LedgerSettingsFormProps {
  * holdingPeriodWarnDays is stored and edited directly as an integer number of days.
  * LEDGER_MANAGE gate is enforced at the page level.
  */
-export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps) {
+export default function LedgerSettingsForm({ settings, labels }: LedgerSettingsFormProps) {
   // Display values (dollars, two decimal places)
   const [disbDollars, setDisbDollars] = useState(
     (settings.disbApprovalThresholdCents / 100).toFixed(2)
@@ -153,8 +156,8 @@ export default function LedgerSettingsForm({ settings }: LedgerSettingsFormProps
           Public fund holding period (days)
         </label>
         <p className="text-xs text-gray-500 mb-2">
-          Controls the aged public-fund guardrail. A warning fires when an Activity, Charitable, or
-          Scholarship fund is holding money that has been on hand longer than this many days. Money
+          Controls the aged public-fund guardrail. A warning fires when {labels.activity}, {labels.charitable}, or
+          {labels.scholarship} is holding money that has been on hand longer than this many days. Money
           is counted oldest-first: the opening balance and older income are treated as spent before
           newer income. LCI guidance calls for public funds to return to public use within a
           reasonable time — usually one year (365 days).

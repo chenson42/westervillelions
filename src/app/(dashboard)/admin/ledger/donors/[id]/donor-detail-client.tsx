@@ -11,6 +11,7 @@ import AcknowledgeDialog from "@/components/admin/ledger/acknowledge-dialog";
 import MarkSentDialog from "@/components/admin/ledger/mark-sent-dialog";
 import LinkDonorDialog from "@/components/admin/ledger/link-donor-dialog";
 import type { DonorWithGivingHistory } from "@/lib/ledger-queries";
+import { sumDeductibleGiving } from "@/lib/ledger-donor-giving";
 
 interface DonorDetailClientProps {
   donor: DonorWithGivingHistory;
@@ -78,10 +79,16 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
     }
   }
 
-  const totalGiving = donor.givingHistory.reduce(
-    (sum, row) => sum + row.txn.amountCents,
-    0,
+  // Only gifts to a tax-deductible entity count (B-172): a gift still in Public
+  // Funds is not yet a Foundation gift, and its Foundation copy will carry the
+  // same donor, so summing both would count it twice.
+  const totalGiving = sumDeductibleGiving(
+    donor.givingHistory.map((row) => ({
+      amountCents: row.txn.amountCents,
+      entityDonationsDeductible: row.entityDonationsDeductible,
+    })),
   );
+  const hasPublicRows = donor.givingHistory.some((row) => !row.entityDonationsDeductible);
 
   return (
     <div className="space-y-6">
@@ -148,6 +155,9 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
               <p className="text-lg font-bold text-green-700 tabular-nums mt-0.5">
                 {formatDollars(totalGiving)}
               </p>
+              {hasPublicRows && (
+                <p className="text-xs text-gray-500 mt-0.5">Foundation gifts only</p>
+              )}
             </div>
             <div>
               <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">Donations</p>
@@ -214,6 +224,11 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
                       <td className="px-4 py-3 text-sm text-gray-700">
                         <div>{row.txn.fundName}</div>
                         <div className="text-xs text-gray-400">{row.txn.entityName}</div>
+                        {!row.entityDonationsDeductible && (
+                          <div className="mt-0.5 text-xs text-amber-700">
+                            {row.txn.fundName}, not yet a Foundation gift
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 max-w-[180px]">
                         <div className="truncate">{row.txn.party ?? <span className="text-gray-300">—</span>}</div>
@@ -260,7 +275,7 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
                                 the $250 UI-affordance threshold is decided;
                                 nothing here should ever restate that
                                 inline again. */}
-                            {row.ackStatus === null && (
+                            {row.entityDonationsDeductible && row.ackStatus === null && (
                               <button
                                 type="button"
                                 onClick={() => setAcknowledgeFor(row.txn.id)}
@@ -269,7 +284,7 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
                                 Acknowledge
                               </button>
                             )}
-                            {row.ackStatus === "pending" && row.ackId && (
+                            {row.entityDonationsDeductible && row.ackStatus === "pending" && row.ackId && (
                               <Link
                                 href={`/admin/ledger/donors/letters?ackId=${row.ackId}`}
                                 className="border-2 border-lions-blue text-lions-blue px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[32px] inline-flex items-center"
@@ -277,7 +292,7 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
                                 Generate Letter
                               </Link>
                             )}
-                            {row.ackStatus === "pending" && (
+                            {row.entityDonationsDeductible && row.ackStatus === "pending" && (
                               <button
                                 type="button"
                                 onClick={() => setMarkSentFor(row.txn.id)}

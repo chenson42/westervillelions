@@ -107,6 +107,8 @@ import {
   updateCategory,
   determineCategoryUpdateAction,
   mergeCategories,
+  toCategoryDTO,
+  validateMirrorWrite,
 } from "./ledger-category-queries";
 import { assertBudgetUnlocked } from "./ledger-queries";
 import { ledgerAuditLog, ledgerBudgets } from "./db/schema";
@@ -144,6 +146,7 @@ function category(overrides: Partial<Record<string, unknown>> = {}) {
     isActive: true,
     countsAsGiving: true,
     ackNotRequired: false,
+    mirrorsCategoryId: null,
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-01"),
     ...overrides,
@@ -171,6 +174,88 @@ describe("determineCategoryUpdateAction", () => {
 
   it("returns category_flags_updated when neither name nor isActive changed", () => {
     expect(determineCategoryUpdateAction({})).toBe("category_flags_updated");
+  });
+
+  it("returns category_mirror_changed for a counterpart change, including a clear (null)", () => {
+    expect(determineCategoryUpdateAction({ mirrorsCategoryId: "f-1" })).toBe("category_mirror_changed");
+    expect(determineCategoryUpdateAction({ mirrorsCategoryId: null })).toBe("category_mirror_changed");
+  });
+
+  it("precedence is name, then isActive, then mirror, then flags", () => {
+    expect(determineCategoryUpdateAction({ name: "x", isActive: false, mirrorsCategoryId: "f" })).toBe("category_renamed");
+    expect(determineCategoryUpdateAction({ isActive: true, mirrorsCategoryId: "f" })).toBe("category_reactivated");
+    expect(determineCategoryUpdateAction({ mirrorsCategoryId: "f" })).toBe("category_mirror_changed");
+  });
+});
+
+describe("updateCategory — counterpart (B-172)", () => {
+  it("sets the counterpart and writes category_mirror_changed with ids only", async () => {
+    const existing = category({ flow: "income" });
+    mockDbState.selectQueue.push([existing]);
+    mockDbState.updateReturningQueue.push([{ ...existing, mirrorsCategoryId: "f-1" }]);
+
+    const result = await updateCategory("cat-1", { mirrorsCategoryId: "f-1" }, "user-1");
+
+    expect(result.ok).toBe(true);
+    expect(mockDbState.updateCalls[0].values.mirrorsCategoryId).toBe("f-1");
+    expect(mockDbState.insertCalls).toHaveLength(1);
+    const audit = mockDbState.insertCalls[0].values;
+    expect(audit.action).toBe("category_mirror_changed");
+    expect(audit.targetCategoryId).toBe("cat-1");
+    expect(JSON.parse(audit.before as string)).toEqual({ mirrorsCategoryId: null });
+    expect(JSON.parse(audit.after as string)).toEqual({ mirrorsCategoryId: "f-1" });
+    expect(audit.details).toBeNull();
+  });
+
+  it("clears the counterpart (null) and audits the change", async () => {
+    const existing = category({ flow: "income", mirrorsCategoryId: "f-1" });
+    mockDbState.selectQueue.push([existing]);
+    mockDbState.updateReturningQueue.push([{ ...existing, mirrorsCategoryId: null }]);
+
+    await updateCategory("cat-1", { mirrorsCategoryId: null }, "user-1");
+
+    expect(mockDbState.updateCalls[0].values.mirrorsCategoryId).toBeNull();
+    const audit = mockDbState.insertCalls[0].values;
+    expect(audit.action).toBe("category_mirror_changed");
+    expect(JSON.parse(audit.after as string)).toEqual({ mirrorsCategoryId: null });
+  });
+
+  it("setting the stored value again is a no-op: no UPDATE, no audit row", async () => {
+    const existing = category({ flow: "income", mirrorsCategoryId: "f-1" });
+    mockDbState.selectQueue.push([existing]);
+
+    const result = await updateCategory("cat-1", { mirrorsCategoryId: "f-1" }, "user-1");
+
+    expect(result.ok).toBe(true);
+    expect(mockDbState.updateCalls).toHaveLength(0);
+    expect(mockDbState.insertCalls).toHaveLength(0);
+  });
+
+  it("a rename alongside a counterpart change keeps the rename action but records both fields", async () => {
+    const existing = category({ flow: "income", name: "Gala" });
+    mockDbState.selectQueue.push([existing]);
+    mockDbState.updateReturningQueue.push([{ ...existing, name: "Gala 2", mirrorsCategoryId: "f-1" }]);
+
+    await updateCategory("cat-1", { name: "Gala 2", mirrorsCategoryId: "f-1" }, "user-1");
+
+    const audit = mockDbState.insertCalls[0].values;
+    expect(audit.action).toBe("category_renamed");
+    expect(Object.keys(JSON.parse(audit.after as string)).sort()).toEqual(["mirrorsCategoryId", "name"]);
+  });
+
+  it("the DTO carries the counterpart id and the read-only projection", () => {
+    const projection = {
+      id: "f-1",
+      name: "Public donations",
+      isActive: true,
+      countsAsGiving: true,
+      ackNotRequired: false,
+      form990Line: null,
+    };
+    const dto = toCategoryDTO(category({ flow: "income", mirrorsCategoryId: "f-1" }) as never, projection);
+    expect(dto.mirrorsCategoryId).toBe("f-1");
+    expect(dto.mirror).toEqual(projection);
+    expect(toCategoryDTO(category() as never).mirror).toBeNull();
   });
 });
 
@@ -985,24 +1070,24 @@ describe("getCategoryImpact", () => {
 
   it("test 9a: postedGivingCents is 0 without a giving query for an income-flow category", async () => {
     const cat = category({ id: "cat-1", flow: "income", fundKind: "activity" });
-    mockDbState.selectQueue.push([cat], [{ n: 0 }], []);
+    mockDbState.selectQueue.push([cat], [{ n: 0 }], [], []);
 
     const impact = await getCategoryImpact("cat-1");
 
     expect(impact!.transactions.postedGivingCents).toBe(0);
-    // Only 3 selects consumed (category, txn count, budget rows) — no giving query.
+    // Only 4 selects consumed (category, txn count, budget rows, mirroredBy) — no giving query.
     expect(mockDbState.selectQueue).toHaveLength(0);
-    expect(mockDbState.wheres).toHaveLength(3);
+    expect(mockDbState.wheres).toHaveLength(4);
   });
 
   it("test 9b: postedGivingCents is 0 without a giving query for an administrative-fund category", async () => {
     const cat = category({ id: "cat-1", flow: "expense", fundKind: "administrative" });
-    mockDbState.selectQueue.push([cat], [{ n: 0 }], []);
+    mockDbState.selectQueue.push([cat], [{ n: 0 }], [], []);
 
     const impact = await getCategoryImpact("cat-1");
 
     expect(impact!.transactions.postedGivingCents).toBe(0);
-    expect(mockDbState.wheres).toHaveLength(3);
+    expect(mockDbState.wheres).toHaveLength(4);
   });
 
   it("test 9c: postedGivingCents is queried with getPhilanthropy's exact filter for an eligible category", async () => {
@@ -1033,5 +1118,158 @@ describe("getCategoryImpact", () => {
       "scholarship",
     ]);
     expect(sql).toContain("is null"); // transferGroupId IS NULL, no bound param
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-172: merge re-points counterpart links; impact reports them
+// ---------------------------------------------------------------------------
+
+describe("mergeCategories — counterpart links (B-172)", () => {
+  const src = (o: Record<string, unknown> = {}) => category({ id: "src", name: "Gala", fundKind: "charitable", flow: "income", ...o });
+  const dst = (o: Record<string, unknown> = {}) => category({ id: "dst", name: "Gala (new)", fundKind: "charitable", flow: "income", ...o });
+
+  it("refuses 409 mirror_conflict when both have a counterpart and they differ, before any write", async () => {
+    mockDbState.selectQueue.push([src({ mirrorsCategoryId: "f-1" })], [dst({ mirrorsCategoryId: "f-2" })]);
+
+    const result = await mergeCategories({ sourceId: "src", destinationId: "dst", confirm: true, actorUserId: "u" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(409);
+      expect(result.code).toBe("mirror_conflict");
+    }
+    expect(mockDbState.updateCalls).toHaveLength(0);
+    expect(mockDbState.insertCalls).toHaveLength(0);
+  });
+
+  it("the same counterpart on both, or only one side, is not a conflict", async () => {
+    for (const [a, b] of [["f-1", "f-1"], ["f-1", null], [null, "f-1"]] as const) {
+      resetMockDb();
+      mockDbState.selectQueue.push([src({ mirrorsCategoryId: a })], [dst({ mirrorsCategoryId: b })], [{ n: 0 }], [], [], [{ n: 0 }]);
+      const result = await mergeCategories({ sourceId: "src", destinationId: "dst", confirm: false, actorUserId: "u" });
+      expect(result.ok).toBe(true);
+    }
+  });
+
+  it("the plan reports mirrorsRepointed and writes nothing", async () => {
+    mockDbState.selectQueue.push([src()], [dst()], [{ n: 0 }], [], [], [{ n: 2 }]);
+
+    const result = await mergeCategories({ sourceId: "src", destinationId: "dst", confirm: false, actorUserId: "u" });
+
+    expect(result.ok && !result.confirm && result.mirrorsRepointed).toBe(2);
+    expect(mockDbState.updateCalls).toHaveLength(0);
+  });
+
+  it("confirm re-points categories that mirror the source, counts them in the audit details, and reports the count", async () => {
+    mockDbState.selectQueue.push([src()], [dst()], [{ n: 0 }], [], [], [{ n: 3 }]);
+
+    const result = await mergeCategories({ sourceId: "src", destinationId: "dst", confirm: true, actorUserId: "u" });
+
+    expect(result.ok && result.confirm && result.mirrorsRepointed).toBe(3);
+    const repoint = mockDbState.updateCalls.find((c) => "mirrorsCategoryId" in c.values);
+    expect(repoint?.values.mirrorsCategoryId).toBe("dst");
+    const audit = mockDbState.insertCalls[0].values;
+    expect(audit.action).toBe("category_merged");
+    expect(audit.details).toContain("Counterpart links re-pointed: 3");
+  });
+
+  it("confirm with nothing to re-point issues no counterpart UPDATE", async () => {
+    mockDbState.selectQueue.push([src()], [dst()], [{ n: 0 }], [], [], [{ n: 0 }]);
+
+    await mergeCategories({ sourceId: "src", destinationId: "dst", confirm: true, actorUserId: "u" });
+
+    expect(mockDbState.updateCalls.some((c) => "mirrorsCategoryId" in c.values)).toBe(false);
+  });
+});
+
+describe("getCategoryImpact — counterpart (B-172)", () => {
+  it("returns the category's counterpart and the categories that point at it (names capped at 10)", async () => {
+    const cat = category({ id: "cat-1", flow: "income", fundKind: "charitable", mirrorsCategoryId: null });
+    const names = Array.from({ length: 12 }, (_, i) => ({ name: `Club ${i}` }));
+    mockDbState.selectQueue.push([cat], [{ n: 0 }], [], names);
+
+    const impact = await getCategoryImpact("cat-1");
+
+    expect(impact!.mirror).toBeNull();
+    expect(impact!.mirroredBy.count).toBe(12);
+    expect(impact!.mirroredBy.names).toHaveLength(10);
+    expect(impact!.category.mirrorsCategoryId).toBeNull();
+  });
+
+  it("names the counterpart, its active state and its entity", async () => {
+    const cat = category({ id: "cat-1", flow: "income", mirrorsCategoryId: "f-1" });
+    mockDbState.selectQueue.push(
+      [cat],
+      [{ n: 0 }],
+      [],
+      [{ id: "f-1", name: "Public donations", isActive: false, entityName: "Westerville Lions Foundation" }],
+      [],
+    );
+
+    const impact = await getCategoryImpact("cat-1");
+
+    expect(impact!.mirror).toEqual({
+      id: "f-1",
+      name: "Public donations",
+      isActive: false,
+      entityName: "Westerville Lions Foundation",
+    });
+    expect(impact!.mirroredBy).toEqual({ count: 0, names: [] });
+  });
+});
+
+describe("validateMirrorWrite (B-172)", () => {
+  const subject = { id: "cat-1", entityId: "e-club", fundKind: "activity", flow: "income" };
+  const target = (o: Record<string, unknown> = {}) => ({
+    id: "f-1",
+    entityId: "e-fnd",
+    fundKind: "charitable",
+    flow: "income",
+    isActive: true,
+    ...o,
+  });
+  const entities = [
+    { id: "e-club", donationsDeductible: false },
+    { id: "e-fnd", donationsDeductible: true },
+  ];
+  const labelRows = [{ kind: "activity", name: "Community Pool", isActive: true }];
+
+  it("null target clears without touching the database", async () => {
+    expect(await validateMirrorWrite(subject, null)).toEqual({ ok: true });
+    expect(mockDbState.wheres).toHaveLength(0);
+  });
+
+  it("accepts an active Foundation charitable income category", async () => {
+    mockDbState.selectQueue.push([target()], entities);
+    expect(await validateMirrorWrite(subject, "f-1")).toEqual({ ok: true });
+  });
+
+  it("404 mirror_target_not_found for an unknown target", async () => {
+    mockDbState.selectQueue.push([]);
+    const r = await validateMirrorWrite(subject, "missing");
+    expect(r).toMatchObject({ ok: false, status: 404, code: "mirror_target_not_found" });
+  });
+
+  it("400 with the pure check's code, worded with the stored fund name", async () => {
+    mockDbState.selectQueue.push([target({ isActive: false })], entities, labelRows);
+    const r = await validateMirrorWrite(subject, "f-1");
+    expect(r).toMatchObject({ ok: false, status: 400, code: "target_inactive" });
+
+    mockDbState.selectQueue.push([target({ flow: "expense" })], entities, labelRows);
+    expect(await validateMirrorWrite(subject, "f-1")).toMatchObject({ code: "target_not_foundation_income" });
+
+    mockDbState.selectQueue.push([target({ entityId: "e-club", fundKind: "activity" })], entities, labelRows);
+    expect(await validateMirrorWrite(subject, "f-1")).toMatchObject({ code: "target_not_foundation_income" });
+
+    mockDbState.selectQueue.push([target()], entities, labelRows);
+    const bad = await validateMirrorWrite({ ...subject, flow: "expense" }, "f-1");
+    expect(bad).toMatchObject({ code: "subject_not_public_income" });
+    if (!bad.ok) expect(bad.error).toContain("Community Pool");
+  });
+
+  it("POST (no subject id) never trips target_is_self", async () => {
+    mockDbState.selectQueue.push([target()], entities);
+    expect(await validateMirrorWrite({ ...subject, id: null }, "f-1")).toEqual({ ok: true });
   });
 });

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { FundLabels } from "@/lib/ledger-fund-labels";
 
 const linkClass =
   "text-lions-blue hover:underline focus:outline-none focus:ring-2 focus:ring-lions-blue rounded";
@@ -10,7 +11,7 @@ const linkClass =
  * not the earlier superseded two-account plan. Cross-links to the compliance
  * page (aged-public-fund guardrail).
  */
-export default function ZeffyFundRoutingSection() {
+export default function ZeffyFundRoutingSection({ labels }: { labels: FundLabels }) {
   return (
     <section id="zeffy-fund-routing" className="bg-white rounded-2xl shadow-sm overflow-hidden p-6">
       <h2 className="text-xl font-bold text-gray-900">Zeffy &amp; Fund Routing</h2>
@@ -27,8 +28,8 @@ export default function ZeffyFundRoutingSection() {
         </li>
         <li>
           <span className="font-semibold">Donations via Zeffy</span> &rarr; recorded as club{" "}
-          <span className="font-semibold">Activity Fund</span> (public) income, then promptly
-          swept to the Foundation. The Activity Fund is a clearing account with a target balance
+          <span className="font-semibold">{labels.activity}</span> (public) income, then promptly
+          swept to the Foundation. {labels.activity} is a clearing account with a target balance
           of $0 — it is never a home for donation money, only a landing place on the way to the
           Foundation.
         </li>
@@ -39,7 +40,7 @@ export default function ZeffyFundRoutingSection() {
       </h3>
       <p className="mt-2 text-sm text-gray-700">
         Write the check or transfer, then record it in the Ledger as two linked entries citing the
-        same board minute where one exists: a club <span className="font-semibold">Activity Fund
+        same board minute where one exists: a club <span className="font-semibold">{labels.activity}
         expense</span> (money leaving the club books) and a matching Foundation{" "}
         <span className="font-semibold">income</span> entry (money arriving at the Foundation).
       </p>

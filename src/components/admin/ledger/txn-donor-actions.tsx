@@ -12,6 +12,11 @@ interface TxnDonorActionsProps {
   donorId: string | null;
   /** The ack status if an ack record exists for this transaction */
   ackStatus: "pending" | "sent" | null;
+  /** `foundation` (default): Link donor plus the acknowledgment controls.
+   *  `public`: a Club Public Funds income row, where the donor may be linked
+   *  but the Foundation issues any receipt later, so the Acknowledge, Mark
+   *  Sent and "Ack sent" controls never render. */
+  mode?: "foundation" | "public";
 }
 
 /**
@@ -27,7 +32,8 @@ interface TxnDonorActionsProps {
  *    impossible to acknowledge a sub-$250 gift at all — removed deliberately.
  *  - Mark Sent — shown when ack exists but not yet sent
  *
- * Only rendered on Foundation entity income rows (caller must gate).
+ * Rendered on Foundation income rows (default mode) and, in `public` mode,
+ * on Club Public Funds income rows (Link donor only). Caller must gate.
  * Gate: LEDGER_RECORD (caller must enforce).
  */
 export default function TxnDonorActions({
@@ -36,7 +42,9 @@ export default function TxnDonorActions({
   txnDate,
   donorId,
   ackStatus,
+  mode = "foundation",
 }: TxnDonorActionsProps) {
+  const showAck = mode === "foundation";
   const [linkOpen, setLinkOpen] = useState(false);
   const [ackOpen, setAckOpen] = useState(false);
   const [markSentOpen, setMarkSentOpen] = useState(false);
@@ -58,7 +66,7 @@ export default function TxnDonorActions({
         </button>
 
         {/* Acknowledge (only if no ack exists yet — any amount) */}
-        {ackStatus === null && (
+        {showAck && ackStatus === null && (
           <button
             type="button"
             onClick={() => setAckOpen(true)}
@@ -73,7 +81,7 @@ export default function TxnDonorActions({
         )}
 
         {/* Mark Sent — when ack exists but not sent */}
-        {ackStatus === "pending" && (
+        {showAck && ackStatus === "pending" && (
           <button
             type="button"
             onClick={() => setMarkSentOpen(true)}
@@ -88,7 +96,7 @@ export default function TxnDonorActions({
         )}
 
         {/* Sent indicator */}
-        {ackStatus === "sent" && (
+        {showAck && ackStatus === "sent" && (
           <span className="inline-flex items-center gap-0.5 text-xs text-green-700 px-1.5 py-0.5" title="Acknowledgment sent">
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
