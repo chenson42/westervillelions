@@ -1,6 +1,7 @@
 import ApprovalActions, { type ApprovalActionsProps } from "./approval-actions";
 import ApprovalFundLabel from "./approval-fund-label";
 import { HIGHLIGHT_CLASSES } from "./approval-highlight";
+import SweepBatchSummary, { type SweepBatchSummaryData } from "./sweep-batch-summary";
 
 /**
  * One pending item below the `xl` breakpoint (the admin sidebar offset, not
@@ -11,8 +12,15 @@ export default function ApprovalCard({
   dateText,
   entityName,
   highlight = false,
+  batch = null,
   ...actions
-}: ApprovalActionsProps & { dateText: string; entityName?: string | null; highlight?: boolean }) {
+}: ApprovalActionsProps & {
+  dateText: string;
+  entityName?: string | null;
+  highlight?: boolean;
+  /** An itemized sweep batch's summary (B-172 Inc 2b, B8): replaces the payee and memo lines. */
+  batch?: SweepBatchSummaryData | null;
+}) {
   return (
     <li
       data-row-id={actions.transactionId}
@@ -25,7 +33,9 @@ export default function ApprovalCard({
         <p className="text-2xl font-bold tabular-nums text-gray-900">{actions.amount}</p>
         <p className="pt-1 text-sm text-gray-500">{dateText}</p>
       </div>
-      {(actions.party || actions.memo) && (
+      {batch ? (
+        <SweepBatchSummary data={batch} showRecorder={false} />
+      ) : (actions.party || actions.memo) && (
         <div className="text-sm">
           {actions.party ? (
             <p className="break-words font-medium text-gray-900">{actions.party}</p>

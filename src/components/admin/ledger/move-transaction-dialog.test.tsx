@@ -26,8 +26,8 @@ import {
   isMoveSubmittable,
   moveFailureAction,
   resolveMoveClose,
-  sweepDeepLink,
 } from "./correction-dialog-logic";
+import { sweepBuilderHref } from "@/lib/ledger-sweep";
 import {
   MOVE_FAILED_MESSAGE,
   ratchetWarning,
@@ -230,7 +230,7 @@ describe("MoveDialogBody states", () => {
     const html = body({ phase: "success", result });
     expect(html).toContain("Moved to Activity Fund.");
     expect(html).toContain("Record sweep now");
-    expect(html).toContain(`href="/admin/ledger/activity?entity=club&amp;sweepFrom=${TXN}"`);
+    expect(html).toContain(`href="/admin/ledger/sweep?sweep=${TXN}"`);
     expect(html).toContain(">Done<");
 
     const without = body({ phase: "success", result: { ...result, sweepSuggested: false } });
@@ -305,10 +305,8 @@ describe("move request and close rules", () => {
     expect(moveFailureAction(409, null).message).toBe(MOVE_FAILED_MESSAGE);
   });
 
-  it("the sweep deep link carries the entity and the moved row id", () => {
-    expect(sweepDeepLink({ fundSlug: "activity", entitySlug: "club", transactionId: TXN })).toBe(
-      `/admin/ledger/activity?entity=club&sweepFrom=${TXN}`,
-    );
+  it("the sweep link lands on the builder with the moved row preselected (B-172 2b)", () => {
+    expect(sweepBuilderHref([TXN])).toBe(`/admin/ledger/sweep?sweep=${TXN}`);
   });
 });
 
@@ -567,7 +565,7 @@ describe("MoveDialogBody: cross-entity destination (C38)", () => {
     expect(submitTag(html)).toBeNull();
   });
 
-  it("success after a cross-entity move names the entity and the receipt outcome; the sweep link uses the result's entity", () => {
+  it("success after a cross-entity move names the entity and the receipt outcome; the sweep link goes to the builder", () => {
     const result: MoveResponse = {
       id: TXN,
       fundId: ACTIVITY,
@@ -584,7 +582,7 @@ describe("MoveDialogBody: cross-entity destination (C38)", () => {
     const html = body({ phase: "success", result, destEntityName: "Club" }, { entitySlug: "foundation" });
     expect(html).toContain("Moved to Activity Fund (Club).");
     expect(html).toContain("The receipt letter stays attached to the gift and still names the Foundation.");
-    expect(html).toContain(`href="/admin/ledger/activity?entity=club&amp;sweepFrom=${TXN}"`);
+    expect(html).toContain(`href="/admin/ledger/sweep?sweep=${TXN}"`);
     expect(html).not.toContain("entity=foundation");
     const removed = body({ phase: "success", result: { ...result, acknowledgment: "removed" }, destEntityName: "Club" });
     expect(removed).toContain("The unsent receipt record was removed.");

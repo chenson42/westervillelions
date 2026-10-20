@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import {
   APPROVAL_TABS,
+  BOARD_MINUTE_MAX_LEN,
+  classifyDecisionGroup,
   RECENT_DECISIONS_LIMIT,
   approvalNounLabel,
   buildApprovalBanner,
@@ -14,6 +18,7 @@ import {
   describeApprovalFund,
   displayDeciderName,
   isApprovalConflict,
+  isDecideTheBatch,
   cosignEligibility,
   formatApproverList,
   isCosignConflict,
@@ -542,5 +547,183 @@ describe("formatApproverList", () => {
   it("never contains an @, a fraction or votes", () => {
     const t = formatApproverList([n("a@example.com"), n("Ann"), n(null), n("Bo"), n("Cy")], { max: 3 }).text;
     expect(t).not.toMatch(/@|\bof \d+\b|vote/i);
+  });
+});
+
+describe("BOARD_MINUTE_MAX_LEN (B-195)", () => {
+  it("is 500", () => {
+    expect(BOARD_MINUTE_MAX_LEN).toBe(500);
+  });
+
+  it("is declared exactly once in non-test src", () => {
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(name) && !/\.test\./.test(name)) {
+          if (/\b(const|let|var)\s+BOARD_MINUTE_MAX_LEN\b/.test(readFileSync(full, "utf8"))) {
+            hits.push(full.replace(join(__dirname, ".."), "src"));
+          }
+        }
+      }
+    };
+    walk(join(__dirname, ".."));
+    expect(hits).toEqual(["src/lib/ledger-approval.ts"]);
+  });
+});
+
+describe("classifyDecisionGroup (ruling A5)", () => {
+  const G = "group-1";
+  type R = {
+    id: string;
+    flow: string;
+    transferGroupId: string | null;
+    sweptFromTxnId: string | null;
+    sweepLegTxnId: string | null;
+  };
+  const r = (id: string, over: Partial<R> = {}): R => ({
+    id,
+    flow: "expense",
+    transferGroupId: null,
+    sweptFromTxnId: null,
+    sweepLegTxnId: null,
+    ...over,
+  });
+  const leg = (over: Partial<R> = {}) => r("leg", { transferGroupId: G, ...over });
+  const copy = (id: string, over: Partial<R> = {}) =>
+    r(id, { flow: "income", sweptFromTxnId: `src-${id}`, sweepLegTxnId: "leg", ...over });
+
+  it("a lone ungrouped row is single", () => {
+    const rows = [r("a")];
+    expect(classifyDecisionGroup("a", rows)).toMatchObject({ kind: "single", target: rows[0] });
+  });
+
+  it("a lone income row is single too", () => {
+    expect(classifyDecisionGroup("a", [r("a", { flow: "income" })]).kind).toBe("single");
+  });
+
+  it("two rows sharing a transfer group are a pair, from either id", () => {
+    const rows = [r("a", { transferGroupId: G }), r("b", { flow: "income", transferGroupId: G })];
+    expect(classifyDecisionGroup("a", rows).kind).toBe("pair");
+    expect(classifyDecisionGroup("b", rows).kind).toBe("pair");
+  });
+
+  it("a grouped row with no partner is a count fault", () => {
+    expect(classifyDecisionGroup("a", [r("a", { transferGroupId: G })])).toEqual({
+      kind: "fault",
+      reason: "count",
+    });
+  });
+
+  it("three rows in a pair's group is a count fault", () => {
+    const rows = [
+      r("a", { transferGroupId: G }),
+      r("b", { transferGroupId: G }),
+      r("c", { transferGroupId: G }),
+    ];
+    expect(classifyDecisionGroup("a", rows)).toEqual({ kind: "fault", reason: "count" });
+  });
+
+  it("an ungrouped target with extra locked rows is a count fault", () => {
+    expect(classifyDecisionGroup("a", [r("a"), r("b")])).toEqual({ kind: "fault", reason: "count" });
+  });
+
+  it("a pair row carrying a sweep pointer is a shape fault", () => {
+    const rows = [
+      r("a", { transferGroupId: G }),
+      r("b", { flow: "income", transferGroupId: G, sweptFromTxnId: "src" }),
+    ];
+    expect(classifyDecisionGroup("a", rows)).toEqual({ kind: "fault", reason: "shape" });
+  });
+
+  it("a leg with one copy is a batch of 1", () => {
+    const rows = [leg(), copy("c1")];
+    const g = classifyDecisionGroup("leg", rows);
+    expect(g.kind).toBe("sweep_batch");
+    if (g.kind === "sweep_batch") {
+      expect(g.leg.id).toBe("leg");
+      expect(g.copies.map((c) => c.id)).toEqual(["c1"]);
+      expect(g.rows).toHaveLength(2);
+    }
+  });
+
+  it("a leg with 200 copies is a batch of 200", () => {
+    const copies = Array.from({ length: 200 }, (_, i) => copy(`c${i}`));
+    const g = classifyDecisionGroup("leg", [leg(), ...copies]);
+    expect(g.kind).toBe("sweep_batch");
+    if (g.kind === "sweep_batch") expect(g.copies).toHaveLength(200);
+  });
+
+  it("a leg with no copies is a count fault", () => {
+    expect(classifyDecisionGroup("leg", [leg()])).toEqual({ kind: "fault", reason: "count" });
+  });
+
+  it("a copy pointing at a different leg makes the set a shape fault", () => {
+    const rows = [leg(), copy("c1"), copy("c2", { sweepLegTxnId: "other-leg" })];
+    expect(classifyDecisionGroup("leg", rows)).toEqual({ kind: "fault", reason: "shape" });
+  });
+
+  it("an income row posing as the leg is a shape fault", () => {
+    const rows = [leg({ flow: "income" }), copy("c1")];
+    expect(classifyDecisionGroup("leg", rows)).toEqual({ kind: "fault", reason: "shape" });
+  });
+
+  it("a leg that itself carries a source pointer is a shape fault", () => {
+    const rows = [leg({ sweptFromTxnId: "src" }), copy("c1")];
+    expect(classifyDecisionGroup("leg", rows)).toEqual({ kind: "fault", reason: "shape" });
+  });
+
+  it("a copy that is not income, or has no source pointer, is a shape fault", () => {
+    expect(classifyDecisionGroup("leg", [leg(), copy("c1", { flow: "expense" })])).toEqual({
+      kind: "fault",
+      reason: "shape",
+    });
+    expect(classifyDecisionGroup("leg", [leg(), copy("c1", { sweptFromTxnId: null })])).toEqual({
+      kind: "fault",
+      reason: "shape",
+    });
+  });
+
+  it("a foreign row in the locked set of a batch is a shape fault", () => {
+    expect(classifyDecisionGroup("leg", [leg(), copy("c1"), r("x")])).toEqual({
+      kind: "fault",
+      reason: "shape",
+    });
+  });
+
+  it("a copy as the target is target_is_copy", () => {
+    expect(classifyDecisionGroup("c1", [copy("c1")])).toEqual({
+      kind: "fault",
+      reason: "target_is_copy",
+    });
+    expect(classifyDecisionGroup("c1", [leg(), copy("c1")])).toEqual({
+      kind: "fault",
+      reason: "target_is_copy",
+    });
+  });
+
+  it("a target missing from the rows is a shape fault", () => {
+    expect(classifyDecisionGroup("zzz", [r("a")])).toEqual({ kind: "fault", reason: "shape" });
+  });
+
+  it("rows from before the pointer columns (undefined) classify as single and pair", () => {
+    const old = (id: string, over: Record<string, unknown> = {}) =>
+      ({ id, flow: "expense", transferGroupId: null, ...over }) as Parameters<
+        typeof classifyDecisionGroup
+      >[1][number];
+    expect(classifyDecisionGroup("a", [old("a")]).kind).toBe("single");
+    expect(
+      classifyDecisionGroup("a", [old("a", { transferGroupId: G }), old("b", { transferGroupId: G })]).kind,
+    ).toBe("pair");
+  });
+});
+
+describe("isDecideTheBatch", () => {
+  it("recognises the typed 400 body and nothing else", () => {
+    expect(isDecideTheBatch({ error: "x", code: "decide_the_batch" })).toBe(true);
+    expect(isDecideTheBatch({ error: "x", code: "not_pending" })).toBe(false);
+    expect(isDecideTheBatch({ code: "decide_the_batch" })).toBe(false);
+    expect(isDecideTheBatch(null)).toBe(false);
   });
 });

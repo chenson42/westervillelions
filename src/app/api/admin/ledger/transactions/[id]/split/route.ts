@@ -69,6 +69,8 @@ import { eq } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getMatchForTransaction } from "@/lib/reconciliation-queries";
+import { loadSweepRole } from "@/lib/ledger-sweep-link";
+import { sweepLockKind, sweepRefusal } from "@/lib/ledger-transaction-lock";
 
 const INT4_MAX = 2_147_483_647;
 
@@ -92,6 +94,18 @@ export async function POST(
     });
     if (!existing) {
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+    }
+
+    // Guard 0 (B-172 Inc 2a) — an itemized sweep's leg, a swept copy and a
+    // source claimed by a live copy are never split (it would change a figure
+    // the batch has already fixed). Ahead of the approved/transfer guards so
+    // the answer is "void the batch", not an unrelated lock message.
+    const sweepKind = sweepLockKind({
+      sweepLegTxnId: existing.sweepLegTxnId,
+      sweepRole: await loadSweepRole(db, existing),
+    });
+    if (sweepKind) {
+      return NextResponse.json(sweepRefusal(sweepKind, "split", existing), { status: 403 });
     }
 
     // Guard 1 — approved transactions are immutable (mirrors PATCH/DELETE)

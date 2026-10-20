@@ -123,13 +123,14 @@ class StaleMoveRollback extends Error {
 }
 
 const MOVE_BLOCK_MESSAGES: Record<
-  "approved" | "rejected" | "pending" | "dues_synced" | "transfer_leg",
+  "approved" | "rejected" | "pending" | "dues_synced" | "swept_copy" | "transfer_leg",
   string
 > = {
   approved: "Approved transactions cannot be moved. Record a refund entry to correct one.",
   rejected: `Rejected transactions cannot be moved. ${LOCK_COPY.rejected.nextStep}`,
   pending: `A transaction awaiting approval cannot be moved. ${LOCK_COPY.pending.nextStep}`,
   dues_synced: `Entries posted from dues payments cannot be moved. ${LOCK_COPY.dues_synced.nextStep}`,
+  swept_copy: `Swept gifts cannot be moved. ${LOCK_COPY.swept_copy.nextStep}`,
   transfer_leg: `Transfer entries cannot be moved. ${LOCK_COPY.transfer_leg.nextStep}`,
 };
 

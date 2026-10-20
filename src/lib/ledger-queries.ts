@@ -47,6 +47,8 @@ import {
 import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, ne, sql, count, getTableColumns } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { ackDoneeEntityId } from "@/lib/ledger-ack-donee";
+import type { SweepRowBadge } from "@/lib/ledger-sweep";
+import { listSweepBadges, notSweepCopy, sweptSourceHasSentReceipt } from "@/lib/ledger-sweep-link";
 import { getFiscalYear, currentFiscalYear, fiscalYearLabel, fyBounds } from "@/lib/fiscal-year";
 import { formatTimestamp } from "@/lib/format-date";
 import {
@@ -3630,6 +3632,12 @@ export type PendingApprovalRow = LedgerTransaction & {
   entityName: string | null;
   /** Name of the partner leg's entity for a Transfer/Sweep source leg; null otherwise. */
   partnerEntityName: string | null;
+  /**
+   * B-172 Increment 2a: for the leg of an itemized sweep batch, the number of
+   * copies it decides (its partner fund and entity above come from the copies);
+   * null for every other row. The batch's COPIES are never returned.
+   */
+  batch: { count: number } | null;
 };
 
 /**
@@ -3650,7 +3658,11 @@ export type PendingApprovalRow = LedgerTransaction & {
  * this join eliminates UUID fragments on the Approvals page.
  */
 export async function getPendingApprovals(entityId?: string): Promise<PendingApprovalRow[]> {
-  const conditions = [eq(ledgerTransactions.status, "pending")];
+  // A batch's copies are excluded in SQL (ledger-sweep-link.ts notSweepCopy):
+  // the leg is the one decidable row, and its copy count and Foundation fund
+  // come from the grouped select below, never from dedup of this result set
+  // (an entityId filter would otherwise lose the partner).
+  const conditions = [eq(ledgerTransactions.status, "pending"), notSweepCopy()];
   if (entityId) {
     conditions.push(eq(ledgerTransactions.entityId, entityId));
   }
@@ -3696,6 +3708,9 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
       syncStale: ledgerTransactions.syncStale,
       donorId: ledgerTransactions.donorId,
       budgetLineId: ledgerTransactions.budgetLineId,
+      // Sweep batch pointers (migration 0116, DECISION-126)
+      sweptFromTxnId: ledgerTransactions.sweptFromTxnId,
+      sweepLegTxnId: ledgerTransactions.sweepLegTxnId,
       createdAt: ledgerTransactions.createdAt,
       updatedAt: ledgerTransactions.updatedAt,
       // Joined display fields — users.name is the display name (single field, may be null)
@@ -3721,6 +3736,59 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
     recorderName: r.recorderDisplayName ?? null,
   }));
 
+  // Itemized sweep batches (B-172 Increment 2a): ONE grouped select over the
+  // copies of the returned expense legs gives each batch its copy count and
+  // the Foundation fund and entity its copies sit in (identical for every copy
+  // of a batch by construction; if they ever differ, the largest group wins).
+  const legIds = enriched
+    .filter((r) => r.transferGroupId && r.flow === "expense")
+    .map((r) => r.id);
+  const batchByLeg = new Map<
+    string,
+    { count: number; fundId: string; fundName: string | null; entityId: string; top: number }
+  >();
+  if (legIds.length > 0) {
+    const copyRows = await db
+      .select({
+        legId: ledgerTransactions.sweepLegTxnId,
+        fundId: ledgerTransactions.fundId,
+        entityId: ledgerTransactions.entityId,
+        fundName: ledgerFunds.name,
+        copies: sql<number>`count(*)::int`,
+      })
+      .from(ledgerTransactions)
+      .leftJoin(ledgerFunds, eq(ledgerTransactions.fundId, ledgerFunds.id))
+      .where(inArray(ledgerTransactions.sweepLegTxnId, legIds))
+      .groupBy(
+        ledgerTransactions.sweepLegTxnId,
+        ledgerTransactions.fundId,
+        ledgerTransactions.entityId,
+        ledgerFunds.name,
+      );
+    for (const c of copyRows) {
+      if (!c.legId) continue;
+      const n = Number(c.copies);
+      const seen = batchByLeg.get(c.legId);
+      if (!seen) {
+        batchByLeg.set(c.legId, {
+          count: n,
+          fundId: c.fundId,
+          fundName: c.fundName,
+          entityId: c.entityId,
+          top: n,
+        });
+      } else {
+        seen.count += n;
+        if (n > seen.top) {
+          seen.top = n;
+          seen.fundId = c.fundId;
+          seen.fundName = c.fundName;
+          seen.entityId = c.entityId;
+        }
+      }
+    }
+  }
+
   // DECISION-058 dedup: index the destination (income) leg of every pending
   // pair by transferGroupId, then drop it from the result set once we've
   // confirmed its expense-leg partner is also present — the two rows
@@ -3742,6 +3810,18 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
   return enriched
     .filter((r) => !(r.transferGroupId && r.flow === "income" && sourceLegGroupIds.has(r.transferGroupId)))
     .map((r) => {
+      const batch = batchByLeg.get(r.id);
+      if (batch) {
+        return {
+          ...r,
+          partnerFundId: batch.fundId,
+          partnerFundName: batch.fundName ?? "Unknown Fund",
+          partnerEntityId: batch.entityId,
+          entityName: entityNames.get(r.entityId) ?? null,
+          partnerEntityName: entityNames.get(batch.entityId) ?? null,
+          batch: { count: batch.count },
+        };
+      }
       if (r.transferGroupId && r.flow === "expense") {
         const partner = destLegByGroup.get(r.transferGroupId);
         return {
@@ -3751,6 +3831,7 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
           partnerEntityId: partner?.entityId ?? null,
           entityName: entityNames.get(r.entityId) ?? null,
           partnerEntityName: partner ? (entityNames.get(partner.entityId) ?? null) : null,
+          batch: null,
         };
       }
       return {
@@ -3760,6 +3841,7 @@ export async function getPendingApprovals(entityId?: string): Promise<PendingApp
         partnerEntityId: null,
         entityName: entityNames.get(r.entityId) ?? null,
         partnerEntityName: null,
+        batch: null,
       };
     });
 }
@@ -4984,6 +5066,13 @@ export type DonorWithGivingHistory = LedgerDonor & {
      * `sumDeductibleGiving()` in ledger-donor-giving.ts).
      */
     entityDonationsDeductible: boolean;
+    /**
+     * B-172 Inc 2b (B18): the sweep date of this gift's LIVE sweep, or null.
+     * For a Club source gift, the date of the batch holding its live copy; for
+     * a Foundation copy, its batch's date. A source whose only copies were
+     * rejected, a copy of a rejected batch and a plain row are null.
+     */
+    sweptOn: string | null;
   }>;
 };
 
@@ -5035,6 +5124,11 @@ export async function listDonors(opts?: {
   return q.orderBy(asc(ledgerDonors.name));
 }
 
+function sweptOnFromBadge(badge: SweepRowBadge | undefined): string | null {
+  if (!badge || badge.kind === "batch" || badge.state === "rejected") return null;
+  return badge.sweepDate;
+}
+
 /**
  * Get a single donor by ID including their Foundation-income giving history
  * (all ledger_transactions rows where donor_id = id, flow='income').
@@ -5076,6 +5170,10 @@ export async function getDonor(donorId: string): Promise<DonorWithGivingHistory 
     )
     .orderBy(desc(ledgerTransactions.txnDate));
 
+  const badges = await listSweepBadges(
+    db,
+    txnRows.map((r) => r.txn.id),
+  );
   const givingHistory = txnRows.map((r) => ({
     txn: {
       ...r.txn,
@@ -5090,6 +5188,7 @@ export async function getDonor(donorId: string): Promise<DonorWithGivingHistory 
     ackId: r.ackId,
     // A missing entity row (left join) is treated as not deductible: never over-count.
     entityDonationsDeductible: r.entityDonationsDeductible ?? false,
+    sweptOn: sweptOnFromBadge(badges.get(r.txn.id)),
   }));
 
   return { ...donor, givingHistory };
@@ -5216,6 +5315,13 @@ export async function listPendingAcknowledgments(): Promise<PendingAcknowledgmen
         ),
         // Only include transactions that meet the minimum threshold ($250)
         sql`${ledgerTransactions.amountCents} >= ${ACK_MIN_CENTS}`,
+        // B-194: a transfer leg is not a gift (the income leg of a pair into a
+        // deductible entity used to be listed here).
+        isNull(ledgerTransactions.transferGroupId),
+        // B-172 Inc 2a: a swept copy whose SOURCE gift already had a receipt
+        // sent must not be queued for a second one (the receipt sits on the
+        // source row id, DECISION-112).
+        sql`NOT ${sweptSourceHasSentReceipt(ledgerTransactions.id)}`,
       ),
     )
     .orderBy(desc(ledgerTransactions.txnDate));

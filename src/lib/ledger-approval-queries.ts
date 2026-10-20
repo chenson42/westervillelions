@@ -14,7 +14,7 @@
  * History and the resolver both evaluate it in SQL, so they cannot disagree.
  */
 
-import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
+import { asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import {
@@ -26,6 +26,7 @@ import {
 } from "@/lib/db/schema";
 import { isUuid } from "@/lib/utils";
 import { boardDecisionPredicate } from "@/lib/ledger-board-decision";
+import { decisionPartnerRowId, sweepCopyCount } from "@/lib/ledger-sweep-link";
 import {
   RECENT_DECISIONS_LIMIT,
   cosignEligibility,
@@ -37,9 +38,6 @@ import {
   type DecidedApprovalRow,
 } from "@/lib/ledger-approval";
 
-const dest = alias(ledgerTransactions, "dest");
-const destFund = alias(ledgerFunds, "dest_fund");
-const partnerEntity = alias(ledgerEntities, "partner_entity");
 const recorder = alias(users, "recorder");
 const decider = alias(users, "decider");
 
@@ -70,6 +68,14 @@ async function selectDecided(args: {
 }): Promise<DecidedApprovalRow[]> {
   const t = ledgerTransactions;
   const decidedAtOrder = sql`coalesce(${t.approvedAt}, ${t.rejectedAt}, ${t.updatedAt})`;
+  // The row decided together with this one: a pair's income leg or a batch's
+  // copy, by scalar subselect (a join would fan out one row per copy and break
+  // the LIMIT). The outer references are qualified by hand, because a bare
+  // column inside `FROM ledger_transactions AS d` binds to the INNER table
+  // (see the resolver's comment below).
+  const outerId = sql.raw('"ledger_transactions"."id"');
+  const outerGroup = sql.raw('"ledger_transactions"."transfer_group_id"');
+  const partnerRow = decisionPartnerRowId(outerId, outerGroup);
 
   const base = db
     .select({
@@ -86,27 +92,22 @@ async function selectDecided(args: {
       memo: t.memo,
       entityId: t.entityId,
       fundName: ledgerFunds.name,
-      partnerFundName: destFund.name,
-      partnerEntityId: dest.entityId,
+      partnerFundName: sql<string | null>`(SELECT pf.name FROM ${ledgerFunds} AS pf JOIN ${ledgerTransactions} AS p ON p.fund_id = pf.id WHERE p.id = ${partnerRow})`,
+      partnerEntityId: sql<string | null>`(SELECT p.entity_id FROM ${ledgerTransactions} AS p WHERE p.id = ${partnerRow})`,
       entityName: sql<string | null>`coalesce(${ledgerEntities.shortName}, ${ledgerEntities.name})`,
-      partnerEntityName: sql<string | null>`coalesce(${partnerEntity.shortName}, ${partnerEntity.name})`,
+      partnerEntityName: sql<string | null>`(SELECT coalesce(pe.short_name, pe.name) FROM ${ledgerEntities} AS pe JOIN ${ledgerTransactions} AS p ON p.entity_id = pe.id WHERE p.id = ${partnerRow})`,
+      batchCount: sql<number>`${sweepCopyCount(outerId)}`,
       recorderName: recorder.name,
       deciderName: decider.name,
       deciderId: decider.id,
       // Server-side only: feed cosignEligibility(); never copied to a returned object.
       recorderId: t.recordedByUserId,
-      destRecorderId: dest.recordedByUserId,
+      destRecorderId: sql<string | null>`(SELECT p.recorded_by_user_id FROM ${ledgerTransactions} AS p WHERE p.id = ${partnerRow})`,
       approvedById: t.approvedByUserId,
     })
     .from(t)
     .leftJoin(ledgerFunds, eq(t.fundId, ledgerFunds.id))
     .leftJoin(ledgerEntities, eq(t.entityId, ledgerEntities.id))
-    .leftJoin(
-      dest,
-      and(eq(dest.transferGroupId, t.transferGroupId), eq(dest.flow, "income")),
-    )
-    .leftJoin(destFund, eq(dest.fundId, destFund.id))
-    .leftJoin(partnerEntity, eq(dest.entityId, partnerEntity.id))
     .leftJoin(recorder, eq(t.recordedByUserId, recorder.id))
     .leftJoin(
       decider,
@@ -172,6 +173,7 @@ async function selectDecided(args: {
       entityName: r.entityName ?? null,
       partnerEntityName: r.partnerEntityName ?? null,
       recorderName: displayDeciderName(r.recorderName),
+      batchCount: r.batchCount ? Number(r.batchCount) : null,
     };
     if (r.status === "rejected") {
       return {
@@ -241,7 +243,7 @@ export async function resolveApprovalTarget(
       status: t.status,
       entityId: t.entityId,
       isBoardDecision: sql<boolean>`${boardDecisionPredicate(t)}`,
-      partnerEntityId: sql<string | null>`(SELECT d.entity_id FROM ledger_transactions d WHERE d.transfer_group_id = ${outerGroup} AND d.flow = 'income' LIMIT 1)`,
+      partnerEntityId: sql<string | null>`(SELECT p.entity_id FROM ${ledgerTransactions} AS p WHERE p.id = ${decisionPartnerRowId(outerId, outerGroup)})`,
       viewerRecorded: sql<boolean>`EXISTS (SELECT 1 FROM ledger_transactions v WHERE (v.id = ${outerId} OR (v.transfer_group_id IS NOT NULL AND v.transfer_group_id = ${outerGroup})) AND v.recorded_by_user_id = ${viewerUserId})`,
     })
     .from(t)

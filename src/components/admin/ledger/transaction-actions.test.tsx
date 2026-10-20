@@ -22,6 +22,7 @@ import { moveButtonState } from "./transaction-move-eligibility";
 import { CROSS_ENTITY_MANAGE_REQUIRED_MESSAGE, MANAGE_REQUIRED_MESSAGE } from "@/lib/ledger-correction";
 import { LOCK_COPY } from "@/lib/ledger-transaction-lock";
 import type { LedgerFund, LedgerTransaction } from "@/lib/db/schema";
+import type { SweepRowBadge } from "@/lib/ledger-sweep";
 
 const CLUB = "00000000-0000-4000-8000-0000000000c1";
 const FOUNDATION = "00000000-0000-4000-8000-0000000000f1";
@@ -68,6 +69,7 @@ function render(
     ackStatus?: "pending" | "sent" | null;
     foundationPointer?: boolean;
     paidReimbursement?: boolean;
+    sweepBadge?: SweepRowBadge | null;
   } = {},
 ) {
   return renderToStaticMarkup(
@@ -86,6 +88,7 @@ function render(
       nowIso={NOW}
       entitySlug="club"
       paidReimbursement={opts.paidReimbursement}
+      sweepBadge={opts.sweepBadge}
     />,
   );
 }
@@ -303,7 +306,15 @@ describe("no native dialogs", () => {
       "transaction-actions.tsx",
       "move-transaction-dialog.tsx",
       "delete-transaction-dialog.tsx",
-      "sweep-prefill-launcher.tsx",
+      "sweep-batch-builder.tsx",
+      "sweep-closeout-dialog.tsx",
+      "sweep-batch-dialog.tsx",
+      "sweep-batch-button.tsx",
+      "sweep-row-chip.tsx",
+      "sweep-batch-summary.tsx",
+      "reconciliation-match-picker.tsx",
+      "approve-dialog.tsx",
+      "reject-dialog.tsx",
       "correct-reimbursement-dialog.tsx",
       "reconciliation-create-from-bank-line-dialog.tsx",
       "duplicate-payment-advisory.tsx",
@@ -363,5 +374,38 @@ describe("TransactionActions: paid reimbursement rows (B-108, T40)", () => {
     expect(buttonTag(html, "Edit")).toMatch(DISABLED);
     expect(buttonTag(html, "Correct")).toBeNull();
     expect(html).not.toContain("Paid reimbursement.");
+  });
+});
+
+describe("TransactionActions: itemized sweep rows (B-172 Inc 2b, B11)", () => {
+  const LEG = "d0000000-0000-4000-8000-000000000001";
+  const batchBadge: SweepRowBadge = { kind: "batch", legId: LEG, sweepDate: "2026-10-12", state: "posted", count: 3 };
+  const copyBadge: SweepRowBadge = { kind: "copy", legId: LEG, sweepDate: "2026-10-12", state: "posted" };
+  const sourceBadge: SweepRowBadge = { kind: "source", legId: LEG, sweepDate: "2026-10-12", state: "posted" };
+
+  it.each([
+    ["the leg", batchBadge, txn({ flow: "expense", transferGroupId: "g1", fundId: activityFund.id })],
+    ["a copy", copyBadge, txn({ entityId: FOUNDATION, fundId: charitableFund.id, sweepLegTxnId: LEG } as Partial<LedgerTransaction>)],
+    ["a claimed source", sourceBadge, txn({ fundId: activityFund.id })],
+  ])("%s hides Edit, Delete, Split and Move and shows Batch", (_name, badge, transaction) => {
+    const html = render(transaction, { sweepBadge: badge, canManage: true });
+    expect(html).toContain(">Batch<");
+    for (const label of ["Edit", "Edit transfer", "Delete", "Split", "Move", "Correct"]) {
+      expect(buttonTag(html, label)).toBeNull();
+    }
+    expect(html).not.toContain("Reconciled.");
+    expect(html).not.toContain("Transfer leg.");
+  });
+
+  it("a plain row is unchanged: Edit, Delete and Split present, no Batch", () => {
+    const html = render(txn({ fundId: activityFund.id }), { sweepBadge: null });
+    expect(buttonTag(html, "Edit")).not.toBeNull();
+    expect(buttonTag(html, "Delete")).not.toBeNull();
+    expect(buttonTag(html, "Split")).not.toBeNull();
+    expect(html).not.toContain(">Batch<");
+  });
+
+  it("the Batch button is shown to a viewer without Manage Ledger too (the dialog decides about Void)", () => {
+    expect(render(txn({ fundId: activityFund.id }), { sweepBadge: sourceBadge, canManage: false })).toContain(">Batch<");
   });
 });

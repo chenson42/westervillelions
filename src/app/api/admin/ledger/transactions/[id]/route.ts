@@ -103,6 +103,8 @@ import { getBudgetLineForLinkValidation, donorExists } from "@/lib/ledger-querie
 import { getMatchForTransaction } from "@/lib/reconciliation-queries";
 import { validateBankAccountForEntity } from "@/lib/ledger-transaction-validation";
 import { isUuid } from "@/lib/utils";
+import { loadSweepRole } from "@/lib/ledger-sweep-link";
+import { sweepEditAllowance, sweepLockKind, sweepRefusal } from "@/lib/ledger-transaction-lock";
 import { recordLedgerAudit } from "@/lib/ledger-audit";
 import { findSentStatementMonth } from "@/lib/ledger-fund-move-queries";
 import {
@@ -186,6 +188,27 @@ export async function PATCH(
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     }
 
+    // B-172 Inc 2a sweep guard, BEFORE the approved message (a batch's leg is
+    // approved-locked too, but "void the batch" is the useful next step). The
+    // leg and a claimed source are frozen outright; a swept copy accepts only
+    // donorId and memo (sweepEditAllowance). `?both=true` and the pair-only
+    // bank-account branch below are therefore unreachable for a batch leg.
+    const sweepKind = sweepLockKind({
+      sweepLegTxnId: existing.sweepLegTxnId,
+      sweepRole: await loadSweepRole(db, existing),
+    });
+    let sweepParsedBody: unknown;
+    if (sweepKind) {
+      sweepParsedBody = await request.json().catch(() => null);
+      const bodyKeys =
+        sweepParsedBody && typeof sweepParsedBody === "object"
+          ? Object.keys(sweepParsedBody as Record<string, unknown>)
+          : [];
+      if (!sweepEditAllowance(sweepKind, bodyKeys)) {
+        return NextResponse.json(sweepRefusal(sweepKind, "edit", existing), { status: 403 });
+      }
+    }
+
     // inc2 guard: approved transactions are immutable
     if (existing.approvedAt) {
       return NextResponse.json(
@@ -202,7 +225,7 @@ export async function PATCH(
       );
     }
 
-    const body = await request.json();
+    const body = sweepKind ? sweepParsedBody : await request.json();
 
     // DECISION-109: fund is never editable through PATCH. A move is a
     // dedicated, audited action (POST .../move). Evaluated BEFORE the
@@ -811,6 +834,27 @@ export async function DELETE(
           .for("update")
       )[0];
       if (!target) return { ok: false, status: 404, error: "Transaction not found" };
+
+      // 1b. B-172 Inc 2a sweep guard, ahead of the approved message: the leg,
+      // a copy and a source with a live copy are never deleted by hand (void
+      // the batch). A source whose only copies were rejected is kept as the
+      // audit history of that attempt: 409 sweep_history (the RESTRICT FK would
+      // otherwise surface as a 500).
+      const sweepRole = await loadSweepRole(tx, target);
+      const sweepKind = sweepLockKind({ sweepLegTxnId: target.sweepLegTxnId, sweepRole });
+      if (sweepKind) {
+        const refusal = sweepRefusal(sweepKind, "delete", target);
+        return { ok: false, status: 403, error: refusal.error, code: refusal.code };
+      }
+      if (sweepRole.hasAnyCopy) {
+        return {
+          ok: false,
+          status: 409,
+          error:
+            "A sweep was started from this gift and then rejected. The record of that attempt is kept, so the gift cannot be deleted.",
+          code: "sweep_history",
+        };
+      }
 
       // 2. Guards (unchanged codes and order). Legacy-reconciled rows stay
       // deletable (accepted residual, B-92): the snapshot records the mark.

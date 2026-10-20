@@ -104,19 +104,6 @@ export function isDeleteSubmittable(input: { reason: string }): boolean {
   return normalizeCorrectionReason(input.reason).ok;
 }
 
-/** Deep link to the Activity register with the sweep form prefilled (D2). */
-export function sweepDeepLink(input: {
-  fundSlug: string;
-  entitySlug: string;
-  transactionId: string;
-}): string {
-  const params = new URLSearchParams({
-    entity: input.entitySlug,
-    sweepFrom: input.transactionId,
-  });
-  return `/admin/ledger/${input.fundSlug}?${params.toString()}`;
-}
-
 /**
  * How the Move dialog reacts to a failed POST.
  *  - close_and_refresh: the row changed or the caller is not allowed; toast the

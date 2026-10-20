@@ -44,6 +44,20 @@ import type { NextRequest } from "next/server";
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
 
+// B-172 Inc 2a: the sweep-link loaders are DB reads; tests drive them through
+// this state (everything else in the module stays real).
+const { sweepState } = vi.hoisted(() => ({
+  sweepState: {
+    role: { isLeg: false, hasLiveCopy: false, hasAnyCopy: false },
+    receiptSentAt: null as Date | null,
+  },
+}));
+vi.mock("@/lib/ledger-sweep-link", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ledger-sweep-link")>()),
+  loadSweepRole: vi.fn(async () => ({ ...sweepState.role })),
+  getSweptSourceReceiptSentAt: vi.fn(async () => sweepState.receiptSentAt),
+}));
+
 const { mockDbState } = vi.hoisted(() => ({
   mockDbState: {
     txnRows: [] as unknown[],
@@ -160,6 +174,8 @@ const FOUNDATION_INCOME_TXN = {
 const DONOR = { id: "donor-1", name: "Trucco Construction Co", email: null };
 
 beforeEach(() => {
+  sweepState.role = { isLeg: false, hasLiveCopy: false, hasAnyCopy: false };
+  sweepState.receiptSentAt = null;
   vi.mocked(auth).mockResolvedValue({ user: { id: "recorder-1" } } as never);
   vi.mocked(hasFeature).mockResolvedValue(true);
   mockDbState.txnRows = [FOUNDATION_INCOME_TXN];
@@ -580,5 +596,25 @@ describe("POST .../[id]/acknowledge — reconciled-lock donor-link audit trail (
     expect(mockDbState.txnUpdates).toHaveLength(1);
     expect(mockDbState.txnUpdates[0].set.donorId).toBe("donor-1");
     expect(mockDbState.auditInserts).toHaveLength(0);
+  });
+});
+
+describe("POST .../[id]/acknowledge — a swept copy whose source receipt already went out", () => {
+  it("409 receipt_already_sent naming the date, and nothing is created", async () => {
+    sweepState.receiptSentAt = new Date("2026-03-04T17:00:00Z");
+    const res = await POST(makeRequest({ donorId: "donor-1" }), makeParams("txn-1"));
+    const data = await res.json();
+    expect(res.status).toBe(409);
+    expect(data.code).toBe("receipt_already_sent");
+    expect(data.sentOn).toBe("2026-03-04");
+    expect(data.error).toContain("2026-03-04");
+    expect(mockDbState.ackInsertValues).toHaveLength(0);
+    expect(mockDbState.txnUpdates).toHaveLength(0);
+  });
+
+  it("a clean copy (no source receipt) is unchanged: 201", async () => {
+    sweepState.receiptSentAt = null;
+    const res = await POST(makeRequest({ donorId: "donor-1" }), makeParams("txn-1"));
+    expect(res.status).toBe(201);
   });
 });

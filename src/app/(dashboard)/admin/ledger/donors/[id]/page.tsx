@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getDonor } from "@/lib/ledger-queries";
+import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
 import DonorDetailClient from "./donor-detail-client";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +28,7 @@ export default async function AdminLedgerDonorDetailPage({
   const { id } = await params;
   const donor = await getDonor(id);
   if (!donor) notFound();
+  const labels = await getFundLabels();
 
   return (
     <div className="space-y-6">
@@ -49,7 +51,7 @@ export default async function AdminLedgerDonorDetailPage({
         <span className="text-gray-600 truncate max-w-[200px]">{donor.name}</span>
       </div>
 
-      <DonorDetailClient donor={donor} canRecord={canRecord} canManage={canManage} />
+      <DonorDetailClient donor={donor} canRecord={canRecord} canManage={canManage} labels={labels} />
     </div>
   );
 }

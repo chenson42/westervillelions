@@ -14,10 +14,11 @@
  *
  * Procedure (order is binding):
  *   1. malformed id -> 404 without touching the database
- *   2. one statement locks the target and its Transfer/Sweep partner FOR SHARE,
- *      ORDER BY id (conflicts with decideTransaction()'s FOR UPDATE, but not
+ *   2. one statement locks the target and its group (its Transfer/Sweep
+ *      partner, or an itemized sweep batch's copies) FOR SHARE, ORDER BY id (conflicts with decideTransaction()'s FOR UPDATE, but not
  *      with other co-signers, so thirteen taps do not queue)
- *   3. normalise to the EXPENSE leg; everything below keys on its id, never on
+ *   3. normalise to the EXPENSE leg (a batch normalises to its leg; a copy id
+ *      is `not_board_decision`); everything below keys on its id, never on
  *      the id the caller passed (otherwise one person could sign once per leg
  *      and the unique key would not stop it)
  *   4. pending / rejected / not a board approval (boardApprovalPredicate, in SQL)
@@ -32,9 +33,10 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { ledgerTransactions, ledgerTxnCosigns } from "@/lib/db/schema";
 import { isUuid } from "@/lib/utils";
-import { boardApprovalPredicate, lockDecisionPair } from "@/lib/ledger-board-decision";
+import { boardApprovalPredicate, lockDecisionGroup } from "@/lib/ledger-board-decision";
 import { lookupDeciderName } from "@/lib/ledger-approval-decision";
 import {
+  classifyDecisionGroup,
   cosignEligibility,
   displayDeciderName,
   type ApprovalNotFoundBody,
@@ -93,13 +95,15 @@ export async function cosignTransaction(args: {
   const now = args.now ?? new Date();
 
   return db.transaction(async (tx): Promise<CosignResult> => {
-    // 2. Lock the target and its pair partner, shared, in id order.
-    const locked = await lockDecisionPair(tx, id, "share");
+    // 2. Lock the target and its group, shared, in id order.
+    const locked = await lockDecisionGroup(tx, id, "share");
     const target = locked.find((r) => r.id === id);
     if (!target) return { ...NOT_FOUND };
 
-    // A pair is exactly two legs; anything else is a data fault.
-    if (target.transferGroupId ? locked.length !== 2 : locked.length !== 1) {
+    // A pair is exactly two legs, a batch a leg plus its copies; a copy id or
+    // anything else is not a co-signable decision.
+    const group = classifyDecisionGroup(id, locked);
+    if (group.kind === "fault") {
       return conflict("not_board_decision", MESSAGES.not_board_decision);
     }
 

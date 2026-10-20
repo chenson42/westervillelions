@@ -7,7 +7,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DecidedApprovalRow } from "@/lib/ledger-approval";
-import ApprovalHistory, { deciderLabel } from "./approval-history";
+import ApprovalHistory, { batchBadgeText, deciderLabel } from "./approval-history";
 
 const BASE = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -227,5 +227,28 @@ describe("ApprovalHistory", () => {
       expect(html).toContain("min-h-[44px]");
       expect(html).toContain("rounded-lg");
     });
+  });
+});
+
+describe("ApprovalHistory: itemized sweep batches (B-172 Inc 2b)", () => {
+  it("batchBadgeText counts gifts", () => {
+    expect(batchBadgeText(12)).toBe("Batch of 12 gifts");
+    expect(batchBadgeText(1)).toBe("Batch of 1 gift");
+  });
+
+  it("an approved batch card carries the batch badge beside Approved; an ordinary row carries none", () => {
+    const batch = renderToStaticMarkup(
+      <ApprovalHistory rows={[approved({ batchCount: 4, party: null, memo: "Itemized sweep: 4 gifts" })]} />,
+    );
+    expect(batch).toContain("Batch of 4 gifts");
+    expect(batch).toContain("Approved");
+    expect(batch).toContain("Itemized sweep: 4 gifts");
+    expect(renderToStaticMarkup(<ApprovalHistory rows={[approved()]} />)).not.toContain("Batch of");
+  });
+
+  it("a rejected batch card carries the badge too", () => {
+    const html = renderToStaticMarkup(<ApprovalHistory rows={[rejected({ batchCount: 2 })]} />);
+    expect(html).toContain("Batch of 2 gifts");
+    expect(html).toContain("Rejected");
   });
 });

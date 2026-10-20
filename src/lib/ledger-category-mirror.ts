@@ -163,9 +163,9 @@ export function mirrorErrorMessage(code: MirrorErrorCode, labels: FundLabels = D
   return MIRROR_COPY[code](labels);
 }
 
-/** Until itemized sweeps ship (B-172 Increment 2a) the sweep is one lump amount. */
-const LUMP_SWEEP_NOTE =
-  "Sweeps are still recorded as one lump amount for now, so the Foundation will not show this gift or its donor yet.";
+/** What a sweep does with a Foundation-bound gift (B-172 Increment 2b: sweeps are itemized). */
+const SWEEP_COPY_NOTE =
+  "When it is swept, the Foundation books it as its own gift, with its donor if one is linked.";
 
 /** Hint copy, an exhaustive switch over every state. */
 export function mirrorHintCopy(hint: MirrorHint, labels: FundLabels = DEFAULT_FUND_LABELS): string | null {
@@ -174,12 +174,12 @@ export function mirrorHintCopy(hint: MirrorHint, labels: FundLabels = DEFAULT_FU
       return null;
     case "stays":
       return hint.reason === "no_mirror"
-        ? `This category has no Foundation counterpart, so it is recorded as staying in ${labels.activity}. Today's lump sweep does not check this.`
-        : `The Foundation counterpart of this category is deactivated, so it is recorded as staying in ${labels.activity} until it is re-pointed. Today's lump sweep does not check this.`;
+        ? `This category has no Foundation counterpart, so it is recorded as staying in ${labels.activity}. It cannot be swept to the Foundation until a counterpart is set on the category screen.`
+        : `The Foundation counterpart of this category is deactivated, so it is recorded as staying in ${labels.activity} until it is re-pointed. It cannot be swept to the Foundation until then.`;
     case "bound":
       return hint.receipt === "may_be_needed"
-        ? `Foundation-bound: this gift belongs with the Foundation's "${hint.foundationCategoryName}" category, and a written receipt will be needed. ${LUMP_SWEEP_NOTE}`
-        : `Foundation-bound: this gift belongs with the Foundation's "${hint.foundationCategoryName}" category. No written acknowledgment is required for this one (you can still send one from the Foundation). ${LUMP_SWEEP_NOTE}`;
+        ? `Foundation-bound: this gift belongs with the Foundation's "${hint.foundationCategoryName}" category, and a written receipt will be needed. ${SWEEP_COPY_NOTE}`
+        : `Foundation-bound: this gift belongs with the Foundation's "${hint.foundationCategoryName}" category. No written acknowledgment is required for this one (you can still send one from the Foundation). ${SWEEP_COPY_NOTE}`;
     default: {
       const unreachable: never = hint;
       return unreachable;

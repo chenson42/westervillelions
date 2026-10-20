@@ -4,17 +4,21 @@
  * 3, 4, 5, 12 and 13; DECISION-058 for the Transfer/Sweep pair rule).
  *
  * Both routes are thin wrappers over decideTransaction(). The shape:
- *   1. ONE statement locks the target and its Transfer/Sweep partner
- *      (`ORDER BY id FOR UPDATE`, so two concurrent pair decisions cannot
- *      deadlock).
+ *   1. ONE statement locks the target and everything decided with it: its
+ *      Transfer/Sweep partner, or an itemized sweep batch's copies
+ *      (`ORDER BY id FOR UPDATE`, so two concurrent group decisions cannot
+ *      deadlock). classifyDecisionGroup() names the shape.
  *   2. Not pending (target or partner) -> 409 naming the decider.
  *   3. Self rule: the actor recorded ANY locked row -> 403.
  *   4. Input validation, after the lock because "minute required only when
  *      the row has none" needs the locked row. No write has happened, so
  *      returning from the transaction here commits nothing.
- *   5. ONE UPDATE across the locked ids, pinned `AND status = 'pending'`. A
- *      short count throws StaleDecisionRollback so the transaction rolls back
- *      (a plain `return` from db.transaction commits).
+ *   5. ONE UPDATE across the locked ids (a batch: TWO, the leg then the
+ *      copies), each pinned `AND status = 'pending'`. A short count on either
+ *      throws StaleDecisionRollback so the transaction rolls back (a plain
+ *      `return` from db.transaction commits). Approving a batch stamps the leg
+ *      fully; the copies get only status, board_minute and updated_at, never
+ *      approved_at (the lock marker lives on the leg alone).
  *   6. The sentinel is caught outside the transaction, the row is re-read
  *      once, and the same 409 body is returned.
  *
@@ -28,14 +32,16 @@ import { db } from "@/lib/db";
 import { ledgerTransactions, users } from "@/lib/db/schema";
 import type { LedgerTransaction } from "@/lib/db/schema";
 import { isUuid } from "@/lib/utils";
-import { lockDecisionPair } from "@/lib/ledger-board-decision";
+import { lockDecisionGroup } from "@/lib/ledger-board-decision";
 import {
+  BOARD_MINUTE_MAX_LEN,
+  classifyDecisionGroup,
   displayDeciderName,
   type ApprovalConflictBody,
   type ApprovalDecision,
+  type DecideTheBatchBody,
 } from "@/lib/ledger-approval";
 
-export const BOARD_MINUTE_MAX_LEN = 500;
 export const REJECTION_REASON_MAX_LEN = 1000;
 
 export type DecideInput =
@@ -47,7 +53,7 @@ export type DecideResult =
   | {
       ok: false;
       status: 400 | 403 | 404 | 409;
-      body: { error: string; code?: string } | ApprovalConflictBody;
+      body: { error: string; code?: string } | ApprovalConflictBody | DecideTheBatchBody;
     };
 
 /** Thrown by the pinned UPDATE on a short count so the transaction rolls back. */
@@ -57,6 +63,9 @@ class StaleDecisionRollback extends Error {
     this.name = "StaleDecisionRollback";
   }
 }
+
+const DECIDE_THE_BATCH_MESSAGE =
+  "This gift is part of a sweep batch. Approve or reject the whole batch from its transfer entry.";
 
 const NOT_PENDING_MESSAGE = "Transaction is no longer pending";
 const PARTNER_NOT_PENDING_MESSAGE = "The paired transaction is no longer pending";
@@ -161,16 +170,27 @@ async function run(args: {
   const verb = input.kind === "approve" ? "approve" : "reject";
 
   return db.transaction(async (tx): Promise<DecideResult> => {
-    // 1. One statement locks the target and its pair partner (shared helper;
-    //    the co-sign path takes the same lock in "share" mode).
-    const locked = await lockDecisionPair(tx, id, "update");
+    // 1. One statement locks the target and its group (pair partner or batch
+    //    copies; shared helper, the co-sign path takes the same lock in
+    //    "share" mode).
+    const locked = await lockDecisionGroup(tx, id, "update");
 
     const target = locked.find((r) => r.id === id);
     if (!target) return { ...NOT_FOUND };
 
-    // A pair is exactly two legs; anything else is a data fault. Refuse to
-    // write rather than decide half of something unexpected.
-    if (target.transferGroupId ? locked.length !== 2 : locked.length !== 1) {
+    // The shape: single, pair, sweep batch, or a data fault. A copy id is a
+    // caller mistake (400 with a typed code), never a "no longer pending".
+    const group = classifyDecisionGroup(id, locked);
+    if (group.kind === "fault") {
+      if (group.reason === "target_is_copy") {
+        return {
+          ok: false,
+          status: 400,
+          body: { error: DECIDE_THE_BATCH_MESSAGE, code: "decide_the_batch" },
+        };
+      }
+      // Anything else is a data fault. Refuse to write rather than decide
+      // half of something unexpected.
       return {
         ok: false,
         status: 409,
@@ -195,7 +215,8 @@ async function run(args: {
       };
     }
 
-    // 3. Self rule covers either leg.
+    // 3. Self rule covers every locked row (either pair leg; the leg and every
+    //    copy of a batch).
     if (locked.some((r) => r.recordedByUserId === actorUserId)) {
       return {
         ok: false,
@@ -206,6 +227,9 @@ async function run(args: {
 
     // 4. Input. Nothing has been written, so returning commits nothing.
     let stamps: Partial<typeof ledgerTransactions.$inferInsert>;
+    // What the batch's copies get (a batch only): status plus, on approval,
+    // the final minute. Never approved_at.
+    let copyStamps: Partial<typeof ledgerTransactions.$inferInsert>;
     if (input.kind === "approve") {
       const provided =
         typeof input.boardMinute === "string" ? input.boardMinute.trim() : "";
@@ -222,6 +246,7 @@ async function run(args: {
         boardMinute,
         updatedAt: now,
       };
+      copyStamps = { status: "posted", boardMinute, updatedAt: now };
     } else {
       const raw = input.reason;
       if (!raw || typeof raw !== "string" || !raw.trim()) {
@@ -234,18 +259,40 @@ async function run(args: {
         rejectedAt: now,
         updatedAt: now,
       };
+      // A rejection stamps every row of a batch alike.
+      copyStamps = stamps;
     }
 
-    // 5. The pinned write: both legs in one statement, only while pending.
-    const ids = locked.map((r) => r.id);
-    const updated = await tx
-      .update(ledgerTransactions)
-      .set(stamps)
-      .where(
-        and(inArray(ledgerTransactions.id, ids), eq(ledgerTransactions.status, "pending")),
-      )
-      .returning({ id: ledgerTransactions.id });
-    if (updated.length !== ids.length) throw new StaleDecisionRollback();
+    // 5. The pinned write(s), only while pending.
+    if (group.kind === "sweep_batch") {
+      const legUpdated = await tx
+        .update(ledgerTransactions)
+        .set(stamps)
+        .where(
+          and(eq(ledgerTransactions.id, group.leg.id), eq(ledgerTransactions.status, "pending")),
+        )
+        .returning({ id: ledgerTransactions.id });
+      if (legUpdated.length !== 1) throw new StaleDecisionRollback();
+      const copyIds = group.copies.map((c) => c.id);
+      const copiesUpdated = await tx
+        .update(ledgerTransactions)
+        .set(copyStamps)
+        .where(
+          and(inArray(ledgerTransactions.id, copyIds), eq(ledgerTransactions.status, "pending")),
+        )
+        .returning({ id: ledgerTransactions.id });
+      if (copiesUpdated.length !== copyIds.length) throw new StaleDecisionRollback();
+    } else {
+      const ids = locked.map((r) => r.id);
+      const updated = await tx
+        .update(ledgerTransactions)
+        .set(stamps)
+        .where(
+          and(inArray(ledgerTransactions.id, ids), eq(ledgerTransactions.status, "pending")),
+        )
+        .returning({ id: ledgerTransactions.id });
+      if (updated.length !== ids.length) throw new StaleDecisionRollback();
+    }
 
     return { ok: true, id };
   });

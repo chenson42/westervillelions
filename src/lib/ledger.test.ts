@@ -3196,3 +3196,34 @@ describe("isBudgetLinePickValid (T5)", () => {
     expect(isBudgetLinePickValid(l, want)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// parseDollarsToCents (B-172 Inc 2b, B14)
+// ---------------------------------------------------------------------------
+import { parseDollarsToCents } from "./ledger";
+
+describe("parseDollarsToCents", () => {
+  it.each([
+    ["12", 1200],
+    ["12.5", 1250],
+    ["12.50", 1250],
+    ["$1,234.56", 123456],
+    [" 7.00 ", 700],
+    ["0.01", 1],
+    ["19.99", 1999],
+    ["0.29", 29],
+    ["1.15", 115],
+    ["1,000", 100000],
+    ["$5", 500],
+    ["21474836.47", 2_147_483_647],
+  ])("%j is %i cents, without floating-point drift", (raw, cents) => {
+    expect(parseDollarsToCents(raw)).toBe(cents);
+  });
+
+  it.each(["", "   ", "abc", "1.234", "-5", "1e3", "1,23", "12,34.50", ".5", "5.", "$", "1 000", "12abc", "+5", "21474836.48", "99999999999"])(
+    "%j is null",
+    (raw) => {
+      expect(parseDollarsToCents(raw)).toBeNull();
+    },
+  );
+});

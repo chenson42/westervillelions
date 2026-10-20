@@ -9,9 +9,10 @@
  *   2. Full DECISION-058 coverage (Account-to-Account Transfers + Cross-
  *      Entity Sweep, docs/work-log/2026-07-29-ledger-account-transfers.md,
  *      Phase 3 "Unit tests to write" list) — directional allow-list
- *      enforcement, per-leg bank account persistence, boardMinute
- *      requirement, category defaulting, and the over-threshold pending gate
- *      applied to the pair.
+ *      enforcement, per-leg bank account persistence and the over-threshold
+ *      pending gate applied to the pair. The single-amount Sweep was retired by
+ *      B-172 Increment 2b: it answers 400 use_sweep_batch (itemized batches are
+ *      covered by ledger-sweep-batch.test.ts).
  *
  * Hermetic: mocks @/lib/auth, @/lib/permissions-server, @/lib/db,
  * @/lib/ledger-queries, and @/lib/email — importing the real @/lib/db module
@@ -117,6 +118,8 @@ import { getSettings, getEmailsForFeature, donorExists } from "@/lib/ledger-quer
 import { sendBulkMemberEmail } from "@/lib/email";
 import { resolveTreasurer } from "@/lib/board-positions";
 import { db } from "@/lib/db";
+import { SWEEP_ERROR_COPY } from "@/lib/ledger-sweep";
+import { DEFAULT_FUND_LABELS } from "@/lib/ledger-fund-labels";
 
 function makeRequest(body: unknown): NextRequest {
   return { json: async () => body } as unknown as NextRequest;
@@ -154,14 +157,6 @@ const CLUB_PETTY_CASH = { id: "bank-petty-cash", entityId: CLUB_ENTITY, isActive
 const FOUNDATION_CHECKING = { id: "bank-foundation", entityId: FOUNDATION_ENTITY, isActive: true };
 const CLUB_INACTIVE_BANK = { id: "bank-inactive", entityId: CLUB_ENTITY, isActive: false };
 
-const DEFAULT_PUBLIC_DONATIONS_CAT = { id: "cat-public-donations-default" };
-const CUSTOM_FOUNDATION_INCOME_CAT = {
-  id: "cat-custom",
-  entityId: FOUNDATION_ENTITY,
-  fundKind: "charitable",
-  flow: "income",
-};
-
 const VALID_SWEEP_BODY = {
   transfer: true,
   sourceFundId: CLUB_ACTIVITY_FUND.id,
@@ -190,6 +185,7 @@ beforeEach(() => {
     disbApprovalThresholdCents: DISB_THRESHOLD_CENTS,
   } as never);
   vi.mocked(db.insert).mockClear();
+  vi.mocked(db.transaction).mockClear();
   vi.mocked(getEmailsForFeature).mockResolvedValue(["approver@example.com"]);
   vi.mocked(resolveTreasurer).mockResolvedValue({ ok: false, reason: "test" } as never);
   vi.mocked(sendBulkMemberEmail).mockReset();
@@ -320,58 +316,37 @@ describe("POST /api/admin/ledger/transactions — bank account required (default
 // ---------------------------------------------------------------------------
 
 describe("POST /api/admin/ledger/transactions — Transfer/Sweep (DECISION-058)", () => {
-  it("Sweep with a missing boardMinute → 400, regardless of amount", async () => {
+  it("a Sweep body is refused 400 use_sweep_batch BEFORE the board-minute and bank-account checks (B-172 Inc 2b)", async () => {
     const { boardMinute: _omit, ...body } = VALID_SWEEP_BODY;
     void _omit;
     mockDbState.selectQueue.push([CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND]);
 
-    const res = await POST(makeRequest(body));
+    const res = await POST(makeRequest({ ...body, sourceBankAccountId: "not-a-bank-account" }));
     const data = await res.json();
 
     expect(res.status).toBe(400);
-    expect(data.error).toBe("A board-minute reference is required for a cross-entity sweep.");
+    expect(data.code).toBe("use_sweep_batch");
+    expect(data.error).toBe(SWEEP_ERROR_COPY.use_sweep_batch(DEFAULT_FUND_LABELS));
+    expect(vi.mocked(db.transaction)).not.toHaveBeenCalled();
+    expect(mockDbState.lastTransactionInsertValues).toBeNull();
+    expect(sendBulkMemberEmail).not.toHaveBeenCalled();
   });
 
-  it("Sweep with a blank (whitespace-only) boardMinute → 400", async () => {
-    mockDbState.selectQueue.push([CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND]);
+  it.each([8452, 50_000])(
+    "a Sweep of %i cents (under or over the threshold) writes no rows and notifies no one",
+    async (amountCents) => {
+      mockDbState.selectQueue.push([CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND]);
 
-    const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, boardMinute: "   " }));
-    expect(res.status).toBe(400);
-  });
+      const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, amountCents }));
+      const data = await res.json();
 
-  it("Sweep under threshold → both legs inserted status='posted', response status:'posted'", async () => {
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
-      [DEFAULT_PUBLIC_DONATIONS_CAT],
-    );
-
-    const res = await POST(makeRequest(VALID_SWEEP_BODY)); // amountCents 8452 < threshold 25000
-    const data = await res.json();
-
-    expect(res.status).toBe(201);
-    expect(data.status).toBe("posted");
-    const [sourceLeg, destLeg] = mockDbState.lastTransactionInsertValues!;
-    expect(sourceLeg.status).toBe("posted");
-    expect(destLeg.status).toBe("posted");
-  });
-
-  it("Sweep over threshold → both legs inserted status='pending', response status:'pending'", async () => {
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
-      [DEFAULT_PUBLIC_DONATIONS_CAT],
-    );
-
-    const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, amountCents: 50_000 }));
-    const data = await res.json();
-
-    expect(res.status).toBe(201);
-    expect(data.status).toBe("pending");
-    const [sourceLeg, destLeg] = mockDbState.lastTransactionInsertValues!;
-    expect(sourceLeg.status).toBe("pending");
-    expect(destLeg.status).toBe("pending");
-  });
+      expect(res.status).toBe(400);
+      expect(data.code).toBe("use_sweep_batch");
+      expect(vi.mocked(db.transaction)).not.toHaveBeenCalled();
+      expect(mockDbState.lastTransactionInsertValues).toBeNull();
+      expect(sendBulkMemberEmail).not.toHaveBeenCalled();
+    },
+  );
 
   it("Account Transfer over threshold also routes both legs to 'pending' (closes the 'transfers always post' gap)", async () => {
     mockDbState.selectQueue.push([CLUB_ADMIN_FUND], [CLUB_ADMIN_CHECKING, CLUB_PETTY_CASH]);
@@ -384,45 +359,14 @@ describe("POST /api/admin/ledger/transactions — Transfer/Sweep (DECISION-058)"
   });
 
   it("each leg's bankAccountId matches its own request field, and they differ (per-leg account persistence)", async () => {
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
-      [DEFAULT_PUBLIC_DONATIONS_CAT],
-    );
+    mockDbState.selectQueue.push([CLUB_ADMIN_FUND], [CLUB_ADMIN_CHECKING, CLUB_PETTY_CASH]);
 
-    await POST(makeRequest(VALID_SWEEP_BODY));
+    await POST(makeRequest(VALID_ACCOUNT_TRANSFER_BODY));
 
     const [sourceLeg, destLeg] = mockDbState.lastTransactionInsertValues!;
-    expect(sourceLeg.bankAccountId).toBe(CLUB_ACTIVITY_BANK.id);
-    expect(destLeg.bankAccountId).toBe(FOUNDATION_CHECKING.id);
+    expect(sourceLeg.bankAccountId).toBe(CLUB_ADMIN_CHECKING.id);
+    expect(destLeg.bankAccountId).toBe(CLUB_PETTY_CASH.id);
     expect(sourceLeg.bankAccountId).not.toBe(destLeg.bankAccountId);
-  });
-
-  it("Sweep dest leg defaults categoryId to the seeded 'Public donations' category when destCategoryId omitted; source leg stays null", async () => {
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
-      [DEFAULT_PUBLIC_DONATIONS_CAT],
-    );
-
-    await POST(makeRequest(VALID_SWEEP_BODY));
-
-    const [sourceLeg, destLeg] = mockDbState.lastTransactionInsertValues!;
-    expect(sourceLeg.categoryId).toBeNull();
-    expect(destLeg.categoryId).toBe(DEFAULT_PUBLIC_DONATIONS_CAT.id);
-  });
-
-  it("Sweep dest leg uses an explicit destCategoryId when provided (validated against the destination fund)", async () => {
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
-      [CUSTOM_FOUNDATION_INCOME_CAT],
-    );
-
-    await POST(makeRequest({ ...VALID_SWEEP_BODY, destCategoryId: CUSTOM_FOUNDATION_INCOME_CAT.id }));
-
-    const [, destLeg] = mockDbState.lastTransactionInsertValues!;
-    expect(destLeg.categoryId).toBe(CUSTOM_FOUNDATION_INCOME_CAT.id);
   });
 
   it("same-entity Account Transfer: both legs' categoryId stay null (unchanged behavior)", async () => {
@@ -509,13 +453,13 @@ describe("POST /api/admin/ledger/transactions — Transfer/Sweep (DECISION-058)"
 
   it("bank account belonging to the wrong entity → 400", async () => {
     mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      // destBankAccountId points at a Club account, even though destFundId is Foundation's
-      [CLUB_ACTIVITY_BANK, CLUB_ADMIN_CHECKING],
+      [CLUB_ADMIN_FUND],
+      // destBankAccountId points at a Foundation account, though the dest fund is the Club's
+      [CLUB_ADMIN_CHECKING, FOUNDATION_CHECKING],
     );
 
     const res = await POST(
-      makeRequest({ ...VALID_SWEEP_BODY, destBankAccountId: CLUB_ADMIN_CHECKING.id }),
+      makeRequest({ ...VALID_ACCOUNT_TRANSFER_BODY, destBankAccountId: FOUNDATION_CHECKING.id }),
     );
     const data = await res.json();
 
@@ -524,13 +468,10 @@ describe("POST /api/admin/ledger/transactions — Transfer/Sweep (DECISION-058)"
   });
 
   it("inactive bank account on the source leg → 400", async () => {
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_INACTIVE_BANK, FOUNDATION_CHECKING],
-    );
+    mockDbState.selectQueue.push([CLUB_ADMIN_FUND], [CLUB_INACTIVE_BANK, CLUB_PETTY_CASH]);
 
     const res = await POST(
-      makeRequest({ ...VALID_SWEEP_BODY, sourceBankAccountId: CLUB_INACTIVE_BANK.id }),
+      makeRequest({ ...VALID_ACCOUNT_TRANSFER_BODY, sourceBankAccountId: CLUB_INACTIVE_BANK.id }),
     );
     const data = await res.json();
 
@@ -557,22 +498,16 @@ describe("POST /api/admin/ledger/transactions — Transfer/Sweep (DECISION-058)"
     // Even if a client includes an entityId in the body (e.g. an unmigrated
     // client, or a deliberate tamper attempt), it must have zero effect —
     // the route no longer reads it at all.
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
-      [DEFAULT_PUBLIC_DONATIONS_CAT],
-    );
+    mockDbState.selectQueue.push([CLUB_ADMIN_FUND], [CLUB_ADMIN_CHECKING, CLUB_PETTY_CASH]);
 
     const res = await POST(
-      makeRequest({ ...VALID_SWEEP_BODY, entityId: "entity-attacker-supplied" }),
+      makeRequest({ ...VALID_ACCOUNT_TRANSFER_BODY, entityId: "entity-attacker-supplied" }),
     );
-    const data = await res.json();
 
     expect(res.status).toBe(201);
     const [sourceLeg, destLeg] = mockDbState.lastTransactionInsertValues!;
     expect(sourceLeg.entityId).toBe(CLUB_ENTITY);
-    expect(destLeg.entityId).toBe(FOUNDATION_ENTITY);
-    void data;
+    expect(destLeg.entityId).toBe(CLUB_ENTITY);
   });
 });
 
@@ -634,19 +569,16 @@ describe("POST /api/admin/ledger/transactions — pending approval email escapin
     expect(html).toContain("/admin/ledger/approvals");
   });
 
-  it("over-threshold Sweep: memo is escaped and there is no Payee line", async () => {
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
-      [DEFAULT_PUBLIC_DONATIONS_CAT],
+  it("over-threshold Transfer: memo is HTML-escaped and there is no Payee line", async () => {
+    mockDbState.selectQueue.push([CLUB_ADMIN_FUND], [CLUB_ADMIN_CHECKING, CLUB_PETTY_CASH]);
+    const res = await POST(
+      makeRequest({ ...VALID_ACCOUNT_TRANSFER_BODY, amountCents: 50_000, memo: XSS_MEMO }),
     );
-    const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, amountCents: 50_000, memo: XSS_MEMO }));
     expect(res.status).toBe(201);
     const html = sentHtml();
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
     expect(html).not.toContain("Payee");
-    expect(html).toContain("A sweep requires board approval");
   });
 });
 
@@ -660,12 +592,8 @@ describe("POST /api/admin/ledger/transactions — review link and expense-leg id
   }
   const SENTENCE =
     "Only one board approval is needed to post this. If a colleague has already approved it, the link will show who, and you can add your approval too.";
-  const sweepQueue = () =>
-    mockDbState.selectQueue.push(
-      [CLUB_ACTIVITY_FUND, FOUNDATION_CHARITABLE_FUND],
-      [CLUB_ACTIVITY_BANK, FOUNDATION_CHECKING],
-      [DEFAULT_PUBLIC_DONATIONS_CAT],
-    );
+  const transferQueue = () =>
+    mockDbState.selectQueue.push([CLUB_ADMIN_FUND], [CLUB_ADMIN_CHECKING, CLUB_PETTY_CASH]);
 
   it("ordinary over-threshold email links to ?txn=<inserted id> and carries the sentence", async () => {
     mockDbState.selectQueue.push(
@@ -678,13 +606,13 @@ describe("POST /api/admin/ledger/transactions — review link and expense-leg id
     expect(sentHtml()).toContain(SENTENCE);
   });
 
-  it("Sweep 201 carries the expense-leg id plus the existing fields; the email links to it", async () => {
+  it("an over-threshold Transfer 201 carries the expense-leg id plus the existing fields; the email links to it", async () => {
     mockDbState.txReturning = [
       { id: "leg-income", flow: "income" },
       { id: "leg-expense", flow: "expense" },
     ];
-    sweepQueue();
-    const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, amountCents: 50_000 }));
+    transferQueue();
+    const res = await POST(makeRequest({ ...VALID_ACCOUNT_TRANSFER_BODY, amountCents: 50_000 }));
     const data = await res.json();
     expect(res.status).toBe(201);
     expect(data).toMatchObject({ id: "leg-expense", status: "pending" });
@@ -692,6 +620,9 @@ describe("POST /api/admin/ledger/transactions — review link and expense-leg id
     expect(typeof data.derivedFiscalYear).toBe("number");
     expect(sentHtml()).toMatch(/\/admin\/ledger\/approvals\?txn=leg-expense"/);
     expect(sentHtml()).toContain(SENTENCE);
+    expect(vi.mocked(sendBulkMemberEmail).mock.calls[0][0]).toMatchObject({
+      subject: "Transfer pending your approval — $500.00",
+    });
   });
 
   it("an under-threshold Transfer still returns the expense-leg id and sends no email", async () => {
@@ -709,8 +640,8 @@ describe("POST /api/admin/ledger/transactions — review link and expense-leg id
 
   it("with no expense row returned, the link is the plain Approvals URL and the send still happens", async () => {
     mockDbState.txReturning = [];
-    sweepQueue();
-    const res = await POST(makeRequest({ ...VALID_SWEEP_BODY, amountCents: 50_000 }));
+    transferQueue();
+    const res = await POST(makeRequest({ ...VALID_ACCOUNT_TRANSFER_BODY, amountCents: 50_000 }));
     const data = await res.json();
     expect(res.status).toBe(201);
     expect(data).not.toHaveProperty("id");

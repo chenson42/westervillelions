@@ -60,3 +60,18 @@ describe("picker wiring", () => {
     expect(picker).toContain("pickerNeedsHintLookup(bankLine, candidateTransactions)");
   });
 });
+
+describe("picker wiring: Match this batch (B-172 Inc 2b, B12)", () => {
+  const picker = readFileSync(join(__dirname, "reconciliation-match-picker.tsx"), "utf8");
+  it("groups the candidates it was given and the group button selects exactly the group's ids", () => {
+    expect(picker).toContain("groupSweepCandidates(candidateTransactions)");
+    expect(picker).toContain("setSelectedIds(new Set(g.ids))");
+    expect(picker).toContain("Match this batch");
+    expect(picker).toContain("{g.header}");
+  });
+
+  it("the commit still goes through the existing match route and the running-sum gate", () => {
+    expect(picker).toContain("/reconciliation/sessions/${sessionId}/match");
+    expect(picker).toContain("!summary.balanced");
+  });
+});

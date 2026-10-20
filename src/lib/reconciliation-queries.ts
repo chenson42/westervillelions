@@ -329,6 +329,11 @@ export type CandidateTransactionRow = {
   memo: string | null;
   checkNumber: string | null;
   paymentMethod: string | null;
+  /**
+   * B-172 Inc 2b (B12): the batch a Foundation sweep copy belongs to (its leg's
+   * id), null for every other row. The match picker groups on it.
+   */
+  sweepLegTxnId: string | null;
 };
 
 /**
@@ -353,6 +358,7 @@ export async function getCandidateTransactionsForMatching(
       memo: ledgerTransactions.memo,
       checkNumber: ledgerTransactions.checkNumber,
       paymentMethod: ledgerTransactions.paymentMethod,
+      sweepLegTxnId: ledgerTransactions.sweepLegTxnId,
     })
     .from(ledgerTransactions)
     .leftJoin(
@@ -404,6 +410,7 @@ export async function getMatchedTransactionsForSession(
       memo: ledgerTransactions.memo,
       checkNumber: ledgerTransactions.checkNumber,
       paymentMethod: ledgerTransactions.paymentMethod,
+      sweepLegTxnId: ledgerTransactions.sweepLegTxnId,
     })
     .from(ledgerReconciliationMatches)
     .innerJoin(
@@ -441,6 +448,26 @@ export async function getMatchForTransaction(
     .where(eq(ledgerReconciliationMatches.transactionId, transactionId))
     .limit(1);
   return rows[0] ?? null;
+}
+
+/**
+ * Of the given ledger transaction ids, the ones matched to a bank line in ANY
+ * reconciliation session (open or closed). ONE query; an empty list makes none.
+ * Used by void of an itemized sweep batch (a matched leg or copy blocks it) and
+ * by the batch evaluator's `not_matched_to_deposit` flag (B-172 Increment 2a).
+ * `executor` is `db` or a transaction handle.
+ */
+export async function listMatchedTransactionIds(
+  executor: Pick<typeof db, "select">,
+  transactionIds: readonly string[],
+): Promise<Set<string>> {
+  const ids = [...new Set(transactionIds)];
+  if (ids.length === 0) return new Set();
+  const rows = await executor
+    .select({ transactionId: ledgerReconciliationMatches.transactionId })
+    .from(ledgerReconciliationMatches)
+    .where(inArray(ledgerReconciliationMatches.transactionId, ids));
+  return new Set(rows.map((r) => r.transactionId));
 }
 
 export type BatchMatchCandidateTransaction = {

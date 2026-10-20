@@ -172,4 +172,17 @@ describe("copy", () => {
       "No written acknowledgment is required",
     );
   });
+  it("hint copy describes the itemized sweep and never the retired single-amount one (B-172 Inc 2b, B17)", () => {
+    const hints = [
+      mirrorHintCopy({ state: "stays", reason: "no_mirror" }),
+      mirrorHintCopy({ state: "stays", reason: "mirror_inactive" }),
+      mirrorHintCopy({ state: "bound", foundationCategoryName: "X", receipt: "may_be_needed" }),
+      mirrorHintCopy({ state: "bound", foundationCategoryName: "X", receipt: "not_needed" }),
+    ];
+    for (const h of hints) expect(h).not.toMatch(/lump|for now|does not check/i);
+    expect(hints[0]).toContain("cannot be swept to the Foundation until a counterpart is set");
+    expect(hints[1]).toContain("cannot be swept to the Foundation until then");
+    expect(hints[2]).toContain("the Foundation books it as its own gift");
+    expect(hints[3]).toContain("the Foundation books it as its own gift");
+  });
 });

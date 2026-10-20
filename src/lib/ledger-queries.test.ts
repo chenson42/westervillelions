@@ -42,7 +42,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { ACK_MIN_CENTS } from "./ledger";
+import { ACK_MIN_CENTS, isGiving } from "./ledger";
 import { readFileSync } from "fs";
 import path from "path";
 
@@ -2577,6 +2577,45 @@ describe("getDonor — entityDonationsDeductible per gift", () => {
     expect(donor!.givingHistory.map((r) => r.entityDonationsDeductible)).toEqual([true, false, false]);
   });
 
+  it("sweptOn (B18): a source with a live copy and a copy carry their batch's date; a rejected-only source, a rejected copy and a plain row are null", async () => {
+    const row = (id: string, extra: Record<string, unknown> = {}) => ({
+      txn: { ...txn(id), ...extra },
+      fundName: "Public Funds", entityName: "Club", entityDonationsDeductible: false, ackId: null, ackSentAt: null,
+    });
+    mockDbState.queue.push(
+      [{ id: "d-1", name: "Example Donor", emails: [] }],
+      [
+        row("src-live"),
+        row("src-freed"),
+        row("copy-live", { sweepLegTxnId: "leg-1" }),
+        row("copy-rejected", { sweepLegTxnId: "leg-2" }),
+        row("plain"),
+      ],
+      // listSweepBadges select 1: pointer rows that mention the requested ids
+      [
+        { id: "copy-x", legId: "leg-1", sourceId: "src-live", status: "posted" },
+        { id: "copy-y", legId: "leg-2", sourceId: "src-freed", status: "rejected" },
+        { id: "copy-live", legId: "leg-1", sourceId: "src-other", status: "posted" },
+        { id: "copy-rejected", legId: "leg-2", sourceId: "src-freed", status: "rejected" },
+      ],
+      // select 2: the legs
+      [
+        { id: "leg-1", txnDate: "2026-10-19", status: "posted", approvedAt: null },
+        { id: "leg-2", txnDate: "2026-10-12", status: "rejected", approvedAt: null },
+      ],
+    );
+
+    const donor = await getDonor("d-1");
+    const byId = Object.fromEntries(donor!.givingHistory.map((r) => [r.txn.id, r.sweptOn]));
+    expect(byId).toEqual({
+      "src-live": "2026-10-19",
+      "src-freed": null,
+      "copy-live": "2026-10-19",
+      "copy-rejected": null,
+      plain: null,
+    });
+  });
+
   it("donorExists is true for a row and false for none", async () => {
     mockDbState.queue.push([{ id: "d-1" }], []);
     expect(await donorExists("d-1")).toBe(true);
@@ -3001,5 +3040,140 @@ describe("receipt issuer wiring (C17, C18)", () => {
     expect(a?.entity?.name).toBe("Westerville Lions Foundation");
     expect(a?.txn.entityName).toBe("Westerville Lions Club");
     expect(a?.txn.fundName).toBe("Activity Fund");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Itemized sweep batches (B-172 Increment 2a): the approvals query, the
+// receipt worklist (B-194 and the swept-source receipt), and the roll-ups.
+// ---------------------------------------------------------------------------
+describe("getPendingApprovals — itemized sweep batches", () => {
+  const dialect = new PgDialect();
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  function baseRow(over: Record<string, unknown>) {
+    return {
+      id: "txn-default",
+      entityId: "entity-club",
+      fundId: "fund-default",
+      txnDate: "2026-10-19",
+      flow: "expense",
+      amountCents: 500000,
+      transferGroupId: null,
+      status: "pending",
+      recordedByUserId: "user-1",
+      sweptFromTxnId: null,
+      sweepLegTxnId: null,
+      fundName: "Some Fund",
+      recorderDisplayName: "Treasurer Tess",
+      ...over,
+    };
+  }
+
+  it("excludes copies in SQL, with the shared notSweepCopy fragment", async () => {
+    mockDbState.queue.push([]);
+    await getPendingApprovals();
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).toContain('"sweep_leg_txn_id" is null');
+    expect(sql).toContain('"status" = $');
+  });
+
+  it("returns one row per pending batch, with its copy count and the Foundation fund and entity", async () => {
+    const leg = baseRow({ id: "leg-1", transferGroupId: "g-1", fundName: "Activity Fund" });
+    mockDbState.queue.push([leg]);
+    mockDbState.queue.push([
+      { id: "entity-club", name: "Westerville Lions Club", shortName: "Club" },
+      { id: "entity-foundation", name: "Westerville Lions Foundation", shortName: "Foundation" },
+    ]);
+    mockDbState.queue.push([
+      {
+        legId: "leg-1",
+        fundId: "fund-charitable",
+        entityId: "entity-foundation",
+        fundName: "Charitable Fund",
+        copies: 12,
+      },
+    ]);
+    const result = await getPendingApprovals();
+    expect(result).toHaveLength(1);
+    expect(result[0].batch).toEqual({ count: 12 });
+    expect(result[0].partnerFundId).toBe("fund-charitable");
+    expect(result[0].partnerFundName).toBe("Charitable Fund");
+    expect(result[0].partnerEntityId).toBe("entity-foundation");
+    expect(result[0].partnerEntityName).toBe("Foundation");
+  });
+
+  it("still derives the partner when an entityId filter would have excluded the copies' entity", async () => {
+    // Filtered to the Club: the Foundation copies are not in the first result
+    // set at all, yet the grouped select still supplies the partner.
+    const leg = baseRow({ id: "leg-1", transferGroupId: "g-1" });
+    mockDbState.queue.push([leg]);
+    mockDbState.queue.push([{ id: "entity-foundation", name: "Foundation", shortName: null }]);
+    mockDbState.queue.push([
+      { legId: "leg-1", fundId: "f", entityId: "entity-foundation", fundName: "Charitable", copies: 3 },
+    ]);
+    const result = await getPendingApprovals("entity-club");
+    expect(result[0].batch).toEqual({ count: 3 });
+    expect(result[0].partnerEntityName).toBe("Foundation");
+  });
+
+  it("merges a split copy group into one count, keeping the largest group's fund", async () => {
+    mockDbState.queue.push([baseRow({ id: "leg-1", transferGroupId: "g-1" })]);
+    mockDbState.queue.push([]);
+    mockDbState.queue.push([
+      { legId: "leg-1", fundId: "f-small", entityId: "e", fundName: "Small", copies: 1 },
+      { legId: "leg-1", fundId: "f-big", entityId: "e", fundName: "Big", copies: 4 },
+    ]);
+    const [r] = await getPendingApprovals();
+    expect(r.batch).toEqual({ count: 5 });
+    expect(r.partnerFundId).toBe("f-big");
+  });
+
+  it("a lump pair and an ordinary expense carry batch null", async () => {
+    mockDbState.queue.push([
+      baseRow({ id: "src", transferGroupId: "g-2", flow: "expense" }),
+      baseRow({ id: "dst", transferGroupId: "g-2", flow: "income", entityId: "entity-foundation" }),
+      baseRow({ id: "plain" }),
+    ]);
+    const result = await getPendingApprovals();
+    expect(result.map((r) => r.id).sort()).toEqual(["plain", "src"]);
+    expect(result.every((r) => r.batch === null)).toBe(true);
+  });
+});
+
+describe("listPendingAcknowledgments — transfer legs (B-194) and swept sources", () => {
+  const dialect = new PgDialect();
+  beforeEach(() => {
+    mockDbState.queue = [];
+    mockDbState.wheres = [];
+  });
+
+  it("excludes a transfer leg and a copy whose source already had a receipt sent", async () => {
+    mockDbState.queue.push([]);
+    await listPendingAcknowledgments();
+    const { sql } = dialect.sqlToQuery(mockDbState.wheres[0] as never);
+    expect(sql).toContain('"transfer_group_id" is null');
+    expect(sql).toContain("NOT EXISTS");
+    expect(sql).toContain("sw_a.donation_txn_id = sw_s.swept_from_txn_id");
+    expect(sql).toContain("sw_a.sent_at IS NOT NULL");
+  });
+});
+
+describe("roll-ups ignore the sweep leg and its copies (pinned, B-172 Inc 2a)", () => {
+  const row = (over: Record<string, unknown>) => ({ flow: "expense", transferGroupId: null, ...over });
+
+  it("isGiving is false for the leg (an expense carrying a group id) and for a copy (income)", () => {
+    expect(isGiving(row({ transferGroupId: "g-1" }), "activity", null)).toBe(false);
+    expect(isGiving(row({ flow: "income" }), "charitable", null)).toBe(false);
+    expect(isGiving(row({}), "activity", null)).toBe(true);
+  });
+
+  it("the firewall counter needs one group holding both an activity and an administrative row", () => {
+    const src = readFileSync(path.join(__dirname, "ledger-queries.ts"), "utf8");
+    expect(src).toContain('kinds.has("activity") && kinds.has("administrative")');
+    // A batch leg is a one-row group in one fund, so it can never satisfy that test.
   });
 });

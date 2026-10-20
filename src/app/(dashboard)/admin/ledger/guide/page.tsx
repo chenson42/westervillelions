@@ -12,6 +12,7 @@ import type { LedgerSettings } from "@/lib/db/schema";
 import BankTransitionSection from "@/components/admin/ledger/guide/bank-transition-section";
 import BooksRegisterSection from "@/components/admin/ledger/guide/books-register-section";
 import ZeffyFundRoutingSection from "@/components/admin/ledger/guide/zeffy-fund-routing-section";
+import ItemizedSweepSection from "@/components/admin/ledger/guide/itemized-sweep-section";
 import DuesSection from "@/components/admin/ledger/guide/dues-section";
 import ReimbursementsSection from "@/components/admin/ledger/guide/reimbursements-section";
 import UncashedChecksSection from "@/components/admin/ledger/guide/uncashed-checks-section";
@@ -31,6 +32,7 @@ const TOC: { id: string; label: string }[] = [
   { id: "bank-transition", label: "Treasurer Transition — Bank Account" },
   { id: "books-register", label: "Books & the Register" },
   { id: "zeffy-fund-routing", label: "Zeffy & Fund Routing" },
+  { id: "itemized-sweep", label: "Sweeping to the Foundation" },
   { id: "dues", label: "Dues" },
   { id: "reimbursements", label: "Reimbursements & Approvals" },
   { id: "uncashed-checks", label: "Uncashed Checks" },
@@ -48,7 +50,7 @@ const TOC: { id: string; label: string }[] = [
  *
  * A single, linear, in-app guide to The Ledger for the treasurer and a
  * future successor (Phase 1/3 design). Pure Server Component, hardcoded
- * content composed from twelve section files under
+ * content composed from thirteen section files under
  * src/components/admin/ledger/guide/ — see the Phase 3 design doc
  * (docs/work-log/2026-07-21-treasury-users-guide.md) for the full rationale,
  * and docs/work-log/2026-07-27-ledger-budgeting-guide.md for the Budgeting
@@ -170,6 +172,7 @@ export default async function TreasuryUsersGuidePage() {
         <BankTransitionSection />
         <BooksRegisterSection labels={labels} />
         <ZeffyFundRoutingSection labels={labels} />
+        <ItemizedSweepSection labels={labels} />
         <DuesSection />
         <ReimbursementsSection />
         <UncashedChecksSection />

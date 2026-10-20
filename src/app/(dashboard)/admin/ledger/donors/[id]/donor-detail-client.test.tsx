@@ -23,7 +23,8 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
 
-import DonorDetailClient from "./donor-detail-client";
+import DonorDetailClient, { donorRowSweepLine } from "./donor-detail-client";
+import { DEFAULT_FUND_LABELS } from "@/lib/ledger-fund-labels";
 
 function baseDonor(
   overrides: Partial<DonorWithGivingHistory> = {},
@@ -81,6 +82,8 @@ describe("DonorDetailClient — Acknowledge button gate (any amount)", () => {
             donorId: "donor-1",
             reconciledSessionId: null,
             budgetLineId: null,
+            sweptFromTxnId: null,
+            sweepLegTxnId: null,
             createdAt: new Date("2026-09-01"),
             updatedAt: new Date("2026-09-01"),
             fundName: "Charitable Fund",
@@ -89,6 +92,7 @@ describe("DonorDetailClient — Acknowledge button gate (any amount)", () => {
           ackStatus: null,
           ackId: null,
           entityDonationsDeductible: true,
+          sweptOn: null,
         },
       ],
     });
@@ -147,6 +151,7 @@ describe("DonorDetailClient — total counts Foundation gifts only (B-172)", () 
       ackStatus: null,
       ackId: null,
       entityDonationsDeductible: deductible,
+      sweptOn: null,
     };
   }
 
@@ -173,5 +178,46 @@ describe("DonorDetailClient — total counts Foundation gifts only (B-172)", () 
     const html = renderToStaticMarkup(<DonorDetailClient donor={donor} canRecord={true} canManage={false} />);
     expect(html).toContain("$0.00");
     expect(html).not.toContain(">Acknowledge<");
+  });
+
+  it("a swept source reads 'Swept to the Foundation on D', its copy 'Swept from <fund> on D', and the total counts the gift once (B18)", () => {
+    const labels = { ...DEFAULT_FUND_LABELS, activity: "Community Money" };
+    const source = { ...giftRow("t-source", 50000, false, "Community Money"), sweptOn: "2026-10-12" };
+    const copy = { ...giftRow("t-copy", 50000, true, "Charitable Fund"), sweptOn: "2026-10-12" };
+    const donor = baseDonor({ givingHistory: [source, copy] as DonorWithGivingHistory["givingHistory"] });
+    const html = renderToStaticMarkup(
+      <DonorDetailClient donor={donor} canRecord={true} canManage={false} labels={labels} />,
+    );
+    const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(text).toContain("Swept to the Foundation on October 12, 2026");
+    expect(text).toContain("Swept from Community Money on October 12, 2026");
+    expect(text).not.toContain("Community Money, not yet a Foundation gift");
+    // $500 source (not deductible) + $500 copy (deductible) counts as $500, not $1,000.
+    expect(text).toContain("$500.00");
+    expect(text).not.toContain("$1000.00");
+    expect(text).not.toContain("$1,000.00");
+  });
+
+  it("donorRowSweepLine: the three labels and the unswept default", () => {
+    const labels = { ...DEFAULT_FUND_LABELS, activity: "Community Money" };
+    expect(donorRowSweepLine({ entityDonationsDeductible: false, sweptOn: "2026-10-12" }, "Community Money", labels)).toBe(
+      "Swept to the Foundation on October 12, 2026",
+    );
+    expect(donorRowSweepLine({ entityDonationsDeductible: true, sweptOn: "2026-10-12" }, "Charitable Fund", labels)).toBe(
+      "Swept from Community Money on October 12, 2026",
+    );
+    expect(donorRowSweepLine({ entityDonationsDeductible: false, sweptOn: null }, "Community Money", labels)).toBe(
+      "Community Money, not yet a Foundation gift",
+    );
+    expect(donorRowSweepLine({ entityDonationsDeductible: true, sweptOn: null }, "Charitable Fund", labels)).toBeNull();
+  });
+
+  it("a source whose copies were all rejected (sweptOn null) goes back to 'not yet a Foundation gift'", () => {
+    const donor = baseDonor({
+      givingHistory: [giftRow("t-freed", 50000, false, "Community Money")] as DonorWithGivingHistory["givingHistory"],
+    });
+    const html = renderToStaticMarkup(<DonorDetailClient donor={donor} canRecord={true} canManage={false} />);
+    expect(html).toContain("Community Money, not yet a Foundation gift");
+    expect(html).not.toContain("Swept to the Foundation");
   });
 });

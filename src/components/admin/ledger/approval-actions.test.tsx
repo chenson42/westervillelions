@@ -4,6 +4,8 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -65,5 +67,63 @@ describe("ApprovalCard", () => {
     );
     expect(html).toContain("Transfer");
     expect(html).toContain("Admin Fund → Activity Fund");
+  });
+});
+
+describe("ApprovalCard: an itemized sweep batch (B-172 Inc 2b, B8)", () => {
+  const detail = {
+    count: 3,
+    totalCents: 31000,
+    sweepDate: "2026-10-12",
+    earliestGiftDate: "2026-09-02",
+    latestGiftDate: "2026-09-28",
+    fiscalYears: [2026],
+    byCategory: [
+      { name: "Public donations", count: 2, cents: 25000 },
+      { name: "White Cane", count: 1, cents: 6000 },
+    ],
+    recordedBy: "Sam Example",
+    boardMinute: "Motion passed Oct 2026",
+  };
+  const batchProps = {
+    ...base,
+    party: "",
+    memo: "Itemized sweep: 3 gifts",
+    amount: "$310.00",
+    fund: { kind: "sweep" as const, text: "Public Funds \u2192 Foundation" },
+    batchCount: 3,
+  };
+
+  it("shows the summary once, in place of the payee and memo lines, with the shared Approve and Reject", () => {
+    const html = renderToStaticMarkup(
+      <ApprovalCard {...batchProps} dateText="Oct 12, 2026" isSelf={false} batch={detail} />,
+    );
+    expect(html.match(/data-testid="sweep-batch-summary"/g)?.length).toBe(1);
+    expect(html).toContain("Itemized sweep: 3 gifts");
+    expect(html).toContain("3 gifts, $310.00");
+    expect(html).toContain("Gifts dated Sep 2, 2026 to Sep 28, 2026");
+    expect(html).toContain("Public donations: 2 gifts, $250.00");
+    expect(html).toContain("Minute:");
+    expect(html).toContain(">Approve<");
+    expect(html).toContain(">Reject<");
+    // The card keeps its own Recorded by line; the summary does not repeat it.
+    expect(html.match(/Recorded by/g)?.length).toBe(1);
+  });
+
+  it("without a loaded summary it still renders the generated memo and the actions (a failed read never drops the row)", () => {
+    const html = renderToStaticMarkup(
+      <ApprovalCard {...batchProps} dateText="Oct 12, 2026" isSelf={false} batch={null} />,
+    );
+    expect(html).toContain("Itemized sweep: 3 gifts");
+    expect(html).toContain(">Approve<");
+  });
+
+  it("the Approve and Reject dialogs take the batch count and use describeBatchDecision", () => {
+    for (const file of ["approve-dialog.tsx", "reject-dialog.tsx", "approval-actions.tsx"]) {
+      const src = readFileSync(join(__dirname, file), "utf8");
+      expect(src).toContain("batchCount");
+    }
+    expect(readFileSync(join(__dirname, "approve-dialog.tsx"), "utf8")).toContain('describeBatchDecision("approve"');
+    expect(readFileSync(join(__dirname, "reject-dialog.tsx"), "utf8")).toContain('describeBatchDecision("reject"');
   });
 });

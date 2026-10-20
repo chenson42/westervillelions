@@ -8,6 +8,9 @@ import {
   editLockDisplayKind,
   isTransactionReconciled,
   moveBlockKind,
+  sweepEditAllowance,
+  sweepLockKind,
+  sweepRefusal,
   requiredMoveTier,
   crossEntityBlockKind,
   transactionLockKinds,
@@ -206,6 +209,9 @@ describe("LOCK_COPY (T7)", () => {
     "rejected",
     "pending",
     "dues_synced",
+    "sweep_batch",
+    "swept_copy",
+    "swept_source",
     "transfer_leg",
     "reconciled_session",
     "reconciled_legacy",
@@ -263,5 +269,120 @@ describe("paid_reimbursement lock kind (T26, B-108 / DECISION-114)", () => {
     expect(LOCK_COPY.paid_reimbursement.nextStep).not.toMatch(/refund entry/);
     // the approved copy for a non-reimbursement approved row is untouched
     expect(LOCK_COPY.approved.nextStep).toMatch(/refund entry/);
+  });
+});
+
+describe("sweep lock kinds (B-172 Inc 2a, ruling A6)", () => {
+  const NONE = { isLeg: false, hasLiveCopy: false, hasAnyCopy: false };
+  const LEG_ROLE = { ...NONE, isLeg: true };
+  const SOURCE_ROLE = { ...NONE, hasLiveCopy: true, hasAnyCopy: true };
+  const COPY = { sweepLegTxnId: "leg-1" };
+
+  it("sweepLockKind: copy by its column, leg and source by the loaded role", () => {
+    expect(sweepLockKind({})).toBeNull();
+    expect(sweepLockKind({ sweepRole: NONE })).toBeNull();
+    expect(sweepLockKind(COPY)).toBe("swept_copy");
+    expect(sweepLockKind({ sweepRole: LEG_ROLE })).toBe("sweep_batch");
+    expect(sweepLockKind({ sweepRole: SOURCE_ROLE })).toBe("swept_source");
+    // a source whose only copies were rejected is not locked
+    expect(sweepLockKind({ sweepRole: { ...NONE, hasAnyCopy: true } })).toBeNull();
+  });
+
+  it("the three kinds come after the status kinds and dues_synced, before transfer_leg", () => {
+    const leg = row({ ...LEG, ...PENDING, ...DUES, sweepRole: LEG_ROLE });
+    expect(transactionLockKinds(leg)).toEqual([
+      "pending",
+      "dues_synced",
+      "sweep_batch",
+      "transfer_leg",
+    ]);
+    expect(transactionLockKinds(row({ ...APPROVED, ...COPY, ...SESSION }))).toEqual([
+      "approved",
+      "swept_copy",
+      "reconciled_session",
+    ]);
+    expect(classifyTransactionLock(row({ sweepRole: SOURCE_ROLE }))).toBe("swept_source");
+  });
+
+  it("editLockKind is unchanged: a copy, leg and source stay editable as far as it is concerned", () => {
+    expect(editLockKind(row({ ...COPY }))).toBeNull();
+    expect(editLockKind(row({ sweepRole: LEG_ROLE }))).toBeNull();
+    expect(editLockKind(row({ ...APPROVED }))).toBe("approved");
+    expect(editLockKind(row({ ...REJECTED }))).toBe("rejected");
+    expect(editLockKind(row({ ...SESSION }))).toBe("reconciled_session");
+  });
+
+  it("sweepEditAllowance: a copy takes donorId and memo only; leg and source take nothing", () => {
+    expect(sweepEditAllowance("swept_copy", ["donorId"])).toBe(true);
+    expect(sweepEditAllowance("swept_copy", ["memo"])).toBe(true);
+    expect(sweepEditAllowance("swept_copy", ["donorId", "memo"])).toBe(true);
+    for (const key of [
+      "amountCents",
+      "txnDate",
+      "categoryId",
+      "party",
+      "flow",
+      "bankAccountId",
+    ]) {
+      expect(sweepEditAllowance("swept_copy", [key]), key).toBe(false);
+      expect(sweepEditAllowance("swept_copy", ["donorId", key]), key).toBe(false);
+    }
+    expect(sweepEditAllowance("swept_copy", ["", "unknownKey"])).toBe(false);
+    for (const kind of ["sweep_batch", "swept_source"] as const) {
+      expect(sweepEditAllowance(kind, ["donorId"])).toBe(false);
+      expect(sweepEditAllowance(kind, ["memo"])).toBe(false);
+      expect(sweepEditAllowance(kind, ["amountCents"])).toBe(false);
+      expect(sweepEditAllowance(kind, [])).toBe(false);
+    }
+    expect(sweepEditAllowance(null, ["amountCents"])).toBe(true);
+  });
+
+  it("moveBlockKind: a copy is swept_copy; the leg keeps transfer_leg; no swept_source branch", () => {
+    expect(moveBlockKind({ ...row(), sweepLegTxnId: "leg-1" })).toBe("swept_copy");
+    expect(moveBlockKind({ ...row(LEG), sweepLegTxnId: null })).toBe("transfer_leg");
+    // status kinds still win
+    expect(moveBlockKind({ ...row(APPROVED), sweepLegTxnId: "leg-1" })).toBe("approved");
+    expect(moveBlockKind({ ...row(), sweepLegTxnId: null })).toBeNull();
+  });
+
+  it("sweepRefusal: a distinct, fund-name-free message per kind and action; code is the kind", () => {
+    const seen = new Set<string>();
+    for (const kind of ["sweep_batch", "swept_copy", "swept_source"] as const) {
+      for (const action of ["edit", "delete", "split"] as const) {
+        const r = sweepRefusal(kind, action);
+        expect(r.code).toBe(kind);
+        expect(r.error).not.toMatch(/Activity|Public Funds/);
+        seen.add(r.error);
+      }
+    }
+    expect(seen.size).toBe(9);
+  });
+
+  it("sweepRefusal('sweep_batch', action, batch): the message follows the batch's state; the other kinds ignore the batch", () => {
+    const at = new Date("2026-10-20T00:00:00Z");
+    const posted = sweepRefusal("sweep_batch", "delete", { status: "posted", approvedAt: null }).error;
+    const pending = sweepRefusal("sweep_batch", "edit", { status: "pending", approvedAt: null }).error;
+    const approved = sweepRefusal("sweep_batch", "split", { status: "posted", approvedAt: at }).error;
+    const rejected = sweepRefusal("sweep_batch", "edit", { status: "rejected", approvedAt: null }).error;
+    expect(posted).toMatch(/Void it/);
+    expect(pending).toMatch(/Reject it from Approvals/);
+    expect(approved).toMatch(/correcting entry/);
+    expect(approved).not.toMatch(/void/i);
+    expect(rejected).toMatch(/kept as a record/);
+    expect(new Set([posted, pending, approved, rejected]).size).toBe(4);
+    // the verb still follows the action
+    expect(approved).toMatch(/cannot be split/);
+    // no third argument keeps the generic sentence
+    expect(sweepRefusal("sweep_batch", "edit").error).toMatch(/before it is approved/);
+    // copy and source are unchanged by a batch argument
+    const batch = { status: "posted", approvedAt: at };
+    expect(sweepRefusal("swept_copy", "edit", batch)).toEqual(sweepRefusal("swept_copy", "edit"));
+    expect(sweepRefusal("swept_source", "delete", batch)).toEqual(sweepRefusal("swept_source", "delete"));
+  });
+
+  it("LOCK_COPY for the sweep kinds is free of any fund name", () => {
+    for (const k of ["sweep_batch", "swept_copy", "swept_source"] as const) {
+      expect(`${LOCK_COPY[k].label} ${LOCK_COPY[k].nextStep}`).not.toMatch(/Activity|Public Funds/);
+    }
   });
 });

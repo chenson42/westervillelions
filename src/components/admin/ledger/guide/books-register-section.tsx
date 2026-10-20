@@ -160,9 +160,9 @@ export default function BooksRegisterSection({ labels }: { labels: FundLabels })
         <li>
           <span className="font-semibold">Moving does not sweep anything.</span> Once the money has
           actually been moved, choose <span className="font-semibold">Record sweep now</span> to open
-          the Sweep to Foundation form with the amount and account filled in. You still enter the
-          board-minute reference yourself. The Foundation side of a sweep is a transfer with no donor
-          attached, so it does not generate an acknowledgment letter.
+          the Sweep to the Foundation page with that gift already ticked. You review the batch, type
+          the amount that reached the bank and the board-minute reference yourself; see Sweeping to
+          the Foundation below.
         </li>
         <li>
           Approved, rejected, pending, transfer and dues-posted entries cannot be moved. Expense
@@ -212,9 +212,9 @@ export default function BooksRegisterSection({ labels }: { labels: FundLabels })
           money, so check the deposit slip.
         </li>
         <li>
-          The Foundation&rsquo;s income totals fall by the gift now. When you record the sweep, the
-          Foundation&rsquo;s totals count the transfer-in as income, as they do for every sweep, and
-          the Foundation side of a sweep gets no acknowledgment letter.
+          The Foundation&rsquo;s income totals fall by the gift now. When you sweep it back, the
+          Foundation books it again as an itemized copy with its donor. If a receipt was already
+          sent for the gift, the sweep review says so and the Foundation will not send a second one.
         </li>
         <li>
           Only current-fiscal-year entries can move to the other entity, and the Move button is not

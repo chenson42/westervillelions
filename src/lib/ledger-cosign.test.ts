@@ -391,7 +391,7 @@ describe("ledger-cosign.ts source scans", () => {
     expect(src).not.toMatch(/ledger-approval-queries/);
   });
   it("takes the shared lock helper and never FOR UPDATE", () => {
-    expect(src).toContain('lockDecisionPair(tx, id, "share")');
+    expect(src).toContain('lockDecisionGroup(tx, id, "share")');
     expect(src).not.toContain('"update"');
   });
 });
@@ -421,5 +421,78 @@ describe("co-sign table identifier allow-list (R12)", () => {
       .filter((rel) => !/\.test\.tsx?$/.test(rel) && rel !== "src/lib/ledger-cosign.ts")
       .filter((rel) => /["'](@\/lib\/|\.\/)ledger-cosign["']/.test(readFileSync(join(repoRoot, rel), "utf8")));
     expect(offenders).toEqual(["src/app/api/admin/ledger/transactions/[id]/cosign/route.ts"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Itemized sweep batches (B-172 Increment 2a): co-sign normalises to the leg.
+// ---------------------------------------------------------------------------
+
+describe("cosignTransaction — itemized sweep batch", () => {
+  const C1 = "44444444-4444-4444-8444-444444444441";
+  const C2 = "44444444-4444-4444-8444-444444444442";
+  const S1 = "55555555-5555-4555-8555-555555555551";
+  const S2 = "55555555-5555-4555-8555-555555555552";
+  const leg = (over: Row = {}) =>
+    expense({ transferGroupId: G, sweptFromTxnId: null, sweepLegTxnId: null, ...over });
+  const copy = (id: string, source: string, over: Row = {}): Row =>
+    expense({
+      id,
+      flow: "income",
+      transferGroupId: null,
+      approvedAt: null,
+      approvedByUserId: null,
+      sweptFromTxnId: source,
+      sweepLegTxnId: E,
+      ...over,
+    });
+
+  it("co-signing an approved batch inserts the leg's id", async () => {
+    st.lockQueue.push([leg(), copy(C1, S1), copy(C2, S2)]);
+    st.limitQueue.push(ok);
+    const r = await cosignTransaction({ id: E, actorUserId: ACTOR, now: NOW });
+    expect(r).toEqual({ ok: true, id: E, cosignedAt: NOW });
+    expect(st.inserts[0].values.txnId).toBe(E);
+    expect(st.forArgs).toEqual(["share"]);
+  });
+
+  it("a copy id is not_board_decision and inserts nothing", async () => {
+    st.lockQueue.push([copy(C1, S1)]);
+    const r = await cosignTransaction({ id: C1, actorUserId: ACTOR, now: NOW });
+    expect(r).toMatchObject({ ok: false, status: 409, body: { code: "not_board_decision" } });
+    expect(st.inserts).toHaveLength(0);
+  });
+
+  it("an under-threshold posted leg (no approved_at) is not_board_decision", async () => {
+    st.lockQueue.push([
+      leg({ approvedAt: null, approvedByUserId: null }),
+      copy(C1, S1),
+    ]);
+    st.limitQueue.push([{ ok: false }]);
+    const r = await cosignTransaction({ id: E, actorUserId: ACTOR, now: NOW });
+    expect(r).toMatchObject({ ok: false, status: 409, body: { code: "not_board_decision" } });
+    expect(st.inserts).toHaveLength(0);
+  });
+
+  it("a pending batch is not_approved", async () => {
+    st.lockQueue.push([
+      leg({ status: "pending", approvedAt: null, approvedByUserId: null }),
+      copy(C1, S1, { status: "pending" }),
+    ]);
+    const r = await cosignTransaction({ id: E, actorUserId: ACTOR, now: NOW });
+    expect(r).toMatchObject({ ok: false, status: 409, body: { code: "not_approved" } });
+  });
+
+  it("the copies' recorder counts as the recorder", async () => {
+    st.lockQueue.push([leg(), copy(C1, S1, { recordedByUserId: ACTOR })]);
+    st.limitQueue.push(ok);
+    const r = await cosignTransaction({ id: E, actorUserId: ACTOR, now: NOW });
+    expect(r).toMatchObject({ ok: false, status: 403, body: { code: "recorded_by_you" } });
+  });
+
+  it("a leg with no copies is not_board_decision", async () => {
+    st.lockQueue.push([leg()]);
+    const r = await cosignTransaction({ id: E, actorUserId: ACTOR, now: NOW });
+    expect(r).toMatchObject({ ok: false, status: 409, body: { code: "not_board_decision" } });
   });
 });

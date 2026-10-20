@@ -203,6 +203,7 @@ test.describe("category counterpart (mirror) on the category screen", () => {
     await expect(dialog).toContainText("Foundation-bound");
     await expect(dialog).toContainText(`"${FOUNDATION_TARGET_NAME}"`);
     await expect(dialog).toContainText("a written receipt will be needed");
+    await expect(dialog).not.toContainText(/lump/i);
 
     // Act / Assert — $249.99 does not (the same $250 line the pending-acknowledgments list uses)
     await dialog.locator("#txn-amount").fill("249.99");
@@ -294,6 +295,8 @@ test.describe("donor on a Public Funds gift", () => {
     // Assert
     await expect(dialog).toContainText("no Foundation counterpart");
     await expect(dialog).toContainText(`staying in ${activityFundName}`);
+    await expect(dialog).toContainText("cannot be swept to the Foundation until a counterpart is set");
+    await expect(dialog).not.toContainText(/lump/i);
     await page.keyboard.press("Escape");
   });
 });

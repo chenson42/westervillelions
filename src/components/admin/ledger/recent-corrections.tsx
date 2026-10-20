@@ -67,6 +67,7 @@ const KIND_BADGE: Record<CorrectionKind, { label: string; tone: "blue" | "red" |
   moved: { label: "Moved", tone: "blue" },
   deleted: { label: "Deleted", tone: "red" },
   corrected: { label: "Corrected", tone: "green" },
+  sweep_voided: { label: "Sweep voided", tone: "red" },
 };
 
 /** The headline of a card, per kind; exhaustive, with a `never` check. */
@@ -90,6 +91,13 @@ function Headline({ row }: { row: LedgerCorrectionRow }) {
       return <>{base}</>;
     case "corrected":
       return <>{base}</>;
+    case "sweep_voided":
+      return (
+        <>
+          {base}
+          <span className="font-normal text-gray-700"> itemized sweep of {Math.max(row.rowCount - 1, 0)} gifts removed</span>
+        </>
+      );
     default: {
       const unreachable: never = row.kind;
       return unreachable;
@@ -128,7 +136,11 @@ export default function RecentCorrections({ rows, totalInWindow, loadFailed }: R
                   Statement already sent ({formatStatementMonth(row.sentStatementMonth)})
                 </Badge>
               )}
-              {row.rowCount === 2 && <Badge tone="gray">2 entries</Badge>}
+              {row.kind !== "sweep_voided" && row.rowCount === 2 && <Badge tone="gray">2 entries</Badge>}
+              {row.kind === "sweep_voided" && <Badge tone="gray">{row.rowCount} entries</Badge>}
+              {row.kind === "sweep_voided" && row.fromEntityName && row.toEntityName && (
+                <Badge tone="blue">{`${row.fromEntityName} to ${row.toEntityName}`}</Badge>
+              )}
               {row.kind === "moved" && row.crossEntity && (
                 <Badge tone="blue">
                   {row.fromEntityName && row.toEntityName

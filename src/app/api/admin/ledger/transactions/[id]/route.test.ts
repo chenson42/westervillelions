@@ -36,6 +36,20 @@ import type { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
+
+// B-172 Inc 2a: the sweep-link loaders are DB reads; tests drive them through
+// this state (everything else in the module stays real).
+const { sweepState } = vi.hoisted(() => ({
+  sweepState: {
+    role: { isLeg: false, hasLiveCopy: false, hasAnyCopy: false },
+    receiptSentAt: null as Date | null,
+  },
+}));
+vi.mock("@/lib/ledger-sweep-link", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ledger-sweep-link")>()),
+  loadSweepRole: vi.fn(async () => ({ ...sweepState.role })),
+  getSweptSourceReceiptSentAt: vi.fn(async () => sweepState.receiptSentAt),
+}));
 vi.mock("@/lib/reconciliation-queries", () => ({ getMatchForTransaction: vi.fn() }));
 vi.mock("@/lib/receipt-storage", () => ({
   RECEIPT_KEY_REGEX: /^receipts\/.+$/,
@@ -181,6 +195,8 @@ const RECONCILED_TXN = {
 };
 
 beforeEach(() => {
+  sweepState.role = { isLeg: false, hasLiveCopy: false, hasAnyCopy: false };
+  sweepState.receiptSentAt = null;
   vi.mocked(auth).mockResolvedValue({ user: { id: "user-1" } } as never);
   vi.mocked(hasFeature).mockResolvedValue(true);
   mockDbState.existing = null;
@@ -683,5 +699,139 @@ describe("PATCH .../[id] — approvedAt guard is still unconditional (T22)", () 
     expect(json).not.toHaveBeenCalled();
     expect(mockDbState.updates).toHaveLength(0);
     expect(mockDbState.inserts).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Itemized sweep locks (B-172 Increment 2a, ruling A6)
+// ---------------------------------------------------------------------------
+
+describe("PATCH .../[id] — itemized sweep locks", () => {
+  const COPY_TXN = {
+    id: "txn-copy",
+    entityId: "entity-foundation",
+    fundId: "fund-charitable",
+    flow: "income",
+    transferGroupId: null,
+    approvedAt: null,
+    status: "posted",
+    reconciledSessionId: null,
+    receiptStorageKey: null,
+    donorId: null,
+    budgetLineId: null,
+    sweptFromTxnId: "txn-source",
+    sweepLegTxnId: "txn-leg",
+  };
+  const LEG_TXN = {
+    ...ORDINARY_TXN,
+    id: "txn-leg",
+    transferGroupId: "group-9",
+    status: "pending",
+    sweptFromTxnId: null,
+    sweepLegTxnId: null,
+  };
+  const SOURCE_TXN = {
+    ...ORDINARY_TXN,
+    id: "txn-source",
+    flow: "income",
+    sweptFromTxnId: null,
+    sweepLegTxnId: null,
+  };
+
+  it("a copy accepts a donor-only edit (200)", async () => {
+    mockDbState.existing = { ...COPY_TXN };
+    mockDbState.donorRows = [{ id: "donor-1" }];
+    const res = await PATCH(makeRequest({ donorId: "donor-1" }, BASE_URL), makeParams("txn-copy"));
+    expect(res.status).toBe(200);
+    expect(mockDbState.updates.some((u) => u.set.donorId === "donor-1")).toBe(true);
+  });
+
+  it("a copy accepts a memo edit (200)", async () => {
+    mockDbState.existing = { ...COPY_TXN };
+    const res = await PATCH(makeRequest({ memo: "a note" }, BASE_URL), makeParams("txn-copy"));
+    expect(res.status).toBe(200);
+  });
+
+  it.each(["amountCents", "txnDate", "categoryId", "party", "flow", "bankAccountId"])(
+    "a copy refuses %s with 403 and the swept_copy code",
+    async (key) => {
+      mockDbState.existing = { ...COPY_TXN };
+      const res = await PATCH(makeRequest({ [key]: "x" }, BASE_URL), makeParams("txn-copy"));
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.code).toBe("swept_copy");
+      expect(mockDbState.updates).toHaveLength(0);
+    },
+  );
+
+  it("a copy edit mixing donorId with a frozen field is refused whole", async () => {
+    mockDbState.existing = { ...COPY_TXN };
+    const res = await PATCH(
+      makeRequest({ donorId: "donor-1", amountCents: 5 }, BASE_URL),
+      makeParams("txn-copy"),
+    );
+    expect(res.status).toBe(403);
+    expect(mockDbState.updates).toHaveLength(0);
+  });
+
+  it("the leg is refused outright, ?both=true included, with the sweep_batch code", async () => {
+    mockDbState.existing = { ...LEG_TXN };
+    sweepState.role = { isLeg: true, hasLiveCopy: false, hasAnyCopy: false };
+    const res = await PATCH(
+      makeRequest({ memo: "x" }, `${BASE_URL}?both=true`),
+      makeParams("txn-leg"),
+    );
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.code).toBe("sweep_batch");
+    expect(mockDbState.updates).toHaveLength(0);
+  });
+
+  it.each([
+    ["posted", { status: "posted", approvedAt: null }, /Void it/, /before it is approved/],
+    ["pending", { status: "pending", approvedAt: null }, /Reject it from Approvals/, /void it before/i],
+    ["approved", { status: "posted", approvedAt: new Date("2026-10-20T00:00:00Z") }, /correcting entry/, /void it/i],
+  ])("the leg's refusal follows the batch's state (%s), never telling an approved batch to be voided", async (_state, over, yes, no) => {
+    mockDbState.existing = { ...LEG_TXN, ...over };
+    sweepState.role = { isLeg: true, hasLiveCopy: false, hasAnyCopy: false };
+    const res = await PATCH(makeRequest({ memo: "x" }, BASE_URL), makeParams("txn-leg"));
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.code).toBe("sweep_batch");
+    expect(data.error).toMatch(yes);
+    expect(data.error).not.toMatch(no);
+  });
+
+  it("a source claimed by a live copy refuses even a donor-only edit", async () => {
+    mockDbState.existing = { ...SOURCE_TXN };
+    sweepState.role = { isLeg: false, hasLiveCopy: true, hasAnyCopy: true };
+    const res = await PATCH(makeRequest({ donorId: "donor-1" }, BASE_URL), makeParams("txn-source"));
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.code).toBe("swept_source");
+    expect(mockDbState.updates).toHaveLength(0);
+  });
+
+  it("a source whose only copies were rejected is editable again", async () => {
+    mockDbState.existing = { ...SOURCE_TXN };
+    sweepState.role = { isLeg: false, hasLiveCopy: false, hasAnyCopy: true };
+    const res = await PATCH(makeRequest({ memo: "x" }, BASE_URL), makeParams("txn-source"));
+    expect(res.status).toBe(200);
+  });
+
+  it("the sweep guard answers before the approved message", async () => {
+    mockDbState.existing = { ...LEG_TXN, approvedAt: new Date() };
+    sweepState.role = { isLeg: true, hasLiveCopy: false, hasAnyCopy: false };
+    const res = await PATCH(makeRequest({ memo: "x" }, BASE_URL), makeParams("txn-leg"));
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.code).toBe("sweep_batch");
+    expect(data.error).not.toMatch(/Approved transactions cannot be edited/);
+  });
+
+  it("a row with no sweep relation behaves exactly as before", async () => {
+    mockDbState.existing = { ...ORDINARY_TXN };
+    const res = await PATCH(makeRequest({ memo: "x" }, BASE_URL), makeParams("txn-ordinary"));
+    expect(res.status).toBe(200);
   });
 });

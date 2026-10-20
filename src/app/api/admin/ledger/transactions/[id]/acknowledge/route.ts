@@ -81,6 +81,8 @@ import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { db } from "@/lib/db";
+import { getSweptSourceReceiptSentAt } from "@/lib/ledger-sweep-link";
+import { easternDateString } from "@/lib/eastern-date";
 import {
   ledgerTransactions,
   ledgerEntities,
@@ -198,6 +200,22 @@ export async function POST(
         {
           error: "An acknowledgment already exists for this transaction",
           existingAckId: existingAck.id,
+        },
+        { status: 409 },
+      );
+    }
+
+    // B-172 Inc 2a: a Foundation copy made by an itemized sweep must not get a
+    // second receipt when its SOURCE gift's receipt was already sent (the
+    // receipt sits on the source row id, DECISION-112). Names the date.
+    const sourceReceiptSentAt = await getSweptSourceReceiptSentAt(db, txnId);
+    if (sourceReceiptSentAt) {
+      const sentOn = easternDateString(sourceReceiptSentAt);
+      return NextResponse.json(
+        {
+          error: `A receipt for this gift was already sent on ${sentOn}. It does not need another one.`,
+          code: "receipt_already_sent",
+          sentOn,
         },
         { status: 409 },
       );

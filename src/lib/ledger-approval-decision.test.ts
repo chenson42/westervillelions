@@ -514,11 +514,177 @@ describe("lookupDeciderName", () => {
 });
 
 describe("lock helper extraction (2b B2)", () => {
-  it("imports lockDecisionPair and has no inline row lock", () => {
+  it("imports lockDecisionGroup and has no inline row lock", () => {
     const src = readFileSync(join(__dirname, "ledger-approval-decision.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-    expect(src).toContain("lockDecisionPair");
+    expect(src).toContain("lockDecisionGroup");
     expect(src).not.toContain('.for("update")');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Itemized sweep batches (B-172 Increment 2a): a leg plus N income copies.
+// ---------------------------------------------------------------------------
+
+describe("decideTransaction — itemized sweep batch", () => {
+  const LEG = "11111111-0000-4000-8000-000000000001";
+  const C1 = "22222222-0000-4000-8000-000000000001";
+  const C2 = "22222222-0000-4000-8000-000000000002";
+  const S1 = "33333333-0000-4000-8000-000000000001";
+  const S2 = "33333333-0000-4000-8000-000000000002";
+  const leg = (over = {}) =>
+    row({
+      id: LEG,
+      flow: "expense",
+      transferGroupId: GROUP,
+      sweptFromTxnId: null,
+      sweepLegTxnId: null,
+      ...over,
+    });
+  const copy = (id: string, source: string, over = {}) =>
+    row({
+      id,
+      flow: "income",
+      transferGroupId: null,
+      sweptFromTxnId: source,
+      sweepLegTxnId: LEG,
+      ...over,
+    });
+  const batch = (legOver = {}, copyOver = {}) => [
+    leg(legOver),
+    copy(C1, S1, copyOver),
+    copy(C2, S2, copyOver),
+  ];
+
+  it("approve stamps the leg fully and the copies with status, minute and updated_at only", async () => {
+    st.lockQueue.push(batch({ boardMinute: "Creation minute" }, { boardMinute: "Creation minute" }));
+    st.returningQueue.push([{ id: LEG }], [{ id: C1 }, { id: C2 }]);
+    const now = new Date("2026-10-10T15:00:00Z");
+    const res = await decideTransaction({
+      id: LEG,
+      actorUserId: ACTOR,
+      input: { kind: "approve", boardMinute: "  Final minute " },
+      now,
+    });
+    expect(res).toEqual({ ok: true, id: LEG });
+    expect(st.updates).toHaveLength(2);
+    expect(st.updates[0].set).toEqual({
+      status: "posted",
+      approvedByUserId: ACTOR,
+      approvedAt: now,
+      boardMinute: "Final minute",
+      updatedAt: now,
+    });
+    expect(st.updates[1].set).toEqual({
+      status: "posted",
+      boardMinute: "Final minute",
+      updatedAt: now,
+    });
+    expect(st.updates[1].set).not.toHaveProperty("approvedAt");
+    expect(st.updates[1].set).not.toHaveProperty("approvedByUserId");
+    const legQ = dialect(st.updates[0].where);
+    expect(legQ.params).toEqual(expect.arrayContaining([LEG, "pending"]));
+    const copiesQ = dialect(st.updates[1].where);
+    expect(copiesQ.params).toEqual(expect.arrayContaining([C1, C2, "pending"]));
+    expect(st.forArgs).toEqual(["update"]);
+  });
+
+  it("a blank request keeps the batch's creation minute on every row", async () => {
+    st.lockQueue.push(batch({ boardMinute: "Creation minute" }));
+    st.returningQueue.push([{ id: LEG }], [{ id: C1 }, { id: C2 }]);
+    const res = await approve(LEG, "");
+    expect(res.ok).toBe(true);
+    expect(st.updates[0].set.boardMinute).toBe("Creation minute");
+    expect(st.updates[1].set.boardMinute).toBe("Creation minute");
+  });
+
+  it("a short count on the leg UPDATE rolls back and answers the not_pending 409", async () => {
+    st.lockQueue.push(batch({ boardMinute: "m" }));
+    st.returningQueue.push([]);
+    st.limitQueue.push([leg({ status: "posted", approvedAt: new Date(), approvedByUserId: OTHER })]);
+    st.limitQueue.push([{ name: "Pat Example" }]);
+    const res = await approve(LEG);
+    expect(res).toMatchObject({
+      ok: false,
+      status: 409,
+      body: { code: "not_pending", decision: "approved", deciderName: "Pat Example" },
+    });
+    expect(st.committed).toHaveLength(0);
+  });
+
+  it("a short count on the copies UPDATE rolls back both UPDATEs", async () => {
+    st.lockQueue.push(batch({ boardMinute: "m" }));
+    st.returningQueue.push([{ id: LEG }], [{ id: C1 }]);
+    st.limitQueue.push([leg({ status: "posted", approvedAt: new Date(), approvedByUserId: OTHER })]);
+    st.limitQueue.push([{ name: "Pat Example" }]);
+    const res = await approve(LEG);
+    expect(res).toMatchObject({ ok: false, status: 409, body: { code: "not_pending" } });
+    // the mock discards the leg UPDATE with the rolled-back transaction
+    expect(st.updates).toHaveLength(0);
+    expect(st.committed).toHaveLength(0);
+  });
+
+  it("reject stamps every row alike with the rejection fields and never approved_at", async () => {
+    st.lockQueue.push(batch());
+    st.returningQueue.push([{ id: LEG }], [{ id: C1 }, { id: C2 }]);
+    const now = new Date("2026-10-10T16:00:00Z");
+    const res = await decideTransaction({
+      id: LEG,
+      actorUserId: ACTOR,
+      input: { kind: "reject", reason: " Not this year " },
+      now,
+    });
+    expect(res).toEqual({ ok: true, id: LEG });
+    for (const u of st.updates) {
+      expect(u.set).toEqual({
+        status: "rejected",
+        rejectionReason: "Not this year",
+        rejectedByUserId: ACTOR,
+        rejectedAt: now,
+        updatedAt: now,
+      });
+      expect(u.set).not.toHaveProperty("approvedAt");
+    }
+  });
+
+  it("deciding by a copy id is 400 decide_the_batch and writes nothing", async () => {
+    st.lockQueue.push([copy(C1, S1)]);
+    const res = await approve(C1);
+    expect(res).toMatchObject({ ok: false, status: 400, body: { code: "decide_the_batch" } });
+    expect(st.updates).toHaveLength(0);
+  });
+
+  it("a copy that is no longer pending blocks the decision with a 409 naming its decider", async () => {
+    st.lockQueue.push([
+      leg({ boardMinute: "m" }),
+      copy(C1, S1),
+      copy(C2, S2, { status: "rejected", rejectedByUserId: OTHER, rejectedAt: new Date() }),
+    ]);
+    st.limitQueue.push([{ name: "Pat Example" }]);
+    const res = await approve(LEG);
+    expect(res).toMatchObject({
+      ok: false,
+      status: 409,
+      body: { code: "not_pending", decision: "rejected", deciderName: "Pat Example" },
+    });
+    expect(st.updates).toHaveLength(0);
+  });
+
+  it("the self rule covers the copies' recorder", async () => {
+    st.lockQueue.push([
+      leg({ boardMinute: "m" }),
+      copy(C1, S1, { recordedByUserId: ACTOR }),
+    ]);
+    const res = await approve(LEG);
+    expect(res).toMatchObject({ ok: false, status: 403 });
+    expect(st.updates).toHaveLength(0);
+  });
+
+  it("a leg with no copies is a data fault: refused, nothing written", async () => {
+    st.lockQueue.push([leg({ boardMinute: "m" })]);
+    const res = await approve(LEG);
+    expect(res).toMatchObject({ ok: false, status: 409 });
+    expect(st.updates).toHaveLength(0);
   });
 });

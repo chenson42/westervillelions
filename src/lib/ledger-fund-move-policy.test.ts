@@ -163,6 +163,19 @@ describe("checkFundMove (T2: denial codes)", () => {
   });
 });
 
+describe("A6 pin: no fund move leaves an activity fund (B-172 Inc 2a)", () => {
+  it("no allowed cell has from.kind === 'activity', so a swept source needs no move block", () => {
+    const fromActivity = cartesian().filter((c) => c.from.kind === "activity");
+    expect(fromActivity.length).toBeGreaterThan(0);
+    for (const c of fromActivity) {
+      expect(
+        checkFundMove(c).allowed,
+        `${c.flow} activity->${c.to.kind} sameEntity=${c.sameEntity}`,
+      ).toBe(false);
+    }
+  });
+});
+
 describe("checkFundMove vs checkTransferDirection (T3: mutual exclusion)", () => {
   it("no (from, to) pair is allowed by both policies", () => {
     for (const c of cartesian()) {

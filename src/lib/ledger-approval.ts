@@ -18,6 +18,96 @@
 export type ApprovalDecision = "approved" | "rejected";
 export type ApprovalKind = "disbursement" | "transfer" | "sweep";
 
+/**
+ * Longest board-minute reference any ledger write accepts. Defined here, once
+ * (B-195): the transactions route, the budget-approvals route, the transaction
+ * form and decideTransaction() all import it, and a scan fails a second
+ * `const BOARD_MINUTE_MAX_LEN` anywhere in non-test `src`.
+ */
+export const BOARD_MINUTE_MAX_LEN = 500;
+
+// ---------------------------------------------------------------------------
+// Decision groups (B-172 Increment 2a, ruling A5). A board decision targets a
+// single row, a Transfer/Sweep pair (two legs sharing a transfer_group_id), or
+// an itemized sweep batch (one expense leg plus N income copies that point at
+// the leg through sweep_leg_txn_id). classifyDecisionGroup() is the ONE place
+// that tells them apart, used by decideTransaction() and cosignTransaction()
+// on the rows lockDecisionGroup() returned.
+// ---------------------------------------------------------------------------
+
+/** The columns the classifier reads; any row type carrying them is accepted. */
+export interface DecisionGroupRow {
+  id: string;
+  flow: string;
+  transferGroupId: string | null;
+  sweptFromTxnId?: string | null;
+  sweepLegTxnId?: string | null;
+}
+
+const present = (v: string | null | undefined): v is string => v !== null && v !== undefined;
+
+/** Why a locked set is not one of the three legitimate shapes. */
+export type DecisionGroupFaultReason = "count" | "shape" | "target_is_copy";
+
+export type DecisionGroup<R extends DecisionGroupRow> =
+  | { kind: "single"; target: R; rows: R[] }
+  | { kind: "pair"; target: R; rows: R[] }
+  | { kind: "sweep_batch"; target: R; leg: R; copies: R[]; rows: R[] }
+  | { kind: "fault"; reason: DecisionGroupFaultReason };
+
+/**
+ * Pure classification of the rows locked for `targetId`. `rows` is the full set
+ * lockDecisionGroup() returned. The target must be in `rows` (callers answer
+ * 404 first); if it is not, the result is a `shape` fault.
+ *
+ * - target carries `sweepLegTxnId`: a copy -> fault `target_is_copy` (a batch is
+ *   decided from its leg; a copy id is a caller mistake, not a pending state).
+ * - target is the expense leg of N >= 1 copies: `sweep_batch`, provided the set
+ *   is exactly the leg plus copies that all point at it, and the leg itself
+ *   carries no pointer and is an expense.
+ * - no copies, a transfer group: `pair` iff exactly two rows share the group
+ *   and neither carries a sweep pointer. A leg with no copies is a one-row
+ *   group, hence fault `count`.
+ * - no copies, no group: `single` iff the set is exactly the target.
+ */
+export function classifyDecisionGroup<R extends DecisionGroupRow>(
+  targetId: string,
+  rows: readonly R[],
+): DecisionGroup<R> {
+  const target = rows.find((r) => r.id === targetId);
+  if (!target) return { kind: "fault", reason: "shape" };
+  if (present(target.sweepLegTxnId)) return { kind: "fault", reason: "target_is_copy" };
+
+  const copies = rows.filter((r) => r.sweepLegTxnId === target.id);
+  const all = [...rows];
+
+  if (copies.length > 0) {
+    if (target.flow !== "expense" || present(target.sweptFromTxnId)) {
+      return { kind: "fault", reason: "shape" };
+    }
+    // Everything locked must be the leg or one of its copies.
+    if (rows.length !== copies.length + 1) return { kind: "fault", reason: "shape" };
+    if (copies.some((c) => c.flow !== "income" || !present(c.sweptFromTxnId))) {
+      return { kind: "fault", reason: "shape" };
+    }
+    return { kind: "sweep_batch", target, leg: target, copies, rows: all };
+  }
+
+  // No copies: a sweep pointer anywhere in the set is a malformed row.
+  if (rows.some((r) => present(r.sweptFromTxnId) || present(r.sweepLegTxnId))) {
+    return { kind: "fault", reason: "shape" };
+  }
+  if (target.transferGroupId) {
+    if (rows.length !== 2) return { kind: "fault", reason: "count" };
+    if (rows.some((r) => r.transferGroupId !== target.transferGroupId)) {
+      return { kind: "fault", reason: "shape" };
+    }
+    return { kind: "pair", target, rows: all };
+  }
+  if (rows.length !== 1) return { kind: "fault", reason: "count" };
+  return { kind: "single", target, rows: all };
+}
+
 /** The Recently decided list is capped here; no pagination. */
 export const RECENT_DECISIONS_LIMIT = 25;
 
@@ -40,6 +130,23 @@ export interface ApprovalConflictBody {
 export interface ApprovalNotFoundBody {
   error: string;
   code: "not_found";
+}
+
+/**
+ * Body of the 400 from POST .../approve or .../reject when the id is an itemized
+ * sweep COPY (B-172 Increment 2a, ruling A5): a batch is decided from its
+ * transfer leg. Dialogs branch on `code`; the page lists only legs, so this is
+ * a caller mistake, never a state a user reaches.
+ */
+export interface DecideTheBatchBody {
+  error: string;
+  code: "decide_the_batch";
+}
+
+export function isDecideTheBatch(body: unknown): body is DecideTheBatchBody {
+  if (!body || typeof body !== "object") return false;
+  const b = body as Record<string, unknown>;
+  return b.code === "decide_the_batch" && typeof b.error === "string";
 }
 
 export function isApprovalConflict(body: unknown): body is ApprovalConflictBody {
@@ -342,6 +449,12 @@ interface DecidedBase {
   entityName: string | null;
   partnerEntityName: string | null;
   recorderName: string | null;
+  /**
+   * B-172 Inc 2a: the number of copies an itemized sweep batch decided together
+   * (the partner fund and entity above come from the copies); null or absent
+   * for every other row.
+   */
+  batchCount?: number | null;
 }
 
 /** One row of Recently decided. No user ids ever appear on it. */

@@ -23,17 +23,19 @@ import ReconcileToggle, { ReconcileAllButton } from "@/components/admin/ledger/r
 import TxnDonorActions from "@/components/admin/ledger/txn-donor-actions";
 import ReceiptWaiverControl from "@/components/admin/ledger/receipt-waiver-control";
 import RowHighlighter from "@/components/admin/ledger/row-highlighter";
-import SweepPrefillLauncher from "@/components/admin/ledger/sweep-prefill-launcher";
 import ReceiptIssuerNote from "@/components/admin/ledger/receipt-issuer-note";
 import { loadMirrorProjections } from "@/lib/ledger-category-queries";
 import { listMoveRegisterContext } from "@/lib/ledger-fund-move-preview";
-import { getLatestFundMove } from "@/lib/ledger-audit";
-import { buildSweepMemo } from "@/lib/ledger-correction";
-import { isUuid } from "@/lib/utils";
 import { buildFundLabels, fundExplainer, fundKindBadge } from "@/lib/ledger-fund-labels";
 import { db } from "@/lib/db";
 import { listPaidReimbursementTransactionIds } from "@/lib/ledger-reimbursement-link";
-import type { LedgerTransaction, LedgerFund, LedgerBankAccount, LedgerCategory } from "@/lib/db/schema";
+import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
+import { listSweepBadges } from "@/lib/ledger-sweep-link";
+import type { SweepRowBadge } from "@/lib/ledger-sweep";
+import SweepRowChip from "@/components/admin/ledger/sweep-row-chip";
+import SweepBatchButton from "@/components/admin/ledger/sweep-batch-button";
+import { sweepRowControls } from "@/components/admin/ledger/sweep-row-controls";
+import type { LedgerTransaction } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -82,7 +84,6 @@ export default async function AdminLedgerFundPage({
     fy?: string;
     receipt?: string;
     highlight?: string;
-    sweepFrom?: string;
   }>;
 }) {
   const session = await auth();
@@ -104,7 +105,6 @@ export default async function AdminLedgerFundPage({
     fy: fyParam,
     receipt: receiptParam,
     highlight: highlightParam,
-    sweepFrom: sweepFromParam,
   } = await searchParams;
 
   // Validate entity
@@ -133,38 +133,6 @@ export default async function AdminLedgerFundPage({
   const fiscalYear = !isNaN(parsedFY) && parsedFY > 2000 && parsedFY < 2100 ? parsedFY : currentFY;
 
   const isFoundationEntity = entity.donationsDeductible === true;
-
-  // Cross-entity Sweep context (DECISION-058) — the Foundation's funds/bank
-  // accounts/categories, fetched ONLY on Club pages (never Foundation pages)
-  // and only when the viewer can record, since that's the only surface a
-  // Sweep to Foundation is ever legal from. See
-  // docs/work-log/2026-07-29-ledger-account-transfers.md Phase 3 UI plan.
-  let crossEntityContext:
-    | {
-        entityId: string;
-        entityName: string;
-        funds: LedgerFund[];
-        bankAccounts: LedgerBankAccount[];
-        categories: LedgerCategory[];
-      }
-    | undefined;
-  if (!isFoundationEntity && canRecord) {
-    const foundationEntity = entities.find((e) => e.donationsDeductible === true);
-    if (foundationEntity) {
-      const [foundationFunds, foundationBankAccounts, foundationCategories] = await Promise.all([
-        getFunds(foundationEntity.id),
-        getBankAccounts(foundationEntity.id),
-        getCategories(foundationEntity.id, { fundKind: "charitable", flow: "income" }),
-      ]);
-      crossEntityContext = {
-        entityId: foundationEntity.id,
-        entityName: foundationEntity.shortName ?? foundationEntity.name,
-        funds: foundationFunds,
-        bankAccounts: foundationBankAccounts,
-        categories: foundationCategories,
-      };
-    }
-  }
 
   const [bankAccounts, categories, transactions, fiscalYears, ackSummary, budgetLines, moveContext] =
     await Promise.all([
@@ -247,6 +215,20 @@ export default async function AdminLedgerFundPage({
       ).catch(() => new Set<string>())
     : new Set<string>();
 
+  // The sweep chip of every row, from ONE read (two selects for the whole page,
+  // never one per row; B-172 Inc 2b, B11). A failure only drops the chips: the
+  // server still refuses every edit of a sweep row.
+  // The words use ALL entities' stored fund names (a Foundation copy says where it
+  // came from), so they come from getFundLabels(), not from this register's funds.
+  const sweepLabels = await getFundLabels();
+  const sweepBadges: Map<string, SweepRowBadge> = await listSweepBadges(
+    db,
+    transactions.map((t) => t.id),
+  ).catch((err) => {
+    console.error("Ledger register: could not load sweep badges", err);
+    return new Map<string, SweepRowBadge>();
+  });
+
   // Foundation counterparts for the form's hint (B-172); a failure only drops the hint.
   const mirrorHints = Object.fromEntries(
     await loadMirrorProjections(categories).catch(() => new Map<string, never>()),
@@ -260,41 +242,7 @@ export default async function AdminLedgerFundPage({
   const fundLabels = buildFundLabels(allFunds);
   const basePath = `/admin/ledger/${fundSlug}`;
 
-  // "Record sweep now" deep link (DECISION-111 D2): ?sweepFrom=<txnId> opens the
-  // existing sweep form prefilled from a gift just moved into the public fund.
-  // Validated here, server-side; anything that does not check out is ignored
-  // silently (a stale or hand-edited link just shows the register).
   const nowIso = new Date().toISOString();
-  let sweepPrefill:
-    | { bankAccountId: string | null; amountCents: number; memo: string }
-    | undefined;
-  if (
-    sweepFromParam &&
-    isUuid(sweepFromParam) &&
-    canRecord &&
-    !isFoundationEntity &&
-    crossEntityContext &&
-    fund?.kind === "activity"
-  ) {
-    const activityRows = await listTransactions(entity.id, {
-      fundId: fund.id,
-      status: "posted",
-    });
-    const source = activityRows.find(
-      (t) => t.id === sweepFromParam && t.flow === "income" && !t.transferGroupId,
-    );
-    if (source) {
-      // The memo's "moved from ... on <date>" comes from the move's own audit
-      // row (its New York date), never the page-load clock; a row that was
-      // never moved gets no "moved" wording at all.
-      const latestMove = await getLatestFundMove(source.id).catch(() => null);
-      sweepPrefill = {
-        bankAccountId: source.bankAccountId ?? null,
-        amountCents: source.amountCents,
-        memo: buildSweepMemo({ party: source.party, move: latestMove }),
-      };
-    }
-  }
 
   const pageTitle = fund
     ? fund.name
@@ -319,19 +267,6 @@ export default async function AdminLedgerFundPage({
           DECISION-062/063) — scrolls-to and flashes the matching row, no
           auto-open. Renders nothing. */}
       <RowHighlighter targetId={highlightParam} idPrefix="txn-" />
-
-      {sweepPrefill && fund && crossEntityContext && (
-        <SweepPrefillLauncher
-          entityId={entity.id}
-          funds={allFunds}
-          categories={categories}
-          bankAccounts={bankAccounts}
-          budgetLines={budgetLines}
-          defaultFundId={fund.id}
-          crossEntityContext={crossEntityContext}
-          sweepPrefill={sweepPrefill}
-        />
-      )}
 
       {/* Breadcrumb */}
       <div>
@@ -380,6 +315,15 @@ export default async function AdminLedgerFundPage({
             Reports
           </Link>
 
+          {canRecord && !isFoundationEntity && fund?.kind === "activity" && (
+            <Link
+              href="/admin/ledger/sweep"
+              className="border-2 border-lions-blue text-lions-blue px-4 py-2 rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue min-h-[44px] inline-flex items-center"
+            >
+              Sweep to the Foundation
+            </Link>
+          )}
+
           {canRecord && (
             <TransactionFormDialog
               entityId={entity.id}
@@ -388,7 +332,6 @@ export default async function AdminLedgerFundPage({
               bankAccounts={bankAccounts}
               budgetLines={budgetLines}
               defaultFundId={fund?.id}
-              crossEntityContext={crossEntityContext}
               mirrorHints={mirrorHints}
               triggerLabel="Record Transaction"
             />
@@ -491,6 +434,9 @@ export default async function AdminLedgerFundPage({
                       : "Transfer"
                     : txn.party ?? "";
 
+                  const sweepBadge = sweepBadges.get(txn.id) ?? null;
+                  const sweepControls = sweepRowControls(sweepBadge, canManage);
+
                   const isPending = txn.status === "pending";
                   const isRejected = txn.status === "rejected";
                   const isPosted = txn.status === "posted";
@@ -577,8 +523,18 @@ export default async function AdminLedgerFundPage({
                             Rejected: {txn.rejectionReason}
                           </div>
                         )}
+                        {/* The row's part in an itemized sweep. Recorders get the Batch
+                            button beside the other row actions; readers get it here. */}
+                        {sweepBadge && (
+                          <div>
+                            <SweepRowChip badge={sweepBadge} labels={sweepLabels} />
+                            {!canRecord && sweepControls.batchButton && (
+                              <SweepBatchButton legId={sweepBadge.legId} canManage={canManage} labels={sweepLabels} />
+                            )}
+                          </div>
+                        )}
                         {/* Donor / ack controls — Foundation income rows only (LEDGER_RECORD) */}
-                        {isFoundationEntity && canRecord && !isTransfer && txn.flow === "income" && isPosted && (
+                        {sweepControls.donorActions && isFoundationEntity && canRecord && !isTransfer && txn.flow === "income" && isPosted && (
                           <TxnDonorActions
                             txnId={txn.id}
                             amountCents={txn.amountCents}
@@ -589,7 +545,7 @@ export default async function AdminLedgerFundPage({
                         )}
                         {/* Public Funds income rows (Club): Link donor only. The Foundation
                             issues the receipt after the sweep, so no Acknowledge here. */}
-                        {!isFoundationEntity && canRecord && !isTransfer && txn.flow === "income" && isPosted &&
+                        {sweepControls.donorActions && !isFoundationEntity && canRecord && !isTransfer && txn.flow === "income" && isPosted &&
                           allFunds.find((f) => f.id === txn.fundId)?.kind === "activity" && (
                           <TxnDonorActions
                             mode="public"
@@ -665,6 +621,8 @@ export default async function AdminLedgerFundPage({
                             nowIso={nowIso}
                             entitySlug={resolvedEntitySlug}
                             paidReimbursement={paidReimbursementIds.has(txn.id)}
+                            sweepBadge={sweepBadge}
+                            fundLabels={sweepLabels}
                           />
                         </td>
                       )}

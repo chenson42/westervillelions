@@ -9,6 +9,7 @@ import { computeSelectionSummary } from "@/lib/reconciliation";
 import { formatCalendarDate } from "@/lib/format-date";
 import type { CreateFromBankLineCandidate } from "@/lib/ledger-reimbursement-correction";
 import CorrectReimbursementDialog from "./correct-reimbursement-dialog";
+import { groupSweepCandidates } from "./reconciliation-sweep-groups";
 import {
   pickerHintCandidate,
   pickerHintText,
@@ -164,6 +165,9 @@ export default function ReconciliationMatchPicker({
     });
     return rows;
   }, [filtered, sortKey, sortDir]);
+
+  // Itemized sweep batches among the candidates (B-172 Inc 2b, B12).
+  const sweepGroups = useMemo(() => groupSweepCandidates(candidateTransactions), [candidateTransactions]);
 
   const selectedTransactions = useMemo(
     () => candidateTransactions.filter((t) => selectedIds.has(t.id)),
@@ -375,6 +379,26 @@ export default function ReconciliationMatchPicker({
                 </button>
               )}
             </div>
+          )}
+
+          {sweepGroups.length > 0 && (
+            <ul className="mt-3 space-y-2" aria-label="Sweep batches">
+              {sweepGroups.map((g) => (
+                <li
+                  key={g.legId}
+                  className="flex flex-col gap-2 rounded-lg bg-lions-blue/5 p-3 text-sm text-gray-800 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <span className="break-words">{g.header}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds(new Set(g.ids))}
+                    className="shrink-0 border-2 border-lions-blue text-lions-blue px-4 py-2 min-h-[44px] rounded-lg text-sm font-semibold hover:bg-lions-blue/5 transition focus:outline-none focus:ring-2 focus:ring-lions-blue"
+                  >
+                    Match this batch
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
 
           <div className="mt-4">

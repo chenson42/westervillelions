@@ -156,9 +156,20 @@ export function buildPendingApprovalEmailHtml(input: {
   party?: string | null;
   memo?: string | null;
   reviewUrl: string;
+  /**
+   * An itemized sweep (B-172 Increment 2a): the body names the number of gifts
+   * and deliberately ignores `party` and `memo` even if supplied, so no donor
+   * or free text reaches the approvers' list from a batch.
+   */
+  batch?: { count: number };
 }): string {
-  const { noun, amountDollars, txnDate, party, memo, reviewUrl } = input;
-  return `<p>A ${noun} requires board approval before it can be posted.</p>
+  const { noun, amountDollars, txnDate, reviewUrl, batch } = input;
+  const party = batch ? null : input.party;
+  const memo = batch ? null : input.memo;
+  const lead = batch
+    ? `A ${noun} of ${batch.count} ${batch.count === 1 ? "gift" : "gifts"} requires board approval before it can be posted.`
+    : `A ${noun} requires board approval before it can be posted.`;
+  return `<p>${lead}</p>
 <ul>
   <li><strong>Amount:</strong> $${amountDollars}</li>
   <li><strong>Date:</strong> ${txnDate}</li>

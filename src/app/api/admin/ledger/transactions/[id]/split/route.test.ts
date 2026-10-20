@@ -21,6 +21,20 @@ import type { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
+
+// B-172 Inc 2a: the sweep-link loaders are DB reads; tests drive them through
+// this state (everything else in the module stays real).
+const { sweepState } = vi.hoisted(() => ({
+  sweepState: {
+    role: { isLeg: false, hasLiveCopy: false, hasAnyCopy: false },
+    receiptSentAt: null as Date | null,
+  },
+}));
+vi.mock("@/lib/ledger-sweep-link", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ledger-sweep-link")>()),
+  loadSweepRole: vi.fn(async () => ({ ...sweepState.role })),
+  getSweptSourceReceiptSentAt: vi.fn(async () => sweepState.receiptSentAt),
+}));
 vi.mock("@/lib/reconciliation-queries", () => ({
   getMatchForTransaction: vi.fn(),
 }));
@@ -105,6 +119,8 @@ const BASE_TXN = {
 };
 
 beforeEach(() => {
+  sweepState.role = { isLeg: false, hasLiveCopy: false, hasAnyCopy: false };
+  sweepState.receiptSentAt = null;
   vi.mocked(auth).mockResolvedValue({ user: { id: "user-1" } } as never);
   vi.mocked(hasFeature).mockResolvedValue(true);
   vi.mocked(getMatchForTransaction).mockResolvedValue(null);
@@ -282,5 +298,39 @@ describe("POST .../split — approved rows stay refused without parsing (T22)", 
     expect(json).not.toHaveBeenCalled();
     expect(mockDbState.insertedValues).toBeNull();
     expect(mockDbState.updatedSet).toBeNull();
+  });
+});
+
+describe("POST .../split — itemized sweep locks (B-172 Increment 2a)", () => {
+  it.each([
+    ["the leg", { isLeg: true, hasLiveCopy: false, hasAnyCopy: false }, {}, "sweep_batch"],
+    ["a copy", { isLeg: false, hasLiveCopy: false, hasAnyCopy: false }, { sweepLegTxnId: "leg-1" }, "swept_copy"],
+    ["a swept source", { isLeg: false, hasLiveCopy: true, hasAnyCopy: true }, {}, "swept_source"],
+  ])("%s is refused 403 with its lock code before any other guard", async (_n, role, over, code) => {
+    sweepState.role = role;
+    mockDbState.existing = { ...BASE_TXN, ...over, approvedAt: new Date(), transferGroupId: "g1" };
+    const res = await POST(makeRequest({ amountCents: 1000 }), makeParams());
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.code).toBe(code);
+    expect(data.error).not.toMatch(/Approved transactions cannot be split|Transfer transactions/);
+    expect(mockDbState.insertedValues).toBeNull();
+  });
+
+  it("an approved leg's refusal no longer says to void it before it is approved", async () => {
+    sweepState.role = { isLeg: true, hasLiveCopy: false, hasAnyCopy: false };
+    mockDbState.existing = { ...BASE_TXN, approvedAt: new Date("2026-10-20T00:00:00Z"), transferGroupId: "g1" };
+    const res = await POST(makeRequest({ amountCents: 1000 }), makeParams());
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.code).toBe("sweep_batch");
+    expect(data.error).toMatch(/correcting entry/);
+    expect(data.error).not.toMatch(/void it/i);
+  });
+
+  it("a source whose only copies were rejected can be split", async () => {
+    sweepState.role = { isLeg: false, hasLiveCopy: false, hasAnyCopy: true };
+    const res = await POST(makeRequest({ amountCents: 4000 }), makeParams());
+    expect(res.status).toBe(201);
   });
 });

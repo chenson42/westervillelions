@@ -2571,3 +2571,25 @@ export function isBudgetLinePickValid(
     line.flow === "expense"
   );
 }
+
+// ---------------------------------------------------------------------------
+// Dollar-string parsing (B-172 Inc 2b, B14; B-197 tracks migrating the local copies)
+// ---------------------------------------------------------------------------
+
+const DOLLARS_PATTERN = /^\$?(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/;
+const DOLLARS_INT4_MAX_CENTS = 2_147_483_647;
+
+/**
+ * Parse what a person types into an amount field ("12", "12.5", "$1,234.56")
+ * into integer cents, with no floating-point arithmetic. Null for anything
+ * else: empty, letters, a third decimal, a sign, an exponent, or an amount
+ * above the `integer` column's limit. Surrounding whitespace is ignored.
+ */
+export function parseDollarsToCents(raw: string): number | null {
+  const text = raw.trim();
+  if (!DOLLARS_PATTERN.test(text)) return null;
+  const [whole, fraction = ""] = text.replace(/[$,]/g, "").split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  if (!Number.isSafeInteger(cents) || cents > DOLLARS_INT4_MAX_CENTS) return null;
+  return cents;
+}

@@ -46,6 +46,7 @@ import {
 } from "./ledger-audit";
 import {
   CORRECTION_AUDIT_ACTIONS,
+  SWEEP_BATCH_VOIDED_AUDIT_ACTION,
   TRANSACTION_CORRECTED_AUDIT_ACTION,
   TRANSACTION_DELETED_AUDIT_ACTION,
   TRANSACTION_FUND_MOVED_AUDIT_ACTION,
@@ -56,6 +57,7 @@ import {
   type AuditPayloadMap,
   type CorrectionAuditAction,
   type ReimbursementCorrectedAuditPayload,
+  type SweepBatchVoidedAuditPayload,
   type FundMoveAuditPayload,
   type FundMoveAuditPayloadV2,
   type TransactionDeletedAuditPayload,
@@ -278,16 +280,17 @@ describe("recordLedgerAuditNote (DECISION-115)", () => {
 describe("getRecentLedgerCorrections (T32)", () => {
   const NOW = new Date("2026-10-01T12:00:00Z");
 
-  it("selects only the three actions and applies the window cutoff in SQL, with no jsonb cast", async () => {
+  it("selects only the four correction actions and applies the window cutoff in SQL, with no jsonb cast", async () => {
     await getRecentLedgerCorrections({ entityId: "club", now: NOW });
     const q = new PgDialect().sqlToQuery(state.where as SQL);
-    expect(q.sql).toContain('"ledger_audit_log"."action" in ($1, $2, $3)');
-    expect(q.params.slice(0, 3)).toEqual([
+    expect(q.sql).toContain('"ledger_audit_log"."action" in ($1, $2, $3, $4)');
+    expect(q.params.slice(0, 4)).toEqual([
       "transaction_fund_moved",
       "transaction_deleted",
       "transaction_corrected",
+      "sweep_batch_voided",
     ]);
-    const cutoff = q.params[3] as Date | string;
+    const cutoff = q.params[4] as Date | string;
     const cutoffMs = cutoff instanceof Date ? cutoff.getTime() : new Date(cutoff).getTime();
     expect(cutoffMs).toBe(NOW.getTime() - 90 * 24 * 60 * 60 * 1000);
     expect(q.sql.toLowerCase()).not.toContain("jsonb");
@@ -637,6 +640,7 @@ describe("AuditPayloadMap (T30)", () => {
       transaction_fund_moved: true,
       transaction_deleted: true,
       transaction_corrected: true,
+      sweep_batch_voided: true,
     };
     const actions: Record<CorrectionAuditAction, true> = keys;
     expect(Object.keys(actions).sort()).toEqual([...CORRECTION_AUDIT_ACTIONS].sort());
@@ -720,5 +724,137 @@ describe("corrected rows in the reader (T27, T31)", () => {
     expect(r.totalInWindow).toBe(3);
     expect(r.rows[0]).toMatchObject({ kind: "moved", from: "Administrative Fund", to: "Activity Fund" });
     expect(r.rows[0].changes).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-172 Increment 2a / DECISION-126: the fourth kind, `sweep_batch_voided`
+// ---------------------------------------------------------------------------
+
+const VOID_ROW = (id: string, entity: "club" | "foundation", flow: "income" | "expense") => ({
+  id,
+  entity: { id: entity, name: entity === "club" ? "Club" : "Foundation", slug: entity },
+  fund: {
+    id: `fund-${entity}`,
+    name: entity === "club" ? "Public Funds" : "Charitable Fund",
+    slug: entity === "club" ? "activity" : "charitable",
+    kind: entity === "club" ? "activity" : "charitable",
+  },
+  bankAccountId: `bank-${entity}`,
+  categoryId: `cat-${id}`,
+  txnDate: "2026-10-05",
+  flow,
+  amountCents: 4000,
+  status: "posted",
+  sweptFromTxnId: flow === "income" ? `src-${id}` : null,
+});
+
+const VOIDED: SweepBatchVoidedAuditPayload = {
+  before: {
+    v: 1,
+    leg: VOID_ROW("leg", "club", "expense"),
+    copies: [VOID_ROW("c1", "foundation", "income"), VOID_ROW("c2", "foundation", "income")],
+  },
+  after: null,
+  details: {
+    v: 1,
+    reason: "Sweep keyed against the wrong bank account",
+    entityId: "club",
+    destEntityId: "foundation",
+    txnDate: "2026-10-05",
+    amountCents: 8000,
+    fiscalYear: 2026,
+    count: 2,
+    legStatus: "posted",
+    copyFiscalYears: [2025, 2026],
+    unsentAcknowledgmentsRemoved: 1,
+  },
+};
+
+describe("sweep_batch_voided audit (B-172 Increment 2a, break site 14)", () => {
+  const NOW = new Date("2026-10-06T12:00:00Z");
+
+  it("is the fourth correction action and round-trips through serialize and parse", () => {
+    expect(CORRECTION_AUDIT_ACTIONS).toContain(SWEEP_BATCH_VOIDED_AUDIT_ACTION);
+    const t = serializeAuditPayload(VOIDED);
+    expect(parseAuditDetails(SWEEP_BATCH_VOIDED_AUDIT_ACTION, t.details)).toEqual(VOIDED.details);
+    expect(parseAuditBefore(SWEEP_BATCH_VOIDED_AUDIT_ACTION, t.before)).toEqual(VOIDED.before);
+    expect(t.after).toBeNull();
+  });
+
+  it("the snapshot carries no party, memo or donor key anywhere", () => {
+    const text = JSON.stringify(VOIDED);
+    expect(text).not.toMatch(/"(party|memo|donorId|donor|email)"/);
+  });
+
+  it("an unknown version, malformed text or a missing field parses to raw and never throws", () => {
+    const v2 = JSON.stringify({ ...VOIDED.details, v: 2 });
+    expect(parseAuditDetails(SWEEP_BATCH_VOIDED_AUDIT_ACTION, v2)).toEqual({ raw: v2 });
+    expect(parseAuditDetails(SWEEP_BATCH_VOIDED_AUDIT_ACTION, "{")).toEqual({ raw: "{" });
+    expect(parseAuditDetails(SWEEP_BATCH_VOIDED_AUDIT_ACTION, null)).toEqual({ raw: "" });
+    const noDest = JSON.stringify({ v: 1, reason: "x", entityId: "club" });
+    expect(parseAuditDetails(SWEEP_BATCH_VOIDED_AUDIT_ACTION, noDest)).toEqual({ raw: noDest });
+    expect(parseAuditBefore(SWEEP_BATCH_VOIDED_AUDIT_ACTION, JSON.stringify({ v: 1, leg: {} }))).toEqual({
+      raw: JSON.stringify({ v: 1, leg: {} }),
+    });
+    expect(parseAuditBefore(SWEEP_BATCH_VOIDED_AUDIT_ACTION, JSON.stringify({ v: 2 }))).toEqual({
+      raw: JSON.stringify({ v: 2 }),
+    });
+  });
+
+  it("recordLedgerAudit writes the void with the three text columns and a null target", async () => {
+    const inserted: Array<Record<string, unknown>> = [];
+    const exec = {
+      insert: () => ({
+        values: (v: Record<string, unknown>) => {
+          inserted.push(v);
+          return Promise.resolve();
+        },
+      }),
+    };
+    await recordLedgerAudit(exec as never, {
+      actorUserId: ACTOR,
+      action: SWEEP_BATCH_VOIDED_AUDIT_ACTION,
+      targetTransactionId: null,
+      ...VOIDED,
+    });
+    expect(inserted[0].action).toBe("sweep_batch_voided");
+    expect(inserted[0].targetTransactionId).toBeNull();
+    expect(inserted[0].targetCategoryId).toBeNull();
+    expect(JSON.parse(inserted[0].before as string)).toEqual(VOIDED.before);
+    expect(inserted[0].after).toBeNull();
+    expect(JSON.parse(inserted[0].details as string)).toEqual(VOIDED.details);
+  });
+
+  it("the reader lists a void under BOTH the Club and the Foundation, and under no other entity", async () => {
+    state.fetched = [fetchedRow("v1", "sweep_batch_voided", VOIDED, new Date("2026-10-05"))];
+    for (const entityId of ["club", "foundation"]) {
+      const r = await getRecentLedgerCorrections({ entityId, now: NOW });
+      expect(r.rows).toHaveLength(1);
+      expect(r.rows[0]).toMatchObject({
+        kind: "sweep_voided",
+        amountCents: 8000,
+        flow: "expense",
+        txnDate: "2026-10-05",
+        from: "Public Funds",
+        to: "Charitable Fund",
+        reason: "Sweep keyed against the wrong bank account",
+        rowCount: 3,
+        crossEntity: true,
+        fromEntityName: "Club",
+        toEntityName: "Foundation",
+      });
+    }
+    const other = await getRecentLedgerCorrections({ entityId: "elsewhere", now: NOW });
+    expect(other.rows).toHaveLength(0);
+  });
+
+  it("an unreadable void row is still listed, with no reason, rather than hidden", async () => {
+    state.fetched = [
+      { id: "bad", action: "sweep_batch_voided", createdAt: new Date("2026-10-05"), actorName: null, before: null, after: null, details: "legacy text" },
+    ];
+    const r = await getRecentLedgerCorrections({ entityId: "club", now: NOW });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ kind: "sweep_voided", reason: null, amountCents: null, rowCount: 1 });
   });
 });

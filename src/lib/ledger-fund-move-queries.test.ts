@@ -452,6 +452,7 @@ describe("executeFundMove: refusals (T16)", () => {
     ["pending", () => queueSame({ row: { ...ROW, status: "pending" } }), 403, "pending"],
     ["transfer leg", () => queueSame({ row: { ...ROW, transferGroupId: "g1" } }), 403, "transfer_leg"],
     ["dues-synced", () => queueSame({ row: { ...ROW, duesPaymentId: "d1" } }), 403, "dues_synced"],
+    ["swept copy (B-172 Inc 2a)", () => queueSame({ row: { ...ROW, sweepLegTxnId: "leg-1" } }), 403, "swept_copy"],
     ["row not found", () => queueSame({ row: null }), 404, "not_found"],
     [
       "same fund",
@@ -1648,5 +1649,19 @@ describe("findSentStatementMonth and warnings (T19)", () => {
       }),
     ]);
     expect(r.preview.destinations[0].warnings).toBeUndefined();
+  });
+});
+
+describe("MOVE_BLOCK_MESSAGES covers swept_copy (B-172 Increment 2a)", () => {
+  it("evaluateRowState refuses a copy with the swept_copy code and a message that names the next step", async () => {
+    const { evaluateRowState } = await import("./ledger-fund-move-queries");
+    const res = evaluateRowState({ ...ROW, sweepLegTxnId: "leg-1" } as never);
+    expect(res).toMatchObject({ ok: false, status: 403, code: "swept_copy" });
+    if (!res.ok) expect(res.error).toMatch(/void the whole batch/i);
+  });
+
+  it("an ordinary row passes the row-state step", async () => {
+    const { evaluateRowState } = await import("./ledger-fund-move-queries");
+    expect(evaluateRowState({ ...ROW, sweepLegTxnId: null } as never)).toEqual({ ok: true });
   });
 });

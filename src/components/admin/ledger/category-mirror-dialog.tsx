@@ -104,9 +104,8 @@ export default function CategoryMirrorDialog({
           </div>
           <Dialog.Description className="text-sm text-gray-500 mb-4">
             Records which Foundation category this {labels.activity} category belongs with. The Foundation
-            category also decides whether a gift counts as giving and whether a receipt is needed. Itemized
-            sweeps will use it; today&apos;s lump sweep ignores it, and no copy or donor reaches the
-            Foundation yet.
+            category also decides whether a gift counts as giving and whether a receipt is needed. When a
+            gift is swept, its copy on the Foundation&apos;s books uses this category.
           </Dialog.Description>
 
           <form onSubmit={handleSave} className="space-y-4">

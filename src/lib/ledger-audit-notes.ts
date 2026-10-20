@@ -14,7 +14,17 @@
  * No DB import here.
  */
 
-export const AUDIT_NOTE_ACTIONS = ["fund_updated", "donor_deleted", "ledger_settings_updated"] as const;
+export const AUDIT_NOTE_ACTIONS = [
+  "fund_updated",
+  "donor_deleted",
+  "ledger_settings_updated",
+  // B-172 Increment 2a (DECISION-126): an itemized sweep batch was created, or a
+  // Public Funds gift was marked / unmarked as already handled. Plain-sentence
+  // details with ids and counts only; no reader yet.
+  "sweep_batch_created",
+  "sweep_closeout_marked",
+  "sweep_closeout_unmarked",
+] as const;
 
 export type AuditNoteAction = (typeof AUDIT_NOTE_ACTIONS)[number];
 

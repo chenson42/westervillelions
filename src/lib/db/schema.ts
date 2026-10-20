@@ -851,6 +851,10 @@ export const ledgerAuditLog = pgTable(
     // ids only) | 'category_mirrors_seeded' (migration 0115's one-shot marker row; both
     // targets null — the third both-targets-null case beside
     // 'ack_letter_template_updated' and 'reconciliation_session_discarded'; no reader lists it)
+    // B-172 Inc 2a sweep batches: 'sweep_batch_voided' (a CORRECTION action, listed by the
+    // board-visible reader; ids, dates, amounts only, never party/memo/donor) |
+    // 'sweep_batch_created' | 'sweep_closeout_marked' | 'sweep_closeout_unmarked' (notes,
+    // no reader)
     // ('category_created' is a reserved future value — category creation is
     // NOT audited in v1, per DECISION-066 item 5.)
     action: text("action").notNull(),
@@ -1023,10 +1027,43 @@ export const ledgerTransactions = pgTable(
       (): AnyPgColumn => ledgerBudgetLines.id,
       { onDelete: "set null" },
     ),
+    // B-172 Inc 2a / DECISION-126: itemized sweep batch pointers. There is no batch
+    // table; the sweep LEG (a Club expense row with its own one-row transferGroupId)
+    // is the batch and its id is the batch id. Each Foundation income COPY carries
+    // BOTH pointers: swept_from_txn_id = its source Public Funds gift,
+    // sweep_leg_txn_id = its leg. Null on every other row. Written once, only by
+    // createSweepBatch (scan-tested), never edited. ON DELETE RESTRICT: a referenced
+    // gift or leg can never be deleted from under a batch (void deletes copies first).
+    // No CHECK ties the two together. Self-referencing, so the FKs are declared in the
+    // extra-config below with explicit short names (the inline form needs an
+    // AnyPgColumn annotation and drizzle's default name would be 62+ characters).
+    sweptFromTxnId: uuid("swept_from_txn_id"),
+    sweepLegTxnId: uuid("sweep_leg_txn_id"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [
+    foreignKey({
+      columns: [t.sweptFromTxnId],
+      foreignColumns: [t.id],
+      name: "ledger_txn_swept_from_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.sweepLegTxnId],
+      foreignColumns: [t.id],
+      name: "ledger_txn_sweep_leg_fk",
+    }).onDelete("restrict"),
+    // At most one LIVE (non-rejected) copy per source gift; a rejected copy keeps its
+    // pointers as history. LIVE_COPY_PREDICATE in ledger-sweep-link.ts must stay in
+    // step with this predicate (pinned by ledger-sweep-schema.test.ts). If
+    // `drizzle-kit push` ever proposes dropping and recreating this index, rewrite the
+    // predicate to the text Postgres stores and re-run (live check S6).
+    uniqueIndex("ux_ledger_txn_swept_from_live")
+      .on(t.sweptFromTxnId)
+      .where(sql`${t.sweptFromTxnId} IS NOT NULL AND ${t.status} <> 'rejected'`),
+    index("ix_ledger_txn_sweep_leg")
+      .on(t.sweepLegTxnId)
+      .where(sql`${t.sweepLegTxnId} IS NOT NULL`),
     index("ix_ledger_txns_entity_fund").on(t.entityId, t.fundId),
     index("ix_ledger_txns_fund_date").on(t.fundId, t.txnDate),
     index("ix_ledger_txns_status").on(t.status),
@@ -1039,6 +1076,35 @@ export const ledgerTransactions = pgTable(
 
 export type LedgerTransaction = typeof ledgerTransactions.$inferSelect;
 export type NewLedgerTransaction = typeof ledgerTransactions.$inferInsert;
+
+// B-172 Inc 2a: a treasurer's closeout of a Public Funds gift that will never be swept
+// (e.g. it was deposited straight into the Foundation's account). One row per gift;
+// removing the row reopens it. Cascades with the gift; the actor is SET NULL so a deleted
+// account leaves the record. The reason is the one free-text field and must never hold a
+// donor's name (the dialog says so).
+export const ledgerSweepCloseouts = pgTable(
+  "ledger_sweep_closeouts",
+  {
+    txnId: uuid("txn_id").primaryKey(),
+    reason: text("reason").notNull(),
+    closedByUserId: uuid("closed_by_user_id"),
+    closedAt: timestamp("closed_at").notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.txnId],
+      foreignColumns: [ledgerTransactions.id],
+      name: "ledger_sweep_closeouts_txn_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.closedByUserId],
+      foreignColumns: [users.id],
+      name: "ledger_sweep_closeouts_user_fk",
+    }).onDelete("set null"),
+  ],
+);
+
+export type LedgerSweepCloseout = typeof ledgerSweepCloseouts.$inferSelect;
 
 // Informational, append-only co-approvals on a board-approved disbursement (DECISION-117).
 // Keyed on the EXPENSE leg. The posting approval stays on ledgerTransactions.approved_*;

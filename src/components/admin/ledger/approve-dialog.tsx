@@ -12,6 +12,7 @@ import {
   approvalSuccessMessage,
   approvalEntryHref,
   approveHint,
+  describeBatchDecision,
   minuteHelper,
   minuteRequiredMessage,
 } from "./approval-dialog-logic";
@@ -33,6 +34,8 @@ interface ApproveDialogProps {
   context: ApprovalDialogContextData;
   /** Disbursement, transfer or sweep: used in toast copy. */
   noun?: ApprovalKind;
+  /** An itemized sweep batch: the number of gifts this one decision covers (B-172 Inc 2b, B8). */
+  batchCount?: number | null;
   /** Classes for the trigger button this component renders. */
   triggerClassName: string;
   /** The trigger button's label. */
@@ -56,6 +59,7 @@ export default function ApproveDialog({
   existingBoardMinute,
   context,
   noun = "disbursement",
+  batchCount = null,
   triggerClassName,
   children,
 }: ApproveDialogProps) {
@@ -142,6 +146,11 @@ export default function ApproveDialog({
           {party ? ` — ${party}` : ""}
         </p>
         <ApprovalDialogContext data={context} />
+        {batchCount ? (
+          <p role="note" className="mb-4 rounded-lg bg-gray-50 p-3 text-sm text-gray-800">
+            {describeBatchDecision("approve", batchCount)}
+          </p>
+        ) : null}
 
         <div>
           <label

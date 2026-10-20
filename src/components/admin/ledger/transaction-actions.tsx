@@ -7,6 +7,8 @@ import MoveTransactionDialog from "./move-transaction-dialog";
 import DeleteTransactionDialog from "./delete-transaction-dialog";
 import CorrectReimbursementDialog from "./correct-reimbursement-dialog";
 import type { CorrectMode } from "./correct-reimbursement-dialog-logic";
+import SweepBatchButton from "./sweep-batch-button";
+import { sweepRowControls } from "./sweep-row-controls";
 import { moveButtonState } from "./transaction-move-eligibility";
 import { formatMoneyCents } from "./correction-dialog-logic";
 import {
@@ -18,6 +20,8 @@ import {
 } from "@/lib/ledger-transaction-lock";
 import type { LedgerTransaction, LedgerFund, LedgerCategory, LedgerBankAccount } from "@/lib/db/schema";
 import type { BudgetLineOption } from "@/lib/ledger-queries";
+import { DEFAULT_FUND_LABELS, type FundLabels } from "@/lib/ledger-fund-labels";
+import type { SweepRowBadge } from "@/lib/ledger-sweep";
 
 interface TransactionActionsProps {
   transaction: LedgerTransaction;
@@ -52,6 +56,14 @@ interface TransactionActionsProps {
    * reimbursement" (B-108 / DECISION-114). Optional so other callers are unchanged.
    */
   paidReimbursement?: boolean;
+  /**
+   * The row's part in an itemized sweep (B-172 Inc 2b, B11), from one
+   * `listSweepBadges` read on the page. A leg, a copy or a claimed source hides
+   * Edit, Delete, Split and Move and shows "Batch" instead.
+   */
+  sweepBadge?: SweepRowBadge | null;
+  /** The fund names for the batch dialog's words. */
+  fundLabels?: FundLabels;
 }
 
 const actionBase =
@@ -83,6 +95,8 @@ export default function TransactionActions({
   nowIso,
   entitySlug,
   paidReimbursement = false,
+  sweepBadge = null,
+  fundLabels = DEFAULT_FUND_LABELS,
 }: TransactionActionsProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -91,6 +105,7 @@ export default function TransactionActions({
   const [correctMode, setCorrectMode] = useState<CorrectMode | null>(null);
 
   const isTransfer = Boolean(transaction.transferGroupId);
+  const sweepControls = sweepRowControls(sweepBadge, canManage);
 
   // Split eligibility (base conditions checked client-side; the authoritative
   // guards — approved, rejected, reconciled, reconciledSessionId,
@@ -133,7 +148,8 @@ export default function TransactionActions({
       : isTransfer
         ? "transfer_leg"
         : null;
-  const labelKind = displayLock ?? infoLock;
+  // A sweep row's story is told by its chip and the batch dialog, not by a lock label.
+  const labelKind = sweepBadge ? null : (displayLock ?? infoLock);
 
   const deleteSummary = `${transaction.txnDate} · ${
     isTransfer ? "Transfer" : (transaction.party || transaction.memo || "No party")
@@ -169,7 +185,10 @@ export default function TransactionActions({
           table already scrolls horizontally too, but this keeps the actions
           cell itself well-behaved regardless. */}
       <div className="flex flex-wrap items-center gap-2 justify-end">
-        {canCorrect ? (
+        {sweepControls.batchButton && sweepBadge && (
+          <SweepBatchButton legId={sweepBadge.legId} canManage={canManage} labels={fundLabels} />
+        )}
+        {!sweepControls.rowActions ? null : canCorrect ? (
           <button
             type="button"
             onClick={() => setCorrectMode("correct")}
@@ -188,7 +207,7 @@ export default function TransactionActions({
             {isTransfer ? "Edit transfer" : "Edit"}
           </button>
         )}
-        {canSplit && (
+        {sweepControls.rowActions && canSplit && (
           <button
             type="button"
             onClick={() => setSplitOpen(true)}
@@ -197,7 +216,7 @@ export default function TransactionActions({
             Split
           </button>
         )}
-        {moveState.kind !== "omit" && (
+        {sweepControls.rowActions && moveState.kind !== "omit" && (
           <button
             type="button"
             onClick={() => setMoveOpen(true)}
@@ -208,15 +227,17 @@ export default function TransactionActions({
             Move
           </button>
         )}
-        <button
-          type="button"
-          onClick={() => setDeleteOpen(true)}
-          disabled={hardLock !== null}
-          title={displayLock ? LOCK_COPY[displayLock].nextStep : undefined}
-          className={`${actionBase} text-gray-500 hover:text-red-600 focus:ring-gray-300`}
-        >
-          Delete
-        </button>
+        {sweepControls.rowActions && (
+          <button
+            type="button"
+            onClick={() => setDeleteOpen(true)}
+            disabled={hardLock !== null}
+            title={displayLock ? LOCK_COPY[displayLock].nextStep : undefined}
+            className={`${actionBase} text-gray-500 hover:text-red-600 focus:ring-gray-300`}
+          >
+            Delete
+          </button>
+        )}
       </div>
 
       {labelKind && (
@@ -239,7 +260,7 @@ export default function TransactionActions({
           )}
         </p>
       )}
-      {needsBankAccount && (
+      {sweepControls.rowActions && needsBankAccount && (
         <div className="mt-1 ml-auto flex max-w-[14rem] flex-col items-end gap-1 whitespace-normal text-right text-xs text-gray-500">
           <p>No bank account. It can&rsquo;t be reconciled yet.</p>
           <button
@@ -251,14 +272,15 @@ export default function TransactionActions({
           </button>
         </div>
       )}
-      {hardLock === "reconciled_session" &&
+      {sweepControls.rowActions &&
+        hardLock === "reconciled_session" &&
         moveState.kind !== "omit" &&
         moveState.crossEntityOnly && (
           <p className="mt-1 ml-auto max-w-[14rem] whitespace-normal text-right text-xs text-gray-500">
             If the money is in the Club&rsquo;s account, see Move to the Club.
           </p>
         )}
-      {moveState.kind === "disabled" && (
+      {sweepControls.rowActions && moveState.kind === "disabled" && (
         <p className="mt-1 max-w-[14rem] whitespace-normal text-right text-xs text-gray-500 ml-auto">
           {moveState.reason}
         </p>

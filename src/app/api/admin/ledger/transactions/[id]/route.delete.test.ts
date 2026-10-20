@@ -13,6 +13,20 @@ import type { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/permissions-server", () => ({ hasFeature: vi.fn() }));
+
+// B-172 Inc 2a: the sweep-link loaders are DB reads; tests drive them through
+// this state (everything else in the module stays real).
+const { sweepState } = vi.hoisted(() => ({
+  sweepState: {
+    role: { isLeg: false, hasLiveCopy: false, hasAnyCopy: false },
+    receiptSentAt: null as Date | null,
+  },
+}));
+vi.mock("@/lib/ledger-sweep-link", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ledger-sweep-link")>()),
+  loadSweepRole: vi.fn(async () => ({ ...sweepState.role })),
+  getSweptSourceReceiptSentAt: vi.fn(async () => sweepState.receiptSentAt),
+}));
 vi.mock("@/lib/reconciliation-queries", () => ({ getMatchForTransaction: vi.fn() }));
 vi.mock("@/lib/receipt-storage", () => ({
   RECEIPT_KEY_REGEX: /^receipts\/.+$/,
@@ -155,6 +169,8 @@ function queueTail(acks: unknown[] = []) {
 }
 
 beforeEach(() => {
+  sweepState.role = { isLeg: false, hasLiveCopy: false, hasAnyCopy: false };
+  sweepState.receiptSentAt = null;
   vi.mocked(auth).mockResolvedValue({ user: { id: "user-1" } } as never);
   vi.mocked(hasFeature).mockResolvedValue(true);
   s.calls = [];
@@ -379,5 +395,65 @@ describe("DELETE — approved rows stay refused (T22)", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("Approved transactions cannot be deleted");
     expect(calls().filter((c) => c.op === "delete" || c.op === "insert")).toHaveLength(0);
+  });
+});
+
+describe("itemized sweep guards (B-172 Increment 2a)", () => {
+  it.each([
+    ["the leg", { isLeg: true, hasLiveCopy: false, hasAnyCopy: false }, {}, "sweep_batch"],
+    ["a copy", { isLeg: false, hasLiveCopy: false, hasAnyCopy: false }, { sweepLegTxnId: "leg-1" }, "swept_copy"],
+    ["a live source", { isLeg: false, hasLiveCopy: true, hasAnyCopy: true }, {}, "swept_source"],
+  ])("%s is 403 with its lock code and nothing written", async (_n, role, over, code) => {
+    sweepState.role = role;
+    s.selectQueue = [[txn(over)]];
+    const res = await DELETE(req({ reason: REASON }), params());
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe(code);
+    expect(calls().filter((c) => c.op !== "select")).toHaveLength(0);
+  });
+
+  it("the sweep guard answers before the approved message", async () => {
+    sweepState.role = { isLeg: true, hasLiveCopy: false, hasAnyCopy: false };
+    s.selectQueue = [[txn({ approvedAt: new Date() })]];
+    const res = await DELETE(req({ reason: REASON }), params());
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.code).toBe("sweep_batch");
+    expect(data.error).not.toMatch(/Approved transactions cannot be deleted/);
+  });
+
+  it("an approved leg's refusal no longer says to void it before it is approved", async () => {
+    sweepState.role = { isLeg: true, hasLiveCopy: false, hasAnyCopy: false };
+    s.selectQueue = [[txn({ approvedAt: new Date("2026-10-20T00:00:00Z") })]];
+    const res = await DELETE(req({ reason: REASON }), params());
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.code).toBe("sweep_batch");
+    expect(data.error).toMatch(/correcting entry/);
+    expect(data.error).not.toMatch(/void it/i);
+  });
+
+  it("a pending leg's refusal points to Reject; a posted one to Void", async () => {
+    sweepState.role = { isLeg: true, hasLiveCopy: false, hasAnyCopy: false };
+    s.selectQueue = [[txn({ status: "pending", approvedAt: null })]];
+    expect((await (await DELETE(req({ reason: REASON }), params())).json()).error).toMatch(/Reject it from Approvals/);
+    s.selectQueue = [[txn({ status: "posted", approvedAt: null })]];
+    expect((await (await DELETE(req({ reason: REASON }), params())).json()).error).toMatch(/Void it/);
+  });
+
+  it("a source whose only copies were rejected is 409 sweep_history, never a foreign-key 500", async () => {
+    sweepState.role = { isLeg: false, hasLiveCopy: false, hasAnyCopy: true };
+    s.selectQueue = [[txn()]];
+    const res = await DELETE(req({ reason: REASON }), params());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("sweep_history");
+    expect(calls().filter((c) => c.op !== "select")).toHaveLength(0);
+  });
+
+  it("a row with no sweep relation still deletes", async () => {
+    s.selectQueue = [[txn()]];
+    queueTail();
+    const res = await DELETE(req({ reason: REASON }), params());
+    expect(res.status).toBe(200);
   });
 });

@@ -18,7 +18,6 @@ import {
   moveFailureAction,
   noDestinationHeading,
   resolveMoveClose,
-  sweepDeepLink,
 } from "./correction-dialog-logic";
 import {
   MOVE_FAILED_MESSAGE,
@@ -26,6 +25,7 @@ import {
   type MovePreview,
   type MoveResponse,
 } from "@/lib/ledger-correction";
+import { sweepBuilderHref } from "@/lib/ledger-sweep";
 
 export type MoveDialogPhase =
   | { phase: "loading" }
@@ -169,12 +169,7 @@ export function MoveDialogBody(props: MoveDialogBodyProps) {
           </button>
           {result.sweepSuggested && (
             <Link
-              href={sweepDeepLink({
-                fundSlug: result.fundSlug,
-                // The DESTINATION entity's slug (X7), not the register's.
-                entitySlug: result.entitySlug,
-                transactionId: result.id,
-              })}
+              href={sweepBuilderHref([result.id])}
               className={primaryButton}
             >
               Record sweep now

@@ -35,8 +35,8 @@ import {
  *
  * The treasurer's flow: an Administrative-fund income row that is really
  * public money is moved to the Activity Fund (reason required, ratchet and
- * "bank balance unchanged" shown), then "Record sweep now" deep-links to the
- * sweep form prefilled but with the board-minute reference empty. The
+ * "bank balance unchanged" shown), then "Record sweep now" links to the
+ * sweep builder with the moved gift preselected. The
  * correction then shows on the Compliance page. Also covers the lock label on a
  * row cleared by a closed reconciliation session, the reconcile-toggle
  * refusal on that row, PATCH `fundId` -> 400, and a delete refused with 409
@@ -46,7 +46,7 @@ import {
  * Every party starts with "E2E QA Move" and every correction reason contains
  * the same tag, so cleanupMoveTransactionFixtures() removes exactly this
  * suite's transactions, session and audit rows (audit rows are NOT cascade-
- * deleted with a transaction). The sweep form is opened but never submitted,
+ * deleted with a transaction). The sweep builder is opened but nothing is posted,
  * so no sweep rows or email are ever created.
  *
  * The second describe block covers the CROSS-ENTITY move (DECISION-112/113,
@@ -55,7 +55,7 @@ import {
  * its donor and its already-sent receipt, behind a required Club bank-account
  * pick; a gift cleared by a closed reconciliation session gets a guided
  * checklist instead of a form. Fixtures are in helpers/cross-entity-move-fixtures.ts
- * (example.com donors only). The sweep form is opened but never submitted.
+ * (example.com donors only). The sweep builder is opened but nothing is posted.
  *
  * Serial, single worker — see playwright.config.ts.
  */
@@ -226,7 +226,7 @@ test.describe("Move a transaction to another fund", () => {
     await signInAsAdmin(page);
   });
 
-  test("should move an Administrative income row to the Activity Fund and open the sweep form with the board minute left empty", async ({ page }) => {
+  test("should move an Administrative income row to the Activity Fund and open the sweep builder with it preselected", async ({ page }) => {
     // Arrange
     await openRegister(page, "administrative");
     const row = page.locator("tr", { hasText: PARTY_MOVE });
@@ -253,16 +253,13 @@ test.describe("Move a transaction to another fund", () => {
     expect(moved.fundId).toBe(ids.activityFundId);
     expect(moved.bankAccountId).toBe(ids.adminBankId);
 
-    // Act: follow the deep link
+    // Act: follow the link to the sweep builder
     await dialog.getByRole("link", { name: "Record sweep now" }).click();
-    await page.waitForURL(/\/admin\/ledger\/activity.*sweepFrom=/);
-    const sweep = page.getByRole("dialog");
-    await sweep.getByText("Record Sweep").first().waitFor();
+    await page.waitForURL(/\/admin\/ledger\/sweep\?sweep=/);
 
-    // Assert: prefilled, but the board-minute reference is never guessed
-    await expect(sweep.locator("#txn-amount")).toHaveValue("50.00");
-    await expect(sweep.locator("#txn-board-minute")).toHaveValue("");
-    await expect(sweep.locator("#txn-from-account option:checked")).toContainText("Administrative Checking");
+    // Assert: the moved gift is preselected and nothing was recorded
+    await expect(page.locator(`#sweep-gift-${ids.movedTxnId}`)).toBeChecked();
+    await expect(page.getByRole("button", { name: "Review sweep" })).toBeEnabled();
     const sweepRows = await db.select().from(ledgerTransactions).where(ilike(ledgerTransactions.memo, `Sweep of ${PARTY_MOVE}%`));
     expect(sweepRows).toHaveLength(0);
   });
@@ -496,20 +493,16 @@ test.describe("Move a Foundation gift to the Club (cross-entity)", () => {
     await expect(dialog.getByRole("status")).toContainText("receipt letter stays attached");
   });
 
-  test("should open the sweep form on the Club's register with the board minute empty — regression for the deep link taking the register's entity slug", async ({ page }) => {
-    // Arrange: the success step of a move is gone after a reload, so open the sweep deep link the dialog builds
-    await page.goto(`/admin/ledger/activity?entity=club&sweepFrom=${sentGift.txnId}`);
-    const sweep = page.getByRole("dialog");
-    await sweep.getByText("Record Sweep").first().waitFor();
+  test("should open the sweep builder with the moved gift preselected and record nothing", async ({ page }) => {
+    // Arrange: the success step of a move is gone after a reload, so open the link the dialog builds
+    await page.goto(`/admin/ledger/sweep?sweep=${sentGift.txnId}`);
 
-    // Assert: prefilled from the moved gift, the minute is never guessed, and the memo names the Foundation
-    await expect(sweep.locator("#txn-amount")).toHaveValue("50.00");
-    await expect(sweep.locator("#txn-board-minute")).toHaveValue("");
-    await expect(sweep.locator("#txn-from-account option:checked")).toContainText("Administrative Checking");
-    expect(await sweep.locator("#txn-memo").inputValue()).toContain("moved from the Foundation");
+    // Assert: preselected, and no sweep entry exists for it
+    await expect(page.locator(`#sweep-gift-${sentGift.txnId}`)).toBeChecked();
     const sweepRows = await db.select().from(ledgerTransactions).where(ilike(ledgerTransactions.memo, `Sweep of ${TAG}%`));
     expect(sweepRows).toHaveLength(0);
   });
+
 
   test("should name the Foundation as the receipt's issuer on the Club register and refuse to delete the moved gift — regression for a moved receipt losing its issuer", async ({ page }) => {
     // Act

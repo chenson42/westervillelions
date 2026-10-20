@@ -67,9 +67,9 @@ import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getEntityById, getBudgetApproval } from "@/lib/ledger-queries";
+import { BOARD_MINUTE_MAX_LEN } from "@/lib/ledger-approval";
 import { validateRequiredTrimmedText, isBudgetLocked, sumBudgetCauseLines } from "@/lib/ledger";
 
-const BOARD_MINUTE_MAX_LEN = 500;
 
 // Thrown inside the db.transaction() below to force a rollback when the
 // lock-check (now run INSIDE the transaction, DECISION-052/053) finds the

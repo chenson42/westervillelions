@@ -682,6 +682,9 @@ test.describe("Co-sign route (2b)", () => {
   });
 
   test(`should refuse every ineligible target with its typed body and write no row (live check L10, ${N}/${N} runs each)`, async () => {
+    // B-198: ${N} refusals per target against a remote Neon pool overrun the file-level 120 s budget
+    // on a slow link (seen 2026-10-19); the assertion set is unchanged.
+    test.setTimeout(300_000);
     // Arrange
     const before = await digest();
     const rejectedAt = (await db.select().from(ledgerTransactions).where(eq(ledgerTransactions.id, ids.rejected)))[0].rejectedAt!.toISOString();
@@ -994,6 +997,9 @@ test.describe("Co-sign concurrency and locking (2b)", () => {
   });
 
   test(`L8: a Sweep co-signed through both legs: income then expense sequentially (201, 409), in parallel (one 201, one 409), and by two users via different legs (two rows), ${N}/${N} runs each, always keyed on the expense leg`, async () => {
+    // B-198: 60 seeds, 60 drops and 120 count queries go from the runner straight to Neon; from a remote
+    // machine that alone exceeds the file-level 120 s budget (seen 2026-10-19). Assertions unchanged.
+    test.setTimeout(600_000);
     const mk = async (label: string) => seedPair("sweep", label, { status: "posted", recordedBy: uid.recorder, approvedBy: uid.poster, approvedAt: at("2089-01-01T16:00:00Z"), boardMinute: "Cosign L8 motion", cents: 190_000 });
     let seqOk = 0;
     let parOk = 0;

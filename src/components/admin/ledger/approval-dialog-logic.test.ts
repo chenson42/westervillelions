@@ -19,6 +19,7 @@ import {
   cosignDialogProps,
   COSIGN_RETRY_MESSAGE,
   COSIGN_NOT_FOUND_MESSAGE,
+  describeBatchDecision,
 } from "./approval-dialog-logic";
 import type { ApprovalConflictBody, DecidedApprovalRow } from "@/lib/ledger-approval";
 
@@ -334,5 +335,42 @@ describe("cosignDialogProps", () => {
       recorderName: "Sam Example",
       boardMinute: "Minute 4",
     });
+  });
+});
+
+describe("itemized sweep batches (B-172 Inc 2b, B8)", () => {
+  it("describeBatchDecision says one decision covers the whole batch, by verb and count", () => {
+    const approve = describeBatchDecision("approve", 12);
+    expect(approve).toContain("This decides the whole batch of 12 gifts");
+    expect(approve).toContain("individual gifts cannot be decided separately");
+    expect(approve).toContain("Approving posts all of them");
+    const reject = describeBatchDecision("reject", 12);
+    expect(reject).toContain("whole batch of 12 gifts");
+    expect(reject).toContain("Rejecting frees all of them to be swept again");
+    expect(reject).not.toContain("Approving");
+  });
+
+  it("describeBatchDecision uses the singular for one gift", () => {
+    expect(describeBatchDecision("approve", 1)).toContain("whole batch of 1 gift;");
+    expect(describeBatchDecision("approve", 1)).not.toContain("1 gifts");
+  });
+
+  it("approvalFailureAction consumes a 400 decide_the_batch: closes, refreshes, says what the server said", () => {
+    const body = { error: "A sweep batch is decided from its transfer entry.", code: "decide_the_batch" };
+    for (const verb of ["approve", "reject"] as const) {
+      expect(approvalFailureAction(400, body, verb, "sweep")).toEqual({
+        close: true,
+        refresh: true,
+        showEntry: false,
+        toastKind: "error",
+        message: body.error,
+      });
+    }
+  });
+
+  it("a 400 that is not decide_the_batch still keeps the dialog open", () => {
+    const r = approvalFailureAction(400, { error: "Board minute is required." }, "approve", "sweep");
+    expect(r.close).toBe(false);
+    expect(r.message).toBe("Board minute is required.");
   });
 });

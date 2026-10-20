@@ -4,7 +4,11 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
+import { db } from "@/lib/db";
 import { getPendingApprovals, getSettings } from "@/lib/ledger-queries";
+import { getSweepBatchDetail } from "@/lib/ledger-sweep-batch";
+import { sweepLegMemo } from "@/lib/ledger-sweep";
+import SweepBatchSummary, { type SweepBatchSummaryData } from "@/components/admin/ledger/sweep-batch-summary";
 import ApprovalActions from "@/components/admin/ledger/approval-actions";
 import ApprovalCard from "@/components/admin/ledger/approval-card";
 import ApprovalBanner from "@/components/admin/ledger/approval-banner";
@@ -71,6 +75,23 @@ export default async function AdminLedgerApprovalsPage({
     getPendingApprovals(),
     getSettings(),
   ]);
+
+  // An itemized sweep batch shows as ONE row with a summary (B-172 Inc 2b, B8):
+  // count, total, dates, categories, recorder and minute; never a gift list, a
+  // party, a memo or a donor. A failed read only drops the summary, never the row.
+  const batchSummaries = new Map<string, SweepBatchSummaryData>();
+  await Promise.all(
+    pending
+      .filter((p) => p.batch)
+      .map(async (p) => {
+        try {
+          const detail = await getSweepBatchDetail(db, p.id);
+          if (detail) batchSummaries.set(p.id, detail);
+        } catch (err) {
+          console.error("Approvals: could not load a sweep batch summary", err);
+        }
+      }),
+  );
 
   // A deep link that cannot be resolved renders no banner; it never blanks the page.
   let target: ApprovalTargetState | null = null;
@@ -229,12 +250,14 @@ export default async function AdminLedgerApprovalsPage({
                 entityName={txn.entityName}
                 highlight={txn.id === highlightId}
                 amount={formatApprovalDollars(txn.amountCents)}
-                party={txn.party ?? ""}
-                memo={txn.memo}
+                party={txn.batch ? "" : (txn.party ?? "")}
+                memo={txn.batch ? sweepLegMemo(txn.batch.count) : txn.memo}
                 existingBoardMinute={txn.boardMinute}
                 fund={fundFor(txn)}
                 recordedBy={txn.recorderName}
                 isSelf={txn.recordedByUserId === currentUserId}
+                batchCount={txn.batch?.count ?? null}
+                batch={batchSummaries.get(txn.id) ?? null}
               />
             ))}
           </ul>
@@ -292,18 +315,24 @@ export default async function AdminLedgerApprovalsPage({
                         <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900">
                           {formatApprovalDollars(txn.amountCents)}
                         </td>
-                        <td className="max-w-[200px] px-4 py-3 text-sm text-gray-700">
-                          {txn.party ? (
+                        <td className={`${txn.batch ? "max-w-[340px]" : "max-w-[200px]"} px-4 py-3 text-sm text-gray-700`}>
+                          {txn.batch ? (
+                            batchSummaries.has(txn.id) ? (
+                              <SweepBatchSummary data={batchSummaries.get(txn.id)!} showRecorder={false} />
+                            ) : (
+                              <div className="break-words text-xs text-gray-500">{sweepLegMemo(txn.batch.count)}</div>
+                            )
+                          ) : txn.party ? (
                             <div className="break-words font-medium">
                               {txn.party}
                             </div>
                           ) : null}
-                          {txn.memo ? (
+                          {!txn.batch && txn.memo ? (
                             <div className="mt-0.5 break-words text-xs text-gray-500">
                               {txn.memo}
                             </div>
                           ) : null}
-                          {!txn.party && !txn.memo && (
+                          {!txn.batch && !txn.party && !txn.memo && (
                             <span className="text-gray-400">—</span>
                           )}
                         </td>
@@ -314,12 +343,13 @@ export default async function AdminLedgerApprovalsPage({
                           <ApprovalActions
                             transactionId={txn.id}
                             amount={formatApprovalDollars(txn.amountCents)}
-                            party={txn.party ?? ""}
-                            memo={txn.memo}
+                            party={txn.batch ? "" : (txn.party ?? "")}
+                            memo={txn.batch ? sweepLegMemo(txn.batch.count) : txn.memo}
                             existingBoardMinute={txn.boardMinute}
                             fund={fund}
                             recordedBy={txn.recorderName}
                             isSelf={isSelf}
+                            batchCount={txn.batch?.count ?? null}
                           />
                         </td>
                       </tr>

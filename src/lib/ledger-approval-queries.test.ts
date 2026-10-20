@@ -478,3 +478,95 @@ describe("importer allow-list and R9 scan", () => {
     expect(text).not.toMatch(/= \$\{t\.id\}/);
   });
 });
+
+describe("itemized sweep batches (B-172 Inc 2a)", () => {
+  const cls = (over: Record<string, unknown> = {}) => ({
+    id: ID,
+    flow: "expense",
+    status: "posted",
+    entityId: "e1",
+    isBoardDecision: true,
+    partnerEntityId: "e2",
+    viewerRecorded: false,
+    ...over,
+  });
+
+  it("a batch is a sweep row in Recently decided, partner entity and count taken from its copies", async () => {
+    st.queue.push([
+      dbRow({
+        partnerFundName: "Charitable Fund",
+        partnerEntityId: "e2",
+        partnerEntityName: "Foundation",
+        batchCount: 12,
+      }),
+    ]);
+    const [row] = await getRecentDecisions(VIEWER);
+    expect(row.kind).toBe("sweep");
+    expect(row.partnerEntityName).toBe("Foundation");
+    expect(row.batchCount).toBe(12);
+  });
+
+  it("an ordinary row carries batchCount null", async () => {
+    st.queue.push([dbRow()]);
+    const [row] = await getRecentDecisions(VIEWER);
+    expect(row.batchCount).toBeNull();
+  });
+
+  it("the History select derives the partner by scalar subselects over pair and copies, never a join", async () => {
+    st.queue.push([]);
+    await getRecentDecisions(VIEWER);
+    const list = st.selectLists[0];
+    for (const key of ["partnerFundName", "partnerEntityId", "partnerEntityName", "destRecorderId"]) {
+      const text = dialect.sqlToQuery(list[key] as SQL).sql;
+      expect(text, key).toContain("sweep_leg_txn_id");
+      expect(text, key).toContain("d.flow = 'income'");
+      expect(text, key).toContain('"ledger_transactions"."id"');
+    }
+    expect(dialect.sqlToQuery(list.batchCount as SQL).sql).toContain("count(*)");
+    // no LEFT JOIN on a second copy of the transactions table: only the one FROM table
+    // plus funds, entities, recorder and decider
+    expect(st.tables[0]).toHaveLength(5);
+  });
+
+  it("the resolver derives the partner entity through the same subselect", async () => {
+    st.queue.push([]);
+    await resolveApprovalTarget(ID, VIEWER);
+    const text = dialect.sqlToQuery(st.selectLists[0].partnerEntityId as SQL).sql;
+    expect(text).toContain("sweep_leg_txn_id");
+    expect(text).toContain('"ledger_transactions"."transfer_group_id"');
+  });
+
+  it("a batch leg resolves as a sweep: pending with its kind, and decided through the shared mapper", async () => {
+    st.queue.push([cls({ status: "pending", isBoardDecision: false })]);
+    expect(await resolveApprovalTarget(ID, VIEWER)).toEqual({
+      state: "pending",
+      rowId: ID,
+      kind: "sweep",
+      isOwn: false,
+    });
+    st.queue.push([cls()], [dbRow({ partnerEntityId: "e2", batchCount: 3 })]);
+    const res = await resolveApprovalTarget(ID, VIEWER);
+    expect(res.state === "decided" && res.row.kind).toBe("sweep");
+  });
+
+  it("a copy id resolves to not_board_decision (it is an income row)", async () => {
+    st.queue.push([cls({ flow: "income", isBoardDecision: false, partnerEntityId: null })]);
+    const res = await resolveApprovalTarget(ID, VIEWER);
+    expect(res).toMatchObject({ state: "not_board_decision" });
+  });
+
+  it("viewerRecorded still keys on the row and its group, not on the copies (their recorder is the leg's)", () => {
+    const text = readFileSync(join(__dirname, "ledger-approval-queries.ts"), "utf8");
+    const line =
+      text.split("\n").find((l) => l.includes("viewerRecorded: sql<boolean>")) ?? "";
+    expect(line).toContain("v.recorded_by_user_id");
+    expect(line).not.toContain("sweep_leg_txn_id");
+  });
+
+  it("the viewer who recorded the batch cannot co-sign it (the copies share the leg's recorder)", async () => {
+    st.queue.push([dbRow({ recorderId: VIEWER, destRecorderId: VIEWER, partnerEntityId: "e2" })], []);
+    const [row] = await getRecentDecisions(VIEWER);
+    expect(row.decision === "approved" && row.viewerRecorded).toBe(true);
+    expect(row.decision === "approved" && row.canCosign).toBe(false);
+  });
+});

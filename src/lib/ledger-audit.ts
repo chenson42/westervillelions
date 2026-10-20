@@ -14,6 +14,7 @@ import { ledgerAuditLog, users } from "@/lib/db/schema";
 import type { AuditNoteAction } from "@/lib/ledger-audit-notes";
 import {
   CORRECTION_AUDIT_ACTIONS,
+  SWEEP_BATCH_VOIDED_AUDIT_ACTION,
   TRANSACTION_CORRECTED_AUDIT_ACTION,
   TRANSACTION_DELETED_AUDIT_ACTION,
   TRANSACTION_FUND_MOVED_AUDIT_ACTION,
@@ -242,6 +243,38 @@ export async function getRecentLedgerCorrections(args: {
           receiptSent: false,
           // Labels only: memo TEXT is never composed into the list.
           changes: isRawAudit(before) || isRawAudit(after) ? [] : describeCorrectionChanges(before, after),
+        });
+        break;
+      }
+      case SWEEP_BATCH_VOIDED_AUDIT_ACTION: {
+        const details = parseAuditDetails(SWEEP_BATCH_VOIDED_AUDIT_ACTION, r.details);
+        const before = parseAuditBefore(SWEEP_BATCH_VOIDED_AUDIT_ACTION, r.before);
+        // Listed under BOTH the Club (the leg) and the Foundation (the copies).
+        if (!isRawAudit(details) && ![details.entityId, details.destEntityId].includes(args.entityId)) {
+          continue;
+        }
+        const leg = isRawAudit(before) ? null : before.leg;
+        const firstCopy = isRawAudit(before) ? null : (before.copies[0] ?? null);
+        mapped.push({
+          id: r.id,
+          createdAt: r.createdAt,
+          actorName: r.actorName ?? null,
+          kind: "sweep_voided",
+          amountCents: isRawAudit(details) ? null : details.amountCents,
+          flow: isRawAudit(details) ? null : "expense",
+          txnDate: isRawAudit(details) ? null : details.txnDate,
+          from: leg?.fund.name ?? null,
+          to: firstCopy?.fund.name ?? null,
+          reason: isRawAudit(details) ? null : details.reason,
+          settledPeriod: false,
+          rowCount: isRawAudit(details) ? 1 : details.count + 1,
+          sentStatementMonth: null,
+          crossEntity: true,
+          fromEntityName: leg?.entity.name ?? null,
+          toEntityName: firstCopy?.entity.name ?? null,
+          fromBankAccount: null,
+          toBankAccount: null,
+          receiptSent: false,
         });
         break;
       }

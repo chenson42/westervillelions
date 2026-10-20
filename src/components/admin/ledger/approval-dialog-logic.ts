@@ -15,6 +15,7 @@ import {
   isApprovalConflict,
   isCosignConflict,
   isCosignForbidden,
+  isDecideTheBatch,
   type ApprovalKind,
   type CosignerView,
   type DecidedApprovalRow,
@@ -69,6 +70,12 @@ export function approvalFailureAction(
   verb: "approve" | "reject",
   noun: ApprovalKind = "disbursement",
 ): ApprovalFailureAction {
+  // A copy's id reached the route (B-172 Inc 2a ruling A5). The page lists only
+  // legs, so this is a stale or hand-made request: say what the server said,
+  // close, and reload the list.
+  if (status === 400 && isDecideTheBatch(body)) {
+    return { close: true, refresh: true, showEntry: false, toastKind: "error", message: body.error };
+  }
   if (status === 409) {
     return {
       close: true,
@@ -108,6 +115,17 @@ export function approvalFailureAction(
     toastKind: "error",
     message: serverError ?? `Could not ${verb} ${noun}. Please try again.`,
   };
+}
+
+/**
+ * The sentence a batch's Approve or Reject dialog adds (B-172 Increment 2b, B8).
+ * One decision covers every gift, so say so before the approver commits.
+ */
+export function describeBatchDecision(verb: "approve" | "reject", count: number): string {
+  const gifts = count === 1 ? "1 gift" : `${count} gifts`;
+  return `This decides the whole batch of ${gifts}; individual gifts cannot be decided separately. ${
+    verb === "approve" ? "Approving posts all of them." : "Rejecting frees all of them to be swept again."
+  }`;
 }
 
 /** The line explaining a disabled Approve button, or null when it is enabled. */

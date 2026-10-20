@@ -12,6 +12,7 @@ import {
   approvalDialogTitle,
   approvalFailureAction,
   approvalSuccessMessage,
+  describeBatchDecision,
   rejectPlaceholder,
 } from "./approval-dialog-logic";
 
@@ -23,6 +24,8 @@ interface RejectTransactionDialogProps {
   context: ApprovalDialogContextData;
   /** Disbursement, transfer or sweep: used in toast copy. */
   noun?: ApprovalKind;
+  /** An itemized sweep batch: the number of gifts this one decision covers (B-172 Inc 2b, B8). */
+  batchCount?: number | null;
   /** Classes for the trigger button this component renders. */
   triggerClassName: string;
   /** The trigger button's label. */
@@ -41,6 +44,7 @@ export function RejectTransactionDialog({
   party,
   context,
   noun = "disbursement",
+  batchCount = null,
   triggerClassName,
   children,
 }: RejectTransactionDialogProps) {
@@ -120,6 +124,11 @@ export function RejectTransactionDialog({
           {party ? ` — ${party}` : ""}. This action cannot be undone.
         </p>
         <ApprovalDialogContext data={context} />
+        {batchCount ? (
+          <p role="note" className="mb-4 rounded-lg bg-gray-50 p-3 text-sm text-gray-800">
+            {describeBatchDecision("reject", batchCount)}
+          </p>
+        ) : null}
 
         <div>
           <label htmlFor="reject-reason" className="mb-1 block text-sm font-medium text-gray-700">

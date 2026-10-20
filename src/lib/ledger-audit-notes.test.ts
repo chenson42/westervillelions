@@ -35,4 +35,12 @@ describe("AUDIT_NOTE_ACTIONS", () => {
     const corrections = new Set<string>(CORRECTION_AUDIT_ACTIONS);
     expect(AUDIT_NOTE_ACTIONS.filter((a) => corrections.has(a))).toEqual([]);
   });
+
+  it("includes the three sweep notes (B-172 Increment 2a, break site 20) and not the void, which is a correction", () => {
+    expect(AUDIT_NOTE_ACTIONS).toEqual(
+      expect.arrayContaining(["sweep_batch_created", "sweep_closeout_marked", "sweep_closeout_unmarked"]),
+    );
+    expect((AUDIT_NOTE_ACTIONS as readonly string[]).includes("sweep_batch_voided")).toBe(false);
+    expect((CORRECTION_AUDIT_ACTIONS as readonly string[]).includes("sweep_batch_voided")).toBe(true);
+  });
 });

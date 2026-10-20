@@ -11,6 +11,11 @@ import { COSIGN_HELP_LINE, cosignDialogProps, cosignerItems } from "./approval-d
 import CosignDialog from "./cosign-dialog";
 import { HIGHLIGHT_CLASSES } from "./approval-highlight";
 
+/** The History badge for an itemized sweep batch decided as one (B-172 Inc 2b). */
+export function batchBadgeText(count: number): string {
+  return `Batch of ${count} ${count === 1 ? "gift" : "gifts"}`;
+}
+
 /** "Approved by Sam" / "Rejected by You" / "Rejected, decider not on file". */
 export function deciderLabel(row: DecidedApprovalRow): string {
   const verb = row.decision === "approved" ? "Approved" : "Rejected";
@@ -92,12 +97,19 @@ export default function ApprovalHistory({
                 <p className="text-2xl font-bold tabular-nums text-gray-900">
                   {formatApprovalDollars(row.amountCents)}
                 </p>
-                <span
-                  className={`inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-semibold ${
-                    approved ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"
-                  }`}
-                >
-                  {approved ? "Approved" : "Rejected"}
+                <span className="flex flex-wrap items-center gap-2">
+                  {row.batchCount ? (
+                    <span className="inline-flex items-center rounded-lg bg-lions-blue/10 px-2.5 py-1 text-xs font-semibold text-lions-blue">
+                      {batchBadgeText(row.batchCount)}
+                    </span>
+                  ) : null}
+                  <span
+                    className={`inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-semibold ${
+                      approved ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"
+                    }`}
+                  >
+                    {approved ? "Approved" : "Rejected"}
+                  </span>
                 </span>
               </div>
 

@@ -25,6 +25,8 @@ describe("FoundationBoundHint", () => {
   it("bound without a receipt: says no receipt is needed", () => {
     const html = render({ state: "bound", foundationCategoryName: "White Cane", receipt: "not_needed" });
     expect(html).toContain("No written acknowledgment is required");
+    expect(html).toContain("the Foundation books it as its own gift");
+    expect(html).not.toMatch(/lump/i);
   });
 
   it("stays, no counterpart: reads the stored fund name, not a literal", () => {
@@ -40,6 +42,7 @@ describe("FoundationBoundHint", () => {
     const html = render({ state: "stays", reason: "mirror_inactive" });
     expect(html).toContain("deactivated");
     expect(html).toContain("staying in Public Funds");
+    expect(html).not.toMatch(/lump/i);
   });
 
   it("end to end with describeMirrorHint: a gift under the receipt threshold needs no receipt", () => {

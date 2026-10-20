@@ -15,7 +15,7 @@
  *
  * Both exports are built from the single private postedBoardHalf(), so the
  * stamp test lives in one place. No runtime `db` import (the executor type in
- * lockDecisionPair() is `import type`): importable from anywhere server-side.
+ * lockDecisionGroup() is `import type`): importable from anywhere server-side.
  */
 
 import { and, asc, eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
@@ -42,25 +42,32 @@ export function boardDecisionPredicate(t: typeof ledgerTransactions = ledgerTran
   return sql`(${and(eq(t.flow, "expense"), or(eq(t.status, "rejected"), postedBoardHalf(t)))})`;
 }
 
-export type PairLockMode = "update" | "share";
+export type GroupLockMode = "update" | "share";
 
 /** `db` or a transaction handle; a type-only import keeps this file db-free at runtime (T10). */
 type LockExecutor = Pick<typeof db, "select">;
 
 /**
- * Locks a decision target and its Transfer/Sweep partner in ONE statement,
- * `ORDER BY id` so two concurrent pair operations cannot deadlock. Extracted
- * verbatim from decideTransaction() when cosignTransaction() became the second
- * caller. For a non-pair row the subselect is NULL and `transfer_group_id =
- * NULL` matches nothing, so the set is just the target.
+ * Locks a decision target and everything that is decided with it in ONE
+ * statement, `ORDER BY id` so two concurrent group operations cannot deadlock:
+ *   - a Transfer/Sweep pair: the target and its partner (same transfer group);
+ *   - an itemized sweep batch (B-172 Increment 2a): the leg and every copy that
+ *     points at it through `sweep_leg_txn_id`;
+ *   - anything else: just the target (the group subselect is NULL and
+ *     `transfer_group_id = NULL` matches nothing).
+ * Called with a COPY id it returns only that copy; classifyDecisionGroup()
+ * then reports `target_is_copy`.
  *
- * "update" (approve / reject) conflicts with every other lock; "share"
- * (co-sign) conflicts with writers but not with other co-signers.
+ * This is the one lock helper (formerly lockDecisionPair, extracted from
+ * decideTransaction() when cosignTransaction() became the second caller; void
+ * of a sweep batch is the third). "update" (approve / reject / void) conflicts
+ * with every other lock; "share" (co-sign) conflicts with writers but not with
+ * other co-signers.
  */
-export async function lockDecisionPair(
+export async function lockDecisionGroup(
   tx: LockExecutor,
   id: string,
-  mode: PairLockMode,
+  mode: GroupLockMode,
 ): Promise<LedgerTransaction[]> {
   const query = tx
     .select()
@@ -72,6 +79,7 @@ export async function lockDecisionPair(
           ledgerTransactions.transferGroupId,
           sql`(select transfer_group_id from ledger_transactions where id = ${id})`,
         ),
+        eq(ledgerTransactions.sweepLegTxnId, id),
       ),
     )
     .orderBy(asc(ledgerTransactions.id));

@@ -914,26 +914,12 @@ test.describe("Approvals page, Increment 2a (admin viewer)", () => {
         memo: `${TAG} email transfer`,
       },
     });
-    const sweep = await page.request.post("/api/admin/ledger/transactions", {
-      data: {
-        transfer: true,
-        sourceFundId: ids.x.activityFundId,
-        destFundId: ids.x.charitableFundId,
-        sourceBankAccountId: ids.x.adminBankId,
-        destBankAccountId: ids.x.foundationBankId,
-        txnDate: todayIso(),
-        amountCents: base + 33,
-        memo: `${TAG} email sweep`,
-        boardMinute: "Sweep motion QA",
-      },
-    });
-    const [o, t, s] = [await ordinary.json(), await transfer.json(), await sweep.json()];
-    expect([ordinary.status(), transfer.status(), sweep.status()]).toEqual([201, 201, 201]);
+    const [o, t] = [await ordinary.json(), await transfer.json()];
+    expect([ordinary.status(), transfer.status()]).toEqual([201, 201]);
     expect(typeof o.id).toBe("string");
     expect(t.status).toBe("pending");
-    expect(s.status).toBe("pending");
-    expect(typeof t.id).toBe("string"); // the Transfer/Sweep 201 now carries the expense-leg id
-    expect(typeof s.id).toBe("string");
+    expect(typeof t.id).toBe("string"); // the Transfer 201 carries the expense-leg id
+    // The sweep email case moved to ledger-sweep-batch-api.spec.ts: the lump sweep route is retired (B-172 Inc 2b).
 
     // Act
     const created = await emailsSinceBaseline();
@@ -950,7 +936,6 @@ test.describe("Approvals page, Increment 2a (admin viewer)", () => {
     const cases = [
       { label: "ordinary", subject: `Disbursement pending your approval — $${money(base + 11)}`, id: o.id as string },
       { label: "transfer", subject: `Transfer pending your approval — $${money(base + 22)}`, id: t.id as string },
-      { label: "sweep", subject: `Sweep pending your approval — $${money(base + 33)}`, id: s.id as string },
     ];
     for (const c of cases) {
       const mails = bySubject(c.subject);

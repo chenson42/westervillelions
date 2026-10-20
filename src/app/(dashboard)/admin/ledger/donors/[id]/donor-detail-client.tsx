@@ -12,11 +12,35 @@ import MarkSentDialog from "@/components/admin/ledger/mark-sent-dialog";
 import LinkDonorDialog from "@/components/admin/ledger/link-donor-dialog";
 import type { DonorWithGivingHistory } from "@/lib/ledger-queries";
 import { sumDeductibleGiving } from "@/lib/ledger-donor-giving";
+import { DEFAULT_FUND_LABELS, type FundLabels } from "@/lib/ledger-fund-labels";
+import { sweepChipLabel } from "@/lib/ledger-sweep";
 
 interface DonorDetailClientProps {
   donor: DonorWithGivingHistory;
   canRecord: boolean;
   canManage: boolean;
+  /** Stored fund names, for "Swept from {fund} on D" (page passes getFundLabels()). */
+  labels?: FundLabels;
+}
+
+/**
+ * The line under a giving-history row's fund (B-172 Inc 2b, B18): "Swept to the
+ * Foundation on D" on the Public Funds gift once a live copy exists, "Swept from
+ * {fund} on D" on the Foundation copy, else the Inc 1 "not yet a Foundation gift".
+ * Same words as the register chips (the carrier's `sweepChipLabel`).
+ */
+export function donorRowSweepLine(
+  row: { entityDonationsDeductible: boolean; sweptOn: string | null },
+  fundName: string,
+  labels: FundLabels,
+): string | null {
+  if (row.sweptOn) {
+    return sweepChipLabel(
+      { kind: row.entityDonationsDeductible ? "copy" : "source", legId: "", sweepDate: row.sweptOn, state: "posted" },
+      labels,
+    );
+  }
+  return row.entityDonationsDeductible ? null : `${fundName}, not yet a Foundation gift`;
 }
 
 function formatDollars(cents: number): string {
@@ -46,7 +70,12 @@ function AckStatusBadge({ status }: { status: "pending" | "sent" | null }) {
   );
 }
 
-export default function DonorDetailClient({ donor, canRecord, canManage }: DonorDetailClientProps) {
+export default function DonorDetailClient({
+  donor,
+  canRecord,
+  canManage,
+  labels = DEFAULT_FUND_LABELS,
+}: DonorDetailClientProps) {
   const router = useRouter();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -224,11 +253,16 @@ export default function DonorDetailClient({ donor, canRecord, canManage }: Donor
                       <td className="px-4 py-3 text-sm text-gray-700">
                         <div>{row.txn.fundName}</div>
                         <div className="text-xs text-gray-400">{row.txn.entityName}</div>
-                        {!row.entityDonationsDeductible && (
-                          <div className="mt-0.5 text-xs text-amber-700">
-                            {row.txn.fundName}, not yet a Foundation gift
-                          </div>
-                        )}
+                        {(() => {
+                          const line = donorRowSweepLine(row, row.txn.fundName, labels);
+                          return line ? (
+                            <div
+                              className={`mt-0.5 text-xs ${row.sweptOn ? "text-lions-blue" : "text-amber-700"}`}
+                            >
+                              {line}
+                            </div>
+                          ) : null;
+                        })()}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 max-w-[180px]">
                         <div className="truncate">{row.txn.party ?? <span className="text-gray-300">—</span>}</div>

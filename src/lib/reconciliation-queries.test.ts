@@ -22,7 +22,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockDbState } = vi.hoisted(() => ({
-  mockDbState: { queue: [] as unknown[][] },
+  mockDbState: { queue: [] as unknown[][], fields: [] as unknown[] },
 }));
 
 vi.mock("@/lib/db", () => {
@@ -40,20 +40,30 @@ vi.mock("@/lib/db", () => {
     };
     return obj;
   }
-  return { db: { select: () => chain() } };
+  return {
+    db: {
+      select: (fields?: unknown) => {
+        mockDbState.fields.push(fields);
+        return chain();
+      },
+    },
+  };
 });
 
 import {
+  getCandidateTransactionsForMatching,
   getTieOutAssembly,
   getBankLinesForSession,
   getMatchedTransactionsForSession,
   listLaterClosedSessionsForAccount,
+  listMatchedTransactionIds,
   type BankLineWithMatch,
 } from "./reconciliation-queries";
-import type { LedgerBankLine } from "./db/schema";
+import { ledgerTransactions, type LedgerBankLine } from "./db/schema";
 
 beforeEach(() => {
   mockDbState.queue = [];
+  mockDbState.fields = [];
 });
 
 function makeBankLine(overrides: Partial<LedgerBankLine> = {}): LedgerBankLine {
@@ -229,6 +239,33 @@ describe("getMatchedTransactionsForSession", () => {
   });
 });
 
+describe("sweepLegTxnId on candidate and matched rows (B-172 Inc 2b, B12)", () => {
+  it("getCandidateTransactionsForMatching selects the batch pointer, and passes the row through", async () => {
+    const row = {
+      id: "copy-1", txnDate: "2026-09-02", flow: "income", amountCents: 7_500, party: null, memo: null,
+      checkNumber: null, paymentMethod: null, sweepLegTxnId: "leg-1",
+    };
+    mockDbState.queue.push([row, { ...row, id: "plain", sweepLegTxnId: null }]);
+    const rows = await getCandidateTransactionsForMatching("account-1");
+    expect(rows.map((r) => r.sweepLegTxnId)).toEqual(["leg-1", null]);
+    const fields = mockDbState.fields[0] as Record<string, unknown>;
+    expect(fields.sweepLegTxnId).toBe(ledgerTransactions.sweepLegTxnId);
+  });
+
+  it("getMatchedTransactionsForSession selects the batch pointer too (MatchedTransactionRow extends the candidate row)", async () => {
+    mockDbState.queue.push([
+      {
+        matchId: "m-1", bankLineId: "line-1", id: "copy-1", txnDate: "2026-09-02", flow: "income",
+        amountCents: 7_500, party: null, memo: null, checkNumber: null, paymentMethod: null, sweepLegTxnId: "leg-1",
+      },
+    ]);
+    const rows = await getMatchedTransactionsForSession("session-1");
+    expect(rows[0].sweepLegTxnId).toBe("leg-1");
+    const fields = mockDbState.fields[0] as Record<string, unknown>;
+    expect(fields.sweepLegTxnId).toBe(ledgerTransactions.sweepLegTxnId);
+  });
+});
+
 describe("listLaterClosedSessionsForAccount (DECISION-113 X8)", () => {
   it("returns only sessions ending after the given period, in the order the query returned them (newest first)", async () => {
     mockDbState.queue.push([
@@ -246,5 +283,22 @@ describe("listLaterClosedSessionsForAccount (DECISION-113 X8)", () => {
       { id: "s-jul", statementPeriodStart: "2026-07-01", statementPeriodEnd: "2026-07-31" },
     ]);
     expect(await listLaterClosedSessionsForAccount("acct-1", "2026-07-31")).toEqual([]);
+  });
+});
+
+describe("listMatchedTransactionIds (B-172 Increment 2a)", () => {
+  it("makes no query for an empty list", async () => {
+    mockDbState.queue.push([{ transactionId: "never-read" }]);
+    const { db } = await import("@/lib/db");
+    expect(await listMatchedTransactionIds(db, [])).toEqual(new Set());
+    expect(mockDbState.queue).toHaveLength(1);
+  });
+
+  it("returns the ids that have a match row, in one query", async () => {
+    mockDbState.queue.push([{ transactionId: "a" }, { transactionId: "c" }]);
+    const { db } = await import("@/lib/db");
+    const matched = await listMatchedTransactionIds(db, ["a", "b", "c", "a"]);
+    expect([...matched].sort()).toEqual(["a", "c"]);
+    expect(mockDbState.queue).toHaveLength(0);
   });
 });

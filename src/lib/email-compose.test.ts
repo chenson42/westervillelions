@@ -194,3 +194,49 @@ describe("buildApprovalReviewUrl", () => {
     expect(buildApprovalReviewUrl(null)).toBe("https://example.com/admin/ledger/approvals");
   });
 });
+
+describe("buildPendingApprovalEmailHtml (itemized sweep batch)", () => {
+  const input = {
+    noun: "sweep" as const,
+    amountDollars: "3400.00",
+    txnDate: "2026-10-19",
+    reviewUrl: "https://example.com/admin/ledger/approvals?txn=abc",
+  };
+
+  it("names the count of gifts", () => {
+    const html = buildPendingApprovalEmailHtml({ ...input, batch: { count: 12 } });
+    expect(html).toContain("<p>A sweep of 12 gifts requires board approval before it can be posted.</p>");
+    expect(html).toContain("approve or reject this sweep from the");
+  });
+
+  it("uses the singular for a batch of one", () => {
+    const html = buildPendingApprovalEmailHtml({ ...input, batch: { count: 1 } });
+    expect(html).toContain("A sweep of 1 gift requires board approval");
+  });
+
+  it("ignores party and memo even if supplied", () => {
+    const html = buildPendingApprovalEmailHtml({
+      ...input,
+      party: "Some Donor",
+      memo: "Some memo",
+      batch: { count: 3 },
+    });
+    expect(html).not.toContain("Some Donor");
+    expect(html).not.toContain("Some memo");
+    expect(html).not.toContain("Payee");
+    expect(html).not.toContain("Memo");
+    expect(html).toContain("<strong>Amount:</strong> $3400.00");
+  });
+
+  it("without a batch the wording and the party and memo lines are unchanged", () => {
+    const html = buildPendingApprovalEmailHtml({ ...input, party: "Acme", memo: "note" });
+    expect(html).toContain("<p>A sweep requires board approval before it can be posted.</p>");
+    expect(html).toContain("Payee");
+    expect(html).toContain("Memo");
+  });
+
+  it("keeps the no-quorum sentence", () => {
+    const html = buildPendingApprovalEmailHtml({ ...input, batch: { count: 2 } });
+    expect(html).toContain("Only one board approval is needed to post this.");
+  });
+});

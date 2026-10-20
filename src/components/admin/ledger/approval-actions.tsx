@@ -12,6 +12,8 @@ export interface ApprovalActionsProps {
   fund: { kind: ApprovalKind | "plain"; text: string };
   recordedBy: string | null;
   isSelf: boolean;
+  /** An itemized sweep batch: the number of gifts one decision covers; null for every other row. */
+  batchCount?: number | null;
 }
 
 /**
@@ -47,6 +49,7 @@ export default function ApprovalActions(props: ApprovalActionsProps) {
           existingBoardMinute={props.existingBoardMinute}
           noun={noun}
           context={context}
+          batchCount={props.batchCount}
           triggerClassName="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-lions-blue px-5 py-2 text-sm font-semibold text-white transition hover:bg-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
         >
           Approve
@@ -59,6 +62,7 @@ export default function ApprovalActions(props: ApprovalActionsProps) {
           party={props.party}
           noun={noun}
           context={context}
+          batchCount={props.batchCount}
           triggerClassName="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-lions-blue px-5 py-2 text-sm font-semibold text-lions-blue transition hover:bg-lions-blue/5 focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"
         >
           Reject

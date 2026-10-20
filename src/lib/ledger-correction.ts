@@ -79,16 +79,25 @@ export const TRANSACTION_DELETED_AUDIT_ACTION = "transaction_deleted" as const;
  * `details.operation = "fill_bank_account"`, not a separate action.
  */
 export const TRANSACTION_CORRECTED_AUDIT_ACTION = "transaction_corrected" as const;
+/**
+ * An itemized sweep batch was voided (B-172 Increment 2a, DECISION-126): the
+ * leg and every copy were deleted. The fourth correction action, because a void
+ * deletes N+1 money rows and the board must see it in Recent corrections like
+ * any other delete.
+ */
+export const SWEEP_BATCH_VOIDED_AUDIT_ACTION = "sweep_batch_voided" as const;
 
 export type CorrectionAuditAction =
   | typeof TRANSACTION_FUND_MOVED_AUDIT_ACTION
   | typeof TRANSACTION_DELETED_AUDIT_ACTION
-  | typeof TRANSACTION_CORRECTED_AUDIT_ACTION;
+  | typeof TRANSACTION_CORRECTED_AUDIT_ACTION
+  | typeof SWEEP_BATCH_VOIDED_AUDIT_ACTION;
 
 export const CORRECTION_AUDIT_ACTIONS: readonly CorrectionAuditAction[] = [
   TRANSACTION_FUND_MOVED_AUDIT_ACTION,
   TRANSACTION_DELETED_AUDIT_ACTION,
   TRANSACTION_CORRECTED_AUDIT_ACTION,
+  SWEEP_BATCH_VOIDED_AUDIT_ACTION,
 ];
 
 // ---------------------------------------------------------------------------
@@ -191,6 +200,7 @@ export type MoveErrorCode =
   | "rejected"
   | "pending"
   | "transfer_leg"
+  | "swept_copy"
   | "dues_synced"
   | "manage_required"
   | "stale"
@@ -831,6 +841,51 @@ export interface ReimbursementCorrectedAuditPayload {
 }
 
 /**
+ * One deleted row of a voided sweep batch. Ids, dates, amounts, status, the
+ * category id and the bank-account id only: NO party, memo or donor id (the
+ * Foundation copies carry donor names and a board member reads this list).
+ */
+export interface SweepVoidRowSnapshot {
+  id: string;
+  entity: EntityRefSnapshot;
+  fund: FundRefSnapshot;
+  bankAccountId: string | null;
+  categoryId: string | null;
+  txnDate: string;
+  flow: "income" | "expense";
+  amountCents: number;
+  status: string;
+  /** Copies only: the Club gift this copy was made from. */
+  sweptFromTxnId: string | null;
+}
+
+/** `sweep_batch_voided` v1. Self-describing, like the cross-entity move. */
+export interface SweepBatchVoidedAuditPayload {
+  before: { v: 1; leg: SweepVoidRowSnapshot; copies: SweepVoidRowSnapshot[] };
+  after: null;
+  details: {
+    v: 1;
+    reason: string;
+    /** The Club (leg) entity: the reader lists the void under it. */
+    entityId: string;
+    /** The Foundation (copies) entity: and under this one. */
+    destEntityId: string;
+    /** The leg's (sweep) date. */
+    txnDate: string;
+    amountCents: number;
+    /** Fiscal year of the sweep date. */
+    fiscalYear: number;
+    /** Copies removed (the leg is one more row). */
+    count: number;
+    legStatus: string;
+    /** Distinct fiscal years of the copies' gift dates. */
+    copyFiscalYears: number[];
+    /** Receipt records deleted with the copies; none had been sent (a sent one blocks the void). */
+    unsentAcknowledgmentsRemoved: number;
+  };
+}
+
+/**
  * Payload type per audit action. A missing key is a compile error, so adding an
  * action to CorrectionAuditAction without its payload fails the build.
  */
@@ -838,6 +893,7 @@ export interface AuditPayloadMap {
   [TRANSACTION_FUND_MOVED_AUDIT_ACTION]: FundMoveAuditPayload;
   [TRANSACTION_DELETED_AUDIT_ACTION]: TransactionDeletedAuditPayload;
   [TRANSACTION_CORRECTED_AUDIT_ACTION]: ReimbursementCorrectedAuditPayload;
+  [SWEEP_BATCH_VOIDED_AUDIT_ACTION]: SweepBatchVoidedAuditPayload;
 }
 
 export type AuditPayloadFor<A extends CorrectionAuditAction> = AuditPayloadMap[A];
@@ -891,6 +947,8 @@ const MOVED_VERSIONS = [1, 2] as const;
 const DELETED_VERSIONS = [1] as const;
 /** Its own version space: a future v2 corrected payload parses as raw. */
 const CORRECTED_VERSIONS = [1] as const;
+/** Its own version space as well. */
+const SWEEP_VOIDED_VERSIONS = [1] as const;
 
 const CORRECTED_OPERATIONS = ["fill_bank_account", "correct"] as const;
 
@@ -912,13 +970,30 @@ export function parseAuditDetails(
   text: string | null | undefined,
 ): ReimbursementCorrectedAuditPayload["details"] | RawAudit;
 export function parseAuditDetails(
+  action: typeof SWEEP_BATCH_VOIDED_AUDIT_ACTION,
+  text: string | null | undefined,
+): SweepBatchVoidedAuditPayload["details"] | RawAudit;
+export function parseAuditDetails(
   action: CorrectionAuditAction,
   text: string | null | undefined,
 ):
   | FundMoveAuditPayload["details"]
   | TransactionDeletedAuditPayload["details"]
   | ReimbursementCorrectedAuditPayload["details"]
+  | SweepBatchVoidedAuditPayload["details"]
   | RawAudit {
+  if (action === SWEEP_BATCH_VOIDED_AUDIT_ACTION) {
+    const voided = parseVersioned(text, SWEEP_VOIDED_VERSIONS);
+    if (isRawAudit(voided)) return voided;
+    if (
+      typeof voided.reason !== "string" ||
+      typeof voided.entityId !== "string" ||
+      typeof voided.destEntityId !== "string"
+    ) {
+      return { raw: text ?? "" };
+    }
+    return voided as unknown as SweepBatchVoidedAuditPayload["details"];
+  }
   if (action === TRANSACTION_CORRECTED_AUDIT_ACTION) {
     const corrected = parseVersioned(text, CORRECTED_VERSIONS);
     if (isRawAudit(corrected)) return corrected;
@@ -962,13 +1037,24 @@ export function parseAuditBefore(
   text: string | null | undefined,
 ): ReimbursementCorrectedAuditPayload["before"] | RawAudit;
 export function parseAuditBefore(
+  action: typeof SWEEP_BATCH_VOIDED_AUDIT_ACTION,
+  text: string | null | undefined,
+): SweepBatchVoidedAuditPayload["before"] | RawAudit;
+export function parseAuditBefore(
   action: CorrectionAuditAction,
   text: string | null | undefined,
 ):
   | FundMoveAuditPayload["before"]
   | TransactionDeletedAuditPayload["before"]
   | ReimbursementCorrectedAuditPayload["before"]
+  | SweepBatchVoidedAuditPayload["before"]
   | RawAudit {
+  if (action === SWEEP_BATCH_VOIDED_AUDIT_ACTION) {
+    const parsed = parseVersioned(text, SWEEP_VOIDED_VERSIONS);
+    if (isRawAudit(parsed)) return parsed;
+    if (!isObject(parsed.leg) || !Array.isArray(parsed.copies)) return { raw: text ?? "" };
+    return parsed as unknown as SweepBatchVoidedAuditPayload["before"];
+  }
   if (action === TRANSACTION_CORRECTED_AUDIT_ACTION) {
     const parsed = parseVersioned(text, CORRECTED_VERSIONS);
     if (isRawAudit(parsed)) return parsed;
@@ -1030,7 +1116,7 @@ export interface LedgerCorrectionRow {
   id: string;
   createdAt: Date;
   actorName: string | null;
-  kind: "moved" | "deleted" | "corrected";
+  kind: "moved" | "deleted" | "corrected" | "sweep_voided";
   amountCents: number | null;
   flow: string | null;
   txnDate: string | null;

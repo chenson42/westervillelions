@@ -184,7 +184,35 @@ describe("RecentCorrections: corrected kind (B-108, T44)", () => {
     expect(html).toContain("Settled period");
   });
 
-  it("is exhaustive over the three kinds at compile time (a fourth kind must fail the build)", () => {
+  it("renders a voided sweep batch: its own badge, entry count, both entities and the reason (B-172 Inc 2a)", () => {
+    const html = renderToStaticMarkup(
+      <RecentCorrections
+        rows={[
+          row({
+            id: "s",
+            kind: "sweep_voided",
+            flow: "expense",
+            from: "Public Funds",
+            to: "Charitable Fund",
+            rowCount: 4,
+            crossEntity: true,
+            fromEntityName: "Club",
+            toEntityName: "Foundation",
+            reason: "Voided before approval",
+          }),
+        ]}
+        totalInWindow={1}
+      />,
+    );
+    expect(html).toContain("Sweep voided");
+    expect(html).toContain("4 entries");
+    expect(html).toContain("Club to Foundation");
+    expect(html).toContain("itemized sweep of 3 gifts removed");
+    expect(html).toContain("Voided before approval");
+    expect(html).not.toContain("2 entries");
+  });
+
+  it("is exhaustive over every kind at compile time (a new kind must fail the build)", () => {
     const src = readFileSync(join(__dirname, "recent-corrections.tsx"), "utf8");
     expect(src).toContain("Record<CorrectionKind");
     expect(src).toContain("const unreachable: never = row.kind");

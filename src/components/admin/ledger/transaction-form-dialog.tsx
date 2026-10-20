@@ -2,18 +2,10 @@
 
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import TransactionForm, { type SweepPrefill } from "./transaction-form";
+import TransactionForm from "./transaction-form";
 import type { LedgerFund, LedgerCategory, LedgerBankAccount, LedgerTransaction } from "@/lib/db/schema";
 import type { BudgetLineOption } from "@/lib/ledger-queries";
 import type { MirrorProjection } from "@/lib/ledger-category-mirror";
-
-interface CrossEntityContext {
-  entityId: string;
-  entityName: string;
-  funds: LedgerFund[];
-  bankAccounts: LedgerBankAccount[];
-  categories: LedgerCategory[];
-}
 
 type EditableTransaction = Pick<
   LedgerTransaction,
@@ -60,13 +52,8 @@ interface TransactionFormDialogProps {
   /** Default fund for a new transaction — e.g. the fund whose page opened this
    *  dialog. Ignored in edit mode. */
   defaultFundId?: string;
-  /** Foundation entity's funds/bank accounts/categories — Club pages only.
-   *  Enables the "Sweep to Foundation" mode (DECISION-058). */
-  crossEntityContext?: CrossEntityContext;
   /** Category id -> Foundation counterpart (B-172), for the "Foundation-bound" hint. */
   mirrorHints?: Record<string, MirrorProjection>;
-  /** Opens the new-transaction form already in Sweep mode (see TransactionForm). */
-  sweepPrefill?: SweepPrefill;
   /** Whether the dialog is controlled externally */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -88,9 +75,7 @@ export default function TransactionFormDialog({
   initialValues,
   transferPartnerId,
   defaultFundId,
-  crossEntityContext,
   mirrorHints,
-  sweepPrefill,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
 }: TransactionFormDialogProps) {
@@ -151,9 +136,7 @@ export default function TransactionFormDialog({
             initialValues={initialValues}
             transferPartnerId={transferPartnerId}
             defaultFundId={defaultFundId}
-            crossEntityContext={crossEntityContext}
             mirrorHints={mirrorHints}
-            sweepPrefill={sweepPrefill}
           />
         </Dialog.Content>
       </Dialog.Portal>

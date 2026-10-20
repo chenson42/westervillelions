@@ -31,7 +31,7 @@
  * }
  * Response 201: { id: string; derivedFiscalYear: number }
  *
- * --- Transfer / Sweep transaction body (DECISION-058) ---
+ * --- Transfer transaction body (DECISION-058) ---
  * {
  *   transfer: true;
  *   sourceFundId: string;
@@ -41,11 +41,10 @@
  *   txnDate: string;
  *   amountCents: number;
  *   memo?: string;
- *   boardMinute?: string;          // required when checkTransferDirection() says requiresBoardMinute
- *   destCategoryId?: string;       // optional — Sweep destination (income) leg only;
- *                                   // defaults to the destination entity's seeded
- *                                   // "Public donations" income category when omitted
  * }
+ * A sweep to the Foundation (Club Public Funds to the Foundation's charitable
+ * fund) is no longer accepted here: 400 `use_sweep_batch` (B-172 Increment 2b,
+ * DECISION-126). It is recorded through POST /api/admin/ledger/sweep-batches.
  * `entityId` is NOT accepted here — both legs' entities are derived
  * authoritatively from the sourceFundId/destFundId rows themselves (a client
  * can no longer influence the fund lookup by supplying an entityId).
@@ -58,23 +57,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ledgerTransactions, ledgerFunds, ledgerCategories, ledgerBankAccounts } from "@/lib/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { hasFeature } from "@/lib/permissions-server";
 import { FEATURES } from "@/lib/permissions";
 import { getFiscalYear } from "@/lib/fiscal-year";
 import { isUuid } from "@/lib/utils";
-import { getSettings, getEmailsForFeature, getBudgetLineForLinkValidation, donorExists } from "@/lib/ledger-queries";
+import { getSettings, getBudgetLineForLinkValidation, donorExists } from "@/lib/ledger-queries";
 import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
-import { sendBulkMemberEmail } from "@/lib/email";
-import { getFromEmail, buildApprovalReviewUrl, buildPendingApprovalEmailHtml } from "@/lib/email-compose";
+import { notifyPendingApprovers } from "@/lib/ledger-approval-notify";
 import { normalizeCheckNumber } from "@/lib/ledger";
 import { RECEIPT_KEY_REGEX } from "@/lib/receipt-storage";
 import { checkTransferDirection } from "@/lib/ledger-transfer-policy";
 import { validateBankAccountForEntity } from "@/lib/ledger-transaction-validation";
-import { resolveTreasurer } from "@/lib/board-positions";
-
-const BOARD_MINUTE_MAX_LEN = 500;
-const PUBLIC_DONATIONS_CATEGORY_NAME = "Public donations";
+import { SWEEP_ERROR_COPY } from "@/lib/ledger-sweep";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const INT4_MAX = 2_147_483_647;
@@ -401,49 +396,19 @@ export async function POST(request: NextRequest) {
       .returning({ id: ledgerTransactions.id });
 
     // E-1: Notify LEDGER_APPROVE holders when a disbursement is pending
-    // approval. Treasury CC rule (DECISION-086): resolved once, reused for
-    // every approver in the loop — tolerant failure, never blocks the send.
+    // approval. Best effort and isolated: notifyPendingApprovers() never
+    // throws and logs its own failure (ledger-approval-notify.ts).
     if (derivedStatus === "pending") {
-      try {
-        const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
-        const fromEmail = getFromEmail();
-        const amountDollars = (amountCents / 100).toFixed(2);
-        const treasurer = await resolveTreasurer();
-        if (!treasurer.ok) {
-          console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
-        }
-        // sendBulkMemberEmail(), NOT a hand-rolled loop over sendEmail().
-        // `approverEmails` is every LEDGER_APPROVE holder — a genuine bulk
-        // member send, and CLAUDE.md's invariant is explicit about it.
-        //
-        // This is the exact code path of the 2026-08-12 incident, where a QA run
-        // in dev fired this notification and mailed 16 real board members a fake
-        // $500 approval request. DECISION-085 introduced sendBulkMemberEmail()
-        // in response — but these two call sites were never migrated onto it, so
-        // the fix for the incident was never applied to the code that caused it.
-        const approvalHtml = buildPendingApprovalEmailHtml({
-          noun: "disbursement",
-          amountDollars,
-          txnDate,
-          party: typeof party === "string" ? party.trim() : null,
-          memo: typeof memo === "string" ? memo.trim() : null,
-          reviewUrl: buildApprovalReviewUrl(txn.id),
-        });
-        await sendBulkMemberEmail({
-          from: fromEmail,
-          subject: `Disbursement pending your approval — $${amountDollars}`,
-          // Visible Cc, preserving the treasury CC rule (DECISION-086) exactly
-          // as the previous per-recipient sendEmail() call had it.
-          ...(treasurer.ok ? { cc: treasurer.email } : {}),
-          recipients: approverEmails.map((email) => ({ to: email, html: approvalHtml })),
-        });
-      } catch (error) {
-        // Best-effort — email failure does not block the transaction insert,
-        // but it must not be invisible either: a silent catch hid a dead
-        // notification path from QA on 2026-10-10 (work-log
-        // 2026-10-10-approvals-mobile-and-history, Phase 5 O-1).
-        console.error("[Ledger email] Approver notification failed:", error);
-      }
+      const amountDollars = (amountCents / 100).toFixed(2);
+      await notifyPendingApprovers({
+        noun: "disbursement",
+        subject: `Disbursement pending your approval — $${amountDollars}`,
+        amountDollars,
+        txnDate,
+        party: typeof party === "string" ? party.trim() : null,
+        memo: typeof memo === "string" ? memo.trim() : null,
+        reviewTxnId: txn.id,
+      });
     }
 
     return NextResponse.json({ id: txn.id, derivedFiscalYear, status: derivedStatus }, { status: 201 });
@@ -454,7 +419,8 @@ export async function POST(request: NextRequest) {
 }
 
 // ---------------------------------------------------------------------------
-// Transfer / Sweep handler (two-row atomic insert, DECISION-058)
+// Transfer handler (two-row atomic insert, DECISION-058). A cross-entity sweep
+// is refused here; it is an itemized batch (ledger-sweep-batch.ts).
 // ---------------------------------------------------------------------------
 
 async function handleTransfer(
@@ -469,8 +435,6 @@ async function handleTransfer(
     txnDate: rawDate,
     amountCents,
     memo,
-    boardMinute: rawBoardMinute,
-    destCategoryId: rawDestCategoryId,
   } = body;
 
   if (!sourceFundId || typeof sourceFundId !== "string") {
@@ -542,6 +506,16 @@ async function handleTransfer(
     return NextResponse.json({ error: direction.reason }, { status: 403 });
   }
 
+  // B-172 Inc 2b (B13): the single-amount sweep is closed. Answered right after
+  // the direction check, before any other validation or write.
+  if (direction.mode === "sweep") {
+    const labels = await getFundLabels();
+    return NextResponse.json(
+      { error: SWEEP_ERROR_COPY.use_sweep_batch(labels), code: "use_sweep_batch" },
+      { status: 400 },
+    );
+  }
+
   // No-op guard, narrowed to the TRUE no-op (Phase 1 resolved #1): same fund
   // AND same bank account. Same fund + different account is the sanctioned
   // Account-Transfer case (e.g. Admin Checking -> Petty Cash) and must not
@@ -552,20 +526,6 @@ async function handleTransfer(
       { error: "Select a different bank account, or transfer to a different fund." },
       { status: 400 },
     );
-  }
-
-  // Mandatory board-minute reference for any direction the policy flags
-  // (today: only the cross-entity Sweep) — required regardless of amount,
-  // reusing the approve-route's trim/cap validation shape.
-  let boardMinute: string | null = null;
-  if (direction.requiresBoardMinute) {
-    if (typeof rawBoardMinute !== "string" || !rawBoardMinute.trim()) {
-      return NextResponse.json(
-        { error: "A board-minute reference is required for a cross-entity sweep." },
-        { status: 400 },
-      );
-    }
-    boardMinute = rawBoardMinute.trim().slice(0, BOARD_MINUTE_MAX_LEN);
   }
 
   // Bank-account ownership/active validation — new. Previously implicitly
@@ -610,76 +570,6 @@ async function handleTransfer(
     return NextResponse.json({ error: "Destination bank account is inactive" }, { status: 400 });
   }
 
-  // Destination-leg categorization — Sweep only (real charitable income for
-  // 990 purposes); same-entity Transfer legs stay categoryless, as today.
-  let destCategoryId: string | null = null;
-  if (direction.mode === "sweep") {
-    if (rawDestCategoryId !== undefined && rawDestCategoryId !== null) {
-      if (typeof rawDestCategoryId !== "string") {
-        return NextResponse.json({ error: "destCategoryId must be a string" }, { status: 400 });
-      }
-      const catRows = await db
-        .select({
-          id: ledgerCategories.id,
-          entityId: ledgerCategories.entityId,
-          fundKind: ledgerCategories.fundKind,
-          flow: ledgerCategories.flow,
-        })
-        .from(ledgerCategories)
-        .where(eq(ledgerCategories.id, rawDestCategoryId))
-        .limit(1);
-      const cat = catRows[0];
-      if (!cat) {
-        return NextResponse.json({ error: "Category not found" }, { status: 404 });
-      }
-      if (cat.entityId !== destFund.entityId) {
-        return NextResponse.json(
-          { error: "Category does not belong to the destination fund's entity" },
-          { status: 400 },
-        );
-      }
-      if (cat.fundKind !== destFund.kind) {
-        return NextResponse.json({ error: "Category does not match fund type" }, { status: 400 });
-      }
-      if (cat.flow !== "income") {
-        return NextResponse.json(
-          { error: "Category flow does not match transaction flow" },
-          { status: 400 },
-        );
-      }
-      destCategoryId = cat.id;
-    } else {
-      // Default: the destination entity's seeded "Public donations" income
-      // category (already seeded for both fund kinds — drizzle/migrations/
-      // 0044_ledger_books.sql, 0049_ledger_990_lines.sql — resolved by
-      // name/kind, never a hard-coded UUID).
-      const defaultCatRows = await db
-        .select({ id: ledgerCategories.id })
-        .from(ledgerCategories)
-        .where(
-          and(
-            eq(ledgerCategories.entityId, destFund.entityId),
-            eq(ledgerCategories.fundKind, destFund.kind),
-            eq(ledgerCategories.flow, "income"),
-            eq(ledgerCategories.name, PUBLIC_DONATIONS_CATEGORY_NAME),
-          ),
-        )
-        .limit(1);
-      if (defaultCatRows[0]) {
-        destCategoryId = defaultCatRows[0].id;
-      } else {
-        // Defensive only — confirmed seeded in Phase 3 design. A missing
-        // category is a data problem to fix separately, not a reason to
-        // block a treasurer from recording a real bank movement that
-        // already happened.
-        console.error(
-          `[ledger-transfer] Default "${PUBLIC_DONATIONS_CATEGORY_NAME}" category not found for entity`,
-          destFund.entityId,
-        );
-      }
-    }
-  }
-
   const derivedFiscalYear = getFiscalYear(new Date(txnDate + "T00:00:00"));
   const transferGroupId = crypto.randomUUID();
   const cleanMemo = memo && typeof memo === "string" ? memo.trim() || null : null;
@@ -705,7 +595,7 @@ async function handleTransfer(
         transferGroupId,
         memo: cleanMemo,
         bankAccountId: sourceBankAccountId,
-        boardMinute,
+        boardMinute: null,
         status: derivedStatus,
         recordedByUserId: userId,
       },
@@ -716,11 +606,11 @@ async function handleTransfer(
         txnDate,
         flow: "income",
         amountCents: amountCents as number,
-        categoryId: destCategoryId,
+        categoryId: null,
         transferGroupId,
         memo: cleanMemo,
         bankAccountId: destBankAccountId,
-        boardMinute,
+        boardMinute: null,
         status: derivedStatus,
         recordedByUserId: userId,
       },
@@ -731,41 +621,19 @@ async function handleTransfer(
   // email then falls back to the plain Approvals URL (the link is a courtesy).
   const expenseLegId = insertedLegs?.find((r) => r.flow === "expense")?.id;
 
-  // E-1: Notify LEDGER_APPROVE holders when a Transfer/Sweep pair is pending
-  // approval — same mechanism as an ordinary over-threshold expense.
-  // Treasury CC rule (DECISION-086): resolved once, reused for every
-  // approver in the loop — tolerant failure, never blocks the send.
+  // E-1: Notify LEDGER_APPROVE holders when a Transfer pair is pending
+  // approval. Best effort and isolated (ledger-approval-notify.ts).
   if (derivedStatus === "pending") {
-    try {
-      const approverEmails = await getEmailsForFeature(FEATURES.LEDGER_APPROVE);
-      const fromEmail = getFromEmail();
-      const amountDollars = ((amountCents as number) / 100).toFixed(2);
-      const label = direction.mode === "sweep" ? "Sweep" : "Transfer";
-      const treasurer = await resolveTreasurer();
-      if (!treasurer.ok) {
-        console.warn(`[Ledger email] Treasurer CC skipped: ${treasurer.reason}`);
-      }
-      // sendBulkMemberEmail(), NOT a hand-rolled loop — same reasoning as the
-      // disbursement path above (CLAUDE.md invariant; DECISION-085).
-      const transferHtml = buildPendingApprovalEmailHtml({
-        noun: direction.mode === "sweep" ? "sweep" : "transfer",
-        amountDollars,
-        txnDate,
-        party: null,
-        memo: cleanMemo,
-        reviewUrl: buildApprovalReviewUrl(expenseLegId),
-      });
-      await sendBulkMemberEmail({
-        from: fromEmail,
-        subject: `${label} pending your approval — $${amountDollars}`,
-        ...(treasurer.ok ? { cc: treasurer.email } : {}),
-        recipients: approverEmails.map((email) => ({ to: email, html: transferHtml })),
-      });
-    } catch (error) {
-      // Best-effort — email failure does not block the transaction insert,
-      // but see the expense branch above: never swallow it silently.
-      console.error("[Ledger email] Approver notification failed (transfer):", error);
-    }
+    const amountDollars = ((amountCents as number) / 100).toFixed(2);
+    await notifyPendingApprovers({
+      noun: "transfer",
+      subject: `Transfer pending your approval — $${amountDollars}`,
+      amountDollars,
+      txnDate,
+      party: null,
+      memo: cleanMemo,
+      reviewTxnId: expenseLegId,
+    });
   }
 
   return NextResponse.json(

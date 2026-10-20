@@ -39,10 +39,14 @@ export default function ZeffyFundRoutingSection({ labels }: { labels: FundLabels
         Recording the sweep to the Foundation
       </h3>
       <p className="mt-2 text-sm text-gray-700">
-        Write the check or transfer, then record it in the Ledger as two linked entries citing the
-        same board minute where one exists: a club <span className="font-semibold">{labels.activity}
-        expense</span> (money leaving the club books) and a matching Foundation{" "}
-        <span className="font-semibold">income</span> entry (money arriving at the Foundation).
+        Write the check or transfer, then record it on the <span className="font-semibold">Sweep to the
+        Foundation</span> page: tick the {labels.activity} gifts that belong with the Foundation and
+        enter the amount that reached the bank and the board-minute reference. Each gift becomes its
+        own Foundation income entry (with its original date and donor), and the club books show one
+        transfer entry for the batch.{" "}
+        <a href="#itemized-sweep" className={linkClass}>
+          How a sweep works &rarr;
+        </a>
       </p>
 
       <h3 className="mt-5 text-sm font-semibold text-gray-900 uppercase tracking-wide">

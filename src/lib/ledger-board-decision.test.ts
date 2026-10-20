@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import type { SQL } from "drizzle-orm";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { PgDialect } from "drizzle-orm/pg-core";
 import {
   boardApprovalPredicate,
   boardDecisionPredicate,
-  lockDecisionPair,
+  lockDecisionGroup,
 } from "./ledger-board-decision";
 
 const dialect = new PgDialect();
@@ -74,7 +74,7 @@ describe("single definition and boundaries", () => {
   });
 });
 
-describe("lockDecisionPair", () => {
+describe("lockDecisionGroup", () => {
   function fakeTx(rows: { id: string }[]) {
     const seen: { where?: SQL; orderBy?: unknown; mode?: string } = {};
     const chain = {
@@ -98,23 +98,23 @@ describe("lockDecisionPair", () => {
 
   it('"update" calls .for("update")', async () => {
     const { tx, seen } = fakeTx([{ id: ID }]);
-    await lockDecisionPair(tx, ID, "update");
+    await lockDecisionGroup(tx, ID, "update");
     expect(seen.mode).toBe("update");
   });
   it('"share" calls .for("share")', async () => {
     const { tx, seen } = fakeTx([{ id: ID }]);
-    await lockDecisionPair(tx, ID, "share");
+    await lockDecisionGroup(tx, ID, "share");
     expect(seen.mode).toBe("share");
   });
   it("orders by id", async () => {
     const { tx, seen } = fakeTx([]);
-    await lockDecisionPair(tx, ID, "share");
+    await lockDecisionGroup(tx, ID, "share");
     const r = dialect.sqlToQuery(seen.orderBy as SQL);
     expect(r.sql.toLowerCase()).toMatch(/"id" asc/);
   });
   it("renders id = ... OR transfer_group_id = (select transfer_group_id ...)", async () => {
     const { tx, seen } = fakeTx([]);
-    await lockDecisionPair(tx, ID, "update");
+    await lockDecisionGroup(tx, ID, "update");
     const r = dialect.sqlToQuery(seen.where as SQL);
     const text = r.sql.toLowerCase();
     expect(text).toContain('"id" = $');
@@ -122,10 +122,33 @@ describe("lockDecisionPair", () => {
     expect(text).toContain('"transfer_group_id" = (select transfer_group_id from ledger_transactions where id = $');
     expect(r.params).toContain(ID);
   });
+  it("also matches a batch's copies through sweep_leg_txn_id", async () => {
+    const { tx, seen } = fakeTx([]);
+    await lockDecisionGroup(tx, ID, "update");
+    const text = dialect.sqlToQuery(seen.where as SQL).sql.toLowerCase();
+    expect(text).toContain('"sweep_leg_txn_id" = $');
+  });
+  it("issues exactly one select statement", async () => {
+    let selects = 0;
+    const chain: Record<string, unknown> = {};
+    chain.from = () => chain;
+    chain.where = () => chain;
+    chain.orderBy = () => chain;
+    chain.for = () => Promise.resolve([]);
+    const tx = {
+      select: () => {
+        selects += 1;
+        return chain;
+      },
+    } as never;
+    await lockDecisionGroup(tx, ID, "update");
+    await lockDecisionGroup(tx, ID, "share");
+    expect(selects).toBe(2);
+  });
   it("returns the locked rows in the order the database gave them", async () => {
     const rows = [{ id: "a" }, { id: "b" }];
     const { tx } = fakeTx(rows);
-    expect(await lockDecisionPair(tx, ID, "share")).toEqual(rows);
+    expect(await lockDecisionGroup(tx, ID, "share")).toEqual(rows);
   });
 });
 
@@ -147,5 +170,22 @@ describe("R9 source scan (co-sign and queries modules)", () => {
     const src = read("ledger-approval-queries.ts");
     expect(src).toContain("boardDecisionPredicate(");
     expect(src).not.toContain("paidReimbursementExists(");
+  });
+});
+
+describe("no lockDecisionPair remains", () => {
+  it("is absent from every non-test source file", () => {
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(name) && !/\.test\./.test(name)) {
+          if (strip(readFileSync(full, "utf8")).includes("lockDecisionPair")) hits.push(full);
+        }
+      }
+    };
+    walk(join(root, ".."));
+    expect(hits).toEqual([]);
   });
 });
