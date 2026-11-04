@@ -243,7 +243,7 @@ test("L5: name-shaped scene titles are accepted (the warning and preview are the
       await admin.request.delete(`/api/admin/santas-workshop/sessions/${empty.id}/scenes/${(await r.json()).scene.id}`);
     }
   }
-  const contact = ["mom@gmail.com", "call 614.555.0100", "https://example.com/x", "visit example.org", "(614) 555-0100", "email me at a@b.co", "1234567890", "www.example.com", "text 614 555 0199", "x@y.invalid"];
+  const contact = ["mom@example.com", "call 614.555.0100", "https://example.com/x", "visit example.org", "(614) 555-0100", "email me at a@b.co", "1234567890", "www.example.com", "text 614 555 0199", "x@y.invalid"];
   let rejected = 0;
   for (const c of contact) {
     const r = await admin.request.post(url, { data: { title: "Fine title", caption: c } });
