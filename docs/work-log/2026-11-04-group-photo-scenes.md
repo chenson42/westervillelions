@@ -890,3 +890,40 @@ Environment: worktree `/Users/cshenso/git/westervillelions-scenes`, feature Neon
 - Gates: tsc, lint (1 pre-existing warning), test (340 files, 5918 tests), `pnpm build:only` pass. `santas-workshop-scenes.spec.ts` on :3300 against the feature branch DB: 14/14 pass (incl. #12, #13). Dev server stopped.
 - Note: `movedPhotos` counts unpurged photos including superseded ones, while the card count excludes superseded; minor wording divergence, not changed.
 - Next: qa re-run of the full gate stack.
+
+## Phase 5 — Re-verification — 2026-11-04
+
+**Owner:** qa
+**Status:** complete
+
+### Summary
+**Verdict: PASS.** D1 and D2 are fixed and the rest of the stack is green. Measured on worktree `/Users/cshenso/git/westervillelions-scenes`, branch `feature/group-photo-scenes`, HEAD `8739460` (rebased onto main `9aeb578`, v1.100.5), clean tree before this entry. Branch DB host `ep-steep-field-amz4eiik-pooler` confirmed before any write; dev server on :3400 (NEXTAUTH_URL/AUTH_URL overridden, `RESEND_API_KEY` blank, no `EMAIL_DEV_ALLOWLIST`, so nothing could send); main tree, :3000, dev branch and production untouched.
+
+### What I did
+| Check | Result |
+|---|---|
+| `pnpm exec tsc --noEmit` | PASS |
+| `pnpm lint` | PASS (0 errors; the 1 pre-existing warning at `budget-context-panel.tsx:114`) |
+| `pnpm test` | PASS: 343 files, 5937 tests, 5.3 s |
+| `pnpm build:only` | PASS (exit 0; `/santas-workshop/c/[token]`, `/crew/[slug]`, `/f/[token]` dynamic, no warnings) |
+| Dev start / migrations | `pnpm db:migrate` replay clean (only idempotent NOTICEs); no new migration needed from main |
+| e2e `santas-workshop-scenes.spec.ts` + `-crew-flow.spec.ts` + `-clone.spec.ts` (:3400, 1 worker) | **39/39 pass** (3.9 min) |
+| e2e `santas-workshop-collage.spec.ts` (post-rebase collage smoke) | 13/13 pass |
+
+- **D2 fixed (confirmed live):** scene #1 (card row) and #37 (delete dialog and toast) assert the real counts via DB: card row reads "N photos", dialog reads "N photos are in this scene and will move to “Other pictures”.", toast reads "Scene deleted. N photos moved to Other pictures."; the scene then vanishes from the collage and the photos appear under "Other pictures".
+- **D1 fixed (confirmed live):** #38 rotates the worker code, cold-reloads (code screen), re-enters the new code, and the Group photo panel again says "Pick a scene first." with no sticky choice.
+- **Crew flow:** all 13 crew-flow tests pass, including the formerly failing "Parent" roster assertions (main's fixture fix) and "a group photo is filed in the scene the volunteer picked".
+- **Clone coexists with scenes:** all 12 clone tests pass. A throwaway spec (created and deleted by me, not committed) made a practice session with one scene and cloned it via `cloneFrom`: 201, source has 1 scene, clone has 0 scenes (expected: scenes are not copied yet), and the clone form opens.
+- **Collage storyline:** headings in order Santa arrives / Cookies, cocoa and carols / Other pictures, 15 images with 0 photo-door mismatches, zero-scene session still one "Group pictures" grid, removed state prints no scene text.
+- L1, L2, L4, L5 re-ran inside the scenes spec and held (L1: 1 response signature across 8 id variants; L2: 20 racing uploads, 0 failed, all fall to no scene; L5: 10/10 name-shaped accepted, 10/10 contact-shaped rejected).
+- Feature-gate audit: unchanged since the Phase 5 report (no route files changed by D1/D2 or the rebase); all four admin scene routes carry `auth()` + `hasFeature(FEATURES.SANTAS_WORKSHOP_MANAGE)`, crew routes call `requireCrew()` first.
+- Cleanup: every spec removed its rows; branch DB counts after: `sw_sessions` 0, `sw_scenes` 0, `sw_photos` 0, `sw_crew_attempts` 0. Local photo store deleted, dev server on :3400 stopped (port free). Coverage not re-measured (no change to events/permissions/members).
+
+### Outputs
+- This work-log entry only (no code changes).
+
+### Open questions / handoff notes
+- Still unverified by any runner (carried from the first report, needs a real phone before ship): L6 offline outbox with a cached scene list, a scene deleted while photos wait in the queue, iOS Safari "Choose a saved photo".
+- `drizzle-kit push` not run (B-165 prompt); migration 0117 alone creates the objects.
+- Minor wording divergence noted by the implementer: toast `movedPhotos` counts superseded photos, card count does not. Not a defect.
+- Next agent: `analyst` for Phase 6.
