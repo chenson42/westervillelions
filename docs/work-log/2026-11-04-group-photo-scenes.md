@@ -18,7 +18,7 @@
 | 3 — Technical design | tech-lead | Complete | Design complete; implementers named | 2026-11-04 |
 | 4 — Implementation | database-admin → api-developer → ux-developer (worktree + own Neon branch) | Schema step complete (database-admin); api-developer next | — | 2026-11-04 |
 | 5 — Verification | qa | Complete | FAIL (D1, D2) then PASS on re-verification (Slice A) | 2026-11-04 |
-| 6 — Shipped vs intent | analyst | Complete for Slice A | SHIP WITH NOTES (Slices B and C open) | 2026-11-04 |
+| 6 — Shipped vs intent | analyst | Complete for Slices A, B and C | Slice A SHIP WITH NOTES (v1.101.0); Slices B and C SHIP WITH NOTES, reviewed post-push at the user's direction (v1.102.0); follow-ups B-212 (amended), B-214, B-215 | 2026-11-04 |
 
 ---
 
@@ -1205,3 +1205,63 @@ My dev server (:3210) stopped; scratch logs remain in the session scratchpad. Te
 ### Open questions / handoff notes
 - **Next: analyst** for Phase 6 on Slice C (PASS).
 - Still open from the first run, unchanged: the optional polish items and the user's Dec 7 dry-run print check (desktop Chrome and iPhone).
+
+---
+
+## Slices B and C — Phase 6 — Shipped vs Intent — 2026-11-04
+
+**Owner:** analyst
+**Status:** complete
+**Timing:** this review ran **after the push**, at the user's direction ("push both when QA passes"). Measured on main at 1f23ec8 (v1.102.0, pushed). Anything below is a follow-up, not a gate. I read the work-log (Phase 1 intent, Slice B Phase 4/5 PASS, Slice C Phase 4, the Phase 5 FAIL on headers, the fix, the re-verification PASS), DECISION-128/129, B-210 to B-213, `docs/release-notes/v1.102.md`, and the diff `bd2b404..1f23ec8` for `src`, `e2e` and `next.config.ts`. I did not re-run the suite or a browser: "working" below means read in code or established by QA's reports, and I say which.
+
+### Verdict: SHIP WITH NOTES
+
+### ONE-LINE TAKE
+> Howard's storyline now moves from the practice session to the real one without retyping (two entry points, one writer), and families get a free, print-styled storybook that can only show what the collage already shows; what is not proven is how it prints from a real desktop Chrome and a real iPhone, which only a person can check before the Dec 7 dry run.
+
+### What's working
+- **One writer for copy, two doors.** `copyScenes(tx, …)` is used by the Scenes card route and by the clone transaction, so the rules cannot drift: target must be empty (`scenes_not_empty`), source must have scenes, same-session refused, text re-validated per row, dense positions. QA exercised every refusal in a browser, an audit row with ids and counts only and none on refusal, a 20-scene copy, the stale-page case, and the clone rollback (a source scene that no longer validates fails the clone with a human sentence and creates no session and no log row). The user's earlier "clone minus the pictures, so less setup" is met: Clone session now brings the storyline by default and never a photo.
+- **The storybook cannot widen visibility.** It reads `getCollage()` only, scene tiles of kind group only, and QA's parity checks show the book's picture ids per scene equal the collage's, in the same order, through hide, unhide, a late upload before and after "Publish late photos", and a hidden-only scene (page disappears). No portrait, no "Other pictures", no names, ordinal alt text, token not in the visible text. Pending and removed produce no scene text (redirect to the collage's own state page); unknown and malformed tokens are the identical 404.
+- **The Phase 5 FAIL was a real catch and is fixed properly.** The `/book` response lacked the collage's `X-Robots-Tag` and `Referrer-Policy` because the header rule matched one path segment. The fix widens the source to `/santas-workshop/c/:token/:path*`, and a source test pins it, so any later page under the token inherits the posture (the CLAUDE.md bullet now says so). Re-verified 12/12 on the book spec, 13/13 collage, 8/8 family.
+- **The user's words are answered.** "Provide a download pdf book option": a "Download the storybook" link on the live collage opens a cover, one scene per Letter page, and a closing page with the removal sentence, plus a "Save as PDF" button and desktop and iPhone hints. QA's Chromium PDF came out at 6 Letter pages with no clipped or split picture and no controls.
+- **Docs closed out.** DECISION-129 is filed (QA's earlier docs note), DECISION-128 records the book as Item 7 including the reopening of the 2026-10-12 "no multi-scene book" ruling, B-210/B-211 are ticked, the CLAUDE.md bullets carry the copy path and the book, and the release notes list the Dec 7 manual checks.
+
+### Intent-vs-shipped diff
+| # | Phase 1 / user said | Shipped | Verdict |
+|---|---|---|---|
+| 1 | Ruling 9: "Copy scenes from another session" on the real session's Scenes card; only when the target has no scenes; one confirm; title, caption and order only, never photos; not automatic | Select plus Copy button plus `ConfirmDialog` ("The text is public once the collage is published. Photos are not copied."), shown only with zero scenes and at least one other session that has scenes; sources show kind and scene count | matches |
+| 2 | Earlier user ask: clone "minus the pictures" | "Include the N scenes" checkbox on Clone session, default on, only when the source has scenes; copy failure rolls the whole clone back | matches (and exceeds Phase 1, which only had the card button) |
+| 3 | Not offered on a purged session (Phase 1 ruling 13 spirit; QA's UX nit) | Session page passes `[]` when `publicPurgedAt` is set, so the control is hidden; the server still refuses with `session_purged` | matches. See follow-up 4: the hiding is one line, unpinned by any test and unrun by QA; the underlying refusal is tested |
+| 4 | Slice B: optional read-only storyline preview with "empty: will not show" flags | Not built. The Scenes card's per-scene photo counts with the existing empty flag, plus the practice collage, stand in | acceptable drift (Phase 1 marked reassign as the uncuttable part, and that shipped in Slice A) |
+| 5 | Storybook shape (a): route under the same token, cover, one scene per page, closing page, `full` images, `window.print()` button, iOS hint, "loads all the pictures" note | As described; `@page` Letter, `break-before: page`, controls `sw-noprint` | matches |
+| 6 | Book is built from `getCollage()`'s approved view only; no second query, filter or reader of bytes; group pictures only, no portraits or check-in photos | Imports scan-tested; model reads `view.scenes` and kind `group` only | matches |
+| 7 | Live state with at least one visible group picture; pending and removed show no book and no link | Link only inside the live branch with scenes; `/book` redirects otherwise | matches (redirect rather than a 404 is the better behaviour: the QR holder lands on the collage's own state page) |
+| 8 | Same posture as the collage: same token, noindex, no-referrer, force-dynamic | Page-level meta, `force-dynamic`, and (after the fix) the HTTP headers | matches after the Phase 5 fix |
+| 9 | Closing page carries the removal sentence; privacy page gains one sentence | Both shipped, wording verbatim from the user | matches |
+| 10 | Book includes the whole day's group pictures | Only pictures that sit in a scene. Unscened ("Other pictures") group photos are on the collage but not in the book | acceptable drift, but unannounced. DECISION-128 and CLAUDE.md say so; the release notes and the page do not. A parent whose picture was taken with a wrong or missing scene will not find it in the book (follow-up 2) |
+| 11 | Cover shows the photo day | Fixed line "A storybook of the day, one scene to a page."; no date (the live view carries none) | acceptable drift, disclosed by the implementer |
+| 12 | A real print check in Chrome and one iPhone (Phase 1 and DECISION-128 L7) | Not run by any runner; handed to the user in the release notes | open, see follow-up 1 |
+
+### Edge cases
+- Empty state: **pass.** Zero scenes: no link, `/book` redirects, copy control and clone checkbox absent when there is nothing to copy; a scene with only hidden pictures gives no link and no book page.
+- Failure microcopy: **pass.** Copy refusals map to sentences ("already has scenes", "no longer be changed", "Scene 1 of the other session needs editing there before it can be copied"); no code or stack trace shown (QA saw each in the UI).
+- Permission gate: **pass.** `POST …/scenes/copy` calls `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)`; the two pages that gained reads still gate independently; the book is token-gated like the collage by design and adds no `FEATURES` key or API route. QA's feature-gate audits agree.
+- Mobile (360 px): **pass** for the copy control, the clone form and the book's controls and hints (QA, no horizontal scroll). The book's printed layout on a phone is **not run**.
+- Brand: **pass** by reading. Copy card is `rounded-2xl`; buttons `rounded-lg`; confirm through `<ConfirmDialog>`; no native dialogs.
+- Adversarial: **pass.** Enumeration identical on the book (404 identity compared, token not echoed); the book cannot reveal a hidden or late picture (parity run); an uncommitted scene problem cannot fail a clone silently (rollback test); `fromSessionId` malformed or unknown is 400 or 404 with nothing written; stored-text re-validation on copy closes the "bypassed the validator" path.
+- Print fidelity (Chromium `page.pdf()`): **pass** for page count and clipping. **Not established:** that `@page { margin: 0 }` suppresses the browser's own page-URL header and footer (it would print the token link into the margins) and that the `@page` rule nested inside `@media print` is honoured by desktop Chrome, Safari and Firefox. `page.pdf()` does not render browser headers, so QA could not see this. This is the one place a defect would expose the private token link on a saved file.
+- iPhone Save to Files: **not run.**
+
+### Follow-ups (SHIP WITH NOTES; each gets its own tracking entry)
+1. **Real print checks before the Dec 7 dry run (user, with the orchestrator).** Desktop Chrome: open the practice storybook, print preview, confirm no web address, date or page number prints in the margins, and the page count is sensible; Safari/Firefox if available. iPhone: Share, Print, pinch out, Save to Files; time the load on mobile data. Record the results in this work-log. The release notes list these, but **B-212's own text covers only the scene-capture checks**, so the book checks can be lost. Proposed edit to B-212, appended: "Also, from the storybook (B-211): print the practice storybook from desktop Chrome and confirm no URL, date or page number prints in the margins (the token link must never end up in a saved file); then Save to Files from an iPhone and record the page count and load time. If the margins print the URL, set the margin on the container instead of relying on `@page`." Priority stays must-do before Dec 7; if the margin check fails it is a fix to `book/page.tsx`, not a drop.
+2. **Proposed backlog text, B-214 — Santa's Workshop storybook polish (low to should-do, before Dec 16).** (added 2026-11-04 from the scenes Phase 6) (a) Unscened group pictures never reach the book: either say so on the book page and in the next release notes ("pictures that were not placed in a scene stay on the collage"), or decide at the Dec 7 dry run whether an "Other pictures" page belongs, and add a pre-publish check on the photos page that counts unscened group photos so an admin fixes wrong taps before publishing (the admin reassign already exists). (b) A scene with more than six pictures overflows to a second page with no heading: add a small "continued" label. (c) The book's `<main>` sits inside the site layout's `<main id="main-content">`: use a `div` or `section` so there is one main landmark. (d) Centre the closing text and reconsider the cover title ("Santa's Workshop photos"); optionally add the photo day if the view ever carries it. Needs no schema.
+3. **Proposed backlog text, B-215 — Santa's Workshop scenes: pin the purged-session copy-control hiding, and the optional storyline preview (low).** (added 2026-11-04 from the scenes Phase 6) `[sessionId]/page.tsx` passes `copySources={s.publicPurgedAt ? [] : copySources}` so a purged session is not offered a copy that always fails. The server refusal (`session_purged`) is unit- and e2e-tested, but no test asserts the control is hidden, and QA did not click it after the change. Add one e2e assertion (purge a session with no scenes, open the page, expect no `scenes-copy` control) or a source scan. The read-only storyline preview skipped from Slice B (Phase 1 Flow 3) can ride along if wanted; it is optional.
+4. **Docs housekeeping (tech-lead or orchestrator).** The Per-Phase Status table at the top of this work-log still reads Slice A only (Phase 6 "SHIP WITH NOTES (Slices B and C open)"); update it to show Slices B and C shipped as v1.102.0 with this verdict. B-212 carries the only remaining must-do item and stays unchecked.
+
+### Red flags
+None. Nothing found that justifies reopening the pipeline. The one thing that would change that is follow-up 1 showing the token URL in a printed or saved file: that is a reopen of Slice C at Phase 4 (container margin instead of `@page`), not a rollback.
+
+### Handoff
+- Pipeline for Slices B and C is closed with notes; the scenes feature as a whole is shipped (A in v1.101.0, B and C in v1.102.0).
+- Open must-dos: B-212 (with the book checks appended), before Dec 7. Everything else is polish.
+- No code, commit or push by this review.
