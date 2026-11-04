@@ -163,6 +163,39 @@ describe("createZeffyClient", () => {
   });
 });
 
+describe("listCampaigns rate hydration", () => {
+  // Real shapes: the list omits `rates`; the single read carries them (amount in cents).
+  const listed = (id: string, type = "ticketing") => ({ id, object: "campaign", title: `Form ${id}`, type, status: "active" });
+  const single = (id: string) => ({
+    ...listed(id),
+    rates: [{ id: `${id}-r1`, object: "rate", title: "Stuffy", amount: 2500, currency: "usd", is_add_on: false }],
+  });
+
+  it("fills rates for ticketing campaigns from the single read", async () => {
+    const { client, calls } = make(PROD, [
+      res(page([listed("camp-a"), listed("camp-b", "donation")])),
+      res(single("camp-a")),
+    ]);
+    const out = await client.listCampaigns();
+    expect(out[0].rates).toEqual([{ id: "camp-a-r1", title: "Stuffy", amountCents: 2500 }]);
+    expect(out[1].rates).toEqual([]);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].url).toContain("/api/v1/campaigns/camp-a");
+  });
+
+  it("one failed single read leaves that form's rates empty and the list intact", async () => {
+    const { client } = make(PROD, [
+      res(page([listed("camp-a"), listed("camp-b")])),
+      res({ error: {} }, { status: 500 }),
+      res(single("camp-b")),
+    ]);
+    const out = await client.listCampaigns();
+    expect(out.map((c) => c.id)).toEqual(["camp-a", "camp-b"]);
+    expect(out[0].rates).toEqual([]);
+    expect(out[1].rates).toHaveLength(1);
+  });
+});
+
 describe("ZEFFY_API_BASE_URL override", () => {
   const STUB = "http://localhost:4010";
   it("is honoured outside production, so QA and e2e can point at a local stub", async () => {

@@ -238,6 +238,18 @@ export function createZeffyClient(options: ZeffyClientOptions = {}): ZeffyClient
     };
   }
 
+  async function getCampaign(id: string): Promise<CampaignSummary | null> {
+    if (!id || id.length > 200 || /[/?#\s]/.test(id)) throw new ZeffyError("bad_request");
+    const allow = devAllowlist();
+    if (allow && !allow.includes(id)) throw new ZeffyError("dev_campaign_not_allowed");
+    const res = await request(`/api/v1/campaigns/${encodeURIComponent(id)}`, {});
+    if (res.status === 404) return null;
+    if (!res.ok) failFor(res);
+    const body = await json(res);
+    if (!isCampaign(body)) throw new ZeffyError("bad_response", res.status);
+    return toSummary(body);
+  }
+
   return {
     listPayments,
 
@@ -287,19 +299,21 @@ export function createZeffyClient(options: ZeffyClientOptions = {}): ZeffyClient
         if (body.has_more !== true || typeof body.next_cursor !== "string" || !body.next_cursor) break;
         cursor = body.next_cursor;
       }
+      // The list endpoint omits `rates`; only the single-campaign read carries them.
+      // Hydrate ticketing forms one at a time (the shared limiter spaces the calls);
+      // a failure leaves that form's rates empty rather than failing the whole list.
+      for (let i = 0; i < out.length; i += 1) {
+        if (out[i].type !== "ticketing" || out[i].rates.length > 0) continue;
+        try {
+          const full = await getCampaign(out[i].id);
+          if (full) out[i] = { ...out[i], rates: full.rates };
+        } catch {
+          // leave rates empty
+        }
+      }
       return out;
     },
 
-    async getCampaign(id) {
-      if (!id || id.length > 200 || /[/?#\s]/.test(id)) throw new ZeffyError("bad_request");
-      const allow = devAllowlist();
-      if (allow && !allow.includes(id)) throw new ZeffyError("dev_campaign_not_allowed");
-      const res = await request(`/api/v1/campaigns/${encodeURIComponent(id)}`, {});
-      if (res.status === 404) return null;
-      if (!res.ok) failFor(res);
-      const body = await json(res);
-      if (!isCampaign(body)) throw new ZeffyError("bad_response", res.status);
-      return toSummary(body);
-    },
+    getCampaign,
   };
 }
