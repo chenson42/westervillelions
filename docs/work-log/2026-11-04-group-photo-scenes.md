@@ -17,8 +17,8 @@
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-11-04 |
 | 3 — Technical design | tech-lead | Complete | Design complete; implementers named | 2026-11-04 |
 | 4 — Implementation | database-admin → api-developer → ux-developer (worktree + own Neon branch) | Schema step complete (database-admin); api-developer next | — | 2026-11-04 |
-| 5 — Verification | qa | Complete | FAIL (2 defects, see Phase 5 report at end) | 2026-11-04 |
-| 6 — Shipped vs intent | analyst | Pending | — | — |
+| 5 — Verification | qa | Complete | FAIL (D1, D2) then PASS on re-verification (Slice A) | 2026-11-04 |
+| 6 — Shipped vs intent | analyst | Complete for Slice A | SHIP WITH NOTES (Slices B and C open) | 2026-11-04 |
 
 ---
 
@@ -927,3 +927,77 @@ Environment: worktree `/Users/cshenso/git/westervillelions-scenes`, feature Neon
 - `drizzle-kit push` not run (B-165 prompt); migration 0117 alone creates the objects.
 - Minor wording divergence noted by the implementer: toast `movedPhotos` counts superseded photos, card count does not. Not a defect.
 - Next agent: `analyst` for Phase 6.
+
+
+## Phase 6 — Shipped vs Intent — 2026-11-04
+
+**Owner:** analyst
+**Status:** complete for Slice A (Slices B and C are tracked follow-ups, not built)
+
+### Summary
+**Verdict: SHIP WITH NOTES.** Slice A delivers what Phase 1 promised, including the firm requirement: an admin (Howard, via `board_member`) writes an ordered storyline on the session page, a volunteer picks a scene before each group photo, and the public collage shows the group pictures as that storyline (title, caption, pictures per scene, "Other pictures" last). Measured on worktree branch `feature/group-photo-scenes` at c1ca22c (rebased onto main 9aeb578). I read the work-log through QA's re-verification PASS (343 files / 5937 unit tests, build, 39/39 scenes + crew-flow + clone e2e, 13/13 collage e2e) and read the shipped diff for the public page, public contract, gallery, validator and scenes card. I did not re-run the suite or a browser; what I state as working is either read in code or "Established" by QA's report, and I say which.
+
+### ONE-LINE TAKE
+> The storyline works end to end for the dry run (author, pick on the phone, fix a wrong tap, read on the collage) with no widening of what a stranger can see; what remains is the retyping-free copy path (Slice B), the PDF book (Slice C), three checks only a real phone can do, and the ship-time docs.
+
+### What's working
+- **The firm requirement is met and visibility cannot fork.** `c/[token]/page.tsx` renders `view.scenes` as `<section aria-labelledby>` (title `h2`, caption `<p>` only when non-null, one `CollageGallery` per scene), then the unscened list headed "Other pictures" (or "Group pictures" when there are no scenes, so a zero-scene page is today's page), then portraits. Scenes are built from the single `decidePhotoAccess` pass (parity property test over 400 seeded runs, QA L3: 15 images, 0 door mismatches); a scene with only hidden photos vanishes with no heading or hint; `pending` and `removed` print no scene text (QA L4, source scan).
+- **Public DTO change is narrow and pinned.** `CollageScene` is exactly `{ title, caption, tiles }`, no id, count, position or timestamp; the contract file bans `sceneId`; the header comment states the amended rule. Scene text reaches the page only as text nodes (QA e2e #10: `<script>`, `<img onerror>` render as literal text).
+- **Crew picks, never types.** The upload route only parses a UUID; unknown, deleted, foreign and garbage ids give one response signature (QA L1: 1 signature over 8 variants); a delete racing 20 uploads loses none (L2). Crew has no write path to scene text (scan test).
+- **Wrong-tap recovery shipped in Slice A (T3):** scene chip and native "Move to scene" select on the photos page, with `scene_gone` handled. The phone disables both capture buttons until a scene or "Other" is picked, shows "For: <scene>", keeps the choice sticky, and falls back to unscened with a plain sentence when the list cannot load.
+- **Validator matches ruling 11:** NFC, invisibles stripped, code-point lengths 60/280, 20 scenes, email/link/domain/7-digit rejected, "Dec 18-20, 2026" accepted (QA e2e #2).
+- **Brand and a11y:** scenes card uses `rounded-2xl` cards, `rounded-lg` buttons, destructive `ConfirmDialog` that states the photo count, the required public-text warning string, no native dialogs, 44px up/down targets; QA checked 360px (picker, 3 rows each at least 44px, no horizontal scroll) and 390px collage.
+- **Both Phase 5 defects are fixed and proven live:** D2 (counts always 0) now shows real counts in the card row, the dialog and the toast; D1 (sticky choice survived a code rotation on a cold load) now clears on the code screen. Each has a regression test (source scan and an e2e that was red before the fix).
+- **Coexists with the cloning that landed on main:** all 12 clone tests pass with scenes present.
+
+### Intent-vs-shipped diff
+| Item | Phase 1 said | Shipped | Verdict |
+|---|---|---|---|
+| Collage shows the storyline | Required, Slice A: groups by scene in scene order with title and text; unscened last; scene with no visible photo not rendered | As described; QA storyline e2e and screenshot at 390 px | matches |
+| Zero-scene session unchanged | Identical page and phone panel | Page identical (proved against a frozen copy of the old selector); phone panel enabled after the scene load resolves, "Loading scenes..." for a moment with no cache | acceptable drift (T6 deviation 2) |
+| Preset only; volunteers never type | Pick from Howard's list | Picker of buttons, no free text; upload carries a UUID only | matches |
+| Scene is a section; photos hold a reference; live rename | Yes | `sw_photos.scene_id` ON DELETE SET NULL; edits show on the next load | matches |
+| Text policy (60/280/20, shape rejection, warning) | Ruling 11 | As specified. The phone-shape check also rejects a numeric date such as "12-19-2026" (8 digits with hyphens); "Dec 19 2026" and "Dec 18-20, 2026" pass | acceptable drift (see follow-up 7) |
+| Edit and delete after photos attached | Allowed; delete confirm states count; photos fall to Other | As specified; real counts after D2 fix | matches |
+| Reorder by up/down | Yes | Yes; `scenes_changed` refetch | matches |
+| Admin reassign (Phase 1: Slice B) | Slice B | Moved to Slice A by T3; shipped with `scene_gone` handling | acceptable drift (improvement, agreed in Phase 3) |
+| Admin storyline preview with "empty: will not show" | Flow 3, Slice B | Not built as a separate preview. The card shows per-scene counts and an amber "only hidden photos" chip, and the collage on a practice session is the real preview | acceptable drift, tracked in B |
+| Copy scenes to the real session | Ruling 9, Slice B | Not built. The new session clone on main copies the setup but not scenes (QA confirmed: clone has 0 scenes) | open, tracked (B) |
+| Offline outbox carries `sceneId`; label shows title | Ruling 15 | `sceneId` in queued meta; label local only; unknown scene still accepted | matches in code and unit tests; device behaviour unverified (follow-up 1) |
+| Retention | Scenes survive purges; reset keeps them | As specified; test pins it; no retention copy overclaims (grepped `retention-ui.ts`) | matches |
+| "Next scene" button on the saved confirmation | Phase 1 gap 5, optional | Not built | acceptable (optional) |
+| Storybook PDF | Slice C | Not built | open, tracked (C) |
+| Docs: CLAUDE.md collage/crew/retention bullets, DECISION-128 to Resolved, release notes | Phase 2 R14 / Phase 3 | None in the diff (`git diff main...` touches only the work-log among docs). DECISION-128 is still "Proposed"; CLAUDE.md still says "photo id and a kind only" | open, ship-time (follow-up 4) |
+
+### Edge cases
+- Empty state: **pass** (card: empty sentence with "Add the first scene"; collage with no scenes and no tiles shows the existing empty-live message; zero-scene phone and page unchanged).
+- Failure microcopy: **pass** (inline title/caption errors; "Scenes didn't load..." when no cache; `scene_gone` sentence plus refresh; scene text never shown in a stack trace or attribute).
+- Permission gate: **pass** (QA audit: all admin scene routes and the reassign route call `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)`; crew routes call `requireCrew()` first; anonymous callers rejected; no new key, no role migration).
+- Mobile (360px): **pass** (QA e2e #6 with screenshot; collage at 390 px). Real device: **not run** (below).
+- Adversarial pass: enumeration **pass** (L1), delete race **pass** (L2), state leaks **pass** (L4), stored XSS **pass** (#10). Name-shaped titles are accepted 10/10 by design (L5); the only controls are the warning and human review, see follow-up 3.
+
+### Follow-ups (SHIP WITH NOTES; each gets its own tracking entry)
+
+| # | Follow-up | Owner | Due |
+|---|---|---|---|
+| 1 | **Real-phone checks, never run by any runner:** (a) offline outbox with a cached scene list: pick a scene, go offline, take three photos, reconnect, all three land in that scene and the outbox label shows its title; (b) a scene deleted on the laptop while photos wait in the queue: they still send and land in "Other pictures"; (c) **iOS Safari "Choose a saved photo"** with the scene picker in front of it (disabled-until-picked state, sticky choice, upload). Record results in the work-log. | user (needs a phone) with orchestrator | Soon after deploy and before Howard rehearses; hard stop **before the Dec 7 dry run** |
+| 2 | **Slice B (rest):** "Copy scenes from another session" (title, caption, order; never photos; only into an empty target; one confirm; re-runs the validator) and the optional read-only storyline preview. Until it ships, rehearsed scene text must be retyped into the real session, which risks a public typo. Also decide whether the new session-clone dialog should offer a "Copy scenes" checkbox that calls the same writer (one writer, two entry points). Contract type, error codes and copy sentences already exist. | api-developer + ux-developer | **before Dec 14** (so it is exercised after the dry run and in place before Dec 18) |
+| 3 | **Slice C: storybook PDF** (Phase 1 shape a: print-styled `/santas-workshop/c/[token]/book` route over `getCollage()` view.scenes only, no "Other" page, no portraits, redirect unless live with a scene, "Download as PDF" button on the collage, iOS Save-to-PDF hint, privacy-page sentence "A copy you save stays on your device." with its test). Depends on Slice A only; the collage storyline stands alone if it slips. | ux-developer (+ tech-lead for the scope-reopening decision text) | target **Dec 11**, hard **Dec 16**; if it misses, ship without the button |
+| 4 | **Ship-time docs (not done in this diff):** release notes (use the Phase 3 draft), promote DECISION-128 from Proposed to Resolved after re-reading each sentence against QA's "Established" list, update CLAUDE.md (collage DTO sentence in the DECISION-125 bullet, crew bullet scene read and no authoring, retention bullet scenes kept, `sw_scenes` in directory notes). | tech-lead / orchestrator | at push of Slice A |
+| 5 | **Go-live (T1):** before the dry run, orchestrator confirms read-only in production that Howard's account is in the Board role and linked to a member, and asks him to sign out and back in once and open `/admin/santas-workshop`. **Before the real publish on Dec 19, an admin reads every scene title and caption on the live collage preview** (names cannot be machine-rejected; rename-after-publish bypasses the review gate by agreed design, ruling 2). Add both to the go-live checklist. | orchestrator / chair | Dec 7 and Dec 19 |
+| 6 | **Deploy notes:** migration 0117 is additive and nullable; `drizzle-kit push` was never completed locally (B-165 prompt), deploys use `--force` and have nothing of ours to add. Do not deploy the server step without the page (it is all one branch, so merge it whole). | orchestrator | at merge |
+| 7 | Low priority: the phone-shape check rejects numeric dates with hyphens ("12-19-2026"). Either narrow the rule (for example require 10 digits, or a leading + or parenthesis) or leave it and make the reject sentence say "looks like a phone number; write the date out". Also: the delete toast `movedPhotos` counts superseded photos and the card count does not; wording only. | api-developer | with Slice B |
+
+**Proposed backlog text (for the orchestrator to file; next free ID per the memory note is B-209, re-derive before filing):**
+
+- **B-209: Santa's Workshop scenes, copy storyline into another session (Slice B).** "Copy scenes from another session" on the scenes card (target must have no scenes; title, caption, order only; validator re-run; one confirm; audit `scenes_copied` with ids and counts), optionally a "Copy scenes" checkbox on the session-clone dialog that uses the same writer, and a read-only storyline preview with an "empty: will not show" flag. Why: rehearsed text otherwise has to be retyped into the real session, and the public collage prints it. Due before Dec 14, 2026. See work-log 2026-11-04-group-photo-scenes (ruling 9, Flow 3).
+- **B-210: Santa's Workshop storybook PDF (Slice C).** Print-styled book route over the approved collage scenes, Save-as-PDF button, iOS hint, privacy sentence. Group pictures only, scenes in order, no portraits, no "Other" page. Target Dec 11, hard Dec 16, 2026; drop the button if late. Revisit a generated PDF only if iPhone parents cannot save one in the dry run (needs Phase 2). See work-log (Storybook PDF section, R7, R8, T5).
+- **B-211: Real-phone verification of scene capture.** Offline queue with cached scenes, scene deleted while photos queue, iOS Safari "Choose a saved photo" with the picker; record in the work-log. Before the Dec 7 dry run. (May be closed by a work-log note rather than built.)
+- **B-212 (low): scene text shape check false-positives on numeric dates.** See follow-up 7.
+
+### Red flags
+None. Nothing found that has to change before Slice A merges. The three things I would not skip are follow-up 1 (a phone), follow-up 4 (docs and DECISION-128, so the "photo id and a kind only" statements stop contradicting the code) and follow-up 5 (human read of public text before publish).
+
+### Handoff
+- **Pipeline state:** Slice A closes with SHIP WITH NOTES. The work-log stays open for Slices B and C; each re-enters at Phase 3 (small design) and returns to Phase 6 for its own verdict.
+- **Outputs:** this section of `docs/work-log/2026-11-04-group-photo-scenes.md` on `feature/group-photo-scenes`. No code changes, no push, no merge.
