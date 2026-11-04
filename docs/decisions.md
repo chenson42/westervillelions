@@ -28,6 +28,36 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-128: Santa's Workshop group-photo scenes: the public collage carries admin-typed scene title and caption for scenes that have an approved picture, and nothing else
+
+**Status:** Proposed (Phase 3, 2026-11-04; promoted to Resolved at Phase 6 after each factual sentence is re-read against QA's "Established" list). Amends DECISION-125 (item 3: the public collage DTO and "every sentence is a fixed string") and DECISION-121 (item 6: what a crew response may contain). Reopens, narrowly, the 2026-10-12 "no multi-scene book" ruling for a free session-level storybook that is a print-styled page.
+**Date:** 2026-11-04
+**Design:** `docs/work-log/2026-11-04-group-photo-scenes.md` (Phase 1 analyst, Phase 2 architect R1 to R14, Phase 3 tech-lead T1 to T10).
+
+**Context:** The practice test asked for preset titles and text for each staged group photo. A scene is a session-level section (title, caption) with an order; a group photo holds only an optional reference to one. The public collage must present the storyline, which makes it carry admin-typed prose for the first time, against the documented rule that its DTO is "a photo id and a kind only".
+
+**Decision:**
+1. New table `sw_scenes` (session-scoped configuration, `ON DELETE CASCADE` from the session) and nullable `sw_photos.scene_id` (`ON DELETE SET NULL`). No new permission: `santas_workshop.manage` (held by `admin` and `board_member`) authors scenes; the crew code can choose a scene on a group upload and read its own session's scene list, and can never create, edit or delete scene text. No new dependency.
+2. The public DTO grows exactly one type, `CollageScene { title, caption, tiles }`, present only for scenes with at least one picture that `decidePhotoAccess({ kind: "public" })` already approved. `CollageTile` stays `{ id, kind }`. No scene id, count, position or timestamp is public. Scenes are grouped after the single approval pass from its output only (`decidePhotoAccess(` appears once in `collage-queries.ts`); `decidePhotoAccess`, `PhotoFacts`, `photoFactsFrom` and the photo door are unchanged and `sceneId` is not a visibility fact. `pending` and `removed` return no scenes before the scenes query runs.
+3. Scene text is plain text (title 1 to 60, caption 0 to 280, at most 20 per session), validated server-side in one module (`scene-input.ts`) for create, update and copy; it rejects email-, link- and 7+-digit-shaped text, is rendered only as React text nodes (never in `alt`, `title` or metadata), and is never written to the audit log (ids and counts only).
+4. The crew picks, never types: the group-photo route parses a UUID and the scene is resolved inside the INSERT; an unknown, deleted, foreign or malformed id stores no scene and returns the identical response (no enumeration signal), and a delete racing an upload never fails the photo (retry once on `23503`).
+5. Text edited after publish is live at once; the review-before-publish gate covers pictures only. Accepted: the same holders can already hide, unhide and publish.
+6. Retention: scenes are club copy; the personal purge does not touch them; the public purge leaves the rows and the collage serves none (state `removed`); practice reset keeps them. **Accepted residual:** an admin who types a family name into a scene leaves it in the database after the purge; the editor warns, and the retention card must not claim every typed word is gone.
+7. Storybook (Slice C): `/santas-workshop/c/[token]/book`, a second Server Component over `getCollage()`'s approved view, reading `view.scenes` only (no "Other" page, never portraits or check-in photos); images through the one photo door at the `full` variant; non-live or scene-less redirects to the collage; same token, `noindex`, no-referrer, `force-dynamic`. No PDF library (client generation risks phone memory; server generation would be a second reader of photo bytes). The privacy page gains "A copy you save stays on your device."
+
+**Rationale:** The smallest structure that gives Howard a storyline is a pointer from photo to scene, with grouping done after the visibility decision so a scene can never reveal a photo, count or title the door would refuse. Letting the crew only choose keeps public prose behind `santas_workshop.manage`, not behind a code shared by many phones. The tradeoff named out loud: the collage's "nothing typed by a person" guarantee becomes "nothing typed by a person except two bounded fields from one table", enforced by build-failing scans rather than convention; and the review gate does not cover text, which we accept because the same holders can already publish.
+
+**Unmeasured (rule (a)):**
+- *"Deleting a scene is cheap without an index on `sw_photos.scene_id`"* is believed, unmeasured (hundreds of photos per event). Live check L2 times a delete on a practice session.
+- *"The `23503` retry plus the in-statement sub-select leaves no failed upload under a racing delete"* is believed, unmeasured. Live check L2 records failed uploads in a 20-upload race (expect 0).
+- *"Browser Save as PDF produces a usable book on iPhone Safari"* is believed, unmeasured. Live check L7 records it on a real device.
+
+**Accepted residuals and the checks that record them:** (i) admin-typed public prose can contain a name the validator cannot detect: live check **L5** records how many of ten name-shaped titles are accepted (expect 10 of 10, by design) and how many of ten contact-shaped strings are rejected (expect 10 of 10). (ii) A scene id unknown, deleted or foreign must be indistinguishable to a crew device: live check **L1** records the number of distinguishable responses (expect 1). (iii) No scene text before publish or after the public purge: **L4** records the matches (expect 0).
+
+**Impact:** New `scene-contract.ts`, `scene-input.ts`, `scene-queries.ts`, `scene-admin.ts`; migration (number re-derived at Phase 4 start, likely 0117); `schema.ts`; `collage-contract.ts`, `collage-queries.ts`, `crew-contract.ts`, `photo-service.ts`, `session-log.ts`; admin scenes card, photos-page reassign, crew scene picker, collage storyline sections, Slice C book route. `collage-contract-no-pii.test.ts` is amended to an allow-list plus a parity property test; `crew-contract-no-contact.test.ts` gains the `CrewScene` holder test and a no-write scan. CLAUDE.md (collage, crew and retention bullets) is updated at ship time.
+
+---
+
 ## DECISION-127: The Activity fund is displayed as "Public Funds" by changing the stored name only, read through one labels module
 
 **Status:** Resolved for Increment 1 (2026-10-17, v1.99.0; each factual sentence re-read against QA's Established list in `docs/work-log/2026-10-17-itemized-sweep-inc1-rename-and-mirrors.md`; items 2, 3, 4 and 5 amended as marked below and the Phase 5 results recorded in the Shipped note). Companion DECISION-126 was Resolved at the B-172-wide Phase 6 (2026-10-19, v1.100.0); Increments 2a and 2b change nothing in this decision, and the lump-era copy its Shipped note describes was removed when the lump sweep was retired (DECISION-126 item 9).
@@ -105,7 +135,7 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ## DECISION-125: Santa's Workshop retention, visibility and the practice/real asymmetry
 
-**Status:** Resolved (2026-10-13, Slice 5 delivered the retention engine and practice reset; the S5-D1/D2 fixes are implemented and QA re-verification was in progress when this was filed; the chair/board nod and three other lines stay unmeasured, below)
+**Status:** (item 3 amended by DECISION-128: the public collage DTO also carries admin-typed scene title and caption for scenes with an approved picture) Resolved (2026-10-13, Slice 5 delivered the retention engine and practice reset; the S5-D1/D2 fixes are implemented and QA re-verification was in progress when this was filed; the chair/board nod and three other lines stay unmeasured, below)
 **Date:** 2026-10-12
 **Design:** `docs/work-log/2026-10-12-santas-workshop-sessions-and-workers.md` (Phase 1 retention and dry-run tables, Phase 3 "Retention and purge"). Relates to DECISION-120 (the public sign-up page): the session's dates and windows are copied once from `WORKSHOP_2026` by the "New session" form, and the session row carries no `is_public` column, so DECISION-120's database-free page is unchanged. Live checks named SW-Ln are row Ln of that work-log's Phase 5 live-check table (not DECISION-120's L1 to L5).
 
@@ -210,7 +240,7 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ## DECISION-121: The Santa's Workshop worker credential is a session-scoped signed cookie re-checked against the session row on every request; crew responses carry no contact data
 
-**Status:** Resolved (2026-10-12, Phase 6 Slice 2 SHIP WITH NOTES; items 1 to 8 re-read against QA's "Established" list; one line stays unmeasured, below)
+**Status:** (item 6 amended by DECISION-128: a crew response may also carry the session's scene id, title and caption) Resolved (2026-10-12, Phase 6 Slice 2 SHIP WITH NOTES; items 1 to 8 re-read against QA's "Established" list; one line stays unmeasured, below)
 **Date:** 2026-10-12
 **Design:** `docs/work-log/2026-10-12-santas-workshop-sessions-and-workers.md` (Phase 1 worker-code model, Phase 2 Ruling 5, Phase 3 "Crew authentication"). Relates to DECISION-120: the public sign-up page stays database-free and static; the crew, collage and family surfaces are separate dynamic routes that authenticate themselves, and nothing here changes the page's facts seam. Live checks named SW-Ln are row Ln of that work-log's Phase 5 live-check table (not DECISION-120's L1 to L5).
 
