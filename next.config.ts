@@ -87,7 +87,7 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        source: "/santas-workshop/c/:token",
+        source: "/santas-workshop/c/:token/:path*",
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Robots-Tag", value: "noindex, nofollow" },

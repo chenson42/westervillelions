@@ -76,6 +76,10 @@ describe("Permissions-Policy", () => {
     const crew = await resolved("/santas-workshop/crew/x");
     expect(collage["Referrer-Policy"]).toBe("no-referrer");
     expect(collage["X-Robots-Tag"]).toBe("noindex, nofollow");
+    // The storybook under the collage token carries the same headers (Slice C QA defect).
+    const book = await resolved("/santas-workshop/c/aaaaaaaaaaaaaaaaaaaaaa/book");
+    expect(book["Referrer-Policy"]).toBe("no-referrer");
+    expect(book["X-Robots-Tag"]).toBe("noindex, nofollow");
     expect(family["Referrer-Policy"]).toBe("no-referrer");
     expect(crew["Referrer-Policy"]).toBe("no-referrer");
     expect(crew["X-Robots-Tag"]).toBe("noindex");
