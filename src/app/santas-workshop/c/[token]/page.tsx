@@ -29,6 +29,13 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
 
   const group = view.tiles.filter((t) => t.kind === "group");
   const portraits = view.tiles.filter((t) => t.kind === "portrait");
+  // Group ordinals run on through the storyline so every alt text is unique ("Group picture 4").
+  const sceneStarts: number[] = [];
+  let otherStart = 0;
+  for (const scene of view.scenes) {
+    sceneStarts.push(otherStart);
+    otherStart += scene.tiles.length;
+  }
   const today = easternDateString(workshopNow(process.env, new Date()));
 
   return (
@@ -71,18 +78,27 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
 
         {view.state === "live" && (
           <div className="space-y-10">
-            {view.tiles.length === 0 && (
+            {view.scenes.length === 0 && view.tiles.length === 0 && (
               <div className="rounded-2xl bg-gray-50 p-10 text-center text-gray-500">
                 <CollageStateArt id="story-art" />
                 {COLLAGE_COPY.emptyLive}
               </div>
             )}
+            {view.scenes.map((scene, i) => (
+              <section key={i} aria-labelledby={`scene-${i}-heading`} className="space-y-3">
+                <h2 id={`scene-${i}-heading`} className="sw-display text-2xl font-bold text-gray-900">
+                  {scene.title}
+                </h2>
+                {scene.caption !== null && <p className="text-gray-700">{scene.caption}</p>}
+                <CollageGallery tiles={scene.tiles} kind="group" startIndex={sceneStarts[i]} testId="collage-scene" />
+              </section>
+            ))}
             {group.length > 0 && (
               <section aria-labelledby="group-heading" className="space-y-3">
                 <h2 id="group-heading" className="sw-display text-2xl font-bold text-gray-900">
-                  {COLLAGE_COPY.groupHeading}
+                  {view.scenes.length > 0 ? COLLAGE_COPY.otherHeading : COLLAGE_COPY.groupHeading}
                 </h2>
-                <CollageGallery tiles={group} kind="group" />
+                <CollageGallery tiles={group} kind="group" startIndex={otherStart} />
               </section>
             )}
             {portraits.length > 0 && (

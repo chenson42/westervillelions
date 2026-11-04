@@ -18,6 +18,7 @@ export const COLLAGE_COPY = {
   removed: "These photos have been removed",
   removedBody: "The Westerville Lions Club has taken this collage down. Thank you for joining us.",
   groupHeading: "Group pictures",
+  otherHeading: "Other pictures",
   portraitHeading: "Stuffy portraits",
   emptyLive: "No photos have been added yet. Please check back soon.",
   practice: "PRACTICE collage: sample photos only",

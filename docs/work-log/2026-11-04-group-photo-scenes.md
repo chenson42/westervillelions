@@ -773,3 +773,35 @@ Built the whole Slice A server surface per Phase 3: carriers first (committed se
 - A crew scene fetch is `GET …/crew/[slug]/scenes` (not part of the roster poll). `sceneId` goes in the group upload's `meta` JSON; never send the outbox label.
 - Phase 5 live checks L1 to L6 still apply; L1/L2 are now runnable against the server step.
 - Commits are on `feature/group-photo-scenes` in the worktree; nothing pushed or merged.
+
+
+## Phase 4 — Implementation (client) — 2026-11-04
+
+**Owner:** ux-developer
+**Status:** complete (Slice A UI; Slice B copy control and preview, Slice C book not built)
+
+### Summary
+Built the Slice A UI on the api-developer's contract: the admin scenes card on the session page, the scene badge and "Move to scene" select on the photos page, the crew scene picker with sticky choice and cached list, and the storyline sections on the public collage. A zero-scene session renders exactly today's controls and page. Gates: `tsc` clean, `pnpm lint` 0 errors (the 1 pre-existing warning in `budget-context-panel.tsx`), `pnpm test` 339 files / 5916 tests passing, `pnpm build:only` passes. e2e not run (as instructed); one spec extended, one adjusted. No dev server was started.
+
+### What I did
+- **Admin** `scenes-card.tsx` (client): ordered list with title, caption and photo counts (amber chip when a scene has only hidden photos), add/edit form with live code-point counts, the `SCENE_EDITOR_WARNING` note, inline title/caption errors from `invalid_input` + `field`, up/down buttons (44px) calling `PUT …/scenes/order` (refetch on `scenes_changed`), delete via destructive `ConfirmDialog` naming the photo count and "Other pictures", empty state. Wired into the session page from `listAdminScenes`. `ADMIN_API` gained `scenes`, `scene`, `scenesOrder`, `photoScene`.
+- **Admin photos:** page loads the scenes and passes a `scenes` prop; each group photo shows a scene chip ("Other pictures" when none) and a native `<select>` "Move to scene" (only when the session has scenes) calling `PUT …/photos/[id]/scene`; `scene_gone` shows the sentence and `router.refresh()`; success reloads the loaded pages.
+- **Crew:** `scene-store.ts` (localStorage per slug, every access try/catch; choice + cached list; `clearSceneStore`), `scene-picker.tsx` (radio-style 56px buttons: scenes then "Other"), `group-panel.tsx` (loads `GET …/scenes`, cache shown first, sticky choice, stale id forgotten after a fresh load, `sceneId` in the queued meta, label `Group photo: <title>` local only), `photo-capture.tsx` gained `disabledReason` and `pill` (both Take and Choose-a-saved-photo disabled together; saved-photo path untouched), `crew-app.tsx` clears the store whenever the code screen shows (covers 401 anywhere), `crew-api.ts` gained `scenes`.
+- **Collage:** `c/[token]/page.tsx` renders `view.scenes` as `<section aria-labelledby="scene-N-heading">` (title `h2`, caption `<p>` only when non-null, `CollageGallery` with `startIndex` and `testId="collage-scene"`), then the unscened group list headed "Other pictures" (or "Group pictures" when there are no scenes), then portraits. `CollageGallery` gained `startIndex`/`testId`; `COLLAGE_COPY.otherHeading` added. No new filter on the page; scene text is only text nodes.
+- Replaced the api-developer's placeholder sentences for `scenes_not_empty` and `no_scenes_to_copy` in `admin-ui.ts`.
+
+### Tests written
+`scene-store.test.ts` (round trip, per slug, clear, throwing accessor, corrupt cache), `group-panel-source.test.ts` (sceneId in meta, label local, disabled + "Pick a scene first.", zero scenes unchanged, failed-fetch paths, stale id, clear on auth loss, pill), `scenes-card-source.test.ts`, `photos-panel-source.test.ts` (badge, native select, `scene_gone` refresh), `collage-page-source.test.ts` (storyline order, null caption, unique ordinal alt, scene text never in attributes, zero scenes identical, empty-live rule, pending/removed leak nothing). e2e: `santas-workshop-crew-flow.spec.ts` waits for capture to enable (the panel loads scenes first) and has a new scene-pick test.
+
+### Deviations from the design
+1. `photo-capture.tsx` already had a `disabled` prop; I added `disabledReason` (which also forces `disabled`) plus a `pill` prop instead of only the one prop the design named.
+2. While the scene list is loading with no cache, capture is disabled with "Loading scenes…" (design did not name this state); it opens as soon as the load resolves, so a zero-scene session is enabled after a moment, not at first paint.
+3. The picker is a radiogroup of buttons rather than a `<select>` (thumb targets on a phone); the admin photos page uses the native `<select>` per the ruling.
+4. The scene store is cleared by `crew-app.tsx` whenever the code screen is shown (not only inside the panel's own fetch), which also covers a 401 on the roster or an upload.
+5. Slice B (copy control, storyline preview) not built, as scoped. No `scene-picker` standalone render test: its behavior is pinned by source scans and the e2e.
+6. The "For: <scene>" pill sits under the preview's existing "For: the group" line.
+
+### Open questions / handoff notes
+- **Next agent: qa (Phase 5).** Click through: admin session page, add/edit/reorder/delete a scene (delete dialog count); photos page, move a group photo between scenes and to Other; crew group panel at 390px (pick a scene, Take and Choose a saved photo, offline with and without a cached list, rotate the worker code and confirm the choice is forgotten); the collage with 0, 1 and several scenes, plus a scene with only hidden photos (should be absent); Phase 5 live checks L1 to L6.
+- New copy for the Lions Club to refine: "Which scene is this photo for?", "Pick a scene first.", "Loading scenes…", the delete dialog sentence, the empty-state sentence, "Other pictures".
+- Still do not deploy without all of Slice A merged together; the collage now draws scenes.

@@ -11,6 +11,7 @@ import { GroupPanel } from "./group-panel";
 import { OutboxBar } from "./outbox-bar";
 import { RosterView } from "./roster-view";
 import { ScanView } from "./scan-view";
+import { clearSceneStore } from "./scene-store";
 import { StuffyScreen } from "./stuffy-screen";
 import { useOutbox } from "./use-outbox";
 
@@ -121,6 +122,11 @@ export function CrewApp({ slug, adminBypass }: Props) {
   // A 401 on an upload holds the outbox; bring the worker to the code screen.
   const heldNotice = snapshot.heldForSignIn ? (snapshot.items.find((i) => i.message)?.message ?? AUTH_REASON_MESSAGES.signed_out) : null;
   const showCodeScreen = authLost ?? heldNotice;
+  // The code screen means the cookie stopped working: forget the cached storyline and the sticky scene.
+  const onCodeScreen = Boolean(showCodeScreen);
+  useEffect(() => {
+    if (onCodeScreen) clearSceneStore(slug);
+  }, [onCodeScreen, slug]);
 
   const session = roster?.session ?? PLACEHOLDER_SESSION;
   const ctx: CrewCtx = useMemo(

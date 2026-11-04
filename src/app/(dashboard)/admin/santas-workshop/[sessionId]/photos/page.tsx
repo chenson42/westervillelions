@@ -5,6 +5,7 @@ import { FEATURES } from "@/lib/permissions";
 import { isUuid } from "@/lib/utils";
 import { getSessionOverview } from "@/lib/santas-workshop/session-queries";
 import { listSessionPhotos } from "@/lib/santas-workshop/photo-admin";
+import { listAdminScenes } from "@/lib/santas-workshop/scene-queries";
 import { SessionNav } from "@/components/admin/santas-workshop/session-nav";
 import { PhotosPanel } from "@/components/admin/santas-workshop/photos-panel";
 
@@ -17,10 +18,11 @@ export default async function SantasWorkshopPhotosPage({ params }: { params: Pro
 
   const { sessionId } = await params;
   if (!isUuid(sessionId)) notFound();
-  const [s, groups, portraits] = await Promise.all([
+  const [s, groups, portraits, scenes] = await Promise.all([
     getSessionOverview(sessionId),
     listSessionPhotos(sessionId, { kind: "group", page: 1 }),
     listSessionPhotos(sessionId, { kind: "portrait", page: 1 }),
+    listAdminScenes(sessionId),
   ]);
   if (!s || "ok" in groups || "ok" in portraits) notFound();
 
@@ -29,6 +31,7 @@ export default async function SantasWorkshopPhotosPage({ params }: { params: Pro
       <SessionNav session={s} active="photos" />
       <PhotosPanel
         sessionId={s.id}
+        scenes={scenes.map((sc) => ({ id: sc.id, title: sc.title }))}
         sessionKind={s.kind}
         purged={s.status === "purged"}
         initial={{

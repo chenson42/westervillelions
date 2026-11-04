@@ -10,17 +10,28 @@ import { COLLAGE_COPY, publicTileAlt } from "@/lib/santas-workshop/collage-ui";
  * Thumbs lazy-load with width and height so nothing jumps; a tap opens the full picture;
  * a picture the store cannot serve shows a quiet placeholder instead of a broken icon.
  */
-export function CollageGallery({ tiles, kind }: { tiles: CollageTile[]; kind: "group" | "portrait" }) {
+export function CollageGallery({
+  tiles,
+  kind,
+  startIndex = 0,
+  testId,
+}: {
+  tiles: CollageTile[];
+  kind: "group" | "portrait";
+  /** Ordinal offset so alt text ("Group picture 4") stays unique across storyline sections. */
+  startIndex?: number;
+  testId?: string;
+}) {
   const [open, setOpen] = useState<{ id: string; alt: string } | null>(null);
   const group = kind === "group";
   return (
     <>
       <ul
         className={`sw-collage-grid grid gap-3 ${group ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"}`}
-        data-testid={`collage-${kind}`}
+        data-testid={testId ?? `collage-${kind}`}
       >
         {tiles.map((t, i) => (
-          <Tile key={t.id} id={t.id} kind={kind} alt={publicTileAlt(kind, i)} onOpen={() => setOpen({ id: t.id, alt: publicTileAlt(kind, i) })} />
+          <Tile key={t.id} id={t.id} kind={kind} alt={publicTileAlt(kind, startIndex + i)} onOpen={() => setOpen({ id: t.id, alt: publicTileAlt(kind, startIndex + i) })} />
         ))}
       </ul>
       <Dialog.Root open={open !== null} onOpenChange={(o) => !o && setOpen(null)}>

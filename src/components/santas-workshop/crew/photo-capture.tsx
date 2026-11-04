@@ -15,6 +15,10 @@ interface Props {
   /** The worker accepted the photo. The parent downscales and queues it. */
   onUse(file: File): void;
   disabled?: boolean;
+  /** When set, both capture buttons are disabled and this sentence says why. */
+  disabledReason?: string;
+  /** A small pill under the "For:" line of the preview (e.g. the group photo's scene). */
+  pill?: string;
 }
 
 const REMINDER = "Stuffies only, never the children.";
@@ -26,7 +30,8 @@ const REMINDER = "Stuffies only, never the children.";
  * feed the same preview and upload. The preview shows the stuffy's name above the
  * photo; nothing is sent until "Use photo".
  */
-export function PhotoCapture({ stuffyLabel, prompt, takeLabel = "Take photo", useLabel = "Use photo", busy = false, onUse, disabled = false }: Props) {
+export function PhotoCapture({ stuffyLabel, prompt, takeLabel = "Take photo", useLabel = "Use photo", busy = false, onUse, disabled: disabledProp = false, disabledReason, pill }: Props) {
+  const disabled = disabledProp || !!disabledReason;
   const inputId = useId();
   const libraryId = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -91,6 +96,11 @@ export function PhotoCapture({ stuffyLabel, prompt, takeLabel = "Take photo", us
       />
       {!file ? (
         <div className="space-y-3">
+          {disabledReason && (
+            <p role="status" className="font-semibold text-amber-900">
+              {disabledReason}
+            </p>
+          )}
           <label
             htmlFor={inputId}
             className={`${CREW_BTN} cursor-pointer ${disabled || busy ? "pointer-events-none opacity-60" : ""}`}
@@ -107,6 +117,7 @@ export function PhotoCapture({ stuffyLabel, prompt, takeLabel = "Take photo", us
       ) : (
         <div className="space-y-3">
           <p className="font-semibold text-gray-900">For: {stuffyLabel}</p>
+          {pill && <p className="inline-block rounded-lg bg-lions-gold/20 px-3 py-1 text-sm font-semibold text-gray-900">{pill}</p>}
           {previewUrl && (
             // eslint-disable-next-line @next/next/no-img-element -- a local object URL preview, not a site asset
             <img src={previewUrl} alt={`Preview of the photo for ${stuffyLabel}`} className="max-h-[50vh] w-full rounded-2xl bg-gray-100 object-contain" />

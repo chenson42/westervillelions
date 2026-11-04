@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type {
@@ -17,6 +18,7 @@ import type {
   ReviewPhotosResponse,
   SessionKind,
 } from "@/lib/santas-workshop/admin-contract";
+import type { PhotoSceneRequest, PhotoSceneResponse } from "@/lib/santas-workshop/scene-contract";
 import { ADMIN_API, callAdmin } from "@/lib/santas-workshop/admin-ui";
 import { collagePhotoPath } from "@/lib/santas-workshop/collage-contract";
 import { REVIEW_INSTRUCTION, UNHIDE_NEEDS_PUBLISH, adminTileAlt, latePicturesSentence, photoMarkers, publishRefusedText, publishStatusLine, reviewDisabledReason } from "@/lib/santas-workshop/collage-ui";
@@ -26,6 +28,8 @@ import { BTN_PRIMARY, BTN_SECONDARY, BTN_SMALL, CARD, EMPTY } from "./styles";
 
 export interface PhotosPanelProps {
   sessionId: string;
+  /** The session's storyline, in order, for the "Move to scene" control. Empty when there is none. */
+  scenes?: { id: string; title: string }[];
   sessionKind: SessionKind;
   purged: boolean;
   initial: {
@@ -51,7 +55,8 @@ async function copy(text: string, what: string) {
   }
 }
 
-export function PhotosPanel({ sessionId, sessionKind, purged, initial }: PhotosPanelProps) {
+export function PhotosPanel({ sessionId, scenes = [], sessionKind, purged, initial }: PhotosPanelProps) {
+  const router = useRouter();
   const [group, setGroup] = useState<Bucket>({ ...initial.group, pages: 1 });
   const [portrait, setPortrait] = useState<Bucket>({ ...initial.portrait, pages: 1 });
   const [counts, setCounts] = useState(initial.counts);
@@ -121,6 +126,25 @@ export function PhotosPanel({ sessionId, sessionKind, purged, initial }: PhotosP
     setBusy(false);
     if (!hidden && res.data.needsPublish) setHint(UNHIDE_NEEDS_PUBLISH);
     toast.success(res.data.noop ? "Already that way." : hidden ? "Photo hidden." : "Photo is no longer hidden.");
+  }
+
+  /** Moves one group photo to a scene (or to Other pictures). A scene deleted meanwhile refreshes the page. */
+  async function moveToScene(photo: AdminPhotoDto, sceneId: string | null) {
+    setBusy(true);
+    setError(null);
+    setRefusal(null);
+    setHint(null);
+    const body: PhotoSceneRequest = { sceneId };
+    const res = await callAdmin<PhotoSceneResponse>(ADMIN_API.photoScene(photo.id), { method: "PUT", body: JSON.stringify(body) });
+    if (!res.ok) {
+      setBusy(false);
+      setError(res.failure.message);
+      if (res.failure.code === "scene_gone") router.refresh();
+      return;
+    }
+    await reload();
+    setBusy(false);
+    toast.success(res.data.sceneTitle ? "Photo moved to that scene." : "Photo moved to Other pictures.");
   }
 
   async function markReviewed() {
@@ -273,7 +297,7 @@ export function PhotosPanel({ sessionId, sessionKind, purged, initial }: PhotosP
           </p>
         )}
         <p className="text-sm text-gray-600">Look at each picture. {REVIEW_INSTRUCTION} Then mark them reviewed so the collage can be published.</p>
-        <Grid photos={group.photos} kind="group" busy={busy} purged={purged} onHide={setHideTarget} onUnhide={(p) => void setHidden(p, false)} />
+        <Grid photos={group.photos} kind="group" busy={busy} purged={purged} scenes={scenes} onMove={(p, id) => void moveToScene(p, id)} onHide={setHideTarget} onUnhide={(p) => void setHidden(p, false)} />
         {group.hasMore && (
           <button type="button" className={BTN_SMALL} disabled={busy} onClick={() => void showMore("group")}>
             Show more group photos
@@ -330,6 +354,8 @@ function Grid({
   kind,
   busy,
   purged,
+  scenes,
+  onMove,
   onHide,
   onUnhide,
 }: {
@@ -337,6 +363,8 @@ function Grid({
   kind: PhotoListKind;
   busy: boolean;
   purged: boolean;
+  scenes?: { id: string; title: string }[];
+  onMove?: (p: AdminPhotoDto, sceneId: string | null) => void;
   onHide: (p: AdminPhotoDto) => void;
   onUnhide: (p: AdminPhotoDto) => void;
 }) {
@@ -351,7 +379,7 @@ function Grid({
   return (
     <ul className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" data-testid={`${kind}-grid`}>
       {photos.map((p, i) => (
-        <PhotoTile key={p.id} photo={p} index={i} busy={busy} purged={purged} onHide={onHide} onUnhide={onUnhide} />
+        <PhotoTile key={p.id} photo={p} index={i} busy={busy} purged={purged} scenes={scenes ?? []} onMove={onMove} onHide={onHide} onUnhide={onUnhide} />
       ))}
     </ul>
   );
@@ -362,6 +390,8 @@ function PhotoTile({
   index,
   busy,
   purged,
+  scenes,
+  onMove,
   onHide,
   onUnhide,
 }: {
@@ -369,6 +399,8 @@ function PhotoTile({
   index: number;
   busy: boolean;
   purged: boolean;
+  scenes: { id: string; title: string }[];
+  onMove?: (p: AdminPhotoDto, sceneId: string | null) => void;
   onHide: (p: AdminPhotoDto) => void;
   onUnhide: (p: AdminPhotoDto) => void;
 }) {
@@ -401,7 +433,31 @@ function PhotoTile({
           {m.consentLabel && m.consentTone && <Chip tone={m.consentTone}>{m.consentLabel}</Chip>}
           {m.reviewLabel && <Chip tone={photo.reviewed ? "green" : "amber"}>{m.reviewLabel}</Chip>}
           {m.visibleLabel && <Chip tone="blue">{m.visibleLabel}</Chip>}
+          {photo.kind === "group" && scenes.length > 0 && (
+            <Chip tone={photo.sceneTitle ? "blue" : "gray"}>{photo.sceneTitle ? `Scene: ${photo.sceneTitle}` : "Other pictures"}</Chip>
+          )}
         </div>
+        {photo.kind === "group" && scenes.length > 0 && onMove && (
+          <div>
+            <label htmlFor={`scene-${photo.id}`} className="mb-1 block text-xs font-medium text-gray-600">
+              Move to scene
+            </label>
+            <select
+              id={`scene-${photo.id}`}
+              value={photo.sceneId ?? ""}
+              disabled={busy || purged}
+              onChange={(e) => onMove(photo, e.target.value === "" ? null : e.target.value)}
+              className="block min-h-[44px] w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-lions-blue disabled:opacity-60"
+            >
+              <option value="">Other pictures (no scene)</option>
+              {scenes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="mt-auto pt-1">
           {photo.hidden ? (
             <button type="button" className={BTN_SMALL} disabled={busy || purged} onClick={() => onUnhide(photo)}>

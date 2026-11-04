@@ -26,6 +26,7 @@ export function crewPaths(slug: string) {
     pickup: (id: string) => `${base}/stuffies/${enc(id)}/pickup`,
     revert: (id: string) => `${base}/stuffies/${enc(id)}/revert`,
     groupPhotos: `${base}/group-photos`,
+    scenes: `${base}/scenes`,
   } as const;
 }
 

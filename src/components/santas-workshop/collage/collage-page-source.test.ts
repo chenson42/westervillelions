@@ -92,6 +92,70 @@ describe("collage page render", () => {
   });
 });
 
+describe("collage page storyline", () => {
+  const T = (c: string) => ({ id: `${c}${c}${c}${c}${c}${c}${c}${c}-1111-4111-8111-111111111111`, kind: "group" as const });
+  const plain = (html: string) => html.replace(/<style>[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+  it("live with scenes: scene headings and captions in order, then Other pictures, then portraits", async () => {
+    view.current = {
+      state: "live",
+      practice: false,
+      arrivesOn: null,
+      scenes: [
+        { title: "The Sleigh Arrives", caption: "Santa pulls in.", tiles: [T("a"), T("b")] },
+        { title: "Cocoa Time", caption: null, tiles: [T("c")] },
+      ],
+      tiles: [T("d"), { id: "e5555555-5555-4555-8555-555555555555", kind: "portrait" }],
+    };
+    const html = await render();
+    const order = ["The Sleigh Arrives", "Santa pulls in.", "Cocoa Time", "Other pictures", "Stuffy portraits"].map((t) => html.indexOf(t));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).not.toContain("Group pictures");
+    expect(html.match(/data-testid="collage-scene"/g)?.length).toBe(2);
+    expect(html).toContain('data-testid="collage-group"');
+    // A null caption renders no paragraph for that scene.
+    expect(html.match(/<p class="text-gray-700">/g)?.length).toBe(1);
+    // Ordinal alt text runs on through the sections, so it is unique.
+    const alts = [...html.matchAll(/alt="(Group picture \d+)"/g)].map((m) => m[1]);
+    expect(alts).toEqual(["Group picture 1", "Group picture 2", "Group picture 3", "Group picture 4"]);
+    expect(new Set(alts).size).toBe(alts.length);
+  });
+  it("scene text is only ever a text node: never in alt, title or aria-label", async () => {
+    view.current = { state: "live", practice: false, arrivesOn: null, scenes: [{ title: "Zebra Parade", caption: "Quietly marching", tiles: [T("a")] }], tiles: [] };
+    const html = await render();
+    expect(html).toContain("Zebra Parade");
+    for (const attr of html.match(/\s(alt|title|aria-label)="[^"]*"/g) ?? []) expect(attr).not.toMatch(/Zebra|marching/);
+    // The section is labelled by its heading id, not by the text.
+    expect(html).toContain('aria-labelledby="scene-0-heading"');
+    const pageSrc = readFileSync(PAGE, "utf8");
+    expect(pageSrc).not.toMatch(/dangerouslySetInnerHTML/);
+  });
+  it("zero scenes is today's page: 'Group pictures', collage-group, no scene markup", async () => {
+    view.current = { state: "live", practice: false, arrivesOn: null, scenes: [], tiles: [T("a"), { id: "b2222222-2222-4222-8222-222222222222", kind: "portrait" }] };
+    const html = await render();
+    expect(html).toContain("Group pictures");
+    expect(html).toContain('data-testid="collage-group"');
+    expect(html).not.toContain("collage-scene");
+    expect(html).not.toContain("Other pictures");
+    expect(html).not.toContain("scene-0-heading");
+    expect(html).toContain('alt="Group picture 1"');
+  });
+  it("the empty-live message shows only with no scenes and no tiles", async () => {
+    view.current = { state: "live", practice: false, arrivesOn: null, scenes: [], tiles: [] };
+    expect(plain(await render())).toContain("No photos have been added yet");
+    view.current = { state: "live", practice: false, arrivesOn: null, scenes: [{ title: "Only Scene", caption: null, tiles: [T("a")] }], tiles: [] };
+    expect(plain(await render())).not.toContain("No photos have been added yet");
+  });
+  it("pending and removed print no scene text even if a scene were passed", async () => {
+    const scenes = [{ title: "Secret Scene Title", caption: "Secret caption", tiles: [T("a")] }];
+    view.current = { state: "pending", practice: false, arrivesOn: "2099-12-19", scenes, tiles: [] };
+    expect(await render()).not.toContain("Secret");
+    view.current = { state: "removed", practice: false, arrivesOn: null, scenes, tiles: [] };
+    expect(await render()).not.toContain("Secret");
+  });
+});
+
 describe("collage page art", () => {
   it("dresses every state with decorative, print-hidden art and leaves the site chrome hidden", async () => {
     for (const v of [

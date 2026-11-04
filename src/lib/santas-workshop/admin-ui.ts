@@ -108,9 +108,9 @@ export function adminErrorMessage(code: AdminErrorCode, serverMessage?: string):
     case "scenes_changed":
       return SCENES_CHANGED_MESSAGE;
     case "scenes_not_empty":
-      return "This session already has scenes. Copying only works into an empty storyline.";
+      return "This session already has scenes, so scenes can't be copied into it. Delete them first, or add the new ones by hand.";
     case "no_scenes_to_copy":
-      return "That session has no scenes to copy.";
+      return "The session you picked has no scenes to copy.";
     case "server_error":
       return "Something went wrong on our side. Try again, and tell the webmaster if it keeps happening.";
     default: {
@@ -580,6 +580,11 @@ export const ADMIN_API = {
   // Slice 4
   framesManifest: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/frames/manifest`,
   framesExported: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/frames/exported`,
+  // Scenes (DECISION-128)
+  scenes: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/scenes`,
+  scene: (id: string, sceneId: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/scenes/${enc(sceneId)}`,
+  scenesOrder: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/scenes/order`,
+  photoScene: (photoId: string) => `/api/admin/santas-workshop/photos/${enc(photoId)}/scene`,
   hidePhoto: (photoId: string) => `/api/admin/santas-workshop/photos/${enc(photoId)}/hide`,
 } as const;
 

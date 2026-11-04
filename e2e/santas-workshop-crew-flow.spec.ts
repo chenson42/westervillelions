@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../src/lib/db";
-import { swPhotos, swStuffies } from "../src/lib/db/schema";
+import { swPhotos, swScenes, swStuffies } from "../src/lib/db/schema";
 import { PNG_FILE, adminPage, cleanupSession, createPracticeSession, crewContext, enterCode, expectRowState, manualAdd, uniqueSlug, type TestSession } from "./helpers/santas-workshop-crew";
 
 /**
@@ -291,6 +291,8 @@ test("a group photo is filed against the session, not a stuffy", async ({ browse
   const { context, page } = await crewContext(browser);
   await enterCode(page, SLUG, sw.code);
   await page.getByRole("button", { name: "Group photo" }).click();
+  // The panel loads the storyline first; with none, capture opens up as it always did.
+  await expect(page.locator('input[type="file"][capture]')).toBeEnabled();
   await page.locator('input[type="file"][capture]').setInputFiles(PNG_FILE);
   await page.getByRole("button", { name: "Use photo" }).click();
   await expect(page.getByText(/1 group photo saved on this phone/)).toBeVisible();
@@ -298,6 +300,30 @@ test("a group photo is filed against the session, not a stuffy", async ({ browse
     .poll(async () => (await db.select().from(swPhotos).where(and(eq(swPhotos.sessionId, sw.id), eq(swPhotos.kind, "group")))).length, { timeout: 25_000 })
     .toBe(1);
   await context.close();
+});
+
+test("a group photo is filed in the scene the volunteer picked", async ({ browser }) => {
+  const [scene] = await db.insert(swScenes).values({ sessionId: sw.id, title: "The Sleigh Arrives", caption: null, position: 1 }).returning({ id: swScenes.id });
+  try {
+    const { context, page } = await crewContext(browser);
+    await enterCode(page, SLUG, sw.code);
+    await page.getByRole("button", { name: "Group photo" }).click();
+    await expect(page.getByText("Pick a scene first.")).toBeVisible();
+    await expect(page.locator('input[type="file"][capture]')).toBeDisabled();
+    await page.getByRole("radio", { name: /The Sleigh Arrives/ }).click();
+    await expect(page.locator('input[type="file"][capture]')).toBeEnabled();
+    await page.locator('input[type="file"][capture]').setInputFiles(PNG_FILE);
+    await expect(page.getByText("For: The Sleigh Arrives")).toBeVisible();
+    await page.getByRole("button", { name: "Use photo" }).click();
+    await expect(page.getByText(/group photo saved on this phone/)).toBeVisible();
+    await expect
+      .poll(async () => (await db.select().from(swPhotos).where(and(eq(swPhotos.sessionId, sw.id), eq(swPhotos.kind, "group"), eq(swPhotos.sceneId, scene.id)))).length, { timeout: 25_000 })
+      .toBe(1);
+    await context.close();
+  } finally {
+    await db.update(swPhotos).set({ sceneId: null }).where(eq(swPhotos.sceneId, scene.id));
+    await db.delete(swScenes).where(eq(swScenes.id, scene.id));
+  }
 });
 
 test("scan screen: an unbound sticker offers Tag it now and Find by name", async ({ browser }) => {

@@ -21,4 +21,18 @@ describe("admin photos UI", () => {
   it("review sends the newest group photo id the admin saw (never a timestamp)", () => {
     expect(read("photos-panel.tsx")).toContain("throughPhotoId: counts.newestGroupPhotoId");
   });
+  it("each group photo shows its scene badge and a native Move to scene select; a vanished scene refreshes the page", () => {
+    const panel = read("photos-panel.tsx");
+    expect(panel).toContain("<select");
+    expect(panel).toContain("Move to scene");
+    expect(panel).toContain("Other pictures (no scene)");
+    expect(panel).toContain("ADMIN_API.photoScene(photo.id)");
+    expect(panel).toContain('method: "PUT"');
+    expect(panel).toContain('res.failure.code === "scene_gone"');
+    expect(panel).toContain("router.refresh()");
+    // The control is for group photos, and only when the session has a storyline.
+    expect(panel).toContain('photo.kind === "group" && scenes.length > 0');
+    expect(panel).toContain("min-h-[44px]");
+    expect(panel).not.toMatch(/window\.(confirm|alert|prompt)/);
+  });
 });
