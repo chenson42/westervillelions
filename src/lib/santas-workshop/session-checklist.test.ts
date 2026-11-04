@@ -84,7 +84,7 @@ describe("buildChecklist", () => {
 
 describe("unmappedRequiredFields", () => {
   it("lists required fields with no mapped string", () => {
-    expect(unmappedRequiredFields({})).toEqual(["stuffy_name", "snack", "dropoff_window"]);
+    expect(unmappedRequiredFields({})).toEqual(["stuffy_name", "dropoff_window"]);
     expect(unmappedRequiredFields({ stuffy_name: ["a"], snack: ["b"], dropoff_window: ["c"] })).toEqual([]);
     expect(unmappedRequiredFields({ stuffy_name: [], snack: ["b"] })).toEqual(["stuffy_name", "dropoff_window"]);
   });

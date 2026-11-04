@@ -182,10 +182,10 @@ export function PickupPanel({ ctx, row, onDone }: Props) {
         </div>
       )}
       {cardState.status === "error" && <p className="text-red-800">{cardState.message}</p>}
-      {cardState.status === "ready" && (
+      {cardState.status === "ready" && cardState.card.treat && (
         <div className={`${CREW_CARD} p-4`}>
           <p className="text-sm font-semibold text-gray-500">Treat</p>
-          <p className="text-2xl font-bold text-gray-900 break-words">{cardState.card.treat ?? "None chosen. Ask the family."}</p>
+          <p className="text-2xl font-bold text-gray-900 break-words">{cardState.card.treat}</p>
         </div>
       )}
       <CheckInThumb photoId={cardState.status === "ready" ? cardState.card.checkInPhotoId : null} name={name} loading={cardState.status !== "ready"} />

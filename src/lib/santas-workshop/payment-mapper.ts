@@ -235,7 +235,7 @@ export function mapStuffyFromAnswers(
     codes.push("unmapped_question");
   }
   if (!name.text) codes.push("missing_name");
-  if (!snack.text) codes.push("missing_snack");
+  // The snack question left the form (2026-11-04): a missing answer is no longer a reason to flag.
   if (!windowMatched) codes.push("unmapped_window");
   if ([name, description, snack, note, care, child].some((f) => f.truncated)) codes.push("truncated");
 

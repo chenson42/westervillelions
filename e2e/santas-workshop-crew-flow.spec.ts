@@ -262,7 +262,7 @@ test("pickup: name shown first, then a recorded choice, then pickup; a second st
   await context.close();
 });
 
-test("the treat choice rides the pickup card only; a stuffy with none chosen says so", async ({ browser }) => {
+test("the treat choice rides the pickup card only; a stuffy with none chosen shows no treat block", async ({ browser }) => {
   // Move Nilo straight to a step that opens on the hand-over, before the phone loads the roster.
   await db.update(swStuffies).set({ state: "checked_in", tagCode: `E2E-${STAMP}-0NIL` }).where(eq(swStuffies.id, ids.Nilo));
   const { context, page } = await crewContext(browser);
@@ -280,8 +280,8 @@ test("the treat choice rides the pickup card only; a stuffy with none chosen say
   await page.reload();
   await openStuffy(page, "Nilo");
   await page.getByRole("button", { name: "Hand over without a portrait" }).click();
-  await expect(page.getByText("Treat", { exact: true })).toBeVisible();
-  await expect(page.getByText("None chosen. Ask the family.")).toBeVisible();
+  await expect(page.getByText("Treat", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("None chosen. Ask the family.")).toHaveCount(0);
   await context.close();
 });
 

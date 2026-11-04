@@ -61,12 +61,12 @@ describe("answerToText", () => {
 });
 
 describe("field catalog", () => {
-  it("has the spec's fields, three required", () => {
+  it("has the spec's fields, two required (snack left the form)", () => {
     expect(QUESTION_FIELDS.map((f) => f.key)).toEqual([
       "stuffy_name", "stuffy_description", "snack", "note_to_santa", "care_note",
       "child_first_name", "photo_consent", "buyer_phone", "dropoff_window", "acknowledgment",
     ]);
-    expect(QUESTION_FIELDS.filter((f) => f.required).map((f) => f.key)).toEqual(["stuffy_name", "snack", "dropoff_window"]);
+    expect(QUESTION_FIELDS.filter((f) => f.required).map((f) => f.key)).toEqual(["stuffy_name", "dropoff_window"]);
   });
 
   it("accepts the ignore key and rejects unknown keys", () => {

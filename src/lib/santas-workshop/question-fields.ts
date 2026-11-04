@@ -21,7 +21,7 @@ export interface QuestionFieldDef {
 export const QUESTION_FIELDS = [
   { key: "stuffy_name", label: "Stuffy name", scope: "ticket", required: true },
   { key: "stuffy_description", label: "What the stuffy is", scope: "ticket", required: false },
-  { key: "snack", label: "Snack choice", scope: "ticket", required: true },
+  { key: "snack", label: "Snack choice", scope: "ticket", required: false },
   { key: "note_to_santa", label: "Note to Santa", scope: "ticket", required: false },
   { key: "care_note", label: "Care note", scope: "ticket", required: false },
   { key: "child_first_name", label: "Child's first name", scope: "ticket", required: false },

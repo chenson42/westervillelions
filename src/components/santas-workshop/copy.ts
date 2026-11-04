@@ -16,10 +16,8 @@ export const PHOTO_BOX_LABEL =
 export const PHOTO_BOX_HELPER =
   "If you leave this unchecked, your stuffy's portrait goes only on your own printed frame. Your stuffy may still appear in group pictures with other stuffies.";
 
-/** The alternative to the cookie. One line to change once the real treat is decided. */
-export const TREAT_ALTERNATIVE = "a wrapped store-bought treat";
-
-export const TREAT = `Your stuffy comes home with an iced sugar cookie from Mrs. Claus for your child. If your child can't have one, choose ${TREAT_ALTERNATIVE} or no treat on the sign-up form. We cannot promise that any treat is free of allergens.`;
+export const TREAT =
+  "Your stuffy comes home with an iced sugar cookie from Mrs. Claus for your child. If your child can't have one, just tell us at pickup. We cannot promise that any treat is free of allergens.";
 
 export const ZEFFY_TIP_NOTE =
   "At checkout, Zeffy, the platform that processes tickets, offers an optional tip to itself. You can set it to $0 and your ticket is still $15.";
@@ -61,9 +59,9 @@ export const WHAT_TO_BRING: readonly string[] = [
 export const AUDIENCE = "Made for young children and their favorite stuffy. Anyone is welcome to send a stuffy.";
 
 export const PRIVACY_ASKED =
-  "When you sign up, Zeffy asks for your name, email and mobile number, your stuffy's name and what it is, and a treat choice. A child's first name, a care note and a note to Santa are optional.";
+  "When you sign up, Zeffy asks for your name, email and mobile number, your stuffy's name and what it is. A child's first name, a care note and a note to Santa are optional.";
 export const PRIVACY_USE =
-  "We use these only to run the weekend: to find your stuffy, to reach you about it, and to send home the right treat. We never sell or rent them.";
+  "We use these only to run the weekend: to find your stuffy and to reach you about it. We never sell or rent them.";
 export const PRIVACY_WHO =
   "Zeffy takes your payment and keeps its own record of your order. The club's volunteers see your answers. " + PHOTO_STORAGE;
 

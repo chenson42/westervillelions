@@ -42,7 +42,7 @@ describe("copy.ts", () => {
 
   it("the treat sentence names the cookie, the fixed choices and the no-guarantee line, with no allergy wording", () => {
     expect(copy.TREAT).toBe(
-      "Your stuffy comes home with an iced sugar cookie from Mrs. Claus for your child. If your child can't have one, choose a wrapped store-bought treat or no treat on the sign-up form. We cannot promise that any treat is free of allergens.",
+      "Your stuffy comes home with an iced sugar cookie from Mrs. Claus for your child. If your child can't have one, just tell us at pickup. We cannot promise that any treat is free of allergens.",
     );
     expect(copy.TREAT).not.toMatch(/allergy|allergies|allergen-free/i);
     expect(copy.TREAT).not.toMatch(/snack/i);

@@ -143,3 +143,23 @@ No protected routes added or changed. The only server-side change is the field s
 ### Open questions / handoff notes
 - Orchestrator: this is safe to include in the next push; the gating item is the user's Zeffy edit, not the code.
 - Each follow-up above gets its own work-log entry or a backlog line (follow-up 1 is a user task, not a build).
+
+## 2026-11-04 follow-up: snack question dropped from the form
+
+**Decision (user, 2026-11-04):** the Zeffy sign-up form no longer asks a snack/treat question. Every stuffy comes home with an iced sugar cookie from Mrs. Claus; a family whose child cannot have it says so at pickup. v1.100.1 copy ("choose ... on the sign-up form") was therefore wrong. This supersedes follow-ups 1-3 above (form edit, relabel, alternative treat) except the user's own Zeffy form edit.
+
+**Phases:** 1-3 skipped by the orchestrator (copy plus one required flag; no schema, API or permission change). Phase 5 reduced to unit tests plus gates at the user's request; no e2e run.
+
+### Changes
+- `src/components/santas-workshop/copy.ts`: `TREAT` rewritten, `TREAT_ALTERNATIVE` removed (no other users); `PRIVACY_ASKED` and `PRIVACY_USE` drop the treat choice.
+- `src/app/privacy/page.tsx`: same two removals.
+- `src/lib/santas-workshop/question-fields.ts`: `snack` is `required: false` (field, DB column, mapper and admin label kept so a session that still maps a snack question keeps working).
+- `src/lib/santas-workshop/payment-mapper.ts`: no longer raises `missing_snack`. The code stays in the `AttentionCode` vocabulary and the admin label so existing flagged rows still render.
+- `src/components/santas-workshop/crew/pickup-panel.tsx`: the Treat block renders only when a choice exists.
+- Tests: `copy.test.ts` (new sentence pinned, no-allergen assertions kept), `payment-mapper.test.ts`, `payment-apply.test.ts` (reset case now triggers on a removed name), `question-fields.test.ts`, `session-checklist.test.ts`; `e2e/santas-workshop-crew-flow.spec.ts` now asserts the Treat block is absent for a stuffy with none chosen (not run).
+
+### Gates
+`pnpm exec tsc --noEmit` clean; `pnpm lint` 0 errors (1 pre-existing unused-directive warning in budget-context-panel.tsx); `pnpm test` 332 files / 5776 tests pass; `pnpm build:only` see report.
+
+### Note
+Existing rows already flagged `missing_snack` stay flagged until dismissed or remapped.

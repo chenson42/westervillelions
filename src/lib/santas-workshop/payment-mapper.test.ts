@@ -116,9 +116,9 @@ describe("mapPaymentToRegistrants", () => {
     expect(displayStuffyName("   ", 1)).toBe("Unnamed stuffy, order of 1");
   });
 
-  it("a missing snack is missing_snack", () => {
+  it("a missing snack is no longer flagged (the question left the form)", () => {
     const m = mapPaymentToRegistrants(snap({ items: [ticketWith("t1", [q("Stuffy's name", "A")])] }), SESSION);
-    expect(m.stuffies[0].attentionCodes).toContain("missing_snack");
+    expect(m.stuffies[0].attentionCodes).not.toContain("missing_snack");
   });
 
   it.each([

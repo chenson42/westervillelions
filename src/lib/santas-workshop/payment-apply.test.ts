@@ -261,8 +261,7 @@ describe("applyPaymentSnapshot: known payment", () => {
     expect(kept?.set.attentionDismissedAt).toBeInstanceOf(Date);
 
     st.updates = [];
-    edited.items[2].questions[1].answer = "";
-    edited.items[2].questions.splice(1, 1); // snack removed: a new reason (missing_snack)
+    edited.items[2].questions[0].answer = ""; // name removed: a new reason (missing_name)
     await applyPaymentSnapshot(snapshot({ items: edited.items }), { sessionId: SESSION_ID, source: "webhook", fetchedAt: new Date(NOW.getTime() + 2000) });
     const reset = st.updates.find((u) => u.table === "stuffies");
     expect(reset?.set.needsAttention).toBe(true);
