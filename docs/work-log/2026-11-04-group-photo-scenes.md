@@ -17,7 +17,7 @@
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-11-04 |
 | 3 — Technical design | tech-lead | Complete | Design complete; implementers named | 2026-11-04 |
 | 4 — Implementation | database-admin → api-developer → ux-developer (worktree + own Neon branch) | Schema step complete (database-admin); api-developer next | — | 2026-11-04 |
-| 5 — Verification | qa | Pending | — | — |
+| 5 — Verification | qa | Complete | FAIL (2 defects, see Phase 5 report at end) | 2026-11-04 |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
 ---
@@ -805,3 +805,78 @@ Built the Slice A UI on the api-developer's contract: the admin scenes card on t
 - **Next agent: qa (Phase 5).** Click through: admin session page, add/edit/reorder/delete a scene (delete dialog count); photos page, move a group photo between scenes and to Other; crew group panel at 390px (pick a scene, Take and Choose a saved photo, offline with and without a cached list, rotate the worker code and confirm the choice is forgotten); the collage with 0, 1 and several scenes, plus a scene with only hidden photos (should be absent); Phase 5 live checks L1 to L6.
 - New copy for the Lions Club to refine: "Which scene is this photo for?", "Pick a scene first.", "Loading scenes…", the delete dialog sentence, the empty-state sentence, "Other pictures".
 - Still do not deploy without all of Slice A merged together; the collage now draws scenes.
+
+
+## Phase 5 — Verification — 2026-11-04
+
+**Owner:** qa
+**Status:** complete (verdict FAIL, back to implementers)
+
+### Summary
+**Verdict: FAIL.** Two defects, both reproduced. **D2:** the admin Storyline card and the delete dialog always say "No photos" because the count subquery compares `sp.scene_id` to the photo's own id (Drizzle renders `${swScenes.id}` unqualified inside a correlated subquery). **D1:** the phone's sticky scene and cached list survive a worker-code rotation or cookie expiry when the app is cold-loaded, because only a live `CrewApp` clears them. Everything else passed: typecheck, lint, 339 files / 5916 unit tests, production build, L1/L2/L3/L4/L5, the phone flow at 360 px, scene CRUD, Move to scene incl. `scene_gone`, the storyline collage, zero-scene parity, removed state, practice reset. Measured on worktree HEAD ecf6e16 plus one new untracked spec (committed with this report).
+
+### What I did
+Environment: worktree `/Users/cshenso/git/westervillelions-scenes`, feature Neon branch (host `ep-steep-field-amz4eiik-pooler…`, confirmed before any write), dev server on :3200 (NEXTAUTH_URL/AUTH_URL overridden to :3200), `RESEND_API_KEY` blank and no `EMAIL_DEV_ALLOWLIST`, so nothing could send. Did not touch :3000, the main tree, the dev branch or production.
+
+**Gates**
+| Check | Result |
+|---|---|
+| `pnpm exec tsc --noEmit` | PASS (exit 0) |
+| `pnpm lint` | PASS (0 errors; 1 pre-existing warning, `budget-context-panel.tsx:114`) |
+| `pnpm test` | PASS: 339 files, 5916 tests, 5.3 s |
+| `pnpm build:only` | PASS (exit 0; `/santas-workshop/c/[token]`, `/crew/[slug]`, `/f/[token]` dynamic; no warnings) |
+
+**Existing santas-workshop e2e specs (80 tests, :3200, 1 worker)**: 66 passed, 1 failed, 1 skipped, 12 did not run (serial skip after the failure). Per spec: admin-gate, collage (all 14), crew-admin, crew-entry, family, frames, session-edit, webhook-to-roster, santas-workshop (public page): all pass. `santas-workshop-crew-flow.spec.ts`: two tests fail, **both pre-existing and unrelated to this diff**. `:53 the roster shows the registered stuffies…` and `:206 pickup: name shown first…` assert the string "Parent" is absent from the roster HTML/JSON, but the fixture's parent last name is "Parent" and `familyLastName` is deliberately on the roster since v1.100.2 (`crew-contract.ts:136` exists at base 517b6d5; the same two assertions exist at base `spec.ts:58` and `:223`). Re-ran the other 11 crew-flow tests with those two excluded: 11/11 pass, including the extended "a group photo is filed in the scene the volunteer picked". Fix (not mine to make): use a parent last name that is not a substring of anything rendered, in the fixture.
+
+**New spec `e2e/santas-workshop-scenes.spec.ts` (13 tests, written by QA, committed here)**: 12 pass when run in order up to the defects; final runs: tests 1-11 and the removed/reset test pass; **#12 (delete dialog and row count) FAILS on D2** and **#13 (rotation forgets the sticky scene) FAILS on D1**. These two are intentionally left red.
+
+**Manual / live checks**
+| Check | Result | Observed |
+|---|---|---|
+| Scenes card: add, edit, reorder (up/down, ends disabled, persists after reload), delete with ConfirmDialog (Cancel keeps, confirm removes), public-text warning, inline title/caption errors, live code-point counters, 20-scene cap message and disabled Add | pass | e2e #1, #2 |
+| Limits: 60/280 code points (60 emoji accepted, 61 rejected), empty title, email/link/domain/7-digit/phone rejected, "Dec 18-20, 2026" accepted, 21st scene 409 `scene_limit` | pass | e2e #2 |
+| Admin scene routes and crew scenes route reject anonymous callers | pass | 401/403 |
+| **L1** cross-session/deleted/random/garbage/number/object/absent scene id on the real crew upload route | pass | 1 distinct response signature (`200 {"ok":true,"photoId":…,"replayed":false}`) over 8 variants; DB: scene set only for the valid one; replay keeps the first scene |
+| **L2** 20 uploads racing delete of their scene | pass | DELETE 200 in 494-881 ms; 0 failed uploads; 20/20 rows; all 20 `scene_id` null; 0 dangling |
+| **L3** collage parity after publish | pass | 15 images on the page, 0 photo-door mismatches for an anonymous fetch |
+| **L4** state leaks | pass | pending HTML has none of the scene titles; removed state (public purge) shows "These photos have been removed", no scene text, no photo images |
+| **L5** name-shaped titles / contact-shaped text | 10/10 accepted (expected residual) / 10/10 rejected | |
+| Phone 360x740: picker (3 radios, each >= 44 px, no horizontal scroll), Take and Choose-saved both disabled with "Pick a scene first.", enabled after pick, "For: <scene>" pill, scene upload, choose-saved-photo upload in a second scene, "Other" upload with no pill, choice sticky after save and after reload | pass | e2e #6; screenshot reviewed |
+| Scene list fails to load, no cache: capture enabled, "Scenes didn't load…" shown; zero-scene session: no picker, capture enabled | pass | e2e #7, #8 |
+| Admin photos: scene chip, Move to scene between scenes, `scene_gone` sentence plus refreshed options, nothing moved | pass | e2e #9 |
+| Collage storyline at 390 px: headings in order Santa arrives, Cookies, cocoa and carols, Other pictures; caption shown; scene-only-hidden photos makes the scene vanish; unhide restores | pass | e2e #9; screenshot reviewed |
+| Scene text with `<b>`, `<script>`, `<img onerror>` renders as literal text, no elements | pass | e2e #10 |
+| Zero-scene session: one "Group pictures" grid (`collage-group`), no `collage-scene`, no scene controls on the photos page | pass | e2e #11 |
+| Practice reset keeps scenes, deletes photos | pass | e2e removed/reset test |
+| Admin card count text and delete-dialog count | **FAIL (D2)** | see below |
+| Code rotation forgets the sticky choice | **FAIL (D1)** | see below |
+| Real phone, offline outbox (L6), Safari/iOS | not run | needs a device; request user verification before ship (offline outbox with a cached list; photos queued for a scene deleted before the queue drains) |
+| L7 print | n/a (Slice C not built) | |
+
+### Defects (send back to implementers)
+
+**D2 (api-developer; ux consequence) — scene photo counts are always 0.** `src/lib/santas-workshop/scene-queries.ts:40-41`. *Established:* Drizzle's generated SQL for the select is `select "id", (select count(*) from sw_photos sp where sp.scene_id = "id")::int from "sw_scenes" …` (printed with `toSQL()`); inside the subquery the unqualified `"id"` binds to `sp.id`, so the predicate is `scene_id = <photo's own id>` and never matches. Live repro: scene "Santa arrives" held 2 photos (DB count 2, and the same scene renders on the public collage) while the card row read "No photos yet. It will not show on the collage until it has one." and the delete dialog read "No photos are in this scene." (e2e #12, failing at `santas-workshop-scenes.spec.ts` `toContainText("2 photos")`). Consequences: the T4 requirement (dialog states the real count) is not met, the amber "all hidden, will not show" chip can never appear, and an admin is told a visible scene is empty. *Belief (not independently proven):* the unit tests mock the DB, so none could see it. Fix: qualify the outer reference (for example write `sw_scenes.id` in the raw SQL, or join and group), and add a test that renders the query's SQL or an integration check. I found no other correlated subquery in the scene modules. The DELETE response `movedPhotos` (toast) was not reached by the failing test, so recheck it after the fix.
+
+**D1 (ux-developer) — sticky scene and cached list survive code rotation or expiry on a cold load.** `src/app/santas-workshop/crew/[slug]/page.tsx:32` renders the server-side `CodeEntry` when the cookie is invalid; the only `clearSceneStore(slug)` calls are in `crew-app.tsx:125-129` (a live `CrewApp` that sees a 401) and in the panel's own auth-lost branch, so neither runs on a cold load. Repro (e2e #13): pick a scene, rotate the worker code (`POST …/crew-code {action:"rotate",acknowledge:true}`), reload (code screen shows), re-enter the new code, open Group photo: the previous choice is still selected and capture is enabled instead of "Pick a scene first." Contradicts the design comment in `crew-app.tsx` and the ux handoff ("rotate the worker code and confirm the choice is forgotten"). Impact is a wrong-scene tap risk on a phone reused after the 72-hour cookie lapses; admin reassign is the recovery. Fix: call `clearSceneStore(slug)` from a mount effect in `code-entry.tsx`.
+
+### Outputs
+- `e2e/santas-workshop-scenes.spec.ts` (new, 13 tests; two are the red regression tests for D1 and D2 and will pass once fixed).
+- Feature-gate audit (read from the route files; no migrations touched by QA):
+
+| Route or action | `auth()` | `hasFeature(...)` | Key |
+|---|---|---|---|
+| `GET/POST /api/admin/santas-workshop/sessions/[id]/scenes` | yes | yes | `FEATURES.SANTAS_WORKSHOP_MANAGE` |
+| `PATCH/DELETE …/scenes/[sceneId]` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `PUT …/scenes/order` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `PUT /api/admin/santas-workshop/photos/[photoId]/scene` | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `GET /api/santas-workshop/crew/[slug]/scenes` | n/a (crew code) | `requireCrew()` first | crew gate, scoped by the code's session |
+| `POST …/crew/[slug]/group-photos` (changed) | n/a (crew code) | `requireCrew()` first | crew gate |
+
+- Coverage on `events.ts` / `permissions.ts` / `members.ts`: not re-measured (no change to those modules in this diff).
+- Branch DB after cleanup (feature branch, `ep-steep-field-…`): `sw_sessions` 0, `sw_scenes` 0, `sw_photos` 0, `sw_crew_attempts` 0 (every spec's afterAll removed its rows). The e2e admin user was inherited from the parent branch and left. The gitignored local photo store `.santas-workshop-store/` in the worktree was deleted. Dev server on :3200 stopped.
+
+### Open questions / handoff notes
+- **Next agent: api-developer for D2, ux-developer for D1**, then QA re-runs `santas-workshop-scenes.spec.ts` (expect 13/13) and the full gate stack. After D2 is fixed, also confirm the delete toast says the real count.
+- The two `crew-flow` failures ("Parent" fixture collision) are pre-existing at base and should be filed separately; they also hide the 12 tests that follow them in that serial spec.
+- Before ship: user to verify L6 on a real phone (offline outbox with a cached scene list; delete a scene while photos wait; iOS Safari "Choose a saved photo").
+- `drizzle-kit push` was not run (B-165 prompt); migration 0117 alone created the objects, and dev startup applied it idempotently again.
