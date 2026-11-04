@@ -30,7 +30,7 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ## DECISION-128: Santa's Workshop group-photo scenes: the public collage carries admin-typed scene title and caption for scenes that have an approved picture, and nothing else
 
-**Status:** Proposed (Phase 3, 2026-11-04; promoted to Resolved at Phase 6 after each factual sentence is re-read against QA's "Established" list). Amends DECISION-125 (item 3: the public collage DTO and "every sentence is a fixed string") and DECISION-121 (item 6: what a crew response may contain). Reopens, narrowly, the 2026-10-12 "no multi-scene book" ruling for a free session-level storybook that is a print-styled page.
+**Status:** Resolved (2026-11-04, Slice A shipped as v1.101.0; Phase 5 PASS on re-verification, Phase 6 SHIP WITH NOTES; real-phone offline and iOS checks still open, tracked as B-212). Proposed at Phase 3, 2026-11-04. Amends DECISION-125 (item 3: the public collage DTO and "every sentence is a fixed string") and DECISION-121 (item 6: what a crew response may contain). Reopens, narrowly, the 2026-10-12 "no multi-scene book" ruling for a free session-level storybook that is a print-styled page.
 **Date:** 2026-11-04
 **Design:** `docs/work-log/2026-11-04-group-photo-scenes.md` (Phase 1 analyst, Phase 2 architect R1 to R14, Phase 3 tech-lead T1 to T10).
 
