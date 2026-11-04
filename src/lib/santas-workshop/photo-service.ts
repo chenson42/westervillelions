@@ -20,6 +20,7 @@ import { DEVICE_UPLOADS_PER_WINDOW, DEVICE_UPLOAD_WINDOW_SECONDS, PHOTO_LIMITS, 
 import { selectPhotoStoreMode } from "./photo-store/config";
 import { getPhotoStore } from "./photo-store";
 import type { PhotoStore } from "./photo-store/types";
+import { isForeignKeyViolation } from "./pg-error";
 import { validatePhotoPart, type UploadParts } from "./photo-upload";
 import type { PhotoWrite, WriteContext } from "./stuffy-transitions";
 
@@ -234,29 +235,52 @@ async function discard(store: PhotoStore, fullKey: string, thumbKey: string | nu
   if (thumbKey) await store.delete(thumbKey).catch(() => undefined);
 }
 
-/** A group photo has no stuffy and no state: it is one row, idempotent on the photo id. */
-export async function commitGroupPhoto(ctx: WriteContext, photo: UploadedPhoto): Promise<{ ok: true; replayed: boolean }> {
-  const rows = await db
-    .insert(swPhotos)
-    .values({
-      id: photo.id,
-      sessionId: ctx.sessionId,
-      stuffyId: null,
-      kind: "group",
-      storageKind: photo.storageKind,
-      storageKey: photo.storageKey,
-      thumbStorageKey: photo.thumbStorageKey,
-      contentType: photo.contentType,
-      byteSize: photo.byteSize,
-      thumbByteSize: photo.thumbByteSize,
-      width: photo.width,
-      height: photo.height,
-      sha256: photo.sha256,
-      takenAt: photo.takenAt,
-      deviceId: ctx.actor.kind === "crew" ? ctx.actor.deviceId : "admin",
-      recordedByUserId: ctx.actor.kind === "admin" ? ctx.actor.userId : null,
-    })
-    .onConflictDoNothing()
-    .returning({ id: swPhotos.id });
+/**
+ * A group photo has no stuffy and no state: it is one row, idempotent on the photo id.
+ *
+ * `sceneId` is the volunteer's pick, already parsed to a UUID or null (parseGroupSceneId). It is
+ * resolved INSIDE the INSERT (`scene_id = (select id from sw_scenes where id = $1 and session_id = $2)`),
+ * so an unknown, deleted or foreign scene is stored as no scene by construction, with no window
+ * between "resolve" and "insert" and no signal that distinguishes them. The only remaining race
+ * (a scene deleted between the sub-select snapshot and the foreign-key check, Postgres 23503) is
+ * retried ONCE with no scene: a scene problem must never fail or lose a photo. A replay of the same
+ * photo id is a no-op (`onConflictDoNothing`), so the first stored scene wins.
+ */
+export async function commitGroupPhoto(
+  ctx: WriteContext,
+  photo: UploadedPhoto,
+  sceneId: string | null = null,
+): Promise<{ ok: true; replayed: boolean }> {
+  const insert = (scene: string | null) =>
+    db
+      .insert(swPhotos)
+      .values({
+        id: photo.id,
+        sessionId: ctx.sessionId,
+        stuffyId: null,
+        kind: "group",
+        sceneId: scene === null ? null : sql`(select id from sw_scenes where id = ${scene} and session_id = ${ctx.sessionId})`,
+        storageKind: photo.storageKind,
+        storageKey: photo.storageKey,
+        thumbStorageKey: photo.thumbStorageKey,
+        contentType: photo.contentType,
+        byteSize: photo.byteSize,
+        thumbByteSize: photo.thumbByteSize,
+        width: photo.width,
+        height: photo.height,
+        sha256: photo.sha256,
+        takenAt: photo.takenAt,
+        deviceId: ctx.actor.kind === "crew" ? ctx.actor.deviceId : "admin",
+        recordedByUserId: ctx.actor.kind === "admin" ? ctx.actor.userId : null,
+      })
+      .onConflictDoNothing()
+      .returning({ id: swPhotos.id });
+  let rows: { id: string }[];
+  try {
+    rows = await insert(sceneId);
+  } catch (e) {
+    if (sceneId === null || !isForeignKeyViolation(e)) throw e;
+    rows = await insert(null);
+  }
   return { ok: true, replayed: rows.length === 0 };
 }

@@ -28,6 +28,9 @@
  *             session).
  *   public    current portraits and group photos.
  *
+ * Storyline scenes (`sw_scenes`, DECISION-128) are session configuration, not personal data: neither purge scope
+ * nor the practice reset touches them (a reset deletes the photo rows, so their `scene_id` goes with them).
+ *
  * Audit (`sw_session_log`): `purge_step` (counts per request), `purge_done`, `reset`. Counts, ids and
  * booleans; a forced run also records the admin's typed reason (the UI tells them not to type names).
  * Nothing here emails, and the personal-data columns are only ever written to NULL/empty.

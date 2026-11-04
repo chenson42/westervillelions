@@ -25,9 +25,11 @@ const FKS = [
 ];
 
 describe("migration 0116 (itemized sweep batches)", () => {
-  it("should be the highest-numbered migration", () => {
+  it("exists, and no later migration has taken its number", () => {
+    // Was "is the highest-numbered migration", which failed for every later migration (0117 onward).
     const files = readdirSync(dir).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sort();
-    expect(files[files.length - 1]).toBe(MIG);
+    expect(files).toContain(MIG);
+    expect(files.filter((f) => f.startsWith("0116_"))).toEqual([MIG]);
     expect(existsSync(join(dir, MIG))).toBe(true);
   });
 

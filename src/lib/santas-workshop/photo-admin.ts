@@ -17,7 +17,7 @@
 
 import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { swPhotos, swSessions, swStuffies } from "@/lib/db/schema";
+import { swPhotos, swScenes, swSessions, swStuffies } from "@/lib/db/schema";
 import type { SwSession } from "@/lib/db/schema";
 import { getAppUrl } from "@/lib/email-compose";
 import {
@@ -155,10 +155,13 @@ export async function listSessionPhotos(
       publishedAt: swPhotos.publishedAt,
       stuffyName: swStuffies.name,
       consent: swStuffies.photoConsent,
+      sceneId: swPhotos.sceneId,
+      sceneTitle: swScenes.title,
       covered: reviewCoveredSql(sessionId).mapWith(Boolean),
     })
     .from(swPhotos)
     .leftJoin(swStuffies, eq(swPhotos.stuffyId, swStuffies.id))
+    .leftJoin(swScenes, eq(swPhotos.sceneId, swScenes.id))
     .where(and(eq(swPhotos.sessionId, sessionId), inArray(swPhotos.kind, kinds), isNull(swPhotos.purgedAt), isNull(swPhotos.supersededAt)))
     .orderBy(asc(swPhotos.kind), sql`${swPhotos.takenAt} asc nulls last`, asc(swPhotos.id))
     .limit(PHOTOS_PAGE_SIZE + 1)
@@ -180,6 +183,8 @@ export async function listSessionPhotos(
       consent,
       stuffyName: group ? null : r.stuffyName,
       onCollage: decidePhotoAccess({ kind: "public" }, facts, "thumb"),
+      sceneId: group ? r.sceneId : null,
+      sceneTitle: group ? r.sceneTitle : null,
       awaitingPublish: needsPublishFor({ hidden: false, publishedAt: r.publishedAt, kind: r.kind, consent: consent === true }) && r.hiddenAt === null,
     };
   });

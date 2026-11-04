@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ db: {} }));
@@ -226,5 +228,33 @@ describe("the session purge markers close the door even when a photo row was mis
     }
     expect(decidePhotoAccess({ kind: "admin" }, facts({ kind: "portrait", superseded: true, sessionPersonalPurged: true }), "full")).toBe(false);
     expect(decidePhotoAccess({ kind: "family", stuffyId: STUFFY }, facts({ kind: "portrait", sessionPublished: true, sessionPersonalPurged: true }), "full")).toBe(true);
+  });
+});
+
+
+describe("photo-access unchanged (scene scan)", () => {
+  // The storyline (DECISION-128) groups already-approved tiles; it must never become a visibility input.
+  const read = (f: string) => readFileSync(join(__dirname, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  it("photo-access.ts contains no 'scene' at all (case-insensitive)", () => {
+    expect(read("photo-access.ts")).not.toMatch(/scene/i);
+  });
+
+  it("PhotoFacts has no scene field", () => {
+    const src = read("photo-access.ts");
+    const body = src.slice(src.indexOf("export interface PhotoFacts"));
+    expect(body.slice(0, body.indexOf("\n}"))).not.toMatch(/scene/i);
+  });
+
+  it("neither the photo door nor the collage query hands a scene to photoFactsFrom", () => {
+    for (const f of ["photo-door.ts", "collage-queries.ts", "photo-admin.ts"]) {
+      let src = "";
+      try {
+        src = read(f);
+      } catch {
+        continue;
+      }
+      for (const m of src.matchAll(/photoFactsFrom\(([\s\S]*?)\)\s*[,;)]/g)) expect(m[1], f).not.toMatch(/scene/i);
+    }
   });
 });

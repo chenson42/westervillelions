@@ -19,6 +19,8 @@ const { st } = vi.hoisted(() => ({
     sessionUpdates: 0,
     groupInsertRows: [{ id: "g" }] as Row[],
     groupInserts: [] as Row[],
+    /** Errors the next group inserts throw, in order (e.g. a 23503 foreign-key violation). */
+    insertThrows: [] as unknown[],
   },
 }));
 
@@ -51,6 +53,8 @@ vi.mock("@/lib/db", async () => {
           onConflictDoNothing: () => ({
             returning: async () => {
               st.groupInserts.push(v);
+              const boom = st.insertThrows.shift();
+              if (boom) throw boom;
               return st.groupInsertRows;
             },
           }),
@@ -83,6 +87,7 @@ beforeEach(() => {
   st.sessionUpdates = 0;
   st.groupInsertRows = [{ id: "g" }];
   st.groupInserts = [];
+  st.insertThrows = [];
 });
 
 function run(over: Partial<Parameters<typeof ingestPhoto>[0]> = {}) {
@@ -221,5 +226,69 @@ describe("group photos", () => {
     st.groupInsertRows = [];
     expect(await commitGroupPhoto(admin, photo)).toEqual({ ok: true, replayed: true });
     expect(st.groupInserts[1]).toMatchObject({ deviceId: "admin", recordedByUserId: "u1" });
+  });
+});
+
+describe("group photo scene (resolved inside the INSERT)", () => {
+  const photo = { id: UUID_B, kind: "group", storageKind: "local", storageKey: "k", thumbStorageKey: "t", contentType: "image/jpeg", byteSize: 1, thumbByteSize: 1, width: 1, height: 1, sha256: "x", takenAt: new Date() } as UploadedPhoto;
+  const SCENE = "99999999-9999-4999-8999-999999999999";
+  /** Flattens a drizzle `sql` fragment to its text chunks and bound params. */
+  const flatten = (v: unknown): { text: string; params: unknown[] } => {
+    const q = v as { queryChunks: unknown[] };
+    const text: string[] = [];
+    const params: unknown[] = [];
+    for (const c of q.queryChunks) {
+      if (c && typeof c === "object" && "value" in (c as object) && Array.isArray((c as { value: unknown }).value)) text.push((c as { value: string[] }).value.join(""));
+      else params.push(c);
+    }
+    return { text: text.join("?"), params };
+  };
+
+  it("a valid scene id is stored through one sub-select scoped to THIS session (unknown, deleted and foreign ids store null by construction)", async () => {
+    expect(await commitGroupPhoto(crew, photo, SCENE)).toEqual({ ok: true, replayed: false });
+    const f = flatten(st.groupInserts[0].sceneId);
+    expect(f.text).toMatch(/select id from sw_scenes where id = \?.*and session_id = \?/);
+    expect(f.params).toEqual([SCENE, UUID_A]); // the scene and the CREDENTIAL's session, never a request value
+  });
+
+  it("no scene (null or omitted) stores null with the same result", async () => {
+    expect(await commitGroupPhoto(crew, photo, null)).toEqual({ ok: true, replayed: false });
+    expect(await commitGroupPhoto(crew, photo)).toEqual({ ok: true, replayed: false });
+    expect(st.groupInserts[0].sceneId).toBeNull();
+    expect(st.groupInserts[1].sceneId).toBeNull();
+  });
+
+  it("a replay of the same photo id changes nothing (onConflictDoNothing: the first stored scene wins)", async () => {
+    st.groupInsertRows = [];
+    expect(await commitGroupPhoto(crew, photo, SCENE)).toEqual({ ok: true, replayed: true });
+    expect(st.groupInserts).toHaveLength(1);
+  });
+
+  it("23503 (the scene was deleted mid-statement) retries ONCE with no scene and the photo is kept", async () => {
+    st.insertThrows = [Object.assign(new Error("fk"), { code: "23503" })];
+    expect(await commitGroupPhoto(crew, photo, SCENE)).toEqual({ ok: true, replayed: false });
+    expect(st.groupInserts).toHaveLength(2);
+    expect(st.groupInserts[0].sceneId).not.toBeNull();
+    expect(st.groupInserts[1].sceneId).toBeNull();
+  });
+
+  it("a wrapped 23503 (driver cause) also retries; a second failure, or any other error, is thrown", async () => {
+    st.insertThrows = [{ cause: { code: "23503" } }];
+    await expect(commitGroupPhoto(crew, photo, SCENE)).resolves.toMatchObject({ ok: true });
+    st.insertThrows = [Object.assign(new Error("fk"), { code: "23503" }), Object.assign(new Error("again"), { code: "23503" })];
+    await expect(commitGroupPhoto(crew, photo, SCENE)).rejects.toThrow("again");
+    st.insertThrows = [Object.assign(new Error("down"), { code: "57P01" })];
+    await expect(commitGroupPhoto(crew, photo, SCENE)).rejects.toThrow("down");
+  });
+
+  it("with no scene a 23503 is not retried (it is some other constraint)", async () => {
+    st.insertThrows = [Object.assign(new Error("fk"), { code: "23503" })];
+    await expect(commitGroupPhoto(crew, photo, null)).rejects.toThrow("fk");
+    expect(st.groupInserts).toHaveLength(1);
+  });
+
+  it("parsePhotoMeta ignores a stray sceneId (check-in and portrait uploads never carry one)", () => {
+    const r = parsePhotoMeta({ ...meta, sceneId: SCENE }, true);
+    expect(r.ok && Object.keys(r.value)).not.toContain("sceneId");
   });
 });

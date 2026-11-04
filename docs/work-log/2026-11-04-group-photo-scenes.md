@@ -717,3 +717,59 @@ Added `sw_scenes` and the nullable `sw_photos.scene_id` exactly per the Phase 3 
 - For api-developer: `swScenes` (`id, sessionId, title, caption (nullable), position, createdAt, updatedAt`) and `swPhotos.sceneId` (nullable) are exported from `@/lib/db/schema`. Deleting a scene nulls `sw_photos.scene_id` in the database; deleting a session cascades scenes.
 - Dev server in the worktree must use the worktree `.env.local` (branch DB); never point it at the main tree's DB.
 - Next agent: api-developer.
+
+
+## Phase 4 — Implementation (API) — 2026-11-04
+
+**Owner:** api-developer
+**Status:** complete (Slice A server side; Slice B copy-scenes deliberately not built)
+
+### Summary
+Built the whole Slice A server surface per Phase 3: carriers first (committed separately as 54ec7a2 so the UI could start), the scene validator, queries and the single writer module, five admin routes plus the photo reassign route, the crew scenes read route, the group-upload `sceneId` parse with in-INSERT resolution and the 23503 retry (T2), and the collage grouping after the single approval pass (R1). Zero scenes returns today's collage unchanged (proved against a frozen copy of the old function). Gates: `tsc` clean, `pnpm lint` 0 errors (1 pre-existing warning in `budget-context-panel.tsx`), `pnpm test` 336 files / 5886 tests passing. `pnpm build` not run (as instructed); no dev server was started.
+
+### What I did
+- `scene-contract.ts` (carrier), `scene-input.ts` (`validateSceneText`, `parseGroupSceneId`, `parseSceneOrder`), `scene-queries.ts` (crew list, admin list with counts, `resolveSceneId`), `scene-admin.ts` (the only writer of `sw_scenes` and of the reassign; session row `FOR UPDATE` in every transaction; `session_purged` guard; audit with ids/counts only), `pg-error.ts` (`isForeignKeyViolation`).
+- Contracts: `admin-contract.ts` (5 error codes, `AdminPhotoDto.sceneId/sceneTitle`), `crew-contract.ts` (`CrewScene`, `CrewScenesResponse`, `GroupPhotoMeta.sceneId?`), `collage-contract.ts` (`CollageScene`, `CollageView.scenes`), `session-log.ts` (six kinds).
+- `photo-service.ts`: `commitGroupPhoto(ctx, photo, sceneId = null)`; scene resolved in the INSERT; one retry with null on 23503. `photo-admin.ts`: `listSessionPhotos` left-joins `sw_scenes` (group photos only). `collage-queries.ts`: `selectCollage(rows, scenes)`; `selectCollageTiles` kept as `selectCollage(rows, []).tiles`; `getCollage` early-returns `pending`/`removed` with `scenes: []` before any scenes query, then one `Promise.all` of the photo select (adds `sceneId`) and the session-scoped scenes select. `photo-access.ts` and the photo door are untouched.
+- `retention.ts`: comment only (scenes survive purge and reset); behaviour unchanged.
+- Live SQL check on the feature's Neon branch (no write, nothing created): the in-INSERT sub-select compiles and parameter types infer; the statement stops at the unrelated session FK as expected.
+
+### Outputs
+**Carriers (the UI imports these):** `src/lib/santas-workshop/scene-contract.ts`, `crew-contract.ts`, `collage-contract.ts`, `admin-contract.ts`; error text mapped in `admin-ui.ts` (`scene_limit`, `scene_gone`, `scenes_changed`, `scenes_not_empty`, `no_scenes_to_copy`).
+
+**Endpoints** (all admin routes: `await auth()` then `hasFeature(user.id, FEATURES.SANTAS_WORKSHOP_MANAGE)`, first two statements; errors are `AdminErrorBody`):
+
+| Method and path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/admin/santas-workshop/sessions/[id]/scenes` | none | 200 `ScenesListResponse` | 404 `not_found` |
+| `POST …/sessions/[id]/scenes` | `SceneSaveRequest` | 201 `SceneSaveResponse` | 400 `invalid_input` (`field` title/caption, `error` = reject sentence); 404; 409 `scene_limit`, `session_purged` |
+| `PATCH …/sessions/[id]/scenes/[sceneId]` | `SceneSaveRequest` | 200 `SceneSaveResponse` (with counts) | 400; 404 (unknown or other session's scene); 409 `session_purged` |
+| `DELETE …/sessions/[id]/scenes/[sceneId]` | none | 200 `{ ok: true, movedPhotos }` | 404; 409 `session_purged` |
+| `PUT …/sessions/[id]/scenes/order` | `{ order: string[] }` | 200 `ScenesListResponse` | 400 `invalid_input` (non-uuid or repeated id); 409 `scenes_changed`, `session_purged` |
+| `PUT /api/admin/santas-workshop/photos/[photoId]/scene` | `{ sceneId: string \| null }` | 200 `{ ok: true, sceneId, sceneTitle }` | 400 (`sceneId` neither uuid nor null); 404 (unknown, not group, purged); 409 `scene_gone` |
+| `GET /api/santas-workshop/crew/[slug]/scenes` | none (`requireCrew()` first) | 200 `{ scenes: CrewScene[] }`, `no-store` | crew 401 envelope |
+| `POST …/crew/[slug]/group-photos` (existing) | meta gains optional `sceneId` | unchanged body `{ ok, photoId, replayed }` | unchanged; identical for valid, unknown, deleted, foreign, malformed, absent scene |
+
+**Collage view for the page:** `CollageView = { state, practice, arrivesOn, scenes: CollageScene[], tiles: CollageTile[] }`; `scenes` only when live and only scenes with at least one approved group tile, in storyline order; `tiles` = unscened group tiles first, then portraits. `CollageScene = { title, caption: string | null, tiles }` (no id).
+
+**Tests written** (all names from the Phase 3 list for the server step): `scene-input.test.ts` (validateSceneText, parseGroupSceneId, parseSceneOrder), `scene-schema.test.ts` (migration idempotent and matches schema), `collage-queries.test.ts` (parity property test over 400 seeded runs, zero-scenes identical to a frozen copy over 300 runs, grouping order, foreign/deleted scene falls to tiles, live grouping, pending/removed never query scenes), `collage-contract-no-pii.test.ts` (amended per R1: CollageScene exactly title/caption/tiles, caption only inside it, CollageView keys, no sceneId in contract, `decidePhotoAccess(` once, scenes select placement/scoping), `photo-access.test.ts` (no "scene" in photo-access.ts, none in PhotoFacts or any photoFactsFrom call), `scene-admin.test.ts` (create/cap/update/delete/reorder/reassign, session_purged, audit has no text, writers scan), `crew-contract-no-contact.test.ts` (CrewScene exactly id/title/caption, title/caption only there, crew no-write scan, scenes route scoping), `photo-service.test.ts` (in-INSERT resolution, replay keeps first, 23503 retry once, no retry without a scene), `group-photos-scene-route.test.ts` (no enumeration signal, response never echoes scene), `retention.test.ts` (reset keeps scenes, purges never reference scenes), `admin-routes-gate.test.ts` (carrier list). The admin and crew route-gate tests pick up the new routes automatically and pass.
+
+### Deviations from the design
+1. **Pre-existing tests I had to amend (schema step left them red):** `ledger-sweep-schema.test.ts` asserted 0116 is the highest migration (it fails for any later migration; now asserts it exists and owns its number); `session-schema.test.ts` (0113) now excludes `sw_photos.scene_id` and its FK, which belong to 0117 and are guarded by the new `scene-schema.test.ts`.
+2. **Minimal compile-fix edits in UI-owned files:** `collage-page-source.test.ts` stubs gained `scenes: []` (type required it; no behaviour change); `admin-ui.ts` gained five `case`s in its exhaustive error-code switch (the `never` check broke), with fixed sentences from `scene-contract.ts` for three and short plain sentences for the two Slice B codes. ux-developer owns the copy.
+3. **Collage page does not render `scenes` yet.** `c/[token]/page.tsx` is untouched, so until the ux-developer lands the page a scened group picture is in `view.scenes` and not drawn. Do not deploy the server step without the page.
+4. **`parseGroupSceneId(meta)` takes the whole multipart meta** and reads `meta.sceneId` (the design said "`parseGroupSceneId(meta)`"; a bare-id variant would have needed a second helper). A non-string or absent caption is treated as no caption (the reject enum has no reason for it).
+5. **Session audit is written after the transaction commits**, not inside it (`logSessionEvent` uses the shared `db`), same as the existing admin modules.
+6. `SceneSaveResponse` from PATCH carries real counts (re-read from the list); from POST the counts are 0 (a new scene has no photos).
+7. **Not built:** `scenes/copy` route, `copyScenes()`, `SceneCopyRequest` consumer (Slice B; the contract type and error codes exist). `scene_store`, picker and page edits are UI work.
+8. `drizzle-kit push` was not run (needs a TTY, B-165); no schema change in this step beyond the schema handoff.
+
+### Consumers grepped
+`grep -rn "\.kind ===\|action:\|AdminErrorCode\|CollageView\|AdminPhotoDto\|GroupPhotoMeta" src/components src/app` plus the `never`-checked switches: the only exhaustive switch over a widened union was `admin-ui.ts` `adminErrorMessage` (fixed). `CollageView` consumers: `c/[token]/page.tsx` (reads `tiles` only, still compiles) and `collage-page-source.test.ts` (stubs fixed). `AdminPhotoDto` is built only in `photo-admin.ts`; no UI literal of it exists yet. `GroupPhotoMeta` is built in `group-panel.tsx` (field is optional, compiles).
+
+### Open questions / handoff notes
+- **Next agent: ux-developer** (admin `scenes-card`, crew picker/`scene-store`/`group-panel`/`photo-capture` prop/`crew-app` clear, collage page + `CollageGallery` `startIndex`/`testId` + `COLLAGE_COPY.otherHeading`, photos page badge and select). Build on the contracts above; the card gets `photoCount`/`unhiddenCount` from the list and shows the delete count from it (T4).
+- The page should show "Group pictures" when `scenes` is empty and "Other pictures" when it is not (R1); the empty-live message only when `scenes.length === 0 && tiles.length === 0`.
+- A crew scene fetch is `GET …/crew/[slug]/scenes` (not part of the roster poll). `sceneId` goes in the group upload's `meta` JSON; never send the outbox label.
+- Phase 5 live checks L1 to L6 still apply; L1/L2 are now runnable against the server step.
+- Commits are on `feature/group-photo-scenes` in the worktree; nothing pushed or merged.

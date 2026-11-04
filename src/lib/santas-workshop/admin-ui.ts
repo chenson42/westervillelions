@@ -26,6 +26,7 @@ import {
   type ZeffyEventOutcome,
 } from "./admin-contract";
 import { IGNORED_QUESTION_KEY, normalizeQuestionText } from "./question-fields";
+import { SCENE_GONE_MESSAGE, SCENE_LIMIT_MESSAGE, SCENES_CHANGED_MESSAGE } from "./scene-contract";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -100,6 +101,16 @@ export function adminErrorMessage(code: AdminErrorCode, serverMessage?: string):
       return serverMessage || "That cannot run yet: the session must be closed and its removal date must have come.";
     case "practice_only":
       return "Only a practice session can be reset. A real session's data is removed on its dated schedule.";
+    case "scene_limit":
+      return SCENE_LIMIT_MESSAGE;
+    case "scene_gone":
+      return SCENE_GONE_MESSAGE;
+    case "scenes_changed":
+      return SCENES_CHANGED_MESSAGE;
+    case "scenes_not_empty":
+      return "This session already has scenes. Copying only works into an empty storyline.";
+    case "no_scenes_to_copy":
+      return "That session has no scenes to copy.";
     case "server_error":
       return "Something went wrong on our side. Try again, and tell the webmaster if it keeps happening.";
     default: {

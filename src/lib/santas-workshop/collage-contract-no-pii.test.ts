@@ -15,27 +15,72 @@ const contract = read("collage-contract.ts");
 const queries = read("collage-queries.ts");
 const admin = read("photo-admin.ts");
 
+/** The body of one exported interface (between its braces). */
+function interfaceBody(source: string, name: string): string {
+  const start = source.indexOf(`export interface ${name}`);
+  const open = source.indexOf("{", start);
+  let depth = 1;
+  let i = open + 1;
+  while (depth > 0 && i < source.length) {
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}") depth -= 1;
+    i += 1;
+  }
+  return source.slice(open + 1, i - 1);
+}
+const fieldsOf = (body: string) => [...body.matchAll(/^\s+(\w+)\??:/gm)].map((m) => m[1]);
+const contractWithoutScene = contract.replace(interfaceBody(contract, "CollageScene"), "");
+
 describe("public collage DTO", () => {
-  it("names no person, contact, caption, family or storage field", () => {
-    expect(contract).not.toMatch(/name|email|phone|mobile|address|child|parent|buyer|caption|family|stuffyId|orderId|zeffy|token|storage|note|snack|@/i);
+  it("names no person, contact, caption, family or storage field (outside the CollageScene body, the one place a caption is allowed)", () => {
+    expect(contractWithoutScene).not.toMatch(/name|email|phone|mobile|address|child|parent|buyer|caption|family|stuffyId|orderId|zeffy|token|storage|note|snack|@/i);
   });
 
   it("CollageTile is exactly { id, kind }", () => {
-    const body = contract.slice(contract.indexOf("export interface CollageTile"), contract.indexOf("export interface CollageView"));
-    expect([...body.matchAll(/^\s+(\w+)\??:/gm)].map((m) => m[1])).toEqual(["id", "kind"]);
+    expect(fieldsOf(interfaceBody(contract, "CollageTile"))).toEqual(["id", "kind"]);
   });
 
-  it("CollageView carries state, practice, arrivesOn and tiles only", () => {
-    const body = contract.slice(contract.indexOf("export interface CollageView"), contract.indexOf("export type CollageLookup"));
-    expect([...body.matchAll(/^\s+(\w+)\??:/gm)].map((m) => m[1])).toEqual(["state", "practice", "arrivesOn", "tiles"]);
+  it("CollageScene is exactly { title, caption, tiles }: no id, count or photo field", () => {
+    expect(fieldsOf(interfaceBody(contract, "CollageScene"))).toEqual(["title", "caption", "tiles"]);
+  });
+
+  it("the word caption appears in the contract only inside CollageScene", () => {
+    expect(contractWithoutScene).not.toMatch(/caption/i);
+    expect(contract).toMatch(/caption/i);
+  });
+
+  it("CollageView carries state, practice, arrivesOn, scenes and tiles only", () => {
+    expect(fieldsOf(interfaceBody(contract, "CollageView"))).toEqual(["state", "practice", "arrivesOn", "scenes", "tiles"]);
+  });
+
+  it("the scene id is internal to the query: it never appears in the public contract", () => {
+    expect(contract).not.toMatch(/sceneId|scene_id/);
   });
 
   it("the query reads no name, contact or storage column", () => {
     expect(queries).not.toMatch(/\.name\b|buyer|Email|Phone|childFirstName|description|noteToSanta|careNote|snack|storageKey|thumbStorageKey|deviceId|sha256|tagCode|familyToken|rawAnswers/);
   });
 
-  it("the query decides visibility through the photo door's own function", () => {
+  it("the query decides visibility through the photo door's own function, in exactly one place", () => {
     expect(queries).toMatch(/decidePhotoAccess\(\{ kind: "public" \}/);
+    expect(queries.match(/decidePhotoAccess\(/g)).toHaveLength(1);
+  });
+
+  it("scene text comes only from a swScenes select scoped to the token's session, run after the removed and pending early returns", () => {
+    const selects = [...queries.matchAll(/\.from\(swScenes\)/g)];
+    expect(selects).toHaveLength(1);
+    const at = selects[0].index ?? 0;
+    expect(at).toBeGreaterThan(queries.indexOf('state: "removed"'));
+    expect(at).toBeGreaterThan(queries.indexOf('state: "pending"'));
+    const clause = queries.slice(at, queries.indexOf(".orderBy", at));
+    expect(clause).toMatch(/\.where\(eq\(swScenes\.sessionId, session\.id\)\)/);
+  });
+
+  it("the scene id is never passed into the visibility facts, and the scene module with counts is not imported", () => {
+    expect(queries).not.toMatch(/photoFactsFrom\(\{[^}]*sceneId/);
+    expect(queries).toMatch(/rows\.map\(\(\{ sceneId, \.\.\.photo \}\)/);
+    expect(queries).not.toMatch(/scene-queries|scene-admin/);
+    expect(queries).not.toMatch(/photoCount|unhiddenCount/);
   });
 
   it("selects only the token-matched session's photos and never a token column other than the lookup", () => {

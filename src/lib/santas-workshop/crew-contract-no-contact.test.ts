@@ -4,7 +4,7 @@
  * that is allowed to show it, or if the crew read path selects contact columns.
  */
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -91,5 +91,89 @@ describe("crew read path never selects contact columns", () => {
   it("search matches on the parent's name but the row mapper never returns it", () => {
     const toCrewRow = queries.slice(queries.indexOf("export function toCrewRow"), queries.indexOf("export function sortCrewRows"));
     expect(toCrewRow).not.toMatch(/buyerFirstName|buyerLastName|parentName/);
+  });
+});
+
+describe("crew can read scenes, never author them (DECISION-128)", () => {
+  const all = interfaces(contract);
+
+  it("CrewScene is exactly id, title, caption", () => {
+    expect([...all.CrewScene.matchAll(/^\s+(\w+)\??:/gm)].map((m) => m[1])).toEqual(["id", "title", "caption"]);
+    expect([...all.CrewScenesResponse.matchAll(/^\s+(\w+)\??:/gm)].map((m) => m[1])).toEqual(["scenes"]);
+  });
+
+  for (const field of ["title", "caption"]) {
+    it(`${field} appears only in CrewScene (it never spreads to a roster, tag, pickup or other card)`, () => {
+      const holders = Object.entries(all)
+        .filter(([, body]) => new RegExp(`\\b${field}\\b`).test(body))
+        .map(([name]) => name);
+      expect(holders).toEqual(["CrewScene"]);
+    });
+  }
+
+  it("a scene carries no counts, no photo ids and no timestamps", () => {
+    expect(all.CrewScene).not.toMatch(/count|photo|createdAt|updatedAt|position/i);
+  });
+
+  it("GroupPhotoMeta carries an optional sceneId, and GroupPhotoResponse does not echo it", () => {
+    expect(all.GroupPhotoMeta).toMatch(/sceneId\?: string \| null/);
+    expect(all.GroupPhotoResponse).not.toMatch(/scene/i);
+  });
+});
+
+describe("crew no-write scan", () => {
+  const SRC = join(__dirname, "..", "..");
+  const walk = (dir: string, acc: string[] = []): string[] => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) walk(p, acc);
+      else acc.push(p);
+    }
+    return acc;
+  };
+  const crewFiles = [
+    ...walk(join(SRC, "app", "api", "santas-workshop", "crew")),
+    ...walk(join(SRC, "lib", "santas-workshop")).filter((f) => /\/crew-[^/]*\.ts$/.test(f) && !f.endsWith(".test.ts")),
+    ...walk(join(SRC, "components", "santas-workshop", "crew")),
+  ].filter((f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f));
+
+  it("finds the crew surface", () => {
+    expect(crewFiles.length).toBeGreaterThan(20);
+  });
+
+  it("no crew file inserts, updates or deletes swScenes, or imports scene-admin", () => {
+    for (const f of crewFiles) {
+      const src = strip(readFileSync(f, "utf8"));
+      expect(src, f).not.toMatch(/\.(insert|update|delete)\(\s*swScenes\b/);
+      expect(src, f).not.toMatch(/scene-admin/);
+    }
+  });
+
+  it("the only crew-supplied scene datum is the group route's parseGroupSceneId; check-in and portrait routes never read it", () => {
+    const crewApi = join(SRC, "app", "api", "santas-workshop", "crew");
+    const users = walk(crewApi)
+      .filter((f) => /sceneId|parseGroupSceneId/.test(readFileSync(f, "utf8")))
+      .map((f) => f.slice(crewApi.length + 1));
+    expect(users.sort()).toEqual(["[slug]/group-photos/route.ts"]);
+  });
+
+  it("the crew scenes route calls requireCrew first and scopes the query by the credential's session id, never the slug or a request parameter", () => {
+    const route = strip(readFileSync(join(SRC, "app", "api", "santas-workshop", "crew", "[slug]", "scenes", "route.ts"), "utf8"));
+    expect(route).toMatch(/requireCrew\(/);
+    expect(route.indexOf("requireCrew(")).toBeLessThan(route.indexOf("listCrewScenes("));
+    expect(route).toMatch(/listCrewScenes\(gate\.session\.id\)/);
+    expect(route).not.toMatch(/listCrewScenes\((slug|params|request)/);
+    const queriesSrc = strip(readFileSync(join(__dirname, "scene-queries.ts"), "utf8"));
+    const fn = queriesSrc.slice(queriesSrc.indexOf("export async function listCrewScenes"), queriesSrc.indexOf("export async function listAdminScenes"));
+    expect(fn).toMatch(/eq\(swScenes\.sessionId, sessionId\)/);
+    expect(fn).not.toMatch(/count|swPhotos/i);
+  });
+
+  it("the group-photos route parses the scene id from the upload meta and answers with the same body shape whatever it was", () => {
+    const route = strip(readFileSync(join(SRC, "app", "api", "santas-workshop", "crew", "[slug]", "group-photos", "route.ts"), "utf8"));
+    expect(route).toMatch(/parseGroupSceneId\(upload\.parts\.meta\)/);
+    expect(route).toMatch(/commitGroupPhoto\(ctx, photo, sceneId\)/);
+    expect(route).toMatch(/const body: GroupPhotoResponse = \{ ok: true, photoId: meta\.value\.photoId, replayed: outcome\.replayed \}/);
+    expect(route).not.toMatch(/resolveSceneId/);
   });
 });

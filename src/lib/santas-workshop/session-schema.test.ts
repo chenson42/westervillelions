@@ -76,7 +76,8 @@ describe("migration 0113 (Santa's Workshop tables)", () => {
   });
 
   it("FK names equal what drizzle derives, and the migration adds exactly those FKs with matching ON DELETE", () => {
-    const schemaFks = TABLES.flatMap((t) => getTableConfig(t).foreignKeys);
+    // sw_photos.scene_id and its FK arrived in migration 0117 (scene-schema.test.ts guards them).
+    const schemaFks = TABLES.flatMap((t) => getTableConfig(t).foreignKeys).filter((f) => f.getName() !== "sw_photos_scene_id_sw_scenes_id_fk");
     const migrationNames = [...sql.matchAll(/ADD CONSTRAINT (\w+)/g)].map((m) => m[1]).sort();
     expect(migrationNames).toEqual(schemaFks.map((f) => f.getName()).sort());
     for (const fk of schemaFks) {
@@ -130,6 +131,7 @@ describe("migration 0113 (Santa's Workshop tables)", () => {
       const start = sql.indexOf(`CREATE TABLE IF NOT EXISTS ${cfg.name} (`);
       const body = sql.slice(start, sql.indexOf(");", start));
       for (const c of cfg.columns) {
+        if (cfg.name === "sw_photos" && c.name === "scene_id") continue; // added by migration 0117
         expect(body, `${cfg.name}.${c.name}`).toMatch(new RegExp(`^\\s+${c.name} `, "m"));
       }
     }

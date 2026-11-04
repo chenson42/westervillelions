@@ -13,7 +13,7 @@ const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\
 const files = [PAGE, ...readdirSync(__dirname).filter((f) => /\.tsx?$/.test(f) && !f.endsWith(".test.ts")).map((f) => join(__dirname, f))];
 
 const view = vi.hoisted(() => ({
-  current: { state: "live", practice: false, arrivesOn: null, tiles: [] } as import("@/lib/santas-workshop/collage-contract").CollageView | null,
+  current: { state: "live", practice: false, arrivesOn: null, scenes: [], tiles: [] } as import("@/lib/santas-workshop/collage-contract").CollageView | null,
 }));
 vi.mock("@/lib/santas-workshop/collage-queries", () => ({ getCollage: async () => view.current }));
 vi.mock("next/navigation", () => ({
@@ -50,6 +50,7 @@ describe("collage page render", () => {
       state: "live",
       practice: false,
       arrivesOn: null,
+      scenes: [],
       tiles: [
         { id: "a1111111-1111-4111-8111-111111111111", kind: "group" },
         { id: "b2222222-2222-4222-8222-222222222222", kind: "portrait" },
@@ -71,16 +72,16 @@ describe("collage page render", () => {
     expect(text.replace("info@westervillelions.org", "")).not.toMatch(/Bella|Pip|@|\d{3}-\d{4}/);
   });
   it("pending shows the photo day; removed shows the removal sentence; neither lists a photo", async () => {
-    view.current = { state: "pending", practice: true, arrivesOn: "2026-12-19", tiles: [] };
+    view.current = { state: "pending", practice: true, arrivesOn: "2026-12-19", scenes: [], tiles: [] };
     let html = await render();
     expect(html).toContain("The photos arrive on Saturday, Dec 19");
     expect(html).toContain("PRACTICE");
     // A photo day that has passed is never printed as a date.
-    view.current = { state: "pending", practice: false, arrivesOn: "2020-01-04", tiles: [] };
+    view.current = { state: "pending", practice: false, arrivesOn: "2020-01-04", scenes: [], tiles: [] };
     expect(await render()).toContain("The photos are being prepared");
-    view.current = { state: "pending", practice: true, arrivesOn: "2026-12-19", tiles: [] };
+    view.current = { state: "pending", practice: true, arrivesOn: "2026-12-19", scenes: [], tiles: [] };
     expect(html).not.toContain("/api/santas-workshop/photos/");
-    view.current = { state: "removed", practice: false, arrivesOn: null, tiles: [] };
+    view.current = { state: "removed", practice: false, arrivesOn: null, scenes: [], tiles: [] };
     html = await render();
     expect(html).toContain("These photos have been removed");
     expect(html).not.toContain("/api/santas-workshop/photos/");
@@ -94,11 +95,11 @@ describe("collage page render", () => {
 describe("collage page art", () => {
   it("dresses every state with decorative, print-hidden art and leaves the site chrome hidden", async () => {
     for (const v of [
-      { state: "pending", practice: false, arrivesOn: "2099-12-19", tiles: [] },
-      { state: "removed", practice: false, arrivesOn: null, tiles: [] },
-      { state: "live", practice: false, arrivesOn: null, tiles: [] },
+      { state: "pending", practice: false, arrivesOn: "2099-12-19", scenes: [], tiles: [] },
+      { state: "removed", practice: false, arrivesOn: null, scenes: [], tiles: [] },
+      { state: "live", practice: false, arrivesOn: null, scenes: [], tiles: [] },
     ] as const) {
-      view.current = { ...v, tiles: [] };
+      view.current = { ...v, scenes: [], tiles: [] };
       const html = await render();
       expect(html).toContain("/_next/image?url=%2Fimages%2Fsantas-workshop%2Ftrain.png");
       expect(html).toContain("sw-noprint");

@@ -25,6 +25,7 @@ vi.mock("@/lib/db", async () => {
     [schema.swStuffyEvents, "events"],
     [schema.zeffyEvents, "zeffy"],
     [schema.swSessionLog, "log"],
+    [schema.swScenes, "scenes"],
   ]);
   const nameOf = (t: unknown) => names.get(t) ?? "other";
   const selectChain = (): unknown =>
@@ -452,5 +453,31 @@ describe("getRetentionPreview", () => {
   it("an unknown session is null", async () => {
     st.session = null;
     expect(await getRetentionPreview(SID, NOW)).toBeNull();
+  });
+});
+
+describe("scenes survive retention (DECISION-128)", () => {
+  it("practice reset keeps scenes: it deletes photos and orders, never touches the scenes table, and the storyline stays configured", async () => {
+    st.session = sessionRow({ kind: "practice", status: "active" });
+    const { store } = fakeStore();
+    st.selects = [[photo("p1")], [], [{ id: SID }], [{ n: 0 }], [{ orders: 1, stuffies: 1, events: 1 }]];
+    const r = await resetPracticeSession(SID, "admin-1", { store, now: NOW });
+    expect(r).toMatchObject({ done: true });
+    expect(st.ops.filter((o) => o.table === "scenes")).toEqual([]);
+    expect(tableOps("delete", "photos")).toHaveLength(1); // a photo's scene_id column goes with its row
+    // the reset's own session UPDATE does not null or clear anything scene-shaped
+    expect(Object.keys(tableOps("update", "sessions")[0].set ?? {}).join(",")).not.toMatch(/scene/i);
+  });
+
+  it("personal and public purge never reference swScenes (the storyline is club copy, kept; the retention card must not claim otherwise)", async () => {
+    for (const scope of ["personal", "public"] as const) {
+      st.ops = [];
+      const { store } = fakeStore();
+      st.selects = [[photo("p1")], [], ...finalizeSelects()];
+      await purgeSession(args({ scope }), { store, now: NOW });
+      expect(st.ops.filter((o) => o.table === "scenes")).toEqual([]);
+    }
+    const src = readFileSync(join(__dirname, "retention.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(src).not.toMatch(/swScenes|sw_scenes/);
   });
 });
