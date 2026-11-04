@@ -21,12 +21,16 @@ const REMINDER = "Stuffies only, never the children.";
 
 /**
  * Camera capture through a file input with `capture`: it opens the phone's own camera
- * app, so it works without any camera permission prompt and on every browser. The
- * preview shows the stuffy's name above the photo; nothing is sent until "Use photo".
+ * app, so it works without any camera permission prompt and on every browser. A second
+ * input without `capture` lets the volunteer choose a photo already on the phone; both
+ * feed the same preview and upload. The preview shows the stuffy's name above the
+ * photo; nothing is sent until "Use photo".
  */
 export function PhotoCapture({ stuffyLabel, prompt, takeLabel = "Take photo", useLabel = "Use photo", busy = false, onUse, disabled = false }: Props) {
   const inputId = useId();
+  const libraryId = useId();
   const input = useRef<HTMLInputElement>(null);
+  const library = useRef<HTMLInputElement>(null);
   // The preview URL is created in the change handler and revoked when replaced, reset or unmounted.
   const [picked, setPicked] = useState<{ file: File; url: string } | null>(null);
   const pickedUrl = useRef<string | null>(null);
@@ -54,6 +58,7 @@ export function PhotoCapture({ stuffyLabel, prompt, takeLabel = "Take photo", us
   function reset() {
     pick(undefined);
     if (input.current) input.current.value = "";
+    if (library.current) library.current.value = "";
   }
 
   const file = picked?.file ?? null;
@@ -74,13 +79,31 @@ export function PhotoCapture({ stuffyLabel, prompt, takeLabel = "Take photo", us
         onChange={(e) => pick(e.target.files?.[0])}
         disabled={disabled || busy}
       />
+      <input
+        ref={library}
+        id={libraryId}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        aria-label={`Choose a saved photo of ${stuffyLabel}`}
+        onChange={(e) => pick(e.target.files?.[0])}
+        disabled={disabled || busy}
+      />
       {!file ? (
-        <label
-          htmlFor={inputId}
-          className={`${CREW_BTN} cursor-pointer ${disabled || busy ? "pointer-events-none opacity-60" : ""}`}
-        >
-          {takeLabel}
-        </label>
+        <div className="space-y-3">
+          <label
+            htmlFor={inputId}
+            className={`${CREW_BTN} cursor-pointer ${disabled || busy ? "pointer-events-none opacity-60" : ""}`}
+          >
+            {takeLabel}
+          </label>
+          <label
+            htmlFor={libraryId}
+            className={`${CREW_BTN_OUTLINE} cursor-pointer ${disabled || busy ? "pointer-events-none opacity-60" : ""}`}
+          >
+            Choose a saved photo
+          </label>
+        </div>
       ) : (
         <div className="space-y-3">
           <p className="font-semibold text-gray-900">For: {stuffyLabel}</p>

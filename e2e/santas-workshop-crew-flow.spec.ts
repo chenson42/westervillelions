@@ -134,7 +134,7 @@ test("check in with a photo: saved on the phone first, the state advances when t
   await expect(page.getByText("Loves a hug")).toBeVisible();
   await expect(page.getByText("Apple slices")).toHaveCount(0);
   await expect(page.getByText("Snack choice")).toHaveCount(0);
-  await page.locator('input[type="file"]').setInputFiles(PNG_FILE);
+  await page.locator('input[type="file"][capture]').setInputFiles(PNG_FILE);
   await expect(page.getByText("For: Bella")).toBeVisible();
   await page.getByRole("button", { name: "Use photo" }).click();
   await expectRowState(page, "Bella", "Checked in");
@@ -169,7 +169,7 @@ test("portrait, then a retake leaves exactly one current portrait", async ({ bro
 
   await openStuffy(page, "Bella");
   await expect(page.getByText(/Keep the sticker out of the shot/)).toBeVisible();
-  await page.locator('input[type="file"]').setInputFiles(PNG_FILE);
+  await page.locator('input[type="file"][capture]').setInputFiles(PNG_FILE);
   await page.getByRole("button", { name: "Use photo" }).click();
   await expectRowState(page, "Bella", "Portrait done");
 
@@ -190,7 +190,7 @@ test("portrait, then a retake leaves exactly one current portrait", async ({ bro
   await expect(portraitImg).toBeVisible();
   await expect.poll(() => portraitImg.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   await expect.poll(() => thumb.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
-  await page.locator('input[type="file"]').setInputFiles(PNG_FILE);
+  await page.locator('input[type="file"][capture]').setInputFiles(PNG_FILE);
   await page.getByRole("button", { name: "Use photo" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("Replace the portrait?");
   await page.getByRole("alertdialog").getByRole("button", { name: "Replace it" }).click();
@@ -289,7 +289,7 @@ test("a group photo is filed against the session, not a stuffy", async ({ browse
   const { context, page } = await crewContext(browser);
   await enterCode(page, SLUG, sw.code);
   await page.getByRole("button", { name: "Group photo" }).click();
-  await page.locator('input[type="file"]').setInputFiles(PNG_FILE);
+  await page.locator('input[type="file"][capture]').setInputFiles(PNG_FILE);
   await page.getByRole("button", { name: "Use photo" }).click();
   await expect(page.getByText(/1 group photo saved on this phone/)).toBeVisible();
   await expect
@@ -324,7 +324,7 @@ test("a photo taken with no connection waits on the phone and sends when the con
   const { context, page } = await crewContext(browser);
   await enterCode(page, SLUG, sw.code);
   await openStuffy(page, "Max");
-  await page.locator('input[type="file"]').setInputFiles(PNG_FILE);
+  await page.locator('input[type="file"][capture]').setInputFiles(PNG_FILE);
   await context.setOffline(true);
   await page.getByRole("button", { name: "Use photo" }).click();
   await expect(page.getByText(/1 photo waiting to send/)).toBeVisible();
