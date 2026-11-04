@@ -55,7 +55,8 @@ test("the roster shows the registered stuffies and no parent contact data anywhe
   await enterCode(page, SLUG, sw.code);
   for (const name of ["Pip", "Bella", "Max"]) await expect(page.getByRole("button", { name: new RegExp(`^${name}`) }).first()).toBeVisible();
   const html = await page.content();
-  for (const secret of ["example.invalid", "555-0100", "Testa", "Parent"]) expect(html).not.toContain(secret);
+  // The family's last name is on the list since v1.100.2; the first name and contact details never are.
+  for (const secret of ["example.invalid", "555-0100", "Testa"]) expect(html).not.toContain(secret);
   // Search works on the stuffy name.
   await page.getByLabel("Find a stuffy").fill("bel");
   await expect(page.getByRole("button", { name: /^Bella/ })).toBeVisible();
@@ -220,7 +221,8 @@ test("pickup: name shown first, then a recorded choice, then pickup; a second st
   expect(JSON.parse(bodies[1]).code).toBe("pickup_check_required");
   bodies.push(await (await page.request.get(`/api/santas-workshop/crew/${SLUG}/roster`)).text());
   bodies.push(await (await page.request.get(`${base}?view=pickup`)).text());
-  for (const b of bodies) expect(b).not.toContain("Parent");
+  // The roster carries the last name (v1.100.2); the full name on the order stays hidden until it is shown.
+  for (const b of bodies) expect(b).not.toContain("Testa");
 
   await openStuffy(page, "Bella");
   // The pickup card shows the family's treat choice before and after the name is shown.
