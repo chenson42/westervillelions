@@ -61,7 +61,8 @@ describe("worker code card", () => {
   it("builds the message for the crew from the link and the formatted code", () => {
     const text = crewInvitation("https://westervillelions.org", "workshop-2026", "ABCD-EF23");
     expect(text).toContain("https://westervillelions.org/santas-workshop/crew/workshop-2026");
-    expect(text).toContain("ABCD-EF23");
+    expect(text).toContain("code is ABCDEF23\n");
+    expect(text).not.toContain("ABCD-EF23");
     expect(crewInvitation("https://x.test", "s", null)).toBe("https://x.test/santas-workshop/crew/s");
   });
 });

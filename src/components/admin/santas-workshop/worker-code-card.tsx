@@ -106,7 +106,7 @@ export function WorkerCodeCard({ sessionId, slug, status, access }: Props) {
               <p className="text-sm text-gray-600">Worker code</p>
               <p className="break-all font-mono text-3xl font-bold tracking-widest text-gray-900">{shown.formatted ?? shown.code}</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" className={BTN_SMALL} onClick={() => void copy(shown.formatted ?? shown.code ?? "", "Code")}>
+                <button type="button" className={BTN_SMALL} onClick={() => void copy(shown.code ?? "", "Code")}>
                   Copy code
                 </button>
                 <button type="button" className={BTN_SMALL} onClick={() => void copy(crewInvitation(origin, slug, shown.formatted), "Message")}>

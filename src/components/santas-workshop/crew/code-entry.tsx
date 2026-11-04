@@ -65,7 +65,7 @@ export function CodeEntry({ slug, notice, onEntered }: Props) {
               name="code"
               type="text"
               inputMode="text"
-              autoComplete="off"
+              autoComplete="one-time-code"
               autoCapitalize="characters"
               autoCorrect="off"
               spellCheck={false}

@@ -135,9 +135,11 @@ export function codeShownText(c: CrewCodeResponse): string {
 }
 
 /** The text a chair pastes into a message to the crew. */
+// The code goes out unhyphenated on its own line: a phone selects it in one tap
+// and offers it as a one-time code (the entry field is autocomplete=one-time-code).
 export function crewInvitation(origin: string, slug: string, formattedCode: string | null): string {
   const link = `${origin}/santas-workshop/crew/${slug}`;
-  return formattedCode ? `Santa's Workshop crew: open ${link} and enter the code ${formattedCode}.` : link;
+  return formattedCode ? `Your Santa's Workshop crew code is ${formattedCode.replace(/-/g, "")}\n\nOpen ${link}` : link;
 }
 
 // ---------------------------------------------------------------------------
