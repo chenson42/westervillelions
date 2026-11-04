@@ -30,7 +30,7 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ## DECISION-129: A Santa's Workshop session is cloned through the existing create path, with every uncopied field read from the source row on the server and written through an explicit column allowlist
 
-**Status:** Resolved (2026-11-04: clone shipped as v1.100.5, Phase 5 PASS, Phase 6 SHIP WITH NOTES; item 4 completed by v1.102.0, scenes Slice B). Item 6 stays believed, unmeasured until the Dec 7 dry run.
+**Status:** Resolved (2026-11-04: clone shipped as v1.100.5, Phase 5 PASS, Phase 6 SHIP WITH NOTES; item 4 completed by v1.102.0, scenes Slice B). Item 6 stays believed, unmeasured until it is tried with a real Zeffy form.
 **Date:** 2026-11-04
 **Design:** `docs/work-log/2026-11-04-session-clone.md` (Phases 1 to 6); scenes copy in `docs/work-log/2026-11-04-group-photo-scenes.md` (Slice B).
 
@@ -42,7 +42,7 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 3. Quota follows the new kind unless the kind is unchanged; the frame file prefix is never copied (the default derives from the new slug); the crew-closes and purge dates copy only when the pickup date is unchanged. The form always opens on Practice.
 4. Clone core never writes `sw_scenes` itself. Since v1.102.0, an "Include the N scenes" checkbox (default on, shown only when the source has scenes) calls `copyScenes(tx, …)` from `scene-admin.ts`, the only writer of scene rows, inside the clone transaction; a failed copy creates no session.
 5. Purged and closed sources are allowed, because neither purge nor reset writes any copied column (`retention.ts`; QA check 5-2 cloned a force-purged source).
-6. The claim that a duplicated Zeffy form needs no re-mapping is believed, unmeasured (QA check 5-3 needs a real form). Measure it at the Dec 7 dry run.
+6. The claim that a duplicated Zeffy form needs no re-mapping is believed, unmeasured (QA check 5-3 needs a real form). Measure it the first time a session is cloned onto a duplicated Zeffy form.
 
 ---
 
@@ -198,7 +198,7 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 **Unmeasured (rule (a)):**
 - *A photo counter accepts the zip's pictures* (1200 x 1800 JPEGs, these file names, these batch sizes, after the admin unzips them) is unknown; the dry run uploads a real batch, and name prefix and part size are session settings so the answer needs no deploy. Orientation or size changes are a one-file change in `frame-layout.ts`.
-- *A printed 4x6 is scanned by a phone* (the QR at its size floor, with a 2 to 3 percent trim) is unmeasured until the test print on Dec 7.
+- *A printed 4x6 is scanned by a phone* (the QR at its size floor, with a 2 to 3 percent trim) is unmeasured until a test print at the photo counter.
 - *The chair's laptop timing and memory for 200 frames* are unmeasured; Stop keeps finished parts and nothing is stored, so the failure mode is slow, not lost.
 - *The chair's art overlay* (a 1200 x 1800 PNG over the portrait window) has not been seen; the default plain frame is what was verified.
 
