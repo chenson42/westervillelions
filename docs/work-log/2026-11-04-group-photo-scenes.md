@@ -1088,3 +1088,28 @@ Both `scene-queries` helpers are admin-page-only reads of counts and session nam
 - Coverage figures were not re-measured for this slice (new code is in `scene-admin.ts`, covered by the implementer's unit tests).
 - Optional storyline preview was skipped by the implementer (acceptable drift, tracked under B-210's "optional").
 - Next: **analyst** for Phase 6 (PASS).
+
+## Slice C — Phase 4 (storybook PDF, B-211) — 2026-11-04
+
+**Owner:** ux-developer
+**Status:** complete (branch `feature/storybook-pdf`, not pushed)
+
+### Summary
+`/santas-workshop/c/[token]/book` is a print-styled Server Component over `getCollage()` only. It shows a cover, one scene per printed page (group pictures, `full` variant, ordinal alt text) and a closing page. A client "Save as PDF" button calls `window.print()`. The collage links to it in the live state when scenes exist. No dependency, no new query, no change to the photo door.
+
+### What I did
+- `book/page.tsx`: own `noindex, nofollow` + `referrer: no-referrer` + `force-dynamic`; null view -> `notFound()`; non-live or no scene with a group picture -> `redirect()` to the collage. Route-scoped `<style>` with `@page { size: Letter; margin: 0 }` and 14mm page padding (global `@page` in `santas-workshop.css` untouched); controls `sw-noprint`; the token URL is not in the visible text.
+- `book-model.ts` (pure): `bookAvailable`, `bookPages` (scene order, group kind only, running ordinals, skips a scene with no group picture).
+- `BOOK_COPY` in `collage-ui.ts` (fixed strings, desktop and iPhone hints, "loads all the pictures" note); `book-print-button.tsx`.
+- Collage: "Download the storybook" link, `sw-noprint`, only inside the live branch with `scenes.length > 0`.
+- Privacy page: "A copy you save stays on your device." in the workshop section.
+- Tests: new `book-page-source.test.ts` (imports, no `view.tiles`/portrait, headers, redirects, 404, sitemap/robots, global `@page` pinned, model, render), link tests in `collage-page-source.test.ts`, privacy sentence in `workshop-section.test.ts`.
+
+### Gates
+tsc clean; lint 0 errors (1 pre-existing warning in budget-context-panel); `pnpm test` 344 files / 5948 tests pass; `pnpm build:only` passes.
+
+### Deviations / handoff notes
+- **Cover has no photo day.** The live `CollageView` carries `arrivesOn: null`, and a date would need a second read; the cover uses the fixed line "A storybook of the day, one scene to a page." Add a date later only if the view gains one.
+- **No screenshot/PDF rendered:** needs a published practice session with real photo bytes in the dev store; not done. L7 (real Chrome + iPhone Safari print: page count, token URL not printed, load time) remains a Phase 5 item. Pages with more than six pictures overflow to a second page (padding kept via `box-decoration-break: clone`, to verify in Chrome).
+- New copy for the club to refine: all of `BOOK_COPY`, and the privacy sentence (user-owned wording, used verbatim).
+- Next: qa (Phase 5), including L4 (curl the book URL for pending/removed and grep scene titles: expect redirect, 0 matches).

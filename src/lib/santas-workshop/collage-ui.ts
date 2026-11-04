@@ -116,3 +116,16 @@ export function adminTileAlt(photo: Pick<AdminPhotoDto, "kind" | "stuffyName">, 
 export function publicTileAlt(kind: "group" | "portrait", index: number): string {
   return kind === "group" ? `Group picture ${index + 1}` : `Stuffy portrait ${index + 1}`;
 }
+
+/** Every sentence the storybook prints or shows around the print button. Fixed strings only. */
+export const BOOK_COPY = {
+  coverLine: "A storybook of the day, one scene to a page.",
+  link: "Download the storybook",
+  button: "Save as PDF",
+  loadsAll: "This page loads all the pictures, so it may take a moment on mobile data.",
+  iphoneHint: "On an iPhone or iPad: tap Share, then Print, then pinch out on the preview and tap Share again to Save to Files.",
+  desktopHint: "In the print dialog, choose Save as PDF as the destination.",
+  back: "Back to the collage",
+  closing: "Thank you for joining us at Santa's Workshop.",
+  savedCopy: "A copy you save stays on your device.",
+} as const;

@@ -109,7 +109,7 @@ export default async function PrivacyPage() {
               <p className="font-semibold">{PROMISE}</p>
               <p>
                 On the sign-up form, one optional box reads: &ldquo;{PHOTO_BOX_LABEL}&rdquo;{" "}
-                {PHOTO_BOX_HELPER} {COLLAGE_KEEPING}
+                {PHOTO_BOX_HELPER} {COLLAGE_KEEPING} A copy you save stays on your device.
               </p>
               <p>
                 To remove a photo or a detail, contact us at{" "}

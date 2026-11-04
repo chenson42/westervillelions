@@ -131,6 +131,14 @@ describe("collage page storyline", () => {
     const pageSrc = readFileSync(PAGE, "utf8");
     expect(pageSrc).not.toMatch(/dangerouslySetInnerHTML/);
   });
+  it("links to the storybook only when live with scenes", async () => {
+    view.current = { state: "live", practice: false, arrivesOn: null, scenes: [{ title: "S", caption: null, tiles: [T("a")] }], tiles: [] };
+    expect(await render()).toContain(`/book"`);
+    view.current = { state: "live", practice: false, arrivesOn: null, scenes: [], tiles: [T("a")] };
+    expect(await render()).not.toContain("Download the storybook");
+    view.current = { state: "pending", practice: false, arrivesOn: "2099-12-19", scenes: [{ title: "S", caption: null, tiles: [T("a")] }], tiles: [] };
+    expect(await render()).not.toContain("Download the storybook");
+  });
   it("zero scenes is today's page: 'Group pictures', collage-group, no scene markup", async () => {
     view.current = { state: "live", practice: false, arrivesOn: null, scenes: [], tiles: [T("a"), { id: "b2222222-2222-4222-8222-222222222222", kind: "portrait" }] };
     const html = await render();

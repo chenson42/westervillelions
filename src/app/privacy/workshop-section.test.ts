@@ -10,6 +10,10 @@ describe("privacy page workshop section", () => {
     expect(src).toContain("Santa&apos;s Workshop sign-ups:</strong>");
   });
 
+  it("says a saved storybook copy stays on the device", () => {
+    expect(src).toContain("A copy you save stays on your device.");
+  });
+
   it("imports its promise and photo sentences from copy.ts rather than retyping them", () => {
     expect(src).toMatch(/from "@\/components\/santas-workshop\/copy"/);
     for (const name of ["PROMISE", "PHOTO_BOX_LABEL", "PHOTO_BOX_HELPER", "COLLAGE_KEEPING"]) {

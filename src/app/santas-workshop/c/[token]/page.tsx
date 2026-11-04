@@ -7,7 +7,7 @@ import { getCollage } from "@/lib/santas-workshop/collage-queries";
 import { CONTACT_EMAIL } from "@/components/santas-workshop/copy";
 import { easternDateString } from "@/lib/eastern-date";
 import { workshopNow } from "@/lib/santas-workshop/clock";
-import { COLLAGE_COPY, COLLAGE_REMOVAL_HREF, pendingBody, pendingHeadline } from "@/lib/santas-workshop/collage-ui";
+import { BOOK_COPY, COLLAGE_COPY, COLLAGE_REMOVAL_HREF, pendingBody, pendingHeadline } from "@/lib/santas-workshop/collage-ui";
 
 // Read from the database on every request, so a hide or an unpublish is never held by a page cache.
 // Images carry the one accepted 5-minute browser window (private, max-age=300) from the photo door.
@@ -83,6 +83,16 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
                 <CollageStateArt id="story-art" />
                 {COLLAGE_COPY.emptyLive}
               </div>
+            )}
+            {view.scenes.length > 0 && (
+              <p className="sw-noprint">
+                <Link
+                  href={`/santas-workshop/c/${token}/book`}
+                  className="inline-flex min-h-[44px] items-center text-sm font-semibold text-lions-blue hover:text-lions-blue-dark focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                >
+                  {BOOK_COPY.link} &rarr;
+                </Link>
+              </p>
             )}
             {view.scenes.map((scene, i) => (
               <section key={i} aria-labelledby={`scene-${i}-heading`} className="space-y-3">
