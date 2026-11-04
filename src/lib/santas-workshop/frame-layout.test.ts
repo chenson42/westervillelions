@@ -1,7 +1,7 @@
 import { create } from "qrcode";
 import { describe, expect, it } from "vitest";
 import { FRAME_HEIGHT_PX, FRAME_WIDTH_PX } from "./admin-contract";
-import { frameNumberLabel, CAPTION, CAPTION_LINES, computeFrameLayout, coverCrop, fitText, frameArtSizeOk, layoutRects, QUIET_MODULES, SAFE_MARGIN, type Rect } from "./frame-layout";
+import { frameNumberLabel, CAPTION, CAPTION_LINES, computeFrameLayout, computeDecor, computeSnowflakes, titleTextBox, captionTextBox, CANDY_BORDER_PX, PHOTO_RING_PX, coverCrop, fitText, frameArtSizeOk, layoutRects, QUIET_MODULES, SAFE_MARGIN, type Rect } from "./frame-layout";
 
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 // QR sizes: version 1 (21) up to 43 (version 6), the densest that fits at 7 px per module. A real link is version 3 to 5.
@@ -54,6 +54,48 @@ describe("frame layout", () => {
   it("the caption is the words plus the club address, never a link", () => {
     expect(CAPTION).toBe("Scan to see the whole day's photos · westervillelions.org");
     expect(CAPTION_LINES.join(" ")).not.toMatch(/https?:|\/c\//);
+  });
+});
+
+describe("festive decoration", () => {
+  it.each(SIZES)("never touches the photo window, the QR plate or its quiet zone (QR %i)", (n) => {
+    const l = computeFrameLayout({ qrModules: n, practice: true });
+    const d = computeDecor(l);
+    const flakes = computeSnowflakes(l, d, 700, 3);
+    expect(flakes.length).toBeGreaterThan(6);
+    const sacred = [l.photo, l.qrPlate];
+    // photo window and plate unchanged by decoration
+    expect(l.photo).toEqual({ x: 75, y: 225, w: 1050, h: 990 });
+    // the ring lies outside the window, inside the canvas, clear of the title, name and plate halo
+    expect(d.photoRing.x).toBeLessThan(l.photo.x);
+    expect(d.photoRing.x).toBe(l.photo.x - PHOTO_RING_PX);
+    expect(overlaps(d.photoRing, d.plateHalo)).toBe(false);
+    expect(overlaps(d.photoRing, l.name)).toBe(false);
+    expect(overlaps(d.photoRing, titleTextBox(l))).toBe(false);
+    expect(d.plateHalo.x).toBeLessThan(l.qrPlate.x);
+    expect(d.plateHalo.y + d.plateHalo.h).toBeLessThanOrEqual(1800 - 38);
+    for (const h of d.holly) {
+      for (const s of [...sacred, d.photoRing, d.plateHalo, l.name, l.caption, l.number, titleTextBox(l)]) expect(overlaps(h.box, s)).toBe(false);
+    }
+    for (const b of d.lights) {
+      const dot: Rect = { x: b.x - 7, y: b.y - 7, w: 14, h: 14 };
+      expect(overlaps(dot, l.photo)).toBe(false);
+      expect(overlaps(dot, d.plateHalo)).toBe(false);
+    }
+    for (const f of flakes) {
+      const box: Rect = { x: f.x - f.r, y: f.y - f.r, w: 2 * f.r, h: 2 * f.r };
+      for (const s of [...sacred, d.photoRing, d.plateHalo, captionTextBox(l), l.number, titleTextBox(l), ...d.holly.map((h) => h.box)]) expect(overlaps(box, s)).toBe(false);
+      expect(f.x - f.r).toBeGreaterThan(CANDY_BORDER_PX);
+      expect(f.y - f.r).toBeGreaterThan(CANDY_BORDER_PX);
+      expect(f.x + f.r).toBeLessThan(1200 - CANDY_BORDER_PX);
+      expect(f.y + f.r).toBeLessThan(1800 - CANDY_BORDER_PX);
+    }
+  });
+
+  it("is deterministic per seed", () => {
+    const l = computeFrameLayout({ qrModules: 33 });
+    const d = computeDecor(l);
+    expect(computeSnowflakes(l, d, 600, 5)).toEqual(computeSnowflakes(l, d, 600, 5));
   });
 });
 

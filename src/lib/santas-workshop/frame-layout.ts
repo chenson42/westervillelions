@@ -43,6 +43,107 @@ export function frameNumberLabel(frameNumber: number): string {
   return `No. ${String(Math.max(0, Math.trunc(frameNumber))).padStart(3, "0")}`;
 }
 
+/** Festive decoration (drawn frame only). Pure geometry so a test can prove none of it touches the photo or the QR. */
+export const CANDY_BORDER_PX = 32;
+/** Width of the red string-of-lights ring that hugs the photo window on the outside. */
+export const PHOTO_RING_PX = 18;
+/** Gold halo around the white QR plate, drawn outside the plate (the plate and its quiet zone stay pure white). */
+export const PLATE_HALO_PX = 6;
+/** The title text is held to this width (centred) so the corner holly never meets it. */
+export const TITLE_TEXT_MAX_W = 840;
+const HOLLY_SIZE = 130;
+const HOLLY_INSET = 40;
+
+export interface Snowflake {
+  x: number;
+  y: number;
+  r: number;
+}
+
+export interface Decor {
+  /** Outer edge of the red lights ring around the photo window (the ring itself lies between this and the window). */
+  photoRing: Rect;
+  plateHalo: Rect;
+  /** Holly clusters at the top corners; each is a cluster centre and the box it may paint in. */
+  holly: { cx: number; cy: number; flip: boolean; box: Rect }[];
+  /** Bulb centres along the ring's centre line. */
+  lights: { x: number; y: number }[];
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const grow = (r: Rect, by: number): Rect => ({ x: r.x - by, y: r.y - by, w: r.w + 2 * by, h: r.h + 2 * by });
+const hits = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+export function computeDecor(l: FrameLayout): Decor {
+  const ring = grow(l.photo, PHOTO_RING_PX);
+  const lights: { x: number; y: number }[] = [];
+  const half = PHOTO_RING_PX / 2;
+  const step = 55;
+  const left = l.photo.x - half;
+  const right = l.photo.x + l.photo.w + half;
+  const top = l.photo.y - half;
+  const bottom = l.photo.y + l.photo.h + half;
+  for (let x = left + 20; x <= right - 20; x += step) {
+    lights.push({ x, y: top }, { x, y: bottom });
+  }
+  for (let y = top + step; y <= bottom - step + 1; y += step) {
+    lights.push({ x: left, y }, { x: right, y });
+  }
+  const hollyBox = (x: number): Rect => ({ x, y: HOLLY_INSET, w: HOLLY_SIZE, h: HOLLY_SIZE });
+  return {
+    photoRing: ring,
+    plateHalo: grow(l.qrPlate, PLATE_HALO_PX),
+    holly: [
+      { cx: HOLLY_INSET + HOLLY_SIZE / 2 - 6, cy: HOLLY_INSET + HOLLY_SIZE / 2 - 6, flip: false, box: hollyBox(HOLLY_INSET) },
+      { cx: l.width - (HOLLY_INSET + HOLLY_SIZE / 2 - 6), cy: HOLLY_INSET + HOLLY_SIZE / 2 - 6, flip: true, box: hollyBox(l.width - HOLLY_INSET - HOLLY_SIZE) },
+    ],
+    lights,
+  };
+}
+
+/** The centred box the title lines may occupy. */
+export function titleTextBox(l: FrameLayout): Rect {
+  return { x: l.title.x + (l.title.w - TITLE_TEXT_MAX_W) / 2, y: l.title.y, w: TITLE_TEXT_MAX_W, h: l.title.h };
+}
+
+/** The band of the caption rect the two caption lines occupy (the rest of the rect is free for decoration). */
+export function captionTextBox(l: FrameLayout): Rect {
+  const mid = l.caption.y + l.caption.h / 2;
+  return { x: l.caption.x, y: mid - 56, w: l.caption.w, h: 112 };
+}
+
+/**
+ * Deterministic snowflakes that avoid everything printed: the photo and its ring, the QR plate and halo,
+ * the holly, the title and name text, the caption and number. `nameWidth` is the fitted name's width.
+ */
+export function computeSnowflakes(l: FrameLayout, d: Decor, nameWidth: number, seed: number, count = 46): Snowflake[] {
+  const nameBox: Rect = { x: l.name.x + (l.name.w - nameWidth) / 2, y: l.name.y, w: nameWidth, h: l.name.h };
+  const blocked = [d.photoRing, d.plateHalo, titleTextBox(l), nameBox, captionTextBox(l), l.number, ...d.holly.map((h) => h.box)].map((r) => grow(r, 14));
+  const rand = mulberry32(seed * 7919 + 17);
+  const lo = CANDY_BORDER_PX + 24;
+  const out: Snowflake[] = [];
+  for (let attempt = 0; attempt < 900 && out.length < count; attempt += 1) {
+    const r = 11 + Math.floor(rand() * 13);
+    const x = lo + r + rand() * (l.width - 2 * (lo + r));
+    const y = lo + r + rand() * (l.height - 2 * (lo + r));
+    const box: Rect = { x: x - r, y: y - r, w: 2 * r, h: 2 * r };
+    if (blocked.some((b) => hits(b, box))) continue;
+    if (out.some((o) => Math.hypot(o.x - x, o.y - y) < o.r + r + 26)) continue;
+    out.push({ x, y, r });
+  }
+  return out;
+}
+
 export interface FrameLayout {
   width: number;
   height: number;
