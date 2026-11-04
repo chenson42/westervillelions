@@ -1,6 +1,6 @@
 /**
  * Admin-action audit for a session (`sw_session_log`). Counts and ids only,
- * NEVER names, contact data, question answers or codes. The vocabulary is the
+ * NEVER names, contact data, question answers, codes or scene text (title/caption). The vocabulary is the
  * Phase 3 list; later slices add their kinds as they ship.
  */
 
@@ -37,6 +37,12 @@ export const SESSION_LOG_KINDS = [
   "purge_step",
   "purge_done",
   "reset",
+  "scene_created",
+  "scene_updated",
+  "scene_deleted",
+  "scenes_reordered",
+  "scenes_copied",
+  "photo_scene_changed",
 ] as const;
 export type SessionLogKind = (typeof SESSION_LOG_KINDS)[number];
 

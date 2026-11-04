@@ -64,6 +64,11 @@ export const ADMIN_ERROR_CODES = [
   "collage_url_not_production",
   "not_eligible",
   "practice_only",
+  "scene_limit",
+  "scene_gone",
+  "scenes_changed",
+  "scenes_not_empty",
+  "no_scenes_to_copy",
   "server_error",
 ] as const;
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
@@ -562,6 +567,10 @@ export interface AdminPhotoDto {
   onCollage: boolean;
   /** Unhidden, not yet published, and would be on the collage once published (a group photo, or a consented portrait): "Publish late photos" will release it. */
   awaitingPublish: boolean;
+  /** Group photos only: the storyline scene this photo belongs to, or null (Other pictures). Portraits: null. */
+  sceneId: string | null;
+  /** The scene's title (admin-only surface), or null. */
+  sceneTitle: string | null;
 }
 
 export interface PhotoCounts {

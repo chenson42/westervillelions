@@ -284,6 +284,22 @@ export interface GroupPhotoMeta {
   height: number;
   thumbWidth: number;
   thumbHeight: number;
+  /**
+   * The storyline scene the volunteer picked, or null/absent for none. The server
+   * resolves it inside the INSERT: an unknown, deleted or foreign id is stored as no
+   * scene with the same response, so a scene problem never fails or loses a photo.
+   */
+  sceneId?: string | null;
+}
+
+/** One storyline scene as the group-photo picker shows it. Crew can read scenes, never author them. */
+export interface CrewScene {
+  id: string;
+  title: string;
+  caption: string | null;
+}
+export interface CrewScenesResponse {
+  scenes: CrewScene[];
 }
 
 export interface PickupCheckRequest {
