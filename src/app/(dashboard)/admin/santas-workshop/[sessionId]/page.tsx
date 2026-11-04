@@ -75,6 +75,7 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
           <Link href={`${base}/photos`} className={BTN_SECONDARY}>Review photos</Link>
           <Link href={`${base}/frames`} className={BTN_SECONDARY}>Make frames</Link>
           <Link href={`${base}/edit`} className={BTN_SECONDARY}>Edit session</Link>
+          <Link href={`/admin/santas-workshop/new?cloneFrom=${s.id}`} className={BTN_SECONDARY}>Clone session</Link>
         </div>
       </section>
 

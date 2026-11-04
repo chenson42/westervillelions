@@ -199,6 +199,8 @@ export interface CreateSessionRequest {
   photoDate: string;
   pickupDate: string;
   windows: SessionWindow[];
+  /** Clone: the source session id. The server reads every setting the form does not collect from that row. */
+  cloneFrom?: string;
 }
 
 /** PATCH body. `kind` and `slug` are immutable and rejected (`immutable_field`). */

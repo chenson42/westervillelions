@@ -12,7 +12,8 @@ import {
   type SessionKind,
   type SessionResponse,
 } from "@/lib/santas-workshop/admin-contract";
-import { validateCreateSession, validateSessionDates, validateUpdateSession, NAME_MAX, WINDOWS_MAX } from "@/lib/santas-workshop/session-input";
+import { cloneQuotaBytes, isPastDay, suggestCloneSlug } from "@/lib/santas-workshop/session-clone";
+import { isRealDay, validateCreateSession, validateSessionDates, validateUpdateSession, NAME_MAX, WINDOWS_MAX } from "@/lib/santas-workshop/session-input";
 import {
   buildSessionPatch,
   editableOf,
@@ -46,6 +47,8 @@ type Props =
       mode?: "create";
       /** Pre-filled from the WORKSHOP_2026 constant by the server page (defaultSessionDraft). */
       draft: CreateSessionRequest;
+      /** Present when cloning: the source's identity (never its credentials) and today's Eastern day. */
+      clone?: CloneInfo;
     }
   | {
       mode: "edit";
@@ -55,16 +58,26 @@ type Props =
       unmatchedAnswers: UnmatchedWindowAnswer[];
     };
 
-export function SessionForm(props: Props) {
-  if (props.mode === "edit") return <EditSessionForm session={props.session} unmatchedAnswers={props.unmatchedAnswers} />;
-  return <CreateSessionForm draft={props.draft} />;
+export interface CloneInfo {
+  sourceId: string;
+  sourceSlug: string;
+  sourceKind: SessionKind;
+  sourceQuotaBytes: number;
+  /** Eastern day, "YYYY-MM-DD". */
+  today: string;
 }
 
-function CreateSessionForm({ draft }: { draft: CreateSessionRequest }) {
+export function SessionForm(props: Props) {
+  if (props.mode === "edit") return <EditSessionForm session={props.session} unmatchedAnswers={props.unmatchedAnswers} />;
+  return <CreateSessionForm draft={props.draft} clone={props.clone} />;
+}
+
+function CreateSessionForm({ draft, clone }: { draft: CreateSessionRequest; clone?: CloneInfo }) {
   const router = useRouter();
   const [kind, setKind] = useState<SessionKind>(draft.kind);
   const [name, setName] = useState(draft.name);
-  const [slug, setSlug] = useState(suggestSlug(draft.kind, draft.dropoffDate));
+  const suggest = (k: SessionKind, day: string) => (clone ? suggestCloneSlug(k, day, clone.sourceSlug) : suggestSlug(k, day));
+  const [slug, setSlug] = useState(suggest(draft.kind, draft.dropoffDate));
   const [slugTouched, setSlugTouched] = useState(false);
   const [dropoffDate, setDropoffDate] = useState(draft.dropoffDate);
   const [photoDate, setPhotoDate] = useState(draft.photoDate);
@@ -75,7 +88,7 @@ function CreateSessionForm({ draft }: { draft: CreateSessionRequest }) {
 
   function chooseKind(next: SessionKind) {
     setKind(next);
-    if (!slugTouched) setSlug(suggestSlug(next, dropoffDate));
+    if (!slugTouched) setSlug(suggest(next, dropoffDate));
     // Only swap the default name when the admin has not typed their own.
     if (name === (next === "practice" ? "A Visit to Santa's Workshop" : "Santa's Workshop dry run")) {
       setName(next === "practice" ? "Santa's Workshop dry run" : "A Visit to Santa's Workshop");
@@ -109,7 +122,7 @@ function CreateSessionForm({ draft }: { draft: CreateSessionRequest }) {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErrors(null);
-    const body: CreateSessionRequest = { name, slug, kind, dropoffDate, photoDate, pickupDate, windows };
+    const body: CreateSessionRequest = { name, slug, kind, dropoffDate, photoDate, pickupDate, windows, ...(clone ? { cloneFrom: clone.sourceId } : {}) };
     const checked = validateCreateSession(body);
     if (!checked.ok) {
       setErrors({ field: checked.field, message: checked.error });
@@ -122,8 +135,8 @@ function CreateSessionForm({ draft }: { draft: CreateSessionRequest }) {
       setErrors({ field: res.failure.field, message: res.failure.message });
       return;
     }
-    toast.success("Session created.");
-    router.push(`/admin/santas-workshop/${res.data.session.id}`);
+    toast.success(clone ? "Session cloned." : "Session created.");
+    router.push(`/admin/santas-workshop/${res.data.session.id}${clone ? "/connect?cloned=1" : ""}`);
     router.refresh();
   }
 
@@ -150,6 +163,12 @@ function CreateSessionForm({ draft }: { draft: CreateSessionRequest }) {
             </label>
           ))}
         </div>
+        {clone && (
+          <p className="mt-4 text-sm text-gray-600" data-testid="clone-quota-line">
+            Photo storage limit: {Math.round(cloneQuotaBytes(clone.sourceKind, clone.sourceQuotaBytes, kind) / (1024 * 1024))} MB{" "}
+            {kind === clone.sourceKind ? "(from the source)" : `(the default for a ${KIND_LABELS[kind]} session)`}
+          </p>
+        )}
       </fieldset>
 
       <section className={`${CARD} p-6 space-y-4`}>
@@ -178,7 +197,11 @@ function CreateSessionForm({ draft }: { draft: CreateSessionRequest }) {
 
       <section className={`${CARD} p-6`}>
         <h2 className="text-lg font-semibold text-gray-900">Dates</h2>
-        <p className="mt-1 text-sm text-gray-600">Starting values come from the club&rsquo;s 2026 event facts. Change them here for another year or a dry run.</p>
+        <p className="mt-1 text-sm text-gray-600">
+          {clone
+            ? "Starting values come from the session you are cloning. Change them here for another year or a dry run."
+            : "Starting values come from the club’s 2026 event facts. Change them here for another year or a dry run."}
+        </p>
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
           {(
             [
@@ -191,6 +214,9 @@ function CreateSessionForm({ draft }: { draft: CreateSessionRequest }) {
               <label htmlFor={`sw-${field}`} className={LABEL}>{label}</label>
               <input id={`sw-${field}`} type="date" className={INPUT} value={value} onChange={(e) => set(e.target.value)} aria-invalid={!!fieldError(field)} />
               {fieldError(field) && <p className="mt-1 text-sm text-red-700">{fieldError(field)}</p>}
+              {clone && isRealDay(value) && isPastDay(value, clone.today) && (
+                <p className="mt-1 text-sm text-amber-700">This date has already passed.</p>
+              )}
             </div>
           ))}
         </div>

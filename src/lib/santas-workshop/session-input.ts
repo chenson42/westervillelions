@@ -22,6 +22,7 @@ const SLUG = /^[a-z0-9-]{3,40}$/;
 const WINDOW_ID = /^[a-z0-9-]{1,40}$/;
 const ART_KEY = /^[a-z0-9-]{1,40}$/;
 const FILE_PREFIX = /^[a-z0-9-]{1,40}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -173,6 +174,12 @@ export function validateCreateSession(input: unknown): Validated<CreateSessionRe
   const windows = validateWindows(input.windows);
   if (!windows.ok) return windows;
 
+  let cloneFrom: string | undefined;
+  if (input.cloneFrom !== undefined) {
+    if (typeof input.cloneFrom !== "string" || !UUID.test(input.cloneFrom)) return fail("cloneFrom must be a session id", "cloneFrom");
+    cloneFrom = input.cloneFrom;
+  }
+
   const retention = defaultRetention(pickup.value);
   const dates = validateSessionDates({
     dropoffDate: dropoff.value,
@@ -193,6 +200,7 @@ export function validateCreateSession(input: unknown): Validated<CreateSessionRe
       photoDate: photo.value,
       pickupDate: pickup.value,
       windows: windows.value,
+      ...(cloneFrom ? { cloneFrom } : {}),
     },
   };
 }

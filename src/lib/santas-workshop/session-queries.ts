@@ -43,6 +43,7 @@ import { QUESTION_FIELDS, normalizeQuestionText, type QuestionMap } from "./ques
 import { unmatchedAnswers } from "./unmatched-answers";
 import { groupUnmatchedWindowAnswers, type UnmatchedWindowAnswer } from "./unmatched-window-answers";
 import { newToken128 } from "./tokens";
+import { cloneConfig, type CloneConfig, type CloneSource } from "./session-clone";
 import { previewRemapAttention } from "./remap";
 import type { SnapshotQuestion } from "@/lib/zeffy/snapshot";
 
@@ -153,31 +154,83 @@ export async function listSessions(): Promise<SessionListItem[]> {
   }));
 }
 
+/** The only columns a clone reads from its source. Named on purpose: no credential, token, Zeffy or stamp column is ever loaded. */
+export async function getCloneSource(id: string): Promise<CloneSource | null> {
+  const [row] = await db
+    .select({
+      id: swSessions.id,
+      slug: swSessions.slug,
+      name: swSessions.name,
+      kind: swSessions.kind,
+      dropoffDate: swSessions.dropoffDate,
+      photoDate: swSessions.photoDate,
+      pickupDate: swSessions.pickupDate,
+      windows: swSessions.windows,
+      crewClosesOn: swSessions.crewClosesOn,
+      purgePersonalOn: swSessions.purgePersonalOn,
+      purgePublicOn: swSessions.purgePublicOn,
+      storageQuotaBytes: swSessions.storageQuotaBytes,
+      frameArtKey: swSessions.frameArtKey,
+      framePartSize: swSessions.framePartSize,
+      questionMap: swSessions.questionMap,
+    })
+    .from(swSessions)
+    .where(eq(swSessions.id, id))
+    .limit(1);
+  return row ? { ...row, kind: row.kind as CloneSource["kind"] } : null;
+}
+
 export async function createSession(
   input: CreateSessionRequest,
   userId: string,
 ): Promise<{ ok: true; session: SessionDto } | QueryFailure> {
+  // Clone: every setting the form does not collect comes from the source row, read here on the server.
+  let clone: CloneConfig | null = null;
+  if (input.cloneFrom) {
+    const source = await getCloneSource(input.cloneFrom);
+    if (!source) return failure(404, "not_found", "That session no longer exists", "cloneFrom");
+    const cfg = cloneConfig(source, input);
+    if (!cfg.ok) return failure(400, "invalid_input", cfg.error, "cloneFrom");
+    clone = cfg.value;
+  }
   const retention = defaultRetention(input.pickupDate);
   try {
-    const [row] = await db
-      .insert(swSessions)
-      .values({
-        slug: input.slug,
-        name: input.name,
-        kind: input.kind,
-        dropoffDate: input.dropoffDate,
-        photoDate: input.photoDate,
-        pickupDate: input.pickupDate,
-        windows: input.windows,
-        crewClosesOn: defaultCrewClosesOn(input.pickupDate),
-        collageToken: newToken128(),
-        storageQuotaBytes: DEFAULT_QUOTA_BYTES[input.kind],
-        purgePersonalOn: retention.purgePersonalOn,
-        purgePublicOn: retention.purgePublicOn,
-        createdByUserId: userId,
-      })
-      .returning();
-    await logSessionEvent(row.id, userId, "created", { kind: input.kind });
+    const row = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(swSessions)
+        .values({
+          slug: input.slug,
+          name: input.name,
+          kind: input.kind,
+          dropoffDate: input.dropoffDate,
+          photoDate: input.photoDate,
+          pickupDate: input.pickupDate,
+          windows: input.windows,
+          crewClosesOn: clone?.crewClosesOn ?? defaultCrewClosesOn(input.pickupDate),
+          collageToken: newToken128(),
+          storageQuotaBytes: clone?.storageQuotaBytes ?? DEFAULT_QUOTA_BYTES[input.kind],
+          purgePersonalOn: clone?.purgePersonalOn ?? retention.purgePersonalOn,
+          purgePublicOn: clone?.purgePublicOn ?? retention.purgePublicOn,
+          ...(clone
+            ? {
+                frameFilePrefix: clone.frameFilePrefix,
+                frameArtKey: clone.frameArtKey,
+                framePartSize: clone.framePartSize,
+                questionMap: clone.questionMap,
+              }
+            : {}),
+          createdByUserId: userId,
+        })
+        .returning();
+      // Ids only. Written with `tx` so the row and its audit entry commit or roll back together.
+      await tx.insert(swSessionLog).values({
+        sessionId: created.id,
+        userId,
+        kind: "created",
+        detail: clone && input.cloneFrom ? { kind: input.kind, clonedFrom: input.cloneFrom } : { kind: input.kind },
+      });
+      return created;
+    });
     return { ok: true, session: toSessionDto(row) };
   } catch (e) {
     if (isUniqueViolation(e, "slug")) return failure(409, "slug_taken", "That slug is already in use", "slug");

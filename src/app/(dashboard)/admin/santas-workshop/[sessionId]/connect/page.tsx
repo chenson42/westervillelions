@@ -14,12 +14,19 @@ import { EventsList } from "@/components/admin/santas-workshop/events-list";
 
 export const dynamic = "force-dynamic";
 
-export default async function SantasWorkshopConnectPage({ params }: { params: Promise<{ sessionId: string }> }) {
+export default async function SantasWorkshopConnectPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ sessionId: string }>;
+  searchParams: Promise<{ cloned?: string | string[] }>;
+}) {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
   if (!(await hasFeature(session.user.id, FEATURES.SANTAS_WORKSHOP_MANAGE))) redirect("/access-pending");
 
   const { sessionId } = await params;
+  const cloned = (await searchParams).cloned === "1";
   if (!isUuid(sessionId)) notFound();
   const [s, questions] = await Promise.all([getSessionOverview(sessionId), listSeenQuestions(sessionId)]);
   if (!s || !questions) notFound();
@@ -42,6 +49,11 @@ export default async function SantasWorkshopConnectPage({ params }: { params: Pr
   return (
     <div className="space-y-6">
       <SessionNav session={s} active="connect" />
+      {cloned && (
+        <p className="rounded-2xl bg-lions-blue/5 p-4 text-gray-700" data-testid="cloned-hint">
+          Cloned. Next: connect this session&rsquo;s own Zeffy form. Question mapping was copied from the source: make a test purchase and check Needs attention.
+        </p>
+      )}
       <ConnectPanel
         sessionId={s.id}
         connected={{ campaignId, campaignTitle: s.zeffy.campaignTitle, ticketRateIds: s.zeffy.ticketRateIds }}
