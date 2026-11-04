@@ -39,6 +39,7 @@ export interface CrewRowSource {
     needsAttention: boolean;
   };
   order: {
+    lastName: string | null;
     windowId: string | null;
     refundStatus: string;
     refundedCents: number;
@@ -57,6 +58,7 @@ export function toCrewRow(src: CrewRowSource): CrewRosterRow {
     id: stuffy.id,
     name: stuffy.name,
     description: stuffy.description ? stuffy.description.slice(0, DESCRIPTION_CHARS) : null,
+    familyLastName: order.lastName?.trim() || null,
     state: isStuffyState(stuffy.state) ? stuffy.state : "registered",
     windowId: order.windowId,
     orderId: stuffy.orderId,
@@ -98,6 +100,7 @@ const rowColumns = {
   state: swStuffies.state,
   tagCode: swStuffies.tagCode,
   needsAttention: swStuffies.needsAttention,
+  lastName: swOrders.buyerLastName,
   windowId: swOrders.windowId,
   refundStatus: swOrders.refundStatus,
   refundedCents: swOrders.refundedCents,
@@ -116,6 +119,7 @@ function mapRow(r: {
   state: string;
   tagCode: string | null;
   needsAttention: boolean;
+  lastName: string | null;
   windowId: string | null;
   refundStatus: string;
   refundedCents: number;
@@ -127,7 +131,7 @@ function mapRow(r: {
 }): CrewRosterRow {
   return toCrewRow({
     stuffy: { id: r.id, orderId: r.orderId, name: r.name, description: r.description, state: r.state, tagCode: r.tagCode, needsAttention: r.needsAttention },
-    order: { windowId: r.windowId, refundStatus: r.refundStatus, refundedCents: r.refundedCents, paymentDeleted: r.paymentDeleted, refundResolutionCents: r.refundResolutionCents },
+    order: { lastName: r.lastName, windowId: r.windowId, refundStatus: r.refundStatus, refundedCents: r.refundedCents, paymentDeleted: r.paymentDeleted, refundResolutionCents: r.refundResolutionCents },
     orderSize: r.orderSize,
     hasCheckInPhoto: r.hasCheckInPhoto,
     hasPortrait: r.hasPortrait,

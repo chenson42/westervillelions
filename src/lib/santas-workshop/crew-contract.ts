@@ -132,6 +132,8 @@ export interface CrewRosterRow {
   name: string | null;
   /** First 80 characters. */
   description: string | null;
+  /** The family's last name, to tell same-named stuffies apart in the list. Never a first name or contact detail. */
+  familyLastName: string | null;
   state: StuffyState;
   windowId: string | null;
   orderId: string;

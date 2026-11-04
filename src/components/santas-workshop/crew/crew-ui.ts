@@ -31,11 +31,11 @@ export const ROSTER_FILTER_LABELS: Record<RosterFilter, string> = {
   picked_up: CREW_STATE_LABELS.picked_up,
 };
 
-/** Name, description and the last four of the sticker, case-insensitive. The parent's name is never on a row. */
+/** Name, family last name, description and the last four of the sticker, case-insensitive. No first name or contact detail is on a row. */
 export function rowMatchesQuery(row: CrewRosterRow, q: string): boolean {
   const needle = q.trim().toLowerCase();
   if (!needle) return true;
-  const hay = [crewDisplayName(row.name, row.orderSize), row.description ?? "", row.last4 ?? ""].join(" ").toLowerCase();
+  const hay = [crewDisplayName(row.name, row.orderSize), row.familyLastName ?? "", row.description ?? "", row.last4 ?? ""].join(" ").toLowerCase();
   return hay.includes(needle);
 }
 

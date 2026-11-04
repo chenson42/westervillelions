@@ -12,7 +12,7 @@ import { StorageFull, StorageMisconfigured, StorageRateLimited, StorageUnavailab
 
 const src = (over: Partial<CrewRowSource["stuffy"]> = {}, order: Partial<CrewRowSource["order"]> = {}): CrewRowSource => ({
   stuffy: { id: "s1", orderId: "o1", name: "Barnaby", description: "Brown bear".padEnd(200, "x"), state: "tagged", tagCode: "https://vendor.example.invalid/s/abcd1234", needsAttention: false, ...over },
-  order: { windowId: "w1", refundStatus: "none", refundedCents: 0, paymentDeleted: false, refundResolutionCents: null, ...order },
+  order: { lastName: "Smith", windowId: "w1", refundStatus: "none", refundedCents: 0, paymentDeleted: false, refundResolutionCents: null, ...order },
   orderSize: 2,
   hasCheckInPhoto: true,
   hasPortrait: false,
@@ -21,8 +21,10 @@ const src = (over: Partial<CrewRowSource["stuffy"]> = {}, order: Partial<CrewRow
 describe("toCrewRow", () => {
   it("returns only the fields of the contract: no contact, no ids from Zeffy, no notes", () => {
     const row = toCrewRow({ ...src(), buyerEmail: "a@example.invalid", buyerPhone: "6145550100", parentName: "Pat Example" } as CrewRowSource);
-    expect(Object.keys(row).sort()).toEqual(["description", "detailsBeingChecked", "hasCheckInPhoto", "hasPortrait", "id", "last4", "name", "orderId", "orderSize", "refundBadge", "state", "windowId"].sort());
+    expect(Object.keys(row).sort()).toEqual(["description", "detailsBeingChecked", "familyLastName", "hasCheckInPhoto", "hasPortrait", "id", "last4", "name", "orderId", "orderSize", "refundBadge", "state", "windowId"].sort());
     expect(JSON.stringify(row)).not.toMatch(/example\.invalid|6145550100|Pat/);
+    expect(row.familyLastName).toBe("Smith");
+    expect(toCrewRow(src({}, { lastName: "  " })).familyLastName).toBeNull();
   });
 
   it("shows the description's first 80 characters and only the last 4 of the sticker (never a link)", () => {

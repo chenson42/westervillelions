@@ -155,7 +155,7 @@ export function RosterView({ ctx, pendingTag, loadedAt, loadError }: Props) {
                   <span className="min-w-0 flex-1">
                     <span className="block break-words text-lg font-semibold text-gray-900">{crewDisplayName(r.name, r.orderSize)}</span>
                     <span className="mt-0.5 block break-words text-sm text-gray-600">
-                      {[win, r.description, r.last4 ? tagText(r.last4) : null].filter(Boolean).join(" · ")}
+                      {[r.familyLastName, win, r.description, r.last4 ? tagText(r.last4) : null].filter(Boolean).join(" · ")}
                     </span>
                     <span className="mt-1.5 flex flex-wrap gap-1.5">
                       <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATE_TONE[r.state]}`}>{CREW_STATE_LABELS[r.state]}</span>

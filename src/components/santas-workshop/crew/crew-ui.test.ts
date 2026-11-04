@@ -5,7 +5,7 @@ import { canRevert } from "@/lib/santas-workshop/state-machine";
 import { pickupControls, CREW_STATE_LABELS, ROSTER_FILTERS, ROSTER_FILTER_LABELS, crewDisplayName, describeScan, filterRoster, nextStep, previousState, rowMatchesQuery, showRevert, tagText, updatedAgoText, windowLabelFor } from "./crew-ui";
 
 function row(id: string, over: Partial<CrewRosterRow> = {}): CrewRosterRow {
-  return { id, name: id, description: null, state: "registered", windowId: "w1", orderId: "o1", orderSize: 1, last4: null, refundBadge: false, detailsBeingChecked: false, hasCheckInPhoto: false, hasPortrait: false, ...over };
+  return { id, name: id, description: null, familyLastName: null, state: "registered", windowId: "w1", orderId: "o1", orderSize: 1, last4: null, refundBadge: false, detailsBeingChecked: false, hasCheckInPhoto: false, hasPortrait: false, ...over };
 }
 
 describe("crew roster logic", () => {
