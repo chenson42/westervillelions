@@ -2780,6 +2780,25 @@ export const swStuffyEvents = pgTable(
 
 // Photo metadata only. NO bytes, no bytea: bytes live in the PhotoStore (Drive),
 // reachable only through photo-access.ts. `id` is the client-generated idempotency key.
+// Group-photo scenes: an admin-authored storyline (title + caption + order) per session.
+// Session-scoped configuration like windows and frame art. Plain club copy, not personal data.
+// Text policy is enforced by scene-input.ts, not by CHECK constraints (push --force drops them).
+export const swScenes = pgTable(
+  "sw_scenes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => swSessions.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    caption: text("caption"),
+    position: integer("position").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("ix_sw_scenes_session_position").on(t.sessionId, t.position)],
+);
+
 export const swPhotos = pgTable(
   "sw_photos",
   {
@@ -2808,6 +2827,8 @@ export const swPhotos = pgTable(
     hiddenByUserId: uuid("hidden_by_user_id").references(() => users.id, { onDelete: "set null" }),
     publishedAt: timestamp("published_at", { withTimezone: true }), // group photos: set by the publish batch
     purgedAt: timestamp("purged_at", { withTimezone: true }),
+    // Group photos only: the storyline scene. A deleted scene sends its photos back to "no scene".
+    sceneId: uuid("scene_id").references(() => swScenes.id, { onDelete: "set null" }),
   },
   (t) => [
     // One current portrait and one current check-in photo per stuffy, enforced by the database.

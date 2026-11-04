@@ -16,7 +16,7 @@
 | 1 — Functional refinement | analyst | Complete | READY WITH NOTES | 2026-11-04 |
 | 2 — Architectural review | architect | Complete | Approved with suggestions | 2026-11-04 |
 | 3 — Technical design | tech-lead | Complete | Design complete; implementers named | 2026-11-04 |
-| 4 — Implementation | database-admin → api-developer → ux-developer (worktree + own Neon branch) | Pending | — | — |
+| 4 — Implementation | database-admin → api-developer → ux-developer (worktree + own Neon branch) | Schema step complete (database-admin); api-developer next | — | 2026-11-04 |
 | 5 — Verification | qa | Pending | — | — |
 | 6 — Shipped vs intent | analyst | Pending | — | — |
 
@@ -689,3 +689,31 @@ Notes: [...]
 ## Red Flags (if NEEDS REWORK)
 
 - [Specific. What has to change before this ships.]
+
+
+## Phase 4 — Implementation (schema) — 2026-11-04
+
+**Owner:** database-admin
+**Status:** complete
+
+### Summary
+Added `sw_scenes` and the nullable `sw_photos.scene_id` exactly per the Phase 3 data model, with migration `0117_santas_workshop_scenes.sql`. Applied twice to the feature's own Neon branch (idempotent); no production access.
+
+### What I did
+- Neon branch `feature/group-photo-scenes`, id `br-rough-math-ams0lc2m`, child of the dev branch `br-divine-paper-amvfuhzm` (project `tiny-fog-13725730`). Pooled host `ep-steep-field-amz4eiik-pooler.c-5.us-east-1.aws.neon.tech`; verified different from dev (`ep-orange-sunset-…`) and production (`ep-rough-smoke-…`) before any write. Dev vs production mapping was confirmed with positional `neonctl connection-string`.
+- Worktree `.env.local` (gitignored) copied from the main tree with `DATABASE_URL` repointed at the branch and `PROD_DATABASE_URL` commented out. `pnpm install` run.
+- `schema.ts`: `swScenes` (before `swPhotos`), index `ix_sw_scenes_session_position (session_id, position)`; `swPhotos.sceneId` FK `ON DELETE SET NULL`. No CHECK constraints, no new index on `sw_photos.scene_id` (per design).
+- Migration 0117 (re-derived: latest was 0116): `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, both FKs in pg_constraint-guarded DO blocks with drizzle-derived names, `CREATE INDEX IF NOT EXISTS`. No seed, backfill or role binding.
+
+### Outputs
+- `src/lib/db/schema.ts`, `drizzle/migrations/0117_santas_workshop_scenes.sql`; tables affected: `sw_scenes` (new), `sw_photos` (column).
+- Local apply: `export $(grep -E "^DATABASE_URL=" .env.local | xargs) && pnpm db:migrate` (run twice, both clean). Catalog check on the branch confirmed columns, nullability, defaults, both FK definitions and the index.
+- Gates: `pnpm exec tsc --noEmit` clean; `default-role-bundles.test.ts` passes (no permission change). The design names no schema-level unit tests for this step.
+
+### Deviations
+- `drizzle-kit push --force` could not complete non-interactively: it still stops on the pre-existing B-165 prompt (`ledger_entities_slug_unique`, "truncate?") and needs a TTY. Not caused by this change; the migration alone created every object, so push has nothing of ours to add. Whoever has a terminal should run `pnpm db:push` and answer No to truncate prompts to confirm zero scene-related diff.
+
+### Open questions / handoff notes
+- For api-developer: `swScenes` (`id, sessionId, title, caption (nullable), position, createdAt, updatedAt`) and `swPhotos.sceneId` (nullable) are exported from `@/lib/db/schema`. Deleting a scene nulls `sw_photos.scene_id` in the database; deleting a session cascades scenes.
+- Dev server in the worktree must use the worktree `.env.local` (branch DB); never point it at the main tree's DB.
+- Next agent: api-developer.
