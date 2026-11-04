@@ -28,6 +28,24 @@ Both kinds live in this single file, newest first. Numbers are assigned in order
 
 ---
 
+## DECISION-129: A Santa's Workshop session is cloned through the existing create path, with every uncopied field read from the source row on the server and written through an explicit column allowlist
+
+**Status:** Resolved (2026-11-04: clone shipped as v1.100.5, Phase 5 PASS, Phase 6 SHIP WITH NOTES; item 4 completed by v1.102.0, scenes Slice B). Item 6 stays believed, unmeasured until the Dec 7 dry run.
+**Date:** 2026-11-04
+**Design:** `docs/work-log/2026-11-04-session-clone.md` (Phases 1 to 6); scenes copy in `docs/work-log/2026-11-04-group-photo-scenes.md` (Slice B).
+
+**Context:** After the first practice run the user asked to clone a session's setup "minus the pictures", choosing a new Zeffy form and practice or real.
+
+**Decision:**
+1. Clone is `cloneFrom` on `POST /api/admin/santas-workshop/sessions`, not a second route, so token minting, retention defaults and the audit row exist once. The create path is one transaction (session row and `created` audit row).
+2. The read and write column lists are explicit and scan-tested; the worker-code, collage-token, Zeffy and stamp columns are never loaded or written. The Zeffy form is connected afterwards on the Connect page.
+3. Quota follows the new kind unless the kind is unchanged; the frame file prefix is never copied (the default derives from the new slug); the crew-closes and purge dates copy only when the pickup date is unchanged. The form always opens on Practice.
+4. Clone core never writes `sw_scenes` itself. Since v1.102.0, an "Include the N scenes" checkbox (default on, shown only when the source has scenes) calls `copyScenes(tx, …)` from `scene-admin.ts`, the only writer of scene rows, inside the clone transaction; a failed copy creates no session.
+5. Purged and closed sources are allowed, because neither purge nor reset writes any copied column (`retention.ts`; QA check 5-2 cloned a force-purged source).
+6. The claim that a duplicated Zeffy form needs no re-mapping is believed, unmeasured (QA check 5-3 needs a real form). Measure it at the Dec 7 dry run.
+
+---
+
 ## DECISION-128: Santa's Workshop group-photo scenes: the public collage carries admin-typed scene title and caption for scenes that have an approved picture, and nothing else
 
 **Status:** Resolved (2026-11-04, Slice A shipped as v1.101.0; Phase 5 PASS on re-verification, Phase 6 SHIP WITH NOTES; real-phone offline and iOS checks still open, tracked as B-212). Proposed at Phase 3, 2026-11-04. Amends DECISION-125 (item 3: the public collage DTO and "every sentence is a fixed string") and DECISION-121 (item 6: what a crew response may contain). Reopens, narrowly, the 2026-10-12 "no multi-scene book" ruling for a free session-level storybook that is a print-styled page.

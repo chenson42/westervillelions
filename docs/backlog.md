@@ -39,8 +39,8 @@ was deleted on the strength of this review alone.
 - B-111 — Treasurer permission baseline: bind or split `ledger.manage`, fix two gating mismatches.
 
 **Soon**
-- B-210 — Santa's Workshop: copy scenes into another session (and an "Include the scenes" checkbox on Clone session) — before Dec 14
-- B-211 — Santa's Workshop: storybook PDF of the collage storyline ("Save as PDF" print route) — target Dec 11, hard stop Dec 16
+- B-210 — Santa's Workshop: copy scenes into another session (and an "Include the scenes" checkbox on Clone session) — before Dec 14 (shipped v1.102.0)
+- B-211 — Santa's Workshop: storybook PDF of the collage storyline ("Save as PDF" print route) — target Dec 11, hard stop Dec 16 (shipped v1.102.0)
 - B-212 — Santa's Workshop: real-phone checks of scene capture (offline queue, scene deleted while queued, iOS "Choose a saved photo") — before Dec 7
 - B-213 — Santa's Workshop: scene text check rejects numeric dates like "12-19-2026" as a phone number (low)
 - B-209 — Santa's Workshop sign-up page reads its dates and drop-off windows from the active real session (after the Nov 8 launch)
@@ -471,11 +471,11 @@ was deleted on the strength of this review alone.
 
 ## Soon
 
-- [ ] **B-210 — Santa's Workshop: copy scenes into another session.**
+- [x] **B-210 — Santa's Workshop: copy scenes into another session.** (shipped v1.102.0; storyline preview skipped)
   (added 2026-11-04 from `docs/work-log/2026-11-04-group-photo-scenes.md` Phase 6; priority: should-do, **before Dec 14**)
   Slice B of the scenes feature (DECISION-128). A "Copy scenes from another session" control on the Scenes card (title, caption, order; only into a session with no scenes), written by `scene-admin.ts` (the only writer of `sw_scenes`), and an "Include the N scenes" checkbox on Clone session (DECISION-129) calling the same `copyScenes(tx, …)` inside the clone transaction; the clone source scan that forbids scene imports changes in the same PR. Optional: a storyline preview. Until this ships, scenes rehearsed on the practice session are retyped into the real one.
 
-- [ ] **B-211 — Santa's Workshop: storybook PDF of the collage storyline.**
+- [x] **B-211 — Santa's Workshop: storybook PDF of the collage storyline.** (shipped v1.102.0; desktop Chrome print margins and iPhone Save to Files to check by hand before Dec 7, with B-212)
   (added 2026-11-04 from the scenes Phase 1/6; priority: nice-to-have, **target Dec 11, hard stop Dec 16**; drop the button if it slips)
   Slice C: a print-styled `/santas-workshop/c/[token]/book` Server Component over `getCollage()` only (no db, photo-access or photo-store imports; its own noindex, no-referrer, force-dynamic), one scene per page, group pictures only (never portraits, check-in photos or names), live state only (redirect to the collage otherwise), "Save as PDF" via the browser print dialog with an iOS hint, and the privacy-page sentence "A copy you save stays on your device." No dependency.
 
