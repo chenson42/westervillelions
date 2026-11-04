@@ -90,3 +90,22 @@ describe("collage page render", () => {
     await expect(render()).rejects.toThrow("NEXT_NOT_FOUND");
   });
 });
+
+describe("collage page art", () => {
+  it("dresses every state with decorative, print-hidden art and leaves the site chrome hidden", async () => {
+    for (const v of [
+      { state: "pending", practice: false, arrivesOn: "2099-12-19", tiles: [] },
+      { state: "removed", practice: false, arrivesOn: null, tiles: [] },
+      { state: "live", practice: false, arrivesOn: null, tiles: [] },
+    ] as const) {
+      view.current = { ...v, tiles: [] };
+      const html = await render();
+      expect(html).toContain("/_next/image?url=%2Fimages%2Fsantas-workshop%2Ftrain.png");
+      expect(html).toContain("sw-noprint");
+      // Every image from the art registry is decorative: empty alt, never a described picture.
+      const artImgs = html.match(/<img[^>]+santas-workshop%2F[^>]*>/g) ?? [];
+      expect(artImgs.length).toBeGreaterThan(1);
+      for (const img of artImgs) expect(img).toContain('alt=""');
+    }
+  });
+});

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CollageGallery } from "@/components/santas-workshop/collage/collage-gallery";
+import { CollageFooterTrain, CollageHeaderTrain, CollageStateArt } from "@/components/santas-workshop/collage/collage-decor";
 import { getCollage } from "@/lib/santas-workshop/collage-queries";
 import { CONTACT_EMAIL } from "@/components/santas-workshop/copy";
 import { easternDateString } from "@/lib/eastern-date";
@@ -38,6 +39,7 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
           <p className="text-sm uppercase tracking-widest text-lions-gold">{COLLAGE_COPY.siteName}</p>
           <h1 className="sw-display mt-1 text-3xl font-bold sm:text-4xl">{COLLAGE_COPY.title}</h1>
         </div>
+        <CollageHeaderTrain />
       </header>
 
       <div className="mx-auto max-w-6xl px-4 py-8">
@@ -49,6 +51,7 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
 
         {view.state === "pending" && (
           <section className="rounded-2xl bg-white p-8 text-center shadow-sm" aria-labelledby="state-heading">
+            <CollageStateArt id="step-photos" />
             <h2 id="state-heading" className="sw-display text-2xl font-bold text-gray-900">
               {pendingHeadline(view.arrivesOn, today)}
             </h2>
@@ -58,6 +61,7 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
 
         {view.state === "removed" && (
           <section className="rounded-2xl bg-white p-8 text-center shadow-sm" aria-labelledby="state-heading">
+            <CollageStateArt id="step-pickup" />
             <h2 id="state-heading" className="sw-display text-2xl font-bold text-gray-900">
               {COLLAGE_COPY.removed}
             </h2>
@@ -67,7 +71,12 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
 
         {view.state === "live" && (
           <div className="space-y-10">
-            {view.tiles.length === 0 && <div className="rounded-2xl bg-gray-50 p-10 text-center text-gray-500">{COLLAGE_COPY.emptyLive}</div>}
+            {view.tiles.length === 0 && (
+              <div className="rounded-2xl bg-gray-50 p-10 text-center text-gray-500">
+                <CollageStateArt id="story-art" />
+                {COLLAGE_COPY.emptyLive}
+              </div>
+            )}
             {group.length > 0 && (
               <section aria-labelledby="group-heading" className="space-y-3">
                 <h2 id="group-heading" className="sw-display text-2xl font-bold text-gray-900">
@@ -87,7 +96,8 @@ export default async function CollagePage({ params }: { params: Promise<{ token:
           </div>
         )}
 
-        <footer className="sw-print-footer mt-12 space-y-1 border-t border-gray-200 pt-6 text-center text-sm text-gray-600">
+        <CollageFooterTrain />
+        <footer className="sw-print-footer mt-6 space-y-1 border-t border-gray-200 pt-6 text-center text-sm text-gray-600">
           <p>{COLLAGE_COPY.stuffiesOnly}</p>
           <p>
             {COLLAGE_COPY.removalLead}{" "}
