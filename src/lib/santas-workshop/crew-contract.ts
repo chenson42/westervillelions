@@ -7,9 +7,10 @@
  *
  * Least data: a crew DTO NEVER carries a buyer email or mobile, a Zeffy id, or
  * an admin-only field (crew-contract-no-contact.test.ts scans this file).
- * `parentName`, `snack`, `careNote` and `noteToSanta` appear ONLY in the view
+ * `parentName`, `treat`, `careNote` and `noteToSanta` appear ONLY in the view
  * cards that need them (the tag card shows the parent name; the check-in card
- * the snack and care note; the portrait card the note to Santa).
+ * the care note; the portrait card the note to Santa; the pickup card the treat
+ * choice, because the cookie is handed over at pickup, not at drop-off).
  *
  * Errors are `{ error, code, ... }`. Consume `code` with an exhaustive `switch`
  * and a `never` check (the DECISION-102/103 pattern), not a ternary.
@@ -182,7 +183,6 @@ export interface CrewTagCard extends CardBase {
 
 export interface CrewCheckInCard extends CardBase {
   view: "checkin";
-  snack: string | null;
   careNote: string | null;
 }
 
@@ -196,6 +196,8 @@ export interface CrewPortraitCard extends CardBase {
 
 export interface CrewPickupCard extends CardBase {
   view: "pickup";
+  /** The family's cookie/treat choice (not contact data); null when none was chosen. */
+  treat: string | null;
   hasPortrait: boolean;
   checkInPhotoId: string | null;
   /** The current, unhidden portrait for the photo door; null when none or hidden. */

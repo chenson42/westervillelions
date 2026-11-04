@@ -74,15 +74,13 @@ export function CheckInPanel({ ctx, row }: Props) {
         {cardState.status === "error" && <p className="text-red-800">{cardState.message}</p>}
         {cardState.status === "ready" && (
           <dl className="space-y-3">
-            <div>
-              <dt className="text-sm font-semibold text-gray-500">Snack choice</dt>
-              <dd className="text-2xl font-bold text-gray-900 break-words">{cardState.card.snack ?? "None chosen. Ask the family."}</dd>
-            </div>
-            {cardState.card.careNote && (
+            {cardState.card.careNote ? (
               <div>
                 <dt className="text-sm font-semibold text-gray-500">Care note from the family</dt>
                 <dd className="whitespace-pre-wrap break-words text-gray-900">{cardState.card.careNote}</dd>
               </div>
+            ) : (
+              <p className="text-gray-700">No care note from the family.</p>
             )}
           </dl>
         )}

@@ -52,7 +52,7 @@ function Attention({ r }: { r: RegistrantDto }) {
 function Details({ r }: { r: RegistrantDto }) {
   const rows: [string, string | null][] = [
     ["What it is", r.description],
-    ["Snack", r.snack || "No snack choice recorded"],
+    ["Treat", r.snack || "No treat choice recorded"],
     ["Note to Santa", r.noteToSanta],
     ["Care note", r.careNote],
   ];

@@ -117,7 +117,7 @@ export function ManualAddForm({ sessionId, windows, disabled = false }: Props) {
               </select>
             </div>
             <div>
-              <label htmlFor={id("sk")} className={LABEL}>Snack choice (optional)</label>
+              <label htmlFor={id("sk")} className={LABEL}>Treat choice (optional)</label>
               <input id={id("sk")} className={INPUT} value={form.snack} onChange={(e) => set("snack", e.target.value)} {...bad("snack")} />
             </div>
             <div>

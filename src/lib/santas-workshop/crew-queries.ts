@@ -254,7 +254,7 @@ export async function getViewCard(session: SwSession, stuffyId: string, view: Cr
     return card;
   }
   if (view === "checkin") {
-    const card: CrewCheckInCard = { ...base, view: "checkin", snack: s.snack, careNote: s.careNote };
+    const card: CrewCheckInCard = { ...base, view: "checkin", careNote: s.careNote };
     return card;
   }
 
@@ -272,6 +272,7 @@ export async function getViewCard(session: SwSession, stuffyId: string, view: Cr
   const card: CrewPickupCard = {
     ...base,
     view: "pickup",
+    treat: s.snack,
     hasPortrait: portrait !== null,
     checkInPhotoId: checkIn?.id ?? null,
     portraitPhotoId: portrait && !portrait.hiddenAt ? portrait.id : null,

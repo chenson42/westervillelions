@@ -40,7 +40,7 @@ describe("crew contract carries no contact data", () => {
 
   const allowed: Record<string, string[]> = {
     parentName: ["CrewTagCard", "PickupNameResponse"],
-    snack: ["CrewCheckInCard"],
+    treat: ["CrewPickupCard"],
     careNote: ["CrewCheckInCard"],
     noteToSanta: ["CrewPortraitCard"],
   };
@@ -60,6 +60,11 @@ describe("crew contract carries no contact data", () => {
     expect(all.PickupNameResponse).toMatch(/parentName/);
     const reveal = strip(readFileSync(join(__dirname, "..", "..", "app", "api", "santas-workshop", "crew", "[slug]", "stuffies", "[id]", "pickup-check", "route.ts"), "utf8"));
     expect(reveal).not.toMatch(/parentNameFor|parentName/);
+  });
+
+  it("the cookie/treat choice rides the pickup card and no longer the check-in card", () => {
+    expect(all.CrewPickupCard).toMatch(/treat: string \| null/);
+    expect(all.CrewCheckInCard).not.toMatch(/treat|snack/);
   });
 
   it("the roster row (the bulk list) carries none of the four view-only fields", () => {

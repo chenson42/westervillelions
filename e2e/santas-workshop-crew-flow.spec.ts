@@ -30,6 +30,8 @@ test.beforeAll(async ({ browser }) => {
   for (const name of ["Pip", "Bella", "Max"]) {
     ids[name] = (await manualAdd(admin.request, sw.id, { stuffy: name, snack: name === "Bella" ? "Apple slices" : "Cookie", careNote: name === "Bella" ? "Loves a hug" : undefined })).id;
   }
+  // No treat chosen on the form: the pickup card must say so instead of showing a blank.
+  ids.Nilo = (await manualAdd(admin.request, sw.id, { stuffy: "Nilo", snack: "" })).id;
   await admin.close();
 });
 
@@ -74,7 +76,8 @@ test("bind a sticker by typing it, then move it with a confirmation", async ({ b
   await expect(page.getByText(/Sticker ready, ending 0001/)).toBeVisible();
   await page.getByRole("button", { name: "Put this sticker on Pip" }).click();
   await expect(page.getByText("Sticker ending 0001")).toBeVisible();
-  await expect(page.getByText("Snack choice")).toBeVisible();
+  // The cookie is handed over at pickup, so the drop-off card no longer asks about a snack.
+  await expect(page.getByText("Snack choice")).toHaveCount(0);
 
   // The same sticker on another stuffy: the worker is asked, and cancelling changes nothing.
   await openStuffy(page, "Bella");
@@ -127,9 +130,10 @@ test("check in with a photo: saved on the phone first, the state advances when t
   const { context, page } = await crewContext(browser);
   await enterCode(page, SLUG, sw.code);
   await openStuffy(page, "Bella");
-  // Snack choice and care note are shown at check-in.
-  await expect(page.getByText("Apple slices")).toBeVisible();
+  // Only the care note is shown at check-in; the treat choice waits for pickup (no snack at drop-off).
   await expect(page.getByText("Loves a hug")).toBeVisible();
+  await expect(page.getByText("Apple slices")).toHaveCount(0);
+  await expect(page.getByText("Snack choice")).toHaveCount(0);
   await page.locator('input[type="file"]').setInputFiles(PNG_FILE);
   await expect(page.getByText("For: Bella")).toBeVisible();
   await page.getByRole("button", { name: "Use photo" }).click();
@@ -219,10 +223,14 @@ test("pickup: name shown first, then a recorded choice, then pickup; a second st
   for (const b of bodies) expect(b).not.toContain("Parent");
 
   await openStuffy(page, "Bella");
+  // The pickup card shows the family's treat choice before and after the name is shown.
+  await expect(page.getByText("Treat", { exact: true })).toBeVisible();
+  await expect(page.getByText("Apple slices")).toBeVisible();
   await expect(page.getByRole("button", { name: "Mark picked up" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Name matches" })).toHaveCount(0);
   await page.getByRole("button", { name: "Show the name on the order" }).click();
   await expect(page.getByText("Testa Parent")).toBeVisible();
+  await expect(page.getByText("Apple slices")).toBeVisible();
   await expect(page.getByRole("button", { name: "Mark picked up" })).toBeDisabled();
   await page.getByRole("button", { name: "Name matches" }).click();
   await expect(page.getByText("Recorded: the name matches.")).toBeVisible();
@@ -251,6 +259,29 @@ test("pickup: name shown first, then a recorded choice, then pickup; a second st
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await openStuffy(page, "Bella");
   await expect(page.getByText(/already been picked up/)).toBeVisible();
+  await context.close();
+});
+
+test("the treat choice rides the pickup card only; a stuffy with none chosen says so", async ({ browser }) => {
+  // Move Nilo straight to a step that opens on the hand-over, before the phone loads the roster.
+  await db.update(swStuffies).set({ state: "checked_in", tagCode: `E2E-${STAMP}-0NIL` }).where(eq(swStuffies.id, ids.Nilo));
+  const { context, page } = await crewContext(browser);
+  await enterCode(page, SLUG, sw.code);
+  const card = async (id: string, view: string) => (await page.request.get(`/api/santas-workshop/crew/${SLUG}/stuffies/${id}?view=${view}`)).json();
+
+  const bellaPickup = await card(ids.Bella, "pickup");
+  expect(bellaPickup.treat).toBe("Apple slices");
+  const bellaCheckIn = await card(ids.Bella, "checkin");
+  expect(bellaCheckIn).not.toHaveProperty("snack");
+  expect(bellaCheckIn).not.toHaveProperty("treat");
+
+  const niloPickup = await card(ids.Nilo, "pickup");
+  expect(niloPickup.treat).toBeNull();
+  await page.reload();
+  await openStuffy(page, "Nilo");
+  await page.getByRole("button", { name: "Hand over without a portrait" }).click();
+  await expect(page.getByText("Treat", { exact: true })).toBeVisible();
+  await expect(page.getByText("None chosen. Ask the family.")).toBeVisible();
   await context.close();
 });
 

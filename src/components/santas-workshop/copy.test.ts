@@ -40,9 +40,12 @@ describe("copy.ts", () => {
     expect(copy.PHOTO_BOX_HELPER).toMatch(/group pictures/);
   });
 
-  it("the snack sentence has the no-guarantee line and no allergy wording", () => {
-    expect(copy.SNACK).toContain("This is a preference, not a medical request, and we cannot promise that any snack is free of allergens.");
-    expect(copy.SNACK).not.toMatch(/allergy|allergies|allergen-free/i);
+  it("the treat sentence names the cookie, the fixed choices and the no-guarantee line, with no allergy wording", () => {
+    expect(copy.TREAT).toBe(
+      "Your stuffy comes home with an iced sugar cookie from Mrs. Claus for your child. If your child can't have one, choose a wrapped store-bought treat or no treat on the sign-up form. We cannot promise that any treat is free of allergens.",
+    );
+    expect(copy.TREAT).not.toMatch(/allergy|allergies|allergen-free/i);
+    expect(copy.TREAT).not.toMatch(/snack/i);
   });
 
   it('SIGNUP_FRAME_TITLE is "Sign-up form for A Visit to Santa\'s Workshop, powered by Zeffy" and does not contain "donation"', () => {

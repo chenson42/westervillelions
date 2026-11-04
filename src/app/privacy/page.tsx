@@ -76,8 +76,8 @@ export default async function PrivacyPage() {
               </li>
               <li>
                 <strong>Santa&apos;s Workshop sign-ups:</strong> collected for us by Zeffy: your
-                name, email and mobile number, your stuffy&apos;s name and description, a snack
-                preference and, if you choose to give them, a child&apos;s first name, a care note
+                name, email and mobile number, your stuffy&apos;s name and description, a treat
+                choice and, if you choose to give them, a child&apos;s first name, a care note
                 and a note to Santa.
               </li>
               <li>
@@ -104,7 +104,7 @@ export default async function PrivacyPage() {
             <div className="space-y-3 text-gray-700">
               <p>
                 We use sign-up details only to run the event: to find your stuffy, to reach you,
-                and to offer a snack. Zeffy processes the payment and keeps its own record. The
+                and to send home the right treat. Zeffy processes the payment and keeps its own record. The
                 club&apos;s volunteers see your answers. We delete sign-up details from the
                 club&apos;s records by {deletedBy}.
               </p>
