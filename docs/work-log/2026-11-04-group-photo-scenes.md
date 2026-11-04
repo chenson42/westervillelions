@@ -1175,3 +1175,33 @@ In `/private/tmp/claude-501/-Users-cshenso-git-westervillelions/9872a886-1412-4a
 - **Next: ux-developer** (FAIL): `next.config.ts` header rule for `/book` plus a source-scan test; re-run the spec; then qa re-verifies (a 10-minute re-check) and hands to analyst for Phase 6.
 - Optional polish for the club to decide (not blockers): "continued" label on overflow pages; nested `<main>` (the book's `<main>` sits inside the site layout's `<main id="main-content">`, two main landmarks); centre the closing text.
 - User action before the Dec 7 dry run: print once from desktop Chrome (confirm no URL in the page margins) and once from an iPhone, and record the result here (extends B-212).
+
+## Slice C — Phase 5 — Re-verification (storybook headers fix) — 2026-11-04
+
+**Owner:** qa
+**Status:** complete
+**Verdict: PASS** (measured on `feature/storybook-pdf` at 5edc09c, clean tree, feature Neon branch `ep-steep-field`, own dev server on :3210, no email sent, main tree and production untouched)
+
+### Summary
+The one defect from the first Slice C run (the `/book` response lacked the collage's `X-Robots-Tag` and `Referrer-Policy` headers) is fixed: the collage source in `next.config.ts` now covers `/santas-workshop/c/:token/:path*`, `permissions-policy.test.ts` pins the book headers, and the e2e header test is green. The collage and family pages are unchanged.
+
+### What I did
+- `pnpm exec tsc --noEmit`: PASS (clean).
+- `pnpm test`: PASS, 344 files, 5948 tests, 0 failed.
+- `pnpm build:only`: PASS (exit 0, no tracked files changed).
+- `e2e/santas-workshop-storybook.spec.ts`: 12/12 PASS. The header test reports identical headers on collage and book: `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer`, `Cache-Control: no-cache, must-revalidate`; the document also carries `robots: noindex, nofollow, nocache` and `referrer: no-referrer`. Print PDF is 6 pages; 404 identity and removed/purged states hold.
+- `e2e/santas-workshop-collage.spec.ts`: 13/13 PASS.
+- `e2e/santas-workshop-family.spec.ts`: 8/8 PASS on a clean rerun.
+
+### Environment incident (not a defect)
+The first combined collage + family run showed one failure (family retention public-purge test, 19 of 20 passed). Another QA agent ran `pkill -f "next dev"`, which killed my dev server (my log ends with a clean shutdown; the next attempt got ERR_CONNECTION_REFUSED). I restarted the server and re-ran the whole family spec: 8/8 pass, including that test. The first failure is attributed to the killed server, which is established only by the log and the pass on re-run, not by direct observation of the kill.
+
+### Feature-gate audit
+No protected routes touched in 5edc09c (`next.config.ts` header rule, a unit test, no route or action added or changed).
+
+### Cleanup
+My dev server (:3210) stopped; scratch logs remain in the session scratchpad. Test sessions created by the specs live only on the feature Neon branch.
+
+### Open questions / handoff notes
+- **Next: analyst** for Phase 6 on Slice C (PASS).
+- Still open from the first run, unchanged: the optional polish items and the user's Dec 7 dry-run print check (desktop Chrome and iPhone).
