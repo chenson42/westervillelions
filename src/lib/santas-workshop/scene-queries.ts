@@ -37,8 +37,8 @@ export async function listAdminScenes(sessionId: string): Promise<AdminSceneDto[
       position: swScenes.position,
       createdAt: swScenes.createdAt,
       updatedAt: swScenes.updatedAt,
-      photoCount: sql<number>`(select count(*) from sw_photos sp where sp.scene_id = ${swScenes.id} and sp.purged_at is null and sp.superseded_at is null)::int`,
-      unhiddenCount: sql<number>`(select count(*) from sw_photos sp where sp.scene_id = ${swScenes.id} and sp.purged_at is null and sp.superseded_at is null and sp.hidden_at is null)::int`,
+      photoCount: sql<number>`(select count(*) from sw_photos sp where sp.scene_id = sw_scenes.id and sp.purged_at is null and sp.superseded_at is null)::int`,
+      unhiddenCount: sql<number>`(select count(*) from sw_photos sp where sp.scene_id = sw_scenes.id and sp.purged_at is null and sp.superseded_at is null and sp.hidden_at is null)::int`,
     })
     .from(swScenes)
     .where(eq(swScenes.sessionId, sessionId))

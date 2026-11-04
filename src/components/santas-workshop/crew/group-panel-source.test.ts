@@ -46,6 +46,11 @@ describe("group panel scenes", () => {
     expect(app).toContain("clearSceneStore(slug)");
     expect(app).toContain("Boolean(showCodeScreen)");
   });
+  it("clears the scene store when the code screen mounts (cold load after rotation or expiry)", () => {
+    const entry = read("code-entry.tsx");
+    expect(entry).toContain('import { clearSceneStore } from "./scene-store"');
+    expect(entry).toMatch(/useEffect\(\(\) => \{\s*clearSceneStore\(slug\);\s*\}, \[slug\]\)/);
+  });
   it("shows the 'For: <scene>' pill on the preview", () => {
     expect(panel).toContain("pill={activeScene ? `For: ${activeScene.title}` : undefined}");
     expect(read("photo-capture.tsx")).toContain("{pill && ");

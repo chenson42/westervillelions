@@ -880,3 +880,13 @@ Environment: worktree `/Users/cshenso/git/westervillelions-scenes`, feature Neon
 - The two `crew-flow` failures ("Parent" fixture collision) are pre-existing at base and should be filed separately; they also hide the 12 tests that follow them in that serial spec.
 - Before ship: user to verify L6 on a real phone (offline outbox with a cached scene list; delete a scene while photos wait; iOS Safari "Choose a saved photo").
 - `drizzle-kit push` was not run (B-165 prompt); migration 0117 alone created the objects, and dev startup applied it idempotently again.
+
+## Phase 4 fix (D1, D2) — 2026-11-04
+
+**Owner:** full-stack-developer. **Status:** complete.
+
+- D2: `scene-queries.ts` correlated counts now use `sw_scenes.id` (Drizzle renders a single-table select unqualified, so `${swScenes.id}` bound to `sw_photos.id`). Regression: `scene-query-sql.test.ts` (source scan). The delete route's `movedPhotos` count was never affected (plain filtered count) and the e2e dialog/row assertions now see the real counts.
+- D1: `code-entry.tsx` calls `clearSceneStore(slug)` in a mount effect; source test added to `group-panel-source.test.ts`.
+- Gates: tsc, lint (1 pre-existing warning), test (340 files, 5918 tests), `pnpm build:only` pass. `santas-workshop-scenes.spec.ts` on :3300 against the feature branch DB: 14/14 pass (incl. #12, #13). Dev server stopped.
+- Note: `movedPhotos` counts unpurged photos including superseded ones, while the card count excludes superseded; minor wording divergence, not changed.
+- Next: qa re-run of the full gate stack.

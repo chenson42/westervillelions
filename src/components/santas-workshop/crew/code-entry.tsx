@@ -1,10 +1,11 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { EnterRequest } from "@/lib/santas-workshop/crew-contract";
 import { crewPaths, postJson } from "./crew-api";
 import { crewFailureMessage } from "./crew-messages";
+import { clearSceneStore } from "./scene-store";
 import { CREW_BTN, CREW_CARD, CREW_INPUT, CREW_LABEL, CREW_NOTICE_AMBER } from "./crew-styles";
 
 interface Props {
@@ -27,6 +28,12 @@ export function CodeEntry({ slug, notice, onEntered }: Props) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The code screen means there is no working cookie (rotated, expired, signed out): a cold load never
+  // reaches CrewApp, so forget the cached storyline and the sticky scene here too.
+  useEffect(() => {
+    clearSceneStore(slug);
+  }, [slug]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
