@@ -65,6 +65,8 @@ export interface CloneInfo {
   sourceQuotaBytes: number;
   /** Eastern day, "YYYY-MM-DD". */
   today: string;
+  /** Scenes in the source's storyline; the "Include the scenes" checkbox shows only when above zero. */
+  sceneCount?: number;
 }
 
 export function SessionForm(props: Props) {
@@ -76,6 +78,7 @@ function CreateSessionForm({ draft, clone }: { draft: CreateSessionRequest; clon
   const router = useRouter();
   const [kind, setKind] = useState<SessionKind>(draft.kind);
   const [name, setName] = useState(draft.name);
+  const [includeScenes, setIncludeScenes] = useState(true);
   const suggest = (k: SessionKind, day: string) => (clone ? suggestCloneSlug(k, day, clone.sourceSlug) : suggestSlug(k, day));
   const [slug, setSlug] = useState(suggest(draft.kind, draft.dropoffDate));
   const [slugTouched, setSlugTouched] = useState(false);
@@ -122,7 +125,7 @@ function CreateSessionForm({ draft, clone }: { draft: CreateSessionRequest; clon
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErrors(null);
-    const body: CreateSessionRequest = { name, slug, kind, dropoffDate, photoDate, pickupDate, windows, ...(clone ? { cloneFrom: clone.sourceId } : {}) };
+    const body: CreateSessionRequest = { name, slug, kind, dropoffDate, photoDate, pickupDate, windows, ...(clone ? { cloneFrom: clone.sourceId } : {}), ...(clone && (clone.sceneCount ?? 0) > 0 ? { includeScenes } : {}) };
     const checked = validateCreateSession(body);
     if (!checked.ok) {
       setErrors({ field: checked.field, message: checked.error });
@@ -163,6 +166,15 @@ function CreateSessionForm({ draft, clone }: { draft: CreateSessionRequest; clon
             </label>
           ))}
         </div>
+        {clone && (clone.sceneCount ?? 0) > 0 && (
+          <label className="mt-4 flex items-start gap-3 text-sm text-gray-900" data-testid="clone-include-scenes">
+            <input type="checkbox" className="mt-1 h-5 w-5" checked={includeScenes} onChange={(e) => setIncludeScenes(e.target.checked)} />
+            <span>
+              Include the {clone.sceneCount} scene{clone.sceneCount === 1 ? "" : "s"}
+              <span className="block text-gray-600">Copies the storyline titles, captions and order. Photos are not copied.</span>
+            </span>
+          </label>
+        )}
         {clone && (
           <p className="mt-4 text-sm text-gray-600" data-testid="clone-quota-line">
             Photo storage limit: {Math.round(cloneQuotaBytes(clone.sourceKind, clone.sourceQuotaBytes, kind) / (1024 * 1024))} MB{" "}

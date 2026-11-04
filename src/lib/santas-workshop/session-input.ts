@@ -180,6 +180,12 @@ export function validateCreateSession(input: unknown): Validated<CreateSessionRe
     cloneFrom = input.cloneFrom;
   }
 
+  let includeScenes = false;
+  if (input.includeScenes !== undefined) {
+    if (typeof input.includeScenes !== "boolean") return fail("includeScenes must be true or false", "includeScenes");
+    includeScenes = input.includeScenes && cloneFrom !== undefined;
+  }
+
   const retention = defaultRetention(pickup.value);
   const dates = validateSessionDates({
     dropoffDate: dropoff.value,
@@ -201,6 +207,7 @@ export function validateCreateSession(input: unknown): Validated<CreateSessionRe
       pickupDate: pickup.value,
       windows: windows.value,
       ...(cloneFrom ? { cloneFrom } : {}),
+      ...(includeScenes ? { includeScenes: true } : {}),
     },
   };
 }

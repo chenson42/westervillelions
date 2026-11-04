@@ -9,9 +9,9 @@
  * never reach the public view.
  */
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { swScenes } from "@/lib/db/schema";
+import { swScenes, swSessions } from "@/lib/db/schema";
 import type { CrewScene } from "./crew-contract";
 import type { AdminSceneDto } from "./scene-contract";
 import { isUuid } from "@/lib/utils";
@@ -64,4 +64,29 @@ export async function resolveSceneId(sessionId: string, raw: unknown): Promise<s
     .where(and(eq(swScenes.id, raw.toLowerCase()), eq(swScenes.sessionId, sessionId)))
     .limit(1);
   return row?.id ?? null;
+}
+
+/** Number of scenes in one session (admin surfaces only). */
+export async function countScenes(sessionId: string): Promise<number> {
+  const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(swScenes).where(eq(swScenes.sessionId, sessionId));
+  return row?.n ?? 0;
+}
+
+export interface SceneCopySource {
+  id: string;
+  name: string;
+  kind: string;
+  sceneCount: number;
+}
+
+/** Other sessions that have at least one scene, for the "Copy scenes from another session" picker. */
+export async function listSceneCopySources(excludeSessionId: string): Promise<SceneCopySource[]> {
+  const rows = await db
+    .select({ id: swSessions.id, name: swSessions.name, kind: swSessions.kind, sceneCount: sql<number>`count(${swScenes.id})::int` })
+    .from(swSessions)
+    .innerJoin(swScenes, eq(swScenes.sessionId, swSessions.id))
+    .where(ne(swSessions.id, excludeSessionId))
+    .groupBy(swSessions.id, swSessions.name, swSessions.kind, swSessions.createdAt)
+    .orderBy(desc(swSessions.createdAt));
+  return rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind, sceneCount: r.sceneCount ?? 0 }));
 }

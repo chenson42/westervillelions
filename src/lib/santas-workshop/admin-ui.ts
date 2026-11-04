@@ -583,6 +583,7 @@ export const ADMIN_API = {
   // Scenes (DECISION-128)
   scenes: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/scenes`,
   scene: (id: string, sceneId: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/scenes/${enc(sceneId)}`,
+  scenesCopy: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/scenes/copy`,
   scenesOrder: (id: string) => `/api/admin/santas-workshop/sessions/${enc(id)}/scenes/order`,
   photoScene: (photoId: string) => `/api/admin/santas-workshop/photos/${enc(photoId)}/scene`,
   hidePhoto: (photoId: string) => `/api/admin/santas-workshop/photos/${enc(photoId)}/hide`,

@@ -6,6 +6,15 @@ const state = vi.hoisted(() => ({
   txCalls: 0,
   insertError: null as unknown,
   selectedShape: null as Record<string, unknown> | null,
+  copyCalls: [] as { args: Record<string, string>; sameTx: boolean }[],
+  copyResult: { ok: true, copied: 3 } as unknown,
+  txObjects: [] as unknown[],
+}));
+vi.mock("./scene-admin", () => ({
+  copyScenes: async (tx: unknown, args: Record<string, string>) => {
+    state.copyCalls.push({ args, sameTx: state.txObjects.includes(tx) });
+    return state.copyResult;
+  },
 }));
 
 vi.mock("@/lib/db", () => {
@@ -43,6 +52,7 @@ vi.mock("@/lib/db", () => {
     },
     transaction: async (cb: (t: typeof tx) => Promise<unknown>) => {
       state.txCalls += 1;
+      state.txObjects.push(tx);
       return cb(tx);
     },
   };
@@ -88,6 +98,9 @@ beforeEach(() => {
   state.txCalls = 0;
   state.insertError = null;
   state.selectedShape = null;
+  state.copyCalls = [];
+  state.copyResult = { ok: true, copied: 3 };
+  state.txObjects = [];
 });
 
 describe("createSession clone", () => {
@@ -147,5 +160,40 @@ describe("createSession clone", () => {
     expect(state.inserts[1].values).toMatchObject({ kind: "created", detail: { kind: "real" } });
     expect(state.inserts[0].values).toMatchObject({ storageQuotaBytes: 600 * 1024 * 1024, crewClosesOn: "2026-12-21" });
     expect(state.inserts[0].values).not.toHaveProperty("questionMap");
+  });
+});
+
+describe("createSession clone includeScenes (Slice B)", () => {
+  const NEW_ID = "22222222-2222-4222-8222-222222222222";
+
+  it("copies the scenes through copyScenes inside the same transaction and records the count (ids and counts only)", async () => {
+    const r = await createSession(input({ cloneFrom: SRC, includeScenes: true }), "u1");
+    expect(r.ok).toBe(true);
+    expect(state.copyCalls).toEqual([{ args: { fromSessionId: SRC, toSessionId: NEW_ID }, sameTx: true }]);
+    expect(state.txCalls).toBe(1);
+    expect(state.inserts[1].values).toMatchObject({ kind: "created", detail: { kind: "real", clonedFrom: SRC, scenes: 3 } });
+  });
+
+  it("does not copy scenes unless includeScenes is set, and never for a plain create", async () => {
+    await createSession(input({ cloneFrom: SRC }), "u1");
+    await createSession(input({ includeScenes: true }), "u1");
+    expect(state.copyCalls).toEqual([]);
+    expect(state.inserts.at(-1)?.values).toMatchObject({ detail: { kind: "real" } });
+  });
+
+  it("a failed scene copy rolls the clone back: the failure is returned and the transaction threw", async () => {
+    state.copyResult = { ok: false, status: 400, code: "invalid_input", error: "Scene 2 of the other session needs editing there before it can be copied" };
+    const r = await createSession(input({ cloneFrom: SRC, includeScenes: true }), "u1");
+    expect(r).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+    // The audit row is written after the copy inside the transaction, so it never ran.
+    expect(state.inserts.map((i) => i.table)).toEqual([swSessions]);
+  });
+
+  it("a source that has no scenes any more still clones (no error, no scenes field)", async () => {
+    state.copyResult = { ok: false, status: 409, code: "no_scenes_to_copy", error: "none" };
+    const r = await createSession(input({ cloneFrom: SRC, includeScenes: true }), "u1");
+    expect(r.ok).toBe(true);
+    expect(state.inserts[1].values).toMatchObject({ detail: { kind: "real", clonedFrom: SRC } });
+    expect(state.inserts[1].values.detail).not.toHaveProperty("scenes");
   });
 });

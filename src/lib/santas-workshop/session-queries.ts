@@ -32,6 +32,7 @@ import { easternDateString } from "@/lib/eastern-date";
 import { workshopNow } from "./clock";
 import { hasCheckInPhotoSql } from "./registrant-photo";
 import { retentionStatusFor } from "./retention-policy";
+import { copyScenes } from "./scene-admin";
 import { logSessionEvent } from "./session-log";
 import { describePhotoStoreConfig } from "./photo-store/config";
 import { lastStorageTest } from "./storage-status";
@@ -180,6 +181,13 @@ export async function getCloneSource(id: string): Promise<CloneSource | null> {
   return row ? { ...row, kind: row.kind as CloneSource["kind"] } : null;
 }
 
+/** Thrown inside the clone transaction so a failed scene copy rolls the new session back. */
+class CloneScenesFailed extends Error {
+  constructor(readonly failure: QueryFailure) {
+    super(failure.error);
+  }
+}
+
 export async function createSession(
   input: CreateSessionRequest,
   userId: string,
@@ -194,6 +202,7 @@ export async function createSession(
     clone = cfg.value;
   }
   const retention = defaultRetention(input.pickupDate);
+  let scenesCopied = 0;
   try {
     const row = await db.transaction(async (tx) => {
       const [created] = await tx
@@ -222,17 +231,25 @@ export async function createSession(
           createdByUserId: userId,
         })
         .returning();
+      // The storyline joins this transaction: a failed copy throws, so no session is left behind.
+      if (clone && input.cloneFrom && input.includeScenes) {
+        const copied = await copyScenes(tx, { fromSessionId: input.cloneFrom, toSessionId: created.id });
+        if (copied.ok) scenesCopied = copied.copied;
+        // A source that lost its scenes since the form loaded is not an error: the session is still wanted.
+        else if (copied.code !== "no_scenes_to_copy") throw new CloneScenesFailed(copied);
+      }
       // Ids only. Written with `tx` so the row and its audit entry commit or roll back together.
       await tx.insert(swSessionLog).values({
         sessionId: created.id,
         userId,
         kind: "created",
-        detail: clone && input.cloneFrom ? { kind: input.kind, clonedFrom: input.cloneFrom } : { kind: input.kind },
+        detail: clone && input.cloneFrom ? { kind: input.kind, clonedFrom: input.cloneFrom, ...(scenesCopied > 0 ? { scenes: scenesCopied } : {}) } : { kind: input.kind },
       });
       return created;
     });
     return { ok: true, session: toSessionDto(row) };
   } catch (e) {
+    if (e instanceof CloneScenesFailed) return e.failure;
     if (isUniqueViolation(e, "slug")) return failure(409, "slug_taken", "That slug is already in use", "slug");
     throw e;
   }

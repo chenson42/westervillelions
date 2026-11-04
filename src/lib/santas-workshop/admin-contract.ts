@@ -206,6 +206,8 @@ export interface CreateSessionRequest {
   windows: SessionWindow[];
   /** Clone: the source session id. The server reads every setting the form does not collect from that row. */
   cloneFrom?: string;
+  /** Clone only: also copy the source's storyline scenes (title, caption, order) inside the same transaction. */
+  includeScenes?: boolean;
 }
 
 /** PATCH body. `kind` and `slug` are immutable and rejected (`immutable_field`). */

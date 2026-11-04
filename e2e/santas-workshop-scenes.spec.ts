@@ -1,7 +1,7 @@
 import { test, expect, request as pwRequest, type APIRequestContext } from "@playwright/test";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../src/lib/db";
-import { swPhotos, swScenes, swSessions } from "../src/lib/db/schema";
+import { swPhotos, swScenes, swSessionLog, swSessions } from "../src/lib/db/schema";
 import { makeJpeg } from "../src/lib/santas-workshop/photo-fixtures";
 import { PNG_FILE, adminPage, cleanupSession, collageToken, createPracticeSession, crewContext, enterCode, uniqueSlug, type TestSession } from "./helpers/santas-workshop-crew";
 
@@ -33,8 +33,10 @@ test.beforeAll(async ({ browser }) => {
   await admin.close();
 });
 
+const COPY_SLUGS: string[] = [];
+
 test.afterAll(async () => {
-  for (const s of [SLUG, SLUG_OTHER, SLUG_EMPTY]) await cleanupSession(s, STARTED);
+  for (const s of [SLUG, SLUG_OTHER, SLUG_EMPTY, ...COPY_SLUGS]) await cleanupSession(s, STARTED);
 });
 
 /** The real crew route, reached with the admin cookie (requireCrew accepts a santas_workshop.manage holder). */
@@ -499,4 +501,190 @@ test("removed: a publicly purged session prints no scene text; a practice reset 
   expect((await db.select().from(swPhotos).where(eq(swPhotos.sessionId, sw.id))).length).toBe(0);
   expect((await db.select().from(swScenes).where(eq(swScenes.sessionId, sw.id))).map((s) => s.title).sort()).toEqual([...titles].sort());
   await admin.close();
+});
+
+// ---------------------------------------------------------------------------
+// Slice B (B-210): copy scenes into an empty session
+// ---------------------------------------------------------------------------
+
+const COPY_TEXT = [
+  { title: "Santa arrives", caption: "The sleigh lands on the lawn." },
+  { title: "Cocoa & carols", caption: null },
+  { title: "Café — goodbye wave", caption: "Everyone says \"see you next year\"." },
+];
+
+async function copySession(request: APIRequestContext, tag: string) {
+  const slug = uniqueSlug(`e2e-cp-${tag}`);
+  COPY_SLUGS.push(slug);
+  return createPracticeSession(request, slug, false);
+}
+
+async function addSceneViaApi(request: APIRequestContext, sessionId: string, title: string, caption: string | null) {
+  const res = await request.post(`/api/admin/santas-workshop/sessions/${sessionId}/scenes`, { data: { title, caption } });
+  expect(res.status(), await res.text()).toBe(201);
+}
+
+const copyUrl = (id: string) => `/api/admin/santas-workshop/sessions/${id}/scenes/copy`;
+const sceneRows = async (id: string) => (await db.select().from(swScenes).where(eq(swScenes.sessionId, id))).sort((a, b) => a.position - b.position);
+
+test("copy scenes (UI): confirm dialog, exact title/caption/order copied, no photos, audit row has ids and a count only, control disappears", async ({ browser }) => {
+  const page = await adminPage(browser);
+  const src = await copySession(page.request, "src");
+  const tgt = await copySession(page.request, "tgt");
+  const noScenes = await copySession(page.request, "none");
+  for (const s of COPY_TEXT) await addSceneViaApi(page.request, src.id, s.title, s.caption);
+
+  await page.goto(`/admin/santas-workshop/${tgt.id}`);
+  const card = page.getByRole("region", { name: "Storyline scenes" });
+  const control = card.getByTestId("scenes-copy");
+  await expect(control).toBeVisible();
+  // The copy control fits a 360 px screen without sideways scroll, then returns to desktop width.
+  await page.setViewportSize({ width: 360, height: 800 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // Only sessions that have scenes are offered: the source is, the empty session is not, this session never is.
+  const select = control.getByLabel("Copy scenes from another session");
+  await expect(select.locator(`option[value="${src.id}"]`)).toHaveText(/\(Practice, 3 scenes\)/);
+  await expect(select.locator(`option[value="${noScenes.id}"]`)).toHaveCount(0);
+  await expect(select.locator(`option[value="${tgt.id}"]`)).toHaveCount(0);
+  await expect(control.getByRole("button", { name: "Copy scenes" })).toBeDisabled();
+
+  await select.selectOption(src.id);
+  await control.getByRole("button", { name: "Copy scenes" }).click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("Copy these scenes?");
+  await expect(dialog).toContainText("This copies 3 scenes from");
+  await expect(dialog).toContainText("The text is public once the collage is published. Photos are not copied.");
+  // Cancel changes nothing.
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  expect(await sceneRows(tgt.id)).toHaveLength(0);
+
+  await control.getByRole("button", { name: "Copy scenes" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Copy scenes" }).click();
+  const list = card.getByTestId("scenes-list");
+  await expect(list.getByText("Santa arrives")).toBeVisible();
+  await expect(page.getByText("Copied 3 scenes.")).toBeVisible();
+  expect((await list.locator("li p.font-semibold").allInnerTexts()).map((t) => t.replace(/^\d+\.\s*/, ""))).toEqual(COPY_TEXT.map((s) => s.title));
+  await expect(card.getByTestId("scenes-copy")).toHaveCount(0);
+
+  // Exact in the database: text, null caption, dense order; the source is unchanged; no photos.
+  const copied = await sceneRows(tgt.id);
+  expect(copied.map((r) => [r.title, r.caption, r.position])).toEqual(COPY_TEXT.map((s, i) => [s.title, s.caption, i]));
+  const original = await sceneRows(src.id);
+  expect(original.map((r) => [r.title, r.caption, r.position])).toEqual(COPY_TEXT.map((s, i) => [s.title, s.caption, i]));
+  expect(copied.map((r) => r.id).some((id) => original.map((o) => o.id).includes(id))).toBe(false);
+  expect(await db.select({ id: swPhotos.id }).from(swPhotos).where(eq(swPhotos.sessionId, tgt.id))).toHaveLength(0);
+
+  // Audit: one row, ids and a count; none of the typed text.
+  const log = (await db.select().from(swSessionLog).where(eq(swSessionLog.sessionId, tgt.id))).filter((l) => l.kind === "scenes_copied");
+  expect(log).toHaveLength(1);
+  expect(log[0].detail).toEqual({ fromSessionId: src.id, count: 3 });
+  expect(JSON.stringify(log[0].detail)).not.toContain("Santa");
+
+  // After a reload the control is still gone and the copied scenes remain.
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Storyline scenes" }).getByTestId("scenes-copy")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Storyline scenes" }).getByTestId("scenes-list").getByText("Café — goodbye wave")).toBeVisible();
+  await page.close();
+});
+
+test("copy scenes (UI): a session with scenes has no copy control; a stale page that copies after scenes appeared shows the server sentence and the real list", async ({ browser }) => {
+  const page = await adminPage(browser);
+  const src = await copySession(page.request, "src2");
+  const tgt = await copySession(page.request, "tgt2");
+  await addSceneViaApi(page.request, src.id, "Source scene", null);
+
+  // Stale page: loaded empty, then another tab adds a scene to the target.
+  await page.goto(`/admin/santas-workshop/${tgt.id}`);
+  const card = page.getByRole("region", { name: "Storyline scenes" });
+  await expect(card.getByTestId("scenes-copy")).toBeVisible();
+  await addSceneViaApi(page.request, tgt.id, "Added elsewhere", null);
+  await card.getByLabel("Copy scenes from another session").selectOption(src.id);
+  await card.getByRole("button", { name: "Copy scenes" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Copy scenes" }).click();
+  await expect(card.getByRole("alert")).toContainText(/already has scenes/i);
+  await expect(card.getByTestId("scenes-list").getByText("Added elsewhere")).toBeVisible();
+  expect((await sceneRows(tgt.id)).map((r) => r.title)).toEqual(["Added elsewhere"]);
+
+  // Fresh load of a session that has scenes: no control at all.
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Storyline scenes" }).getByTestId("scenes-copy")).toHaveCount(0);
+  await page.close();
+});
+
+test("copy scenes (API): refusals leave the target untouched; 20 scenes copy; the gate refuses anonymous callers", async ({ browser }) => {
+  const page = await adminPage(browser);
+  const api = page.request;
+  const src = await copySession(api, "src3");
+  const tgt = await copySession(api, "tgt3");
+  const hasScenes = await copySession(api, "has3");
+  const empty = await copySession(api, "empty3");
+  const purged = await copySession(api, "purged3");
+  await addSceneViaApi(api, src.id, "Only scene", "A caption");
+  await addSceneViaApi(api, hasScenes.id, "Existing", null);
+
+  // target already has scenes
+  let res = await api.post(copyUrl(hasScenes.id), { data: { fromSessionId: src.id } });
+  expect(res.status()).toBe(409);
+  expect((await res.json()).code ?? (await res.json()).error?.code).toBe("scenes_not_empty");
+  expect((await sceneRows(hasScenes.id)).map((r) => r.title)).toEqual(["Existing"]);
+  // source has no scenes
+  res = await api.post(copyUrl(tgt.id), { data: { fromSessionId: empty.id } });
+  expect(res.status()).toBe(409);
+  expect(JSON.stringify(await res.json())).toContain("no_scenes_to_copy");
+  // same session
+  res = await api.post(copyUrl(src.id), { data: { fromSessionId: src.id } });
+  expect(res.status()).toBe(400);
+  // unknown source, malformed source, missing body
+  res = await api.post(copyUrl(tgt.id), { data: { fromSessionId: "00000000-0000-4000-8000-000000000000" } });
+  expect(res.status()).toBe(404);
+  res = await api.post(copyUrl(tgt.id), { data: { fromSessionId: "nope" } });
+  expect(res.status()).toBe(400);
+  res = await api.post(copyUrl(tgt.id), { data: {} });
+  expect(res.status()).toBe(400);
+  // unknown target / malformed target
+  res = await api.post(copyUrl("00000000-0000-4000-8000-000000000000"), { data: { fromSessionId: src.id } });
+  expect(res.status()).toBe(404);
+  res = await api.post(copyUrl("nope"), { data: { fromSessionId: src.id } });
+  expect(res.status()).toBe(404);
+  expect(await sceneRows(tgt.id)).toHaveLength(0);
+
+  // purged target
+  await db.update(swSessions).set({ publicPurgedAt: new Date() }).where(eq(swSessions.id, purged.id));
+  res = await api.post(copyUrl(purged.id), { data: { fromSessionId: src.id } });
+  expect(res.status()).toBe(409);
+  expect(JSON.stringify(await res.json())).toContain("session_purged");
+  expect(await sceneRows(purged.id)).toHaveLength(0);
+  // ... and the UI says so rather than silently doing nothing.
+  await page.goto(`/admin/santas-workshop/${purged.id}`);
+  const card = page.getByRole("region", { name: "Storyline scenes" });
+  if (await card.getByTestId("scenes-copy").count()) {
+    await card.getByLabel("Copy scenes from another session").selectOption(src.id);
+    await card.getByRole("button", { name: "Copy scenes" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Copy scenes" }).click();
+    await expect(card.getByRole("alert")).toContainText(/data has been removed, so it can no longer be changed/i);
+    expect(await sceneRows(purged.id)).toHaveLength(0);
+  }
+
+  // No audit row for any refusal.
+  for (const id of [hasScenes.id, tgt.id, src.id, purged.id]) {
+    expect((await db.select().from(swSessionLog).where(eq(swSessionLog.sessionId, id))).filter((l) => l.kind === "scenes_copied")).toHaveLength(0);
+  }
+
+  // A full 20-scene storyline copies in order.
+  const big = await copySession(api, "big3");
+  const bigTarget = await copySession(api, "bigt3");
+  for (let i = 0; i < 20; i += 1) await db.insert(swScenes).values({ sessionId: big.id, title: `Scene ${String(i + 1).padStart(2, "0")}`, caption: null, position: i });
+  res = await api.post(copyUrl(bigTarget.id), { data: { fromSessionId: big.id } });
+  expect(res.status(), await res.text()).toBe(200);
+  expect((await sceneRows(bigTarget.id)).map((r) => [r.title, r.position])).toEqual(Array.from({ length: 20 }, (_, i) => [`Scene ${String(i + 1).padStart(2, "0")}`, i]));
+
+  // Anonymous callers are refused and nothing is written.
+  const anon = await pwRequest.newContext({ baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000" });
+  const anonTarget = await copySession(api, "anon3");
+  const denied = await anon.post(copyUrl(anonTarget.id), { data: { fromSessionId: src.id } });
+  expect([401, 403, 307]).toContain(denied.status());
+  expect(await sceneRows(anonTarget.id)).toHaveLength(0);
+  await anon.dispose();
+  await page.close();
 });

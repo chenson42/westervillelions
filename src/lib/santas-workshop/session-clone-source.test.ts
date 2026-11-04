@@ -30,10 +30,15 @@ describe("clone source scans", () => {
     }
   });
 
-  it("session-clone.ts and the clone section of session-queries.ts never mention swScenes, sw_scenes or scene-admin", () => {
-    for (const text of [read("lib", "santas-workshop", "session-clone.ts"), cloneSection()]) {
-      expect(text).not.toMatch(/swScenes|sw_scenes|scene-admin|scene-queries/);
-    }
+  it("session-clone.ts never mentions scenes; the clone section reaches sw_scenes only through copyScenes(tx, ...) (Slice B)", () => {
+    const pure = read("lib", "santas-workshop", "session-clone.ts");
+    expect(pure).not.toMatch(/swScenes|sw_scenes|scene-admin|scene-queries|copyScenes/);
+    const section = cloneSection();
+    expect(section).not.toMatch(/swScenes|sw_scenes|scene-queries/);
+    // The one allowed seam: the shared writer, handed the open transaction.
+    expect(section).toMatch(/copyScenes\(tx, \{ fromSessionId: input\.cloneFrom, toSessionId: created\.id \}\)/);
+    expect(queries.match(/from "\.\/scene-admin"/g)).toHaveLength(1);
+    expect(queries).toMatch(/import \{ copyScenes \} from "\.\/scene-admin";/);
   });
 
   it("the session page links to the clone form and the new page never falls back to a blank form for a bad cloneFrom", () => {

@@ -1001,3 +1001,90 @@ None. Nothing found that has to change before Slice A merges. The three things I
 ### Handoff
 - **Pipeline state:** Slice A closes with SHIP WITH NOTES. The work-log stays open for Slices B and C; each re-enters at Phase 3 (small design) and returns to Phase 6 for its own verdict.
 - **Outputs:** this section of `docs/work-log/2026-11-04-group-photo-scenes.md` on `feature/group-photo-scenes`. No code changes, no push, no merge.
+
+---
+
+## Slice B — Phase 4 — 2026-11-04
+
+**Owner:** full-stack-developer
+**Status:** complete (no migration; not committed)
+
+### Summary
+Copy-scenes shipped in both entry points over one writer: `copyScenes(tx, { fromSessionId, toSessionId })` in `scene-admin.ts`, used by `POST …/sessions/[id]/scenes/copy` (Scenes card control) and by the session clone transaction (`includeScenes`). The optional storyline preview was skipped (not trivial; the card's per-scene counts and the practice collage remain the preview).
+
+### What I did
+- `copyScenes(tx, …)`: locks the target (`lockSession`: 404 / `session_purged`), same session -> 400 `invalid_input`, target with scenes -> 409 `scenes_not_empty`, source with none -> 409 `no_scenes_to_copy` (404 if the source row is missing), re-runs `validateSceneText` per row (a row that no longer validates unchanged fails the whole copy, 400 naming "Scene N"), inserts dense positions. `copySceneStoryline()` wraps it in one transaction and writes the `scenes_copied` audit row (`fromSessionId`, `count`; no text).
+- Route `…/scenes/copy` (POST `{ fromSessionId }`), `auth()` then `hasFeature(SANTAS_WORKSHOP_MANAGE)`; `ADMIN_API.scenesCopy`.
+- Scenes card: "Copy scenes from another session" select + `ConfirmDialog`, shown only with 0 scenes and at least one other session that has scenes (`listSceneCopySources`, name/kind/count); server error sentences from `admin-ui.ts`.
+- Clone: `CreateSessionRequest.includeScenes`; `validateCreateSession` keeps it only when true and with `cloneFrom` (non-boolean -> 400). `createSession` calls `copyScenes(tx, …)` inside the existing transaction after the session insert; failure throws, rolling back the session; a source that lost its scenes meanwhile (`no_scenes_to_copy`) is ignored. `created` audit detail gains `scenes: n`. Form checkbox "Include the N scenes" (default on, only when `countScenes(source) > 0`).
+- Scans: clone scan now allows exactly `import { copyScenes } from "./scene-admin"` and the call `copyScenes(tx, { fromSessionId: input.cloneFrom, toSessionId: created.id })`; still forbids `swScenes`/`sw_scenes`/`scene-queries` in the clone section and any scene mention in `session-clone.ts`. `scene-admin.test.ts` transaction-count scan updated (6, with one extra lock call).
+
+### Outputs
+- Added: `src/app/api/admin/santas-workshop/sessions/[id]/scenes/copy/route.ts`, `src/lib/santas-workshop/scenes-copy-route.test.ts` (kept outside the route directory because `admin-routes-gate.test.ts` requires route directories to hold only `route.ts`).
+- Modified: `scene-admin.ts`, `scene-queries.ts` (`countScenes`, `listSceneCopySources`), `session-queries.ts`, `session-input.ts`, `admin-contract.ts`, `admin-ui.ts`, `scenes-card.tsx`, `session-form.tsx`, the session page and `new/page.tsx`; tests `scene-admin.test.ts`, `session-clone.test.ts`, `session-clone-queries.test.ts`, `session-clone-source.test.ts`.
+- Gates: `tsc` clean; `pnpm lint` 0 errors (1 pre-existing warning); `pnpm test` 342 files / 5954 tests pass; `pnpm build:only` passes. No dev server started; e2e not run or extended.
+
+### Deviations from the design
+1. `copyScenes` does not audit; the route wrapper writes `scenes_copied` and the clone records `scenes: n` in its `created` row (both use ids and counts only). Reason: audit through the global `db` would escape the clone transaction.
+2. Lossy repair is not attempted: a stored row that validates to different text fails the copy (design allowed lossless repair; believed unreachable).
+3. Import cycle `session-queries.ts` <-> `scene-admin.ts` (the latter uses `failure`); both only call across at runtime, build and tests pass.
+4. Storyline preview skipped (optional per brief). No e2e added.
+
+### Open questions / handoff notes
+- Browser checks for qa: card control appears only with 0 scenes and a source with scenes; confirm copies and order; second copy shows the `scenes_not_empty` sentence; clone form checkbox shows only for a source with scenes, unchecked -> 0 scenes, checked -> scenes present on the new session and `created` log has `scenes`.
+- Next: qa (Phase 5), then analyst Phase 6; B-210 can be ticked off on SHIP.
+
+---
+
+## Slice B — Phase 5 — Verification — 2026-11-04
+
+**Owner:** qa
+**Status:** complete
+**Tree measured:** main at bd2b404 plus the uncommitted Slice B changes (15 modified files and the two untracked paths listed by `git status`), plus the e2e additions below. Dev server: my own `PORT=3100 pnpm dev` in the main tree (stopped afterwards). `DATABASE_URL` host `ep-orange-sunset-am8erati-pooler` differs from `PROD_DATABASE_URL`'s `ep-rough-smoke-am069viy-pooler`; migration 0117 was already applied (the dev start replayed it as a no-op). No production access, no email.
+
+### Summary
+**Verdict: PASS.** Typecheck, lint, unit tests and the production build are green, and the copy-scenes and Include-the-scenes paths behave as designed in a real browser, including exact text and order, every refusal, the audit rows, and a clone that rolls back when the copy fails. No defects found. Three minor observations are listed under handoff notes; none blocks.
+
+### What I did
+- **Type check:** `pnpm exec tsc --noEmit` PASS (also after the e2e edits).
+- **Lint:** `pnpm lint` 0 errors, 1 pre-existing warning (`budget-context-panel.tsx:114`, not this diff).
+- **Unit tests:** `pnpm test` PASS, 344 files / 5954 tests, 5.4 s (the implementer reported 342 files / 5954 tests; the test count matches).
+- **Production build:** `pnpm build:only` PASS.
+- **E2E** on :3100 (`santas-workshop-clone`, `santas-workshop-scenes`, `santas-workshop-crew-flow`): **47 of 47 passed, 4.6 min** in the final combined run (17 + 17 + 13; 5 clone, 3 scenes tests are new).
+- **Live checks, signed in as the e2e admin (covered by the new specs):**
+  - Copy into an empty session via the Scenes card: option list shows only other sessions that have scenes with "(Practice, 3 scenes)"; empty source and the session itself are absent; Copy button disabled until a source is chosen; confirm dialog text "This copies 3 scenes from ... The text is public once the collage is published. Photos are not copied."; Cancel changes nothing; confirm shows "Copied 3 scenes."; titles, captions (including a null caption, an ampersand, an em dash, an accented letter and embedded quotes), and order exact in the DB (positions 0..n-1); new row ids (no sharing); source unchanged; 0 photos; control gone after copy and after reload.
+  - Audit: exactly one `scenes_copied` row on the target, detail `{fromSessionId, count: 3}`, no typed text. No `scenes_copied` row for any refusal.
+  - Refusals (API, target untouched each time): target has scenes -> 409 `scenes_not_empty`; source has none -> 409 `no_scenes_to_copy`; same session -> 400; unknown source -> 404; malformed or missing source -> 400; unknown or malformed target -> 404; purged target -> 409 `session_purged` (the UI shows "This session's data has been removed, so it can no longer be changed."); anonymous -> refused, nothing written. A 20-scene storyline copies in order.
+  - Stale page: the page loaded empty, scenes added in "another tab", Copy clicked -> server sentence ("already has scenes") shown and the list refetched to the real scenes.
+  - Clone session: source with 3 scenes shows "Include the 3 scenes" (checked by default) with "Photos are not copied."; submit -> new session has the 3 scenes exact, `created` log `{kind, clonedFrom, scenes: 3}`; unchecked -> 0 scenes and a `created` log with no `scenes` key; the new session's page then offers the copy control. Source with no scenes -> no checkbox; the plain New session form -> no checkbox. API: `includeScenes: true` on a sceneless source -> 201 and a plain clone; without `cloneFrom` -> dropped; non-boolean -> 400 naming `includeScenes`, nothing created.
+  - **Copy failure rollback, simulated** (a stored scene "Call 614 555 0100" inserted directly, bypassing the validator): API clone with `includeScenes` -> 400 "Scene 1 of the other session needs editing there before it can be copied"; **no session row, no log row**; through the form the user stays on the form with that sentence and nothing is created; unchecking the box then succeeds.
+  - Layout: the copy control and the clone form with the checkbox have no sideways scroll at 360 px.
+- **Regression sensitivity check:** temporarily disabled the clone's `copyScenes` call (mutation, then restored byte-for-byte from a saved copy; `git diff --stat` for `session-queries.ts` unchanged at 18 insertions / 1 deletion): the new clone-with-scenes test failed as it should.
+- **Cleanup:** every session the specs create is deleted in `afterAll`; a DB query afterwards found 0 `e2e-cp-*`, `e2e-clone-*`, `e2e-scn*` sessions and 0 `sw_scenes` rows. The :3100 server is stopped.
+
+### Regression tests added
+- `e2e/santas-workshop-scenes.spec.ts` (3 tests, "copy scenes (UI)" x2, "copy scenes (API)"): guard the Scenes-card copy path, every refusal, no audit on refusal, the 20-scene copy, stale-page handling, anonymous refusal, 360 px fit.
+- `e2e/santas-workshop-clone.spec.ts` (5 tests, from "clone with scenes"): guard the checkbox (shown/hidden/default), scenes present or absent on the new session, audit detail with and without `scenes`, the quiet fallbacks for `includeScenes` without scenes or without `cloneFrom`, the non-boolean 400, and the rollback on copy failure (API and form).
+- Unit tests for this slice (`scene-admin.test.ts`, `scenes-copy-route.test.ts`, `session-clone*.test.ts`) are the implementer's and pass; I did not add to them.
+
+### Feature-Gate Audit
+| Route or action | `auth()` present? | `hasFeature(...)` present? | Correct key? |
+|---|---|---|---|
+| `POST /api/admin/santas-workshop/sessions/[id]/scenes/copy` (new) | yes, first statement | yes, second statement | `FEATURES.SANTAS_WORKSHOP_MANAGE` (mutation of public-facing text; same key as the other scene routes) |
+| `POST /api/admin/santas-workshop/sessions` (`includeScenes` added) | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+| `/admin/santas-workshop/[sessionId]` page (now loads `listSceneCopySources`) | yes | yes (redirect to `/access-pending`) | `SANTAS_WORKSHOP_MANAGE` |
+| `/admin/santas-workshop/new` page (now calls `countScenes`) | yes | yes | `SANTAS_WORKSHOP_MANAGE` |
+
+Both `scene-queries` helpers are admin-page-only reads of counts and session names/kinds; no scene text is exposed to a non-admin surface. `admin-routes-gate.test.ts` and `admin-page-feature-gates.test.ts` pass in the unit run.
+
+### Outputs
+- Modified: `e2e/santas-workshop-scenes.spec.ts`, `e2e/santas-workshop-clone.spec.ts` (tests only; no feature code touched).
+- This work-log section.
+
+### Open questions / handoff notes
+- **Minor, not blocking (UX):** the Scenes card still offers "Copy scenes from another session" on a publicly purged target that has no scenes; choosing it always fails with the purge sentence. Hiding the control when `publicPurgedAt` is set would be a one-line tidy-up. Likewise the source list includes purged and closed sessions (copying their stored text works; I treated that as intended, since the storyline is kept configuration).
+- **Minor (docs):** DECISION-129 is cited in the brief and in `docs/work-log/2026-11-04-session-clone.md` and `docs/backlog.md`, but there is no `## DECISION-129` entry in `docs/decisions.md` yet; tech-lead should file it (and tick B-210) at ship time.
+- **Process disclosure:** to stop my :3100 server I ran `pkill -f "next dev"` in addition to killing its PID. That pattern matches every `next dev` process on the machine. No other westervillelions server was listening when I started (nothing on :3000/:3001/:3100) and the only other Node listener now (:4000) is an unrelated project, but if the Slice C worktree QA had a `next dev` of its own running, it may have been stopped; restart it if it went away.
+- Coverage figures were not re-measured for this slice (new code is in `scene-admin.ts`, covered by the implementer's unit tests).
+- Optional storyline preview was skipped by the implementer (acceptable drift, tracked under B-210's "optional").
+- Next: **analyst** for Phase 6 (PASS).

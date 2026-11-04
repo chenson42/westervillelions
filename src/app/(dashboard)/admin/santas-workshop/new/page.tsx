@@ -7,6 +7,7 @@ import { isUuid } from "@/lib/utils";
 import { easternDateString } from "@/lib/eastern-date";
 import { defaultSessionDraft } from "@/lib/santas-workshop/session-input";
 import { cloneDraft } from "@/lib/santas-workshop/session-clone";
+import { countScenes } from "@/lib/santas-workshop/scene-queries";
 import { getCloneSource } from "@/lib/santas-workshop/session-queries";
 import { SessionForm } from "@/components/admin/santas-workshop/session-form";
 import { CARD, LINK } from "@/components/admin/santas-workshop/styles";
@@ -40,6 +41,7 @@ export default async function NewSantasWorkshopSessionPage({
         </div>
       );
     }
+    const sourceSceneCount = await countScenes(source.id);
     return (
       <div className="space-y-6 max-w-3xl">
         <div>
@@ -57,6 +59,7 @@ export default async function NewSantasWorkshopSessionPage({
             sourceKind: source.kind,
             sourceQuotaBytes: source.storageQuotaBytes,
             today: easternDateString(new Date()),
+            sceneCount: sourceSceneCount,
           }}
         />
       </div>

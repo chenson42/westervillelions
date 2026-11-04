@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { ADMIN_API, callAdmin } from "@/lib/santas-workshop/admin-ui";
+import { ADMIN_API, KIND_LABELS, callAdmin } from "@/lib/santas-workshop/admin-ui";
+import type { SessionKind } from "@/lib/santas-workshop/session-vocabulary";
 import {
   SCENE_CAPTION_MAX,
   SCENE_EDITOR_WARNING,
   SCENE_TITLE_MAX,
   SCENES_MAX,
   type AdminSceneDto,
+  type SceneCopyRequest,
   type SceneDeleteResponse,
   type SceneOrderRequest,
   type SceneSaveRequest,
@@ -22,6 +24,8 @@ import { BTN_PRIMARY, BTN_SECONDARY, BTN_SMALL, CARD, EMPTY, INPUT, LABEL } from
 interface Props {
   sessionId: string;
   initial: AdminSceneDto[];
+  /** Other sessions that have scenes (name, kind, count); the copy control shows only while this session has none. */
+  copySources?: { id: string; name: string; kind: string; sceneCount: number }[];
 }
 
 type Editing = { id: string | null; title: string; caption: string };
@@ -34,13 +38,15 @@ function photoCountText(s: AdminSceneDto): { text: string; warn: boolean } {
 }
 
 /** The session's storyline: the ordered scenes that group the collage's group pictures. Scene text is PUBLIC. */
-export function ScenesCard({ sessionId, initial }: Props) {
+export function ScenesCard({ sessionId, initial, copySources = [] }: Props) {
   const [scenes, setScenes] = useState(initial);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminSceneDto | null>(null);
+  const [copyFrom, setCopyFrom] = useState("");
+  const [copyOpen, setCopyOpen] = useState(false);
 
   async function refetch() {
     const res = await callAdmin<ScenesListResponse>(ADMIN_API.scenes(sessionId));
@@ -111,6 +117,27 @@ export function ScenesCard({ sessionId, initial }: Props) {
     }
     toast.success(res.data.movedPhotos > 0 ? `Scene deleted. ${res.data.movedPhotos} photo${res.data.movedPhotos === 1 ? "" : "s"} moved to Other pictures.` : "Scene deleted.");
     await refetch();
+  }
+
+  const copySource = copySources.find((c) => c.id === copyFrom) ?? null;
+
+  async function copyStoryline() {
+    if (!copySource) return;
+    setCopyOpen(false);
+    setBusy(true);
+    setError(null);
+    const body: SceneCopyRequest = { fromSessionId: copySource.id };
+    const res = await callAdmin<ScenesListResponse>(ADMIN_API.scenesCopy(sessionId), { method: "POST", body: JSON.stringify(body) });
+    setBusy(false);
+    if (!res.ok) {
+      setError(res.failure.message);
+      // Someone added scenes in another tab: show what is there now.
+      if (res.failure.code === "scenes_not_empty") await refetch();
+      return;
+    }
+    setScenes(res.data.scenes);
+    setCopyFrom("");
+    toast.success(`Copied ${res.data.scenes.length} scene${res.data.scenes.length === 1 ? "" : "s"}.`);
   }
 
   const atLimit = scenes.length >= SCENES_MAX;
@@ -246,6 +273,41 @@ export function ScenesCard({ sessionId, initial }: Props) {
           })}
         </ol>
       )}
+
+      {scenes.length === 0 && !editing && copySources.length > 0 && (
+        <div className="mt-4 rounded-2xl bg-gray-50 p-4" data-testid="scenes-copy">
+          <label htmlFor="scenes-copy-from" className={LABEL}>
+            Copy scenes from another session
+          </label>
+          <p className="mt-1 text-sm text-gray-600">Copies the titles, captions and order. Photos are not copied.</p>
+          <div className="mt-2 flex flex-wrap gap-3">
+            <select id="scenes-copy-from" className={`${INPUT} sm:max-w-md`} value={copyFrom} onChange={(e) => setCopyFrom(e.target.value)} disabled={busy}>
+              <option value="">Choose a session</option>
+              {copySources.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({KIND_LABELS[c.kind as SessionKind] ?? c.kind}, {c.sceneCount} scene{c.sceneCount === 1 ? "" : "s"})
+                </option>
+              ))}
+            </select>
+            <button type="button" className={BTN_SECONDARY} disabled={busy || !copySource} onClick={() => setCopyOpen(true)}>
+              Copy scenes
+            </button>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={copyOpen}
+        onOpenChange={setCopyOpen}
+        title="Copy these scenes?"
+        description={
+          copySource
+            ? `This copies ${copySource.sceneCount} scene${copySource.sceneCount === 1 ? "" : "s"} from ${copySource.name} into this session. The text is public once the collage is published. Photos are not copied.`
+            : ""
+        }
+        confirmLabel="Copy scenes"
+        onConfirm={() => void copyStoryline()}
+      />
 
       <ConfirmDialog
         open={deleteTarget !== null}

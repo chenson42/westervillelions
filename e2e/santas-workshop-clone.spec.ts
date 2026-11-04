@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { eq, inArray, like } from "drizzle-orm";
 import { db } from "../src/lib/db";
-import { swOrders, swPhotos, swSessionLog, swSessions, swStuffies } from "../src/lib/db/schema";
+import { swOrders, swPhotos, swScenes, swSessionLog, swSessions, swStuffies } from "../src/lib/db/schema";
 import { defaultSessionDraft } from "../src/lib/santas-workshop/session-input";
 import { signInAsAdmin } from "./helpers/auth";
 
@@ -326,4 +326,133 @@ test("the clone form has no sideways scroll at 360 px", async ({ page }) => {
   expect(await noSideScroll(page)).toBe(true);
   await page.goto(`/admin/santas-workshop/${ids.src}`);
   expect(await noSideScroll(page)).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// Slice B (B-210, DECISION-129): "Include the scenes" on Clone session
+// ---------------------------------------------------------------------------
+
+const SCENE_TEXT = [
+  { title: "Santa arrives", caption: "The sleigh lands on the lawn." },
+  { title: "Cocoa & carols", caption: null },
+  { title: "Café — goodbye wave", caption: "Everyone says \"see you next year\"." },
+];
+
+const scenesOf = async (id: string) => (await db.select().from(swScenes).where(eq(swScenes.sessionId, id))).sort((a, b) => a.position - b.position);
+const logOf = async (id: string) => db.select().from(swSessionLog).where(eq(swSessionLog.sessionId, id));
+
+test("clone with scenes: the checkbox names the count and is checked by default; submitting copies title, caption and order and logs a count", async ({ page }) => {
+  await signInAsAdmin(page);
+  ids.withScenes = await create(page.request, `${PREFIX}-ws`, "practice");
+  for (const sc of SCENE_TEXT) {
+    const res = await page.request.post(`/api/admin/santas-workshop/sessions/${ids.withScenes}/scenes`, { data: sc });
+    expect(res.status()).toBe(201);
+  }
+
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.goto(`/admin/santas-workshop/new?cloneFrom=${ids.withScenes}`);
+  const box = page.getByTestId("clone-include-scenes").getByRole("checkbox");
+  await expect(page.getByTestId("clone-include-scenes")).toContainText("Include the 3 scenes");
+  await expect(page.getByTestId("clone-include-scenes")).toContainText("Photos are not copied.");
+  await expect(box).toBeChecked();
+  expect(await noSideScroll(page)).toBe(true);
+
+  await fillClone(page, { name: "E2E clone with scenes", slug: `${PREFIX}-wsc` });
+  await page.getByRole("button", { name: "Create practice session" }).click();
+  await page.waitForURL(/\/connect\?cloned=1$/);
+  const clone = (await db.select().from(swSessions).where(eq(swSessions.slug, `${PREFIX}-wsc`)))[0];
+  expect((await scenesOf(clone.id)).map((r) => [r.title, r.caption, r.position])).toEqual(SCENE_TEXT.map((x, i) => [x.title, x.caption, i]));
+  // The source keeps its own rows.
+  expect(await scenesOf(ids.withScenes)).toHaveLength(3);
+  // One audit row: ids and a count, no scene text.
+  const log = await logOf(clone.id);
+  expect(log).toHaveLength(1);
+  expect(log[0].detail).toEqual({ kind: "practice", clonedFrom: ids.withScenes, scenes: 3 });
+  expect(JSON.stringify(log[0].detail)).not.toContain("Santa");
+
+  // The new session's page shows the copied storyline and no copy control (it has scenes).
+  await page.goto(`/admin/santas-workshop/${clone.id}`);
+  const card = page.getByRole("region", { name: "Storyline scenes" });
+  await expect(card.getByTestId("scenes-list").getByText("Cocoa & carols")).toBeVisible();
+  await expect(card.getByTestId("scenes-copy")).toHaveCount(0);
+});
+
+test("clone with the scenes box unchecked creates a session with no scenes and a log row without a scenes count", async ({ page }) => {
+  await signInAsAdmin(page);
+  await page.goto(`/admin/santas-workshop/new?cloneFrom=${ids.withScenes}`);
+  await page.getByTestId("clone-include-scenes").getByRole("checkbox").uncheck();
+  await fillClone(page, { name: "E2E clone no scenes", slug: `${PREFIX}-nsc` });
+  await page.getByRole("button", { name: "Create practice session" }).click();
+  await page.waitForURL(/\/connect\?cloned=1$/);
+  const clone = (await db.select().from(swSessions).where(eq(swSessions.slug, `${PREFIX}-nsc`)))[0];
+  expect(await scenesOf(clone.id)).toHaveLength(0);
+  const log = await logOf(clone.id);
+  expect(log).toHaveLength(1);
+  expect(log[0].detail).toEqual({ kind: "practice", clonedFrom: ids.withScenes });
+  // The new session's own page offers to copy them later.
+  await page.goto(`/admin/santas-workshop/${clone.id}`);
+  await expect(page.getByRole("region", { name: "Storyline scenes" }).getByTestId("scenes-copy")).toBeVisible();
+});
+
+test("a clone source with no scenes shows no scenes checkbox; the API treats includeScenes on it as a plain clone, and without cloneFrom as nothing to copy", async ({ page }) => {
+  await signInAsAdmin(page);
+  await page.goto(`/admin/santas-workshop/new?cloneFrom=${ids.src}`);
+  await expect(page.getByRole("heading", { name: "Clone session" })).toBeVisible();
+  await expect(page.getByTestId("clone-include-scenes")).toHaveCount(0);
+
+  // The form for a brand-new (non-clone) session never shows it either.
+  await page.goto("/admin/santas-workshop/new");
+  await expect(page.getByTestId("clone-include-scenes")).toHaveCount(0);
+
+  // Source lost its scenes meanwhile (or never had any): the session is still created.
+  const plain = await page.request.post("/api/admin/santas-workshop/sessions", { data: { ...defaultSessionDraft("practice"), slug: `${PREFIX}-noscn-a`, cloneFrom: ids.src, includeScenes: true } });
+  expect(plain.status(), await plain.text()).toBe(201);
+  const plainId = (await plain.json()).session.id as string;
+  expect(await scenesOf(plainId)).toHaveLength(0);
+  expect((await logOf(plainId))[0].detail).toEqual({ kind: "practice", clonedFrom: ids.src });
+
+  // includeScenes without cloneFrom is dropped, not an error and not a copy.
+  const nofrom = await page.request.post("/api/admin/santas-workshop/sessions", { data: { ...defaultSessionDraft("practice"), slug: `${PREFIX}-noscn-b`, includeScenes: true } });
+  expect(nofrom.status(), await nofrom.text()).toBe(201);
+  const nofromId = (await nofrom.json()).session.id as string;
+  expect(await scenesOf(nofromId)).toHaveLength(0);
+  expect((await logOf(nofromId))[0].detail).toEqual({ kind: "practice" });
+
+  // A non-boolean is a field error and creates nothing.
+  const bad = await page.request.post("/api/admin/santas-workshop/sessions", { data: { ...defaultSessionDraft("practice"), slug: `${PREFIX}-noscn-c`, cloneFrom: ids.withScenes, includeScenes: "yes" } });
+  expect(bad.status()).toBe(400);
+  expect(JSON.stringify(await bad.json())).toContain("includeScenes");
+  expect(await db.select({ id: swSessions.id }).from(swSessions).where(eq(swSessions.slug, `${PREFIX}-noscn-c`))).toHaveLength(0);
+});
+
+test("a scene copy that fails rolls the whole clone back: no session, no scenes, no log row (simulated with a stored scene that no longer validates)", async ({ page }) => {
+  await signInAsAdmin(page);
+  ids.badScenes = await create(page.request, `${PREFIX}-bad`, "practice");
+  // Written straight to the table, bypassing the validator, to stand in for a row that cannot be copied unchanged.
+  await db.insert(swScenes).values({ sessionId: ids.badScenes, title: "Call 614 555 0100", caption: null, position: 0 });
+
+  const res = await page.request.post("/api/admin/santas-workshop/sessions", { data: { ...defaultSessionDraft("practice"), slug: `${PREFIX}-badclone`, cloneFrom: ids.badScenes, includeScenes: true } });
+  expect(res.status(), await res.text()).toBe(400);
+  expect(await res.text()).toContain("Scene 1");
+  expect(await db.select({ id: swSessions.id }).from(swSessions).where(eq(swSessions.slug, `${PREFIX}-badclone`))).toHaveLength(0);
+
+  // The same source without the box still clones (the scenes are simply not asked for).
+  const without = await page.request.post("/api/admin/santas-workshop/sessions", { data: { ...defaultSessionDraft("practice"), slug: `${PREFIX}-badclone2`, cloneFrom: ids.badScenes } });
+  expect(without.status(), await without.text()).toBe(201);
+});
+
+test("through the form, a copy failure leaves the user on the form with the sentence and creates nothing", async ({ page }) => {
+  await signInAsAdmin(page);
+  await page.goto(`/admin/santas-workshop/new?cloneFrom=${ids.badScenes}`);
+  await expect(page.getByTestId("clone-include-scenes")).toContainText("Include the 1 scene");
+  await fillClone(page, { name: "E2E bad scene clone", slug: `${PREFIX}-badform` });
+  await page.getByRole("button", { name: "Create practice session" }).click();
+  await expect(page.getByText(/Scene 1 of the other session needs editing there before it can be copied/)).toBeVisible();
+  expect(page.url()).toContain("/admin/santas-workshop/new?cloneFrom=");
+  expect(await db.select({ id: swSessions.id }).from(swSessions).where(eq(swSessions.slug, `${PREFIX}-badform`))).toHaveLength(0);
+  // Unchecking the box lets the same form succeed.
+  await page.getByTestId("clone-include-scenes").getByRole("checkbox").uncheck();
+  await page.getByRole("button", { name: "Create practice session" }).click();
+  await page.waitForURL(/\/connect\?cloned=1$/);
+  expect(await db.select({ id: swSessions.id }).from(swSessions).where(eq(swSessions.slug, `${PREFIX}-badform`))).toHaveLength(1);
 });

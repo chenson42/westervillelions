@@ -130,3 +130,17 @@ describe("validateCreateSession cloneFrom", () => {
     expect(plain.ok && "cloneFrom" in plain.value).toBe(false);
   });
 });
+
+describe("validateCreateSession includeScenes (Slice B)", () => {
+  const SRC = "11111111-1111-4111-8111-111111111111";
+  const body = (extra: Record<string, unknown>) => ({ ...request(), ...extra });
+
+  it("is kept only with cloneFrom and only when true; a non-boolean is rejected", () => {
+    expect(validateCreateSession(body({ cloneFrom: SRC, includeScenes: true }))).toMatchObject({ ok: true, value: { cloneFrom: SRC, includeScenes: true } });
+    const off = validateCreateSession(body({ cloneFrom: SRC, includeScenes: false }));
+    expect(off.ok && "includeScenes" in off.value).toBe(false);
+    const orphan = validateCreateSession(body({ includeScenes: true }));
+    expect(orphan.ok && "includeScenes" in orphan.value).toBe(false);
+    expect(validateCreateSession(body({ cloneFrom: SRC, includeScenes: "yes" }))).toMatchObject({ ok: false, field: "includeScenes" });
+  });
+});

@@ -163,6 +163,63 @@ export async function reorderScenes(sessionId: string, order: string[], userId: 
 }
 
 // ---------------------------------------------------------------------------
+// Copy a storyline into an empty session (Slice B; also the clone seam)
+// ---------------------------------------------------------------------------
+
+export type CopyScenesResult = { ok: true; copied: number } | QueryFailure;
+
+/**
+ * Copies title, caption and order (never photos) from one session's storyline into another that
+ * has none. Runs inside the CALLER's transaction (the route wrapper below, or the session clone,
+ * so a failed copy leaves no new session behind). The target row is locked, then emptiness is
+ * checked and the rows are inserted, so two copies cannot both pass. Every row re-runs the
+ * validator; a stored row that no longer validates unchanged fails the whole copy.
+ * Audit is the caller's job (ids and counts only).
+ */
+export async function copyScenes(tx: Tx, args: { fromSessionId: string; toSessionId: string }): Promise<CopyScenesResult> {
+  const { fromSessionId, toSessionId } = args;
+  if (fromSessionId === toSessionId) return failure(400, "invalid_input", "Pick a different session to copy from", "fromSessionId");
+
+  const blocked = await lockSession(tx, toSessionId);
+  if (blocked) return blocked;
+
+  const [existing] = await tx.select({ n: sql<number>`count(*)::int` }).from(swScenes).where(eq(swScenes.sessionId, toSessionId));
+  if ((existing?.n ?? 0) > 0) return failure(409, "scenes_not_empty", "This session already has scenes");
+
+  const source = await tx
+    .select({ title: swScenes.title, caption: swScenes.caption })
+    .from(swScenes)
+    .where(eq(swScenes.sessionId, fromSessionId))
+    .orderBy(asc(swScenes.position), asc(swScenes.createdAt), asc(swScenes.id));
+  if (source.length === 0) {
+    const [exists] = await tx.select({ id: swSessions.id }).from(swSessions).where(eq(swSessions.id, fromSessionId)).limit(1);
+    if (!exists) return failure(404, "not_found", "Session not found", "fromSessionId");
+    return failure(409, "no_scenes_to_copy", "That session has no scenes to copy");
+  }
+
+  const rows: { title: string; caption: string | null }[] = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const checked = validateSceneText(source[i]);
+    if (!checked.ok || checked.value.title !== source[i].title || checked.value.caption !== source[i].caption) {
+      return failure(400, "invalid_input", `Scene ${i + 1} of the other session needs editing there before it can be copied`, "fromSessionId");
+    }
+    rows.push(checked.value);
+  }
+  for (let i = 0; i < rows.length; i += 1) {
+    await tx.insert(swScenes).values({ sessionId: toSessionId, title: rows[i].title, caption: rows[i].caption, position: i });
+  }
+  return { ok: true, copied: rows.length };
+}
+
+/** POST …/scenes/copy: one transaction around copyScenes, then the audit row (ids and counts only). */
+export async function copySceneStoryline(toSessionId: string, fromSessionId: string, userId: string): Promise<SceneResult<ScenesListResponse>> {
+  const outcome = await db.transaction(async (tx) => copyScenes(tx, { fromSessionId, toSessionId }));
+  if (!outcome.ok) return outcome;
+  await logSessionEvent(toSessionId, userId, "scenes_copied", { fromSessionId, count: outcome.copied });
+  return { ok: true, response: { scenes: await listAdminScenes(toSessionId) } };
+}
+
+// ---------------------------------------------------------------------------
 // Reassign one group photo
 // ---------------------------------------------------------------------------
 

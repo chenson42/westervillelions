@@ -7,7 +7,7 @@ import { isUuid } from "@/lib/utils";
 import { getSessionOverview, listRegistrants } from "@/lib/santas-workshop/session-queries";
 import { STUFFY_STATES } from "@/lib/santas-workshop/admin-contract";
 import { CHECKLIST_MARK, STATE_LABELS, formatEasternInstant, registrantsHref } from "@/lib/santas-workshop/admin-ui";
-import { listAdminScenes } from "@/lib/santas-workshop/scene-queries";
+import { listAdminScenes, listSceneCopySources } from "@/lib/santas-workshop/scene-queries";
 import { getStorageStatus } from "@/lib/santas-workshop/storage-status";
 import { ADMIN_API } from "@/lib/santas-workshop/admin-ui";
 import { ScenesCard } from "@/components/admin/santas-workshop/scenes-card";
@@ -28,11 +28,12 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
 
   const { sessionId } = await params;
   if (!isUuid(sessionId)) notFound();
-  const [s, storage, noPhoto, scenes] = await Promise.all([
+  const [s, storage, noPhoto, scenes, copySources] = await Promise.all([
     getSessionOverview(sessionId),
     getStorageStatus(),
     listRegistrants(sessionId, { flag: "no_checkin_photo", page: 1 }),
     listAdminScenes(sessionId),
+    listSceneCopySources(sessionId),
   ]);
   if (!s) notFound();
 
@@ -159,7 +160,8 @@ export default async function SantasWorkshopSessionPage({ params }: { params: Pr
         )}
       </section>
 
-      <ScenesCard sessionId={s.id} initial={scenes} />
+      {/* A purged session can no longer be changed, so it is offered nothing to copy. */}
+      <ScenesCard sessionId={s.id} initial={scenes} copySources={s.publicPurgedAt ? [] : copySources} />
 
       <section className="grid gap-4 md:grid-cols-2">
         <RetentionCard sessionId={s.id} retention={s.retention} />

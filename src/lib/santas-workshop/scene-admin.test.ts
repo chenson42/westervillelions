@@ -83,7 +83,7 @@ vi.mock("./session-log", () => ({
 }));
 vi.mock("./scene-queries", () => ({ listAdminScenes: async () => st.list }));
 
-import { createScene, deleteScene, reorderScenes, setPhotoScene, updateScene } from "./scene-admin";
+import { copySceneStoryline, copyScenes, createScene, deleteScene, reorderScenes, setPhotoScene, updateScene } from "./scene-admin";
 
 const SID = "11111111-1111-4111-8111-111111111111";
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -183,6 +183,61 @@ describe("deleteScene", () => {
     st.selects = [[{ id: SID, publicPurgedAt: new Date() }]];
     expect(await deleteScene(SID, A, "u1")).toMatchObject({ ok: false, code: "session_purged" });
     expect(writes("scenes")).toHaveLength(0);
+  });
+});
+
+describe("copyScenes / copySceneStoryline (Slice B)", () => {
+  const FROM = "99999999-9999-4999-8999-999999999999";
+  const run = (from = FROM, to = SID) => copyScenes({ select: () => undefined } as never, { fromSessionId: from, toSessionId: to });
+
+  it("copies title, caption and order as dense positions into an empty session; never touches photos", async () => {
+    st.selects = [[sessionLocked], [{ n: 0 }], [{ title: "The Sleigh Arrives", caption: "Santa lands" }, { title: "Cookies", caption: null }]];
+    const r = await copySceneStoryline(SID, FROM, "u1");
+    expect(r).toMatchObject({ ok: true });
+    expect(writes("scenes").map((o) => o.values)).toEqual([
+      { sessionId: SID, title: "The Sleigh Arrives", caption: "Santa lands", position: 0 },
+      { sessionId: SID, title: "Cookies", caption: null, position: 1 },
+    ]);
+    expect(writes("photos")).toHaveLength(0);
+    expect(st.transactions).toBe(1);
+    expect(st.logs).toEqual([{ sessionId: SID, kind: "scenes_copied", detail: { fromSessionId: FROM, count: 2 } }]);
+    expect(JSON.stringify(st.logs)).not.toMatch(/Sleigh|Cookies|Santa lands/);
+  });
+
+  it("refuses a target that already has scenes (scenes_not_empty): nothing written, no audit", async () => {
+    st.selects = [[sessionLocked], [{ n: 1 }]];
+    expect(await copySceneStoryline(SID, FROM, "u1")).toMatchObject({ ok: false, status: 409, code: "scenes_not_empty" });
+    expect(writes("scenes")).toHaveLength(0);
+    expect(st.logs).toEqual([]);
+  });
+
+  it("a source with no scenes is 409 no_scenes_to_copy; a missing source is 404", async () => {
+    st.selects = [[sessionLocked], [{ n: 0 }], [], [{ id: FROM }]];
+    expect(await copySceneStoryline(SID, FROM, "u1")).toMatchObject({ ok: false, status: 409, code: "no_scenes_to_copy" });
+    st.selects = [[sessionLocked], [{ n: 0 }], [], []];
+    expect(await copySceneStoryline(SID, FROM, "u1")).toMatchObject({ ok: false, status: 404, code: "not_found" });
+    expect(writes("scenes")).toHaveLength(0);
+  });
+
+  it("the same session is 400 before any database use", async () => {
+    expect(await run(SID, SID)).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+    expect(await copySceneStoryline(SID, SID, "u1")).toMatchObject({ ok: false, status: 400 });
+    expect(st.transactions).toBe(1);
+  });
+
+  it("a publicly purged target is refused (session_purged); a purged SOURCE is not read as a reason to refuse", async () => {
+    st.selects = [[{ id: SID, publicPurgedAt: new Date() }]];
+    expect(await copySceneStoryline(SID, FROM, "u1")).toMatchObject({ ok: false, status: 409, code: "session_purged" });
+    expect(writes("scenes")).toHaveLength(0);
+  });
+
+  it("a stored row that no longer validates unchanged fails the whole copy, naming its position (never partial)", async () => {
+    st.selects = [[sessionLocked], [{ n: 0 }], [{ title: "Fine", caption: null }, { title: "Mail a@b.co", caption: null }]];
+    const r = await copySceneStoryline(SID, FROM, "u1");
+    expect(r).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+    expect((r as { error: string }).error).toContain("Scene 2");
+    expect(writes("scenes")).toHaveLength(0);
+    expect(st.logs).toEqual([]);
   });
 });
 
@@ -289,8 +344,9 @@ describe("scene-admin source scans", () => {
   });
 
   it("every transaction takes the session row lock first (FOR UPDATE)", () => {
-    expect(src.match(/db\.transaction\(/g)?.length).toBe(5);
+    expect(src.match(/db\.transaction\(/g)?.length).toBe(6); // 5 writers + copySceneStoryline (locks inside copyScenes)
     expect(src.match(/lockSession\(tx, sessionId\)/g)?.length).toBe(4);
+    expect(src.match(/lockSession\(tx, toSessionId\)/g)?.length).toBe(1);
     expect(src).toMatch(/\.for\("update"\)/);
   });
 });
