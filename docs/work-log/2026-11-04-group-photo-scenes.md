@@ -1113,3 +1113,65 @@ tsc clean; lint 0 errors (1 pre-existing warning in budget-context-panel); `pnpm
 - **No screenshot/PDF rendered:** needs a published practice session with real photo bytes in the dev store; not done. L7 (real Chrome + iPhone Safari print: page count, token URL not printed, load time) remains a Phase 5 item. Pages with more than six pictures overflow to a second page (padding kept via `box-decoration-break: clone`, to verify in Chrome).
 - New copy for the club to refine: all of `BOOK_COPY`, and the privacy sentence (user-owned wording, used verbatim).
 - Next: qa (Phase 5), including L4 (curl the book URL for pending/removed and grep scene titles: expect redirect, 0 matches).
+
+## Slice C — Phase 5 — Verification (storybook PDF, B-211) — 2026-11-04
+
+**Owner:** qa
+**Status:** complete (verdict FAIL, one defect; handed back to ux-developer)
+**Tree measured:** worktree `/Users/cshenso/git/westervillelions-scenes`, branch `feature/storybook-pdf` at 8380d52 (from main bd2b404) plus the new untracked `e2e/santas-workshop-storybook.spec.ts` (committed with this entry). Dev database: the feature's Neon branch (host `ep-steep-field-…`, different from the main tree's `ep-orange-sunset-…`; no `PROD_DATABASE_URL`). `RESEND_API_KEY` blank, no email path touched. Dev server on :3217 (NEXTAUTH_URL/AUTH_URL overridden for that process), stopped afterwards; :3000 and :3100 untouched. The main tree was not touched.
+
+### Summary
+**Verdict: FAIL.** Everything the slice promises works except one stated requirement: `/santas-workshop/c/<token>/book` is served **without** the `X-Robots-Tag: noindex, nofollow` and `Referrer-Policy: no-referrer` HTTP headers that the collage has (the book's own `<meta name="robots">` and `<meta name="referrer">` are present, so indexing and referrer leakage are covered at the document level only). Cause is below. All gates are green, the live behaviour (12 e2e checks, 11 passing) matches the design, the printed PDF is 6 Letter pages with no clipping. Hand back to ux-developer for a one-line `next.config.ts` fix plus a pinning test; re-run `pnpm exec playwright test e2e/santas-workshop-storybook.spec.ts` (the `book headers` test goes green).
+
+### What I did
+- **Gates:** `pnpm exec tsc --noEmit` PASS; `pnpm lint` PASS (0 errors, the 1 pre-existing warning in `budget-context-panel.tsx`); `pnpm test` PASS 344 files / 5948 tests, 5.9 s; `pnpm build:only` PASS, `/santas-workshop/c/[token]/book` listed as dynamic (ƒ).
+- **Live setup (practice session on the branch DB, real PNG bytes in the local photo store, framed with a dark 14 px border so a clipped edge shows):** 5 scenes: "Santa arrives" 8 pictures (7 landscape 1200x900 + 1 upright 900x1200), "Cookies and cocoa" 3 pictures (1 hidden), "Mrs. Claus waves" 1, "Hidden only" 1 hidden picture, "No photos at all" 0; plus 1 unscened group picture and 1 consented stuffy portrait. Two further practice sessions: one with no scenes, one whose only scene holds a hidden picture. Published through the admin UI (review step, then Publish). Spec: `e2e/santas-workshop-storybook.spec.ts` (12 tests; self-cleaning).
+- **Run result:** 11 pass, 1 FAIL (`book headers`), 12 total; 52 s. Final DB check: 0 rows left (sessions, photos), local store empty.
+
+| Check | Result |
+|-------|--------|
+| Pending: no link on collage; `/book` is a 307 to the collage; no scene title in either body | PASS |
+| Live with scenes: collage shows exactly one "Download the storybook" link to `/book` | PASS |
+| `/book` structure: cover + 3 scene pages (hidden-only, no-photo scenes absent) + closing; scene order, captions, pictures `v=full` | PASS |
+| Book picture ids per scene equal the collage's scene ids, same order (8, 2, 1) | PASS |
+| No portrait, no unscened ("Other pictures"), no hidden picture, no stuffy name in the book; alt text ordinal and unique ("Group picture 1" to "11") | PASS |
+| Token not present in visible text | PASS |
+| Hide a live picture: gone from book and collage identically (7,2,1); hide a scene's only picture: its page disappears (4 sections); unhide restores | PASS |
+| Picture uploaded after publish: absent from book and collage, photo door 404 to a stranger; after review and Publish late photos: on both (9,2,1) | PASS |
+| Unknown token and malformed token: `/book` and collage both 404, identical documents (dev stack trace removed), token not echoed | PASS |
+| No scenes: no link; `/book` redirects to collage | PASS |
+| Scene exists but its only picture is hidden: no link; `/book` redirects | PASS |
+| Removed (public purge): no link; `/book` redirects to the "These photos have been removed" page; no scene text, no photo `<img>` | PASS |
+| Privacy page shows "A copy you save stays on your device." | PASS |
+| 360 px: no horizontal scroll; Save as PDF button, iPhone hint and the "loads all the pictures" note visible | PASS |
+| **HTTP headers on `/book`: `X-Robots-Tag` and `Referrer-Policy: no-referrer`** | **FAIL** (see below) |
+| Document-level posture: `<meta name="robots" content="noindex, nofollow, nocache">`, `<meta name="referrer" content="no-referrer">` | PASS |
+
+### Print check (Chromium `page.pdf()`, Letter, print media)
+`pdfinfo`: 6 pages, 612 x 792 pt. Pages: 1 cover; 2 "Santa arrives" with 6 pictures; 3 the remaining 2 pictures of that scene (the upright one letterboxed, border intact); 4 "Cookies and cocoa" (2 visible pictures); 5 "Mrs. Claus waves"; 6 closing page (thank-you line, stuffies-only line, removal sentence with the club address, "A copy you save stays on your device."). So 1 cover + 3 scenes + 1 overflow page + 1 closing. No clipped or split pictures; borders visible on every side; no controls (`sw-noprint`) in the PDF; text extraction shows no token URL and no names. Visual observations, none blocking: the continuation page (page 3) has no heading, so a reader sees two pictures with no scene title (a small "continued" label would help); the closing text sits at the top of its page rather than centered; the cover reads "Santa's Workshop photos".
+
+### The defect (established vs believed)
+- **Established (reproduced three times, with the collage as control in the same test):** an anonymous `GET /santas-workshop/c/<token>/book` (no redirect following, status 200) returns no `X-Robots-Tag` and `Referrer-Policy: strict-origin-when-cross-origin` (the global default); the collage at `/santas-workshop/c/<token>` returns `X-Robots-Tag: noindex, nofollow` and `Referrer-Policy: no-referrer`. The `<meta>` equivalents on `/book` are correct.
+- **Believed cause (consistent with the observation, not separately tested):** `next.config.ts` has a header rule with `source: "/santas-workshop/c/:token"`, which matches a single path segment and so does not match `/c/<token>/book`. The crew rule uses `:path*` and works. Fix: add a rule for `/santas-workshop/c/:token/book` with the same two headers (or widen the existing source to `/santas-workshop/c/:token/:path*`), and pin it with a source test that reads `next.config.ts`; none of the existing source tests reads that file.
+- **Severity:** low in practice (the meta tags already tell crawlers and browsers the same thing), but the design ruling says "same posture as the collage" and the task listed headers, so it is a FAIL, not a note.
+
+### Not verified by this run (needs a person)
+- **Desktop Chrome/Safari print dialog:** that the browser's own header/footer (page URL and date, which would print the token link) is suppressed by `@page { margin: 0 }`. `page.pdf()` does not render browser headers and footers, so this cannot be shown by the runner.
+- **iPhone Safari:** Share, Print, pinch to preview, Save to Files, page count and load time of a full book on mobile data. Ask the user (or the chair) to do this on the practice collage; sign-off on the real-phone part is not given.
+
+### Feature-Gate Audit
+No protected routes touched. The book is a token-gated public Server Component (no `auth()`/`hasFeature()` by design, same as the collage); no `src/app/api` route, server action or `FEATURES.*` key was added or changed in 8380d52 (10 files: book page, model, button, copy, collage link, privacy sentence, tests). It reads only `getCollage()`; the photo door still decides every image request (verified: a late photo 404s to a stranger).
+
+### Coverage
+Not applicable: no change to `events.ts`, `permissions.ts` or `members.ts`. The new pure module `book-model.ts` is covered by `book-page-source.test.ts` (implementer).
+
+### Regression tests added
+- `e2e/santas-workshop-storybook.spec.ts` (new, 12 tests): `book headers: noindex, nofollow and no-referrer on the response and in the document` (guards against: the book losing the collage's HTTP posture; **currently red, by design, until the fix**); hide/late-photo parity with the collage; print PDF page count; 404 identity; state redirects. Set `QA_SHOTS=<dir>` to write the PDF and screenshots. A caution recorded in the spec: the header test must fetch with `maxRedirects: 0`, because after a purge `/book` redirects and a followed request returns the collage's headers (this produced a false pass once during this run).
+
+### Artifacts
+In `/private/tmp/claude-501/-Users-cshenso-git-westervillelions/9872a886-1412-4aed-832f-98f89eeaa486/scratchpad/storybook/`: `storybook.pdf` (6 pages), `pg-1.png` to `pg-6.png` (PDF pages at 40 dpi), `book-screen.png` (desktop screen render), `book-360-top.png`, `book-360-full.png`, `dev.log`.
+
+### Open questions / handoff notes
+- **Next: ux-developer** (FAIL): `next.config.ts` header rule for `/book` plus a source-scan test; re-run the spec; then qa re-verifies (a 10-minute re-check) and hands to analyst for Phase 6.
+- Optional polish for the club to decide (not blockers): "continued" label on overflow pages; nested `<main>` (the book's `<main>` sits inside the site layout's `<main id="main-content">`, two main landmarks); centre the closing text.
+- User action before the Dec 7 dry run: print once from desktop Chrome (confirm no URL in the page margins) and once from an iPhone, and record the result here (extends B-212).
