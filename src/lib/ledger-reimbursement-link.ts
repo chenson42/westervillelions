@@ -80,3 +80,28 @@ export async function loadPaidReimbursementsForTransaction(
     .limit(5);
   return rows;
 }
+
+/**
+ * Of the given ledger row ids, a map from each to the PAID reimbursement that
+ * links to it (the first, if several; the FK has no unique index). Used by the
+ * register to point "View receipt" at the reimbursement's own receipt route.
+ */
+export async function mapPaidReimbursementIdsByTransaction(
+  exec: LinkExec,
+  txnIds: readonly string[],
+): Promise<Map<string, string>> {
+  const ids = [...new Set(txnIds)];
+  if (ids.length === 0) return new Map();
+  const rows = await exec
+    .select({ id: ledgerReimbursements.id, txnId: ledgerReimbursements.ledgerTransactionId })
+    .from(ledgerReimbursements)
+    .where(
+      and(
+        inArray(ledgerReimbursements.ledgerTransactionId, ids),
+        eq(ledgerReimbursements.status, "paid"),
+      ),
+    );
+  const out = new Map<string, string>();
+  for (const r of rows) if (r.txnId && !out.has(r.txnId)) out.set(r.txnId, r.id);
+  return out;
+}

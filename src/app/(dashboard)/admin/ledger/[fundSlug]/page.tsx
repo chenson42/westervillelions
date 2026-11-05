@@ -28,7 +28,10 @@ import { loadMirrorProjections } from "@/lib/ledger-category-queries";
 import { listMoveRegisterContext } from "@/lib/ledger-fund-move-preview";
 import { buildFundLabels, fundExplainer, fundKindBadge } from "@/lib/ledger-fund-labels";
 import { db } from "@/lib/db";
-import { listPaidReimbursementTransactionIds } from "@/lib/ledger-reimbursement-link";
+import {
+  listPaidReimbursementTransactionIds,
+  mapPaidReimbursementIdsByTransaction,
+} from "@/lib/ledger-reimbursement-link";
 import { getFundLabels } from "@/lib/ledger-fund-labels-queries";
 import { listSweepBadges } from "@/lib/ledger-sweep-link";
 import type { SweepRowBadge } from "@/lib/ledger-sweep";
@@ -214,6 +217,17 @@ export default async function AdminLedgerFundPage({
         transactions.filter((t) => t.flow === "expense" && t.approvedAt).map((t) => t.id),
       ).catch(() => new Set<string>())
     : new Set<string>();
+
+  // Receipt source for paid-reimbursement rows (their receipt lives on the
+  // reimbursement request, not the ledger row). Shown to every ledger viewer
+  // through the LEDGER_VIEW-gated admin reimbursement receipt route; no storage
+  // key or URL ever reaches the page. Failure degrades to "No receipt".
+  const reimbursementIdByTxnId = await mapPaidReimbursementIdsByTransaction(
+    db,
+    transactions
+      .filter((t) => t.flow === "expense" && !t.receiptStorageKey && !t.transferGroupId)
+      .map((t) => t.id),
+  ).catch(() => new Map<string, string>());
 
   // The sweep chip of every row, from ONE read (two selects for the whole page,
   // never one per row; B-172 Inc 2b, B11). A failure only drops the chips: the
@@ -464,6 +478,15 @@ export default async function AdminLedgerFundPage({
                             {txn.receiptStorageKey ? (
                               <a
                                 href={`/api/admin/ledger/transactions/${txn.id}/receipt`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"
+                              >
+                                View receipt
+                              </a>
+                            ) : reimbursementIdByTxnId.has(txn.id) ? (
+                              <a
+                                href={`/api/admin/ledger/reimbursements/${reimbursementIdByTxnId.get(txn.id)}/receipt`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-xs font-semibold text-lions-blue hover:text-lions-blue-dark transition focus:outline-none focus:ring-2 focus:ring-lions-blue rounded"

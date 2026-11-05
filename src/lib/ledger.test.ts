@@ -835,7 +835,7 @@ describe("guardrails", () => {
 describe("isReceiptMissing", () => {
   it("returns true for an expense row with both receiptStorageKey and receiptWaivedAt null", () => {
     expect(
-      isReceiptMissing({ flow: "expense", receiptStorageKey: null, receiptWaivedAt: null }),
+      isReceiptMissing({ flow: "expense", receiptStorageKey: null, receiptWaivedAt: null, transferGroupId: null, hasPaidReimbursement: false }),
     ).toBe(true);
   });
 
@@ -845,13 +845,15 @@ describe("isReceiptMissing", () => {
         flow: "expense",
         receiptStorageKey: "receipts/abc/file.pdf",
         receiptWaivedAt: null,
+        transferGroupId: null,
+        hasPaidReimbursement: false,
       }),
     ).toBe(false);
   });
 
   it("returns false when receiptWaivedAt is set (waived)", () => {
     expect(
-      isReceiptMissing({ flow: "expense", receiptStorageKey: null, receiptWaivedAt: new Date() }),
+      isReceiptMissing({ flow: "expense", receiptStorageKey: null, receiptWaivedAt: new Date(), transferGroupId: null, hasPaidReimbursement: false }),
     ).toBe(false);
   });
 
@@ -861,13 +863,39 @@ describe("isReceiptMissing", () => {
         flow: "expense",
         receiptStorageKey: "receipts/abc/file.pdf",
         receiptWaivedAt: new Date(),
+        transferGroupId: null,
+        hasPaidReimbursement: false,
       }),
     ).toBe(false);
   });
 
   it("returns false for a non-expense row regardless of the other two fields (income/transfer never count)", () => {
     expect(
-      isReceiptMissing({ flow: "income", receiptStorageKey: null, receiptWaivedAt: null }),
+      isReceiptMissing({ flow: "income", receiptStorageKey: null, receiptWaivedAt: null, transferGroupId: null, hasPaidReimbursement: false }),
+    ).toBe(false);
+  });
+
+  it("returns false for a transfer leg (transferGroupId set) even with no receipt", () => {
+    expect(
+      isReceiptMissing({
+        flow: "expense",
+        receiptStorageKey: null,
+        receiptWaivedAt: null,
+        transferGroupId: "g-1",
+        hasPaidReimbursement: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false for a row a paid reimbursement links to (its request carries the receipt)", () => {
+    expect(
+      isReceiptMissing({
+        flow: "expense",
+        receiptStorageKey: null,
+        receiptWaivedAt: null,
+        transferGroupId: null,
+        hasPaidReimbursement: true,
+      }),
     ).toBe(false);
   });
 });

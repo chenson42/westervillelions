@@ -965,17 +965,32 @@ function formatUsdCents(cents: number): string {
  *     expense-only scope confirmed by the user)
  *   - receiptStorageKey is null (no file attached)
  *   - receiptWaivedAt is null (not administratively waived — DECISION-035)
+ *   - transferGroupId is null (a transfer leg moves the club's own money
+ *     between funds; there is nothing to document)
+ *   - hasPaidReimbursement is false (a paid reimbursement's request always
+ *     carries a receipt of its own — ledger_reimbursements.receipt_storage_key
+ *     is NOT NULL — so it satisfies the requirement)
  *
  * Shared by the in-memory guardrail count (getOverview()'s allTxns filter)
  * and the SQL-side `listTransactions({ missingReceipt })` filter so the two
- * can never drift apart in meaning.
+ * can never drift apart in meaning. `hasPaidReimbursement` is derived
+ * server-side with paidReimbursementExists() / listPaidReimbursementTransactionIds()
+ * in ledger-reimbursement-link.ts, never client-supplied.
  */
 export function isReceiptMissing(t: {
   flow: string;
   receiptStorageKey: string | null;
   receiptWaivedAt: Date | null;
+  transferGroupId: string | null;
+  hasPaidReimbursement: boolean;
 }): boolean {
-  return t.flow === "expense" && !t.receiptStorageKey && !t.receiptWaivedAt;
+  return (
+    t.flow === "expense" &&
+    !t.receiptStorageKey &&
+    !t.receiptWaivedAt &&
+    !t.transferGroupId &&
+    !t.hasPaidReimbursement
+  );
 }
 
 export type GuardrailsInput = {

@@ -44,10 +44,14 @@ import {
   type LedgerDonor,
   type LedgerAcknowledgment,
 } from "@/lib/db/schema";
-import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, ne, sql, count, getTableColumns } from "drizzle-orm";
+import { eq, and, gte, lt, ilike, or, inArray, desc, asc, isNotNull, isNull, ne, not, sql, count, getTableColumns } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { ackDoneeEntityId } from "@/lib/ledger-ack-donee";
 import type { SweepRowBadge } from "@/lib/ledger-sweep";
+import {
+  listPaidReimbursementTransactionIds,
+  paidReimbursementExists,
+} from "@/lib/ledger-reimbursement-link";
 import { listSweepBadges, notSweepCopy, sweptSourceHasSentReceipt } from "@/lib/ledger-sweep-link";
 import { getFiscalYear, currentFiscalYear, fiscalYearLabel, fyBounds } from "@/lib/fiscal-year";
 import { formatTimestamp } from "@/lib/format-date";
@@ -554,6 +558,10 @@ export async function listTransactions(
     conditions.push(eq(ledgerTransactions.flow, "expense"));
     conditions.push(isNull(ledgerTransactions.receiptStorageKey));
     conditions.push(isNull(ledgerTransactions.receiptWaivedAt));
+    // Lockstep with isReceiptMissing(): transfer legs and paid-reimbursement
+    // rows are never "missing a receipt".
+    conditions.push(isNull(ledgerTransactions.transferGroupId));
+    conditions.push(not(paidReimbursementExists(ledgerTransactions.id)));
   }
 
   if (search && search.trim()) {
@@ -3133,7 +3141,18 @@ export async function getOverview(
     (t) => t.flow === "expense" && t.paymentMethod === "cash",
   ).length;
   // Waived rows (receiptWaivedAt set) are excluded from this count — DECISION-035.
-  const txnsWithoutReceipt = allTxns.filter(isReceiptMissing).length;
+  // Transfer legs and paid-reimbursement rows are excluded too (isReceiptMissing).
+  // Only rows that could otherwise be missing need the reimbursement lookup.
+  const receiptCandidates = allTxns.filter((t) =>
+    isReceiptMissing({ ...t, hasPaidReimbursement: false }),
+  );
+  const paidReimbursementTxnIds = await listPaidReimbursementTransactionIds(
+    db,
+    receiptCandidates.map((t) => t.id),
+  );
+  const txnsWithoutReceipt = receiptCandidates.filter(
+    (t) => !paidReimbursementTxnIds.has(t.id),
+  ).length;
 
   // --------------------------------------------------------------------------
   // Guardrail inputs — inc2 fields
