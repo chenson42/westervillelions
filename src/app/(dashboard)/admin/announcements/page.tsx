@@ -46,7 +46,7 @@ export default async function AdminAnnouncementsPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Announcements</h1>
           <p className="mt-2 text-gray-600">
-            Manage homepage announcements and featured notices
+            Announcements appear as buttons in the homepage banner. The first two active ones with a link are shown.
           </p>
         </div>
         <Link

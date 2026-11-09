@@ -46,9 +46,6 @@ export default function AnnouncementForm({
     sortOrder: announcement?.sortOrder ?? 0,
   });
 
-  const bodyLength = formData.body.length;
-  const BODY_SOFT_LIMIT = 200;
-
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) {
@@ -145,17 +142,8 @@ export default function AnnouncementForm({
                 htmlFor="body"
                 className="block text-sm font-medium text-gray-700"
               >
-                Body <span className="text-gray-500">(optional)</span>
+                Notes <span className="text-gray-500">(optional, not shown on the website)</span>
               </label>
-              <span
-                className={`text-xs tabular-nums ${
-                  bodyLength > BODY_SOFT_LIMIT
-                    ? "text-amber-600 font-semibold"
-                    : "text-gray-400"
-                }`}
-              >
-                {bodyLength} / {BODY_SOFT_LIMIT}
-              </span>
             </div>
             <textarea
               id="body"
@@ -165,12 +153,7 @@ export default function AnnouncementForm({
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
-            {bodyLength > BODY_SOFT_LIMIT && (
-              <p className="mt-1 text-xs text-amber-600">
-                Body text over {BODY_SOFT_LIMIT} characters will be truncated
-                on the homepage.
-              </p>
-            )}
+
           </div>
 
           {/* Link URL */}
@@ -179,21 +162,23 @@ export default function AnnouncementForm({
               htmlFor="linkUrl"
               className="block text-sm font-medium text-gray-700"
             >
-              Link URL <span className="text-gray-500">(optional)</span>
+              Link URL <span className="text-gray-500">(required)</span>
             </label>
             <input
               type="text"
               inputMode="url"
               id="linkUrl"
               name="linkUrl"
+              required
               value={formData.linkUrl}
               onChange={handleChange}
               placeholder="https://example.com or /white-cane"
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
             <p className="mt-1 text-xs text-gray-500">
-              An active announcement linking to <code>/white-cane</code> also turns on the White Cane
-              button in the homepage hero while that campaign page is open (mid-September through October 31).
+              Announcements appear on the homepage only as buttons in the hero banner, linking here.
+              The first active one (by sort order) takes the gold button; a second gets an outlined
+              button; more than two are not shown.
             </p>
           </div>
 
@@ -211,11 +196,11 @@ export default function AnnouncementForm({
               name="linkLabel"
               value={formData.linkLabel}
               onChange={handleChange}
-              placeholder="Learn more"
+              placeholder="Sign up for Santa's Workshop"
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-lions-blue focus:outline-none focus:ring-1 focus:ring-lions-blue"
             />
             <p className="mt-1 text-xs text-gray-500">
-              Defaults to &ldquo;Learn more&rdquo; if left blank.
+              The button text. Defaults to the title if left blank.
             </p>
           </div>
         </div>
@@ -303,7 +288,7 @@ export default function AnnouncementForm({
               htmlFor="isActive"
               className="ml-2 block text-sm text-gray-700"
             >
-              Active (shown on homepage)
+              Active (shown as a homepage button)
             </label>
           </div>
         </div>

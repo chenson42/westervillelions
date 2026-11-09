@@ -1,6 +1,5 @@
 import Link from "next/link";
 import Image from "next/image";
-import type { HomepageAnnouncement } from "@/lib/db/schema";
 import { formatWallClockDate } from "@/lib/events";
 
 type NextEvent = {
@@ -18,7 +17,6 @@ type NextEvent = {
 
 type Props = {
   nextEvents: NextEvent[];
-  activeAnnouncements: HomepageAnnouncement[];
 };
 
 function stripMarkdown(text: string): string {
@@ -93,77 +91,20 @@ function NextEventCard({ event }: { event: NextEvent }) {
   );
 }
 
-function AnnouncementList({
-  announcements,
-}: {
-  announcements: HomepageAnnouncement[];
-}) {
-  return (
-    <div className="rounded-2xl bg-white shadow-lg overflow-hidden h-full">
-      <ul>
-        {announcements.map((item, index) => {
-          const body =
-            item.body && item.body.length > 200
-              ? item.body.slice(0, 200) + "…"
-              : item.body;
-          const label = item.linkLabel ?? "Learn more";
-
-          return (
-            <li key={item.id}>
-              {index > 0 && <hr className="border-gray-100 mx-8" />}
-              <div className="px-8 py-5">
-                <p className="font-semibold text-gray-900 text-sm leading-snug">
-                  {item.title}
-                </p>
-                {body && (
-                  <p className="mt-1 text-sm text-gray-600 leading-relaxed">
-                    {body}
-                  </p>
-                )}
-                {item.linkUrl && (
-                  <a
-                    href={item.linkUrl}
-                    className="mt-2 inline-flex items-center text-sm font-semibold text-lions-blue hover:text-lions-blue-dark transition-colors focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-1 rounded"
-                    target={
-                      item.linkUrl.startsWith("http") ? "_blank" : undefined
-                    }
-                    rel={
-                      item.linkUrl.startsWith("http")
-                        ? "noopener noreferrer"
-                        : undefined
-                    }
-                  >
-                    {label} &rarr;
-                  </a>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
-export default function FeaturedContent({ nextEvents, activeAnnouncements }: Props) {
-  if (nextEvents.length === 0 && activeAnnouncements.length === 0) {
+// Announcements are not listed here: they show only as buttons in the homepage hero.
+export default function FeaturedContent({ nextEvents }: Props) {
+  if (nextEvents.length === 0) {
     return null;
   }
 
-  const hasEvents = nextEvents.length > 0;
-  const hasAnnouncements = activeAnnouncements.length > 0;
-
-  // Events-only grid class when no announcements
   const eventsOnlyGrid =
     nextEvents.length === 1 ? "" :
     nextEvents.length === 2 ? "md:grid-cols-2" :
     "md:grid-cols-3";
 
   const grid = (
-    <div className={`grid gap-6 max-w-6xl mx-auto ${hasEvents && hasAnnouncements ? "md:grid-cols-3" : ""}`}>
-      {hasEvents && (
-        <div className={hasAnnouncements ? "md:col-span-2" : "w-full"}>
-          <div className={!hasAnnouncements && nextEvents.length === 1 ? "max-w-2xl mx-auto" : ""}>
+    <div className="max-w-6xl mx-auto">
+      <div className={nextEvents.length === 1 ? "max-w-2xl mx-auto" : ""}>
           {/* Badge above cards */}
           <div className="mb-3">
             <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
@@ -206,20 +147,7 @@ export default function FeaturedContent({ nextEvents, activeAnnouncements }: Pro
               </svg>
             </Link>
           </div>
-          </div>
-        </div>
-      )}
-      {hasAnnouncements && (
-        <div className={hasEvents ? "md:col-span-1" : "w-full"}>
-          {/* Badge above card — matches Upcoming Events badge */}
-          <div className="mb-3">
-            <span className="inline-flex items-center rounded-full bg-lions-gold px-3 py-1 text-xs font-bold text-lions-blue-dark uppercase tracking-wide">
-              Announcements
-            </span>
-          </div>
-          <AnnouncementList announcements={activeAnnouncements} />
-        </div>
-      )}
+      </div>
     </div>
   );
 

@@ -10,7 +10,7 @@ import { getNextOccurrence, parseWallClock, nowEastern } from "@/lib/events";
 import { format } from "date-fns";
 import { getRecentGivingStats } from "@/lib/impact-stats-queries";
 import { roundDownToThousand, formatImpactAmount } from "@/lib/impact-stats";
-import { campaignState } from "@/components/white-cane/campaign-state";
+import { heroAnnouncementButtons } from "@/lib/homepage-hero-buttons";
 
 export const revalidate = 300;
 
@@ -42,12 +42,10 @@ export const metadata: Metadata = {
 
 const FOUNDING_YEAR = 1928;
 
-/** True for "/white-cane" or an absolute URL whose path is /white-cane (trailing slash and query ignored). */
-function linksToWhiteCane(linkUrl: string | null): boolean {
-  if (!linkUrl) return false;
-  const path = linkUrl.startsWith("/") ? linkUrl : (() => { try { return new URL(linkUrl).pathname; } catch { return ""; } })();
-  return path.replace(/\/+$/, "").split("?")[0] === "/white-cane";
-}
+const GOLD_BUTTON =
+  "bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue";
+const OUTLINED_BUTTON =
+  "bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue";
 
 export default async function HomePage() {
   // nowEastern(), not new Date(): the process runs in UTC on Vercel, and
@@ -180,13 +178,11 @@ export default async function HomePage() {
     ? sortByNextOccurrence(withNextOccurrence(featuredEventRows))
     : sortByNextOccurrence(withNextOccurrence(fallbackEventRows)).slice(0, 1);
   const yearsOfService = new Date().getFullYear() - FOUNDING_YEAR;
-  // The hero's White Cane button is on only while the campaign page is open AND an
-  // active homepage announcement links to /white-cane. Admins turn it on and off at
-  // /admin/announcements (with start/end dates) without a deploy. campaignState()
-  // takes a real instant, not the Eastern-shifted `now`.
-  const whiteCaneLive =
-    campaignState(new Date()) === "live" &&
-    activeAnnouncementRows.some((a) => linksToWhiteCane(a.linkUrl));
+  // Homepage announcements appear only as hero buttons: the first active one with a
+  // link takes the gold slot, a second takes an outlined slot, and Join moves to the
+  // outlined slot after them. Admins turn them on and off (with start/end dates) at
+  // /admin/announcements, without a deploy.
+  const announcementButtons = heroAnnouncementButtons(activeAnnouncementRows);
 
   return (
     <div className="min-h-screen bg-white">
@@ -219,36 +215,33 @@ export default async function HomePage() {
           <p className="text-xl md:text-2xl max-w-4xl mx-auto font-light leading-relaxed mb-10">
             Helping our community thrive through service and care.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            {whiteCaneLive ? (
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 justify-center">
+            {announcementButtons.length > 0 ? (
               <>
-                {/* White Cane window (Oct 15-31): the campaign takes the gold slot and
-                    Join moves to the outlined slot. Reverts on Nov 1 by itself. */}
-                <Link
-                  href="/white-cane"
-                  className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
-                >
-                  Give to the White Cane campaign
-                </Link>
-                <Link
-                  href="/join"
-                  className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
-                >
+                {announcementButtons.map((button, index) => (
+                  <Link
+                    key={button.id}
+                    href={button.href}
+                    target={button.external ? "_blank" : undefined}
+                    rel={button.external ? "noopener noreferrer" : undefined}
+                    className={index === 0 ? GOLD_BUTTON : OUTLINED_BUTTON}
+                  >
+                    {button.label}
+                  </Link>
+                ))}
+                <Link href="/join" className={OUTLINED_BUTTON}>
                   Join the Club
                 </Link>
               </>
             ) : (
               <>
-                <Link
-                  href="/join"
-                  className="bg-lions-gold text-lions-blue-dark px-8 py-4 rounded-lg font-bold text-lg hover:bg-lions-gold-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
-                >
+                <Link href="/join" className={GOLD_BUTTON}>
                   Join the Club
                 </Link>
                 <Link
                   href="/connect"
                   aria-label="Find out when and where we meet"
-                  className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-bold text-lg hover:bg-white hover:text-lions-blue transition focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-lions-blue"
+                  className={OUTLINED_BUTTON}
                 >
                   Attend a Meeting
                 </Link>
@@ -292,9 +285,9 @@ export default async function HomePage() {
       {/* Service Areas — the eight Lions global causes, mirroring /mission */}
       <ServiceAreas />
 
-      {/* What's Happening — events & announcements (FeaturedContent renders its
+      {/* What's Happening — upcoming events (FeaturedContent renders its
           own section, heading, and bg-lions-blue/5 band when not embedded) */}
-      <FeaturedContent nextEvents={nextEvents} activeAnnouncements={activeAnnouncementRows} />
+      <FeaturedContent nextEvents={nextEvents} />
 
       {/* Stay Connected — social follow chips */}
       <section className="py-16 bg-white">
@@ -355,7 +348,7 @@ export default async function HomePage() {
           <p className="text-xl text-gray-700 mb-10 max-w-2xl mx-auto">
             Join us in serving our community and making a lasting difference
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 justify-center">
             <Link
               href="/donate"
               className="bg-lions-blue text-white px-10 py-4 rounded-lg font-bold text-lg hover:bg-lions-blue-dark transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-lions-blue focus:ring-offset-2"

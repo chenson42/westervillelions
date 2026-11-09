@@ -41,7 +41,13 @@ export async function PATCH(
 
     if (data.title !== undefined) updateFields.title = data.title;
     if (data.body !== undefined) updateFields.body = data.body || null;
-    if (data.linkUrl !== undefined) updateFields.linkUrl = data.linkUrl || null;
+    if (data.linkUrl !== undefined) {
+      // Announcements show only as homepage hero buttons, so the link cannot be cleared.
+      if (typeof data.linkUrl !== "string" || !data.linkUrl.trim()) {
+        return NextResponse.json({ error: "Link URL is required" }, { status: 400 });
+      }
+      updateFields.linkUrl = data.linkUrl.trim();
+    }
     if (data.linkLabel !== undefined) updateFields.linkLabel = data.linkLabel || null;
     if (typeof data.isActive === "boolean") updateFields.isActive = data.isActive;
     if (data.startsAt !== undefined) {

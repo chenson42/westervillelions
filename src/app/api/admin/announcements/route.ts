@@ -67,12 +67,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Announcements show only as homepage hero buttons, so a link is required.
+    if (typeof data.linkUrl !== "string" || !data.linkUrl.trim()) {
+      return NextResponse.json(
+        { error: "Link URL is required" },
+        { status: 400 }
+      );
+    }
+
     const [newAnnouncement] = await db
       .insert(homepageAnnouncements)
       .values({
         title: data.title,
         body: data.body || null,
-        linkUrl: data.linkUrl || null,
+        linkUrl: data.linkUrl.trim(),
         linkLabel: data.linkLabel || null,
         isActive: data.isActive ?? true,
         startsAt: data.startsAt ? new Date(data.startsAt) : null,
